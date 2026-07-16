@@ -61,8 +61,10 @@ export function requireClientAccess(param = "id") {
 export function requireCaseAccess(param = "id") {
   return async (req, res, next) => {
     try {
+      // deletedAt: undefined keeps trashed cases reachable here so their
+      // profile can render the trash state and the restore route can work.
       const record = await prisma.case.findFirst({
-        where: { id: req.params[param], agencyId: req.auth.agencyId, ...caseAccessWhere(req) },
+        where: { id: req.params[param], agencyId: req.auth.agencyId, ...caseAccessWhere(req), deletedAt: undefined },
         select: { id: true },
       });
       if (!record) return denied(res);

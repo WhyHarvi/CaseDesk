@@ -878,6 +878,7 @@ model Case {
   nextAction                 String?                        @map("next_action")
   submittedAt                DateTime?                      @map("submitted_at")
   decisionAt                 DateTime?                      @map("decision_at")
+  deletedAt                  DateTime?                      @map("deleted_at")
   createdAt                  DateTime                       @default(now()) @map("created_at")
   updatedAt                  DateTime                       @updatedAt @map("updated_at")
   agency                     Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -905,6 +906,7 @@ model Case {
   @@index([agencyId])
   @@index([clientId])
   @@index([assignedUserId])
+  @@index([agencyId, deletedAt])
   @@map("cases")
 }
 

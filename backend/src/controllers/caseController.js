@@ -82,6 +82,7 @@ const controller = createCrudController({
     ...(req.query.assignedUserId ? { assignedUserId: req.query.assignedUserId } : {}),
     ...(req.query.caseType ? { caseType: req.query.caseType } : {}),
     ...(req.query.status ? { status: req.query.status } : {}),
+    ...(req.query.trash === "1" ? { deletedAt: { not: null } } : {}),
   }),
   activityEntity: "case",
 });
@@ -516,7 +517,61 @@ export async function updateCaseDocumentAssignment(req, res) {
 }
 
 export const listCases = controller.list;
-export const getCaseById = controller.getById;
+
+// Unlike other case reads, the profile view must also load trashed cases so
+// staff can see the "in trash" state and restore from it.
+export async function getCaseById(req, res) {
+  const data = await prisma.case.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...caseAccessWhere(req), deletedAt: undefined },
+    include,
+  });
+  if (!data) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  res.json({ data });
+}
+
+export async function softDeleteCase(req, res) {
+  const existing = await prisma.case.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...caseAccessWhere(req) },
+    select: { id: true, clientId: true, caseType: true },
+  });
+  if (!existing) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  const data = await prisma.case.update({
+    where: { id: existing.id },
+    data: { deletedAt: new Date() },
+    include,
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.id,
+    action: "case.deleted",
+    details: `${existing.caseType} moved to trash`,
+  });
+  res.json({ data });
+}
+
+export async function restoreCase(req, res) {
+  const existing = await prisma.case.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...caseAccessWhere(req), deletedAt: { not: null } },
+    select: { id: true, clientId: true, caseType: true },
+  });
+  if (!existing) throw createHttpError(404, "No trashed case was found to restore.", "NOT_FOUND");
+  const data = await prisma.case.update({
+    where: { id: existing.id },
+    data: { deletedAt: null },
+    include,
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.id,
+    action: "case.restored",
+    details: `${existing.caseType} restored from trash`,
+  });
+  res.json({ data });
+}
 
 export async function closeCase(req, res) {
   const existing = await prisma.case.findFirst({

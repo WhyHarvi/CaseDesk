@@ -1,4 +1,4 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, FolderCheck, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import AssessmentOverlay from "../components/case-profile/AssessmentOverlay";
@@ -18,7 +18,9 @@ import NotesOverlay from "../components/case-profile/notes/NotesOverlay";
 import ActivitiesOverlay from "../components/case-profile/activities/ActivitiesOverlay";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import CommunicationSetupOverlay from "../components/case-profile/communication/CommunicationSetupOverlay";
-import CaseCloseDialog from "../components/case-profile/CaseCloseDialog";
+import CaseActionDialog from "../components/case-profile/CaseActionDialog";
+
+const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
 import {
   buildBlankTemplateStep,
@@ -71,6 +73,9 @@ export default function CaseProfile() {
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
+  const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
+  const [restoringCase, setRestoringCase] = useState(false);
+  const [restoreError, setRestoreError] = useState("");
   const [notesOverlayOpen, setNotesOverlayOpen] = useState(false);
   const [activitiesOverlayOpen, setActivitiesOverlayOpen] = useState(false);
   const [statementOverlayOpen, setStatementOverlayOpen] = useState(false);
@@ -1563,6 +1568,43 @@ export default function CaseProfile() {
       ) : null}
 
       <section className="space-y-8">
+        {caseItem?.deletedAt ? (
+          <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-rose-200/80 bg-rose-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(190,18,60,0.08)]">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+                <Trash2 className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-rose-900">This case is in the trash</p>
+                <p className="text-sm text-rose-700/80">
+                  It is hidden from lists and the client portal.{restoreError ? ` ${restoreError}` : ""}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={restoringCase}
+              onClick={async () => {
+                setRestoringCase(true);
+                setRestoreError("");
+                try {
+                  const response = await api.patch(`/cases/${caseItem.id}/restore`);
+                  setCaseItem((current) => ({ ...current, ...response.data.data }));
+                } catch (requestError) {
+                  setRestoreError(requestError.response?.data?.message || "Unable to restore this case.");
+                } finally {
+                  setRestoringCase(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60"
+            >
+              {restoringCase ? (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              ) : null}
+              {restoringCase ? "Restoring…" : "Restore case"}
+            </button>
+          </article>
+        ) : null}
         <CaseProfileTopSection
           caseItem={caseItem}
           paymentSummary={paymentSummary}
@@ -1594,13 +1636,33 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setCloseCaseDialogOpen(true);
           }}
+          onDeleteCase={() => {
+            setActiveToolbarTray("");
+            setDeleteCaseDialogOpen(true);
+          }}
         />
 
-        <CaseCloseDialog
+        <CaseActionDialog
           open={closeCaseDialogOpen}
-          caseItem={caseItem}
           onClose={() => setCloseCaseDialogOpen(false)}
-          onClosed={(closedCase) => {
+          icon={FolderCheck}
+          iconWrapClassName="bg-amber-50 text-amber-600"
+          title="Close this case?"
+          message="Pending tasks, follow-ups, and appointments will be cancelled. Documents, payments, and history stay on record."
+          confirmLabel="Close case"
+          workingLabel="Closing…"
+          successTitle="Case closed"
+          successMessage="Everything stays on record."
+          blocked={
+            TERMINAL_CASE_STATUSES.has(caseItem?.status)
+              ? {
+                  title: "Already closed",
+                  message: `This case is ${caseItem?.status?.toLowerCase() || "closed"}, so there is nothing left to close.`,
+                }
+              : null
+          }
+          action={async () => (await api.patch(`/cases/${caseItem.id}/close`)).data.data}
+          onSuccess={(closedCase) => {
             setCaseItem((current) => ({ ...current, ...closedCase }));
             setFollowUps((current) =>
               current.map((followUp) =>
@@ -1611,6 +1673,27 @@ export default function CaseProfile() {
               current.map((step) => (step.status === "Pending" ? { ...step, status: "Cancelled", isActive: false } : step)),
             );
           }}
+        />
+
+        <CaseActionDialog
+          open={deleteCaseDialogOpen}
+          onClose={() => setDeleteCaseDialogOpen(false)}
+          icon={Trash2}
+          iconWrapClassName="bg-rose-50 text-rose-600"
+          title="Move this case to Trash?"
+          message="It will disappear from case lists, dashboards, and the client portal. Nothing is destroyed — you can restore it anytime."
+          confirmLabel="Move to Trash"
+          workingLabel="Moving…"
+          confirmClassName="bg-rose-600 hover:bg-rose-500"
+          successTitle="Moved to Trash"
+          successMessage="Restore it anytime from the Cases page."
+          blocked={
+            caseItem?.deletedAt
+              ? { title: "Already in Trash", message: "This case is already in the trash. You can restore it from the banner above." }
+              : null
+          }
+          action={async () => (await api.delete(`/cases/${caseItem.id}`)).data.data}
+          onSuccess={() => navigate("/app/cases")}
         />
 
         <WorkflowTimeline

@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
+import CaseTrashOverlay from "../components/cases/CaseTrashOverlay";
 import api from "../services/api";
 
 const STAGE_OPTIONS = [
@@ -1158,6 +1160,7 @@ export default function Cases() {
     priority: "all",
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const [activeActionMenuId, setActiveActionMenuId] = useState(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth >= 1024 : true,
@@ -1566,6 +1569,15 @@ export default function Cases() {
     <>
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
+      <CaseTrashOverlay
+        open={trashOpen}
+        onClose={() => setTrashOpen(false)}
+        onRestored={(restored) => {
+          setToast({ type: "success", message: `${restored.caseType} restored.` });
+          loadWorkspaceData({ quiet: true });
+        }}
+      />
+
       <section className="min-h-screen px-1 py-1">
         <div className="mx-auto w-full max-w-[1560px] space-y-6">
           <section className="rounded-3xl border border-white/70 bg-white/75 px-6 py-5 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -1591,6 +1603,14 @@ export default function Cases() {
                 >
                   <Download className="h-4 w-4" />
                   Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrashOpen(true)}
+                  className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 text-sm font-medium text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Trash
                 </button>
                 <button
                   type="button"

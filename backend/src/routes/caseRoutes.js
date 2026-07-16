@@ -5,6 +5,8 @@ import {
   createCaseDocumentChecklist,
   getCaseById,
   listCases,
+  restoreCase,
+  softDeleteCase,
   updateCaseDocumentAssignment,
   updateCase,
 } from "../controllers/caseController.js";
@@ -51,5 +53,7 @@ router.patch("/:id/workflow/:stepId", asyncHandler(updateCaseWorkflowStep));
 router.get("/:id", asyncHandler(getCaseById));
 router.patch("/:id", asyncHandler(updateCase));
 router.patch("/:id/close", asyncHandler(closeCase));
+router.delete("/:id", asyncHandler(softDeleteCase));
+router.patch("/:id/restore", asyncHandler(restoreCase));
 
 export default router;

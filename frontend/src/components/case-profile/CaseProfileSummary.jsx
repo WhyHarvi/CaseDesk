@@ -107,7 +107,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, onOpenWorkflow, onOpenApplicants, onOpenNotes, onOpenActivities, onOpenStatement, onCloseCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, onOpenWorkflow, onOpenApplicants, onOpenNotes, onOpenActivities, onOpenStatement, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -123,6 +123,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, on
             onSelect={(item) => {
               if (item === "Applicants") onOpenApplicants();
               if (item === "Close") onCloseCase?.();
+              if (item === "Delete") onDeleteCase?.();
             }}
           />
           <SimpleActionPill icon={UserRound} label="Applicants" onClick={onOpenApplicants} />

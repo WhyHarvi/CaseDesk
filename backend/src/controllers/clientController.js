@@ -15,6 +15,7 @@ const include = {
     },
   },
   cases: {
+    where: { deletedAt: null },
     orderBy: { updatedAt: "desc" },
     select: {
       id: true,
@@ -36,7 +37,7 @@ function scopedInclude(req) {
     ...include,
     cases: {
       ...include.cases,
-      where: caseAccessWhere(req),
+      where: { ...caseAccessWhere(req), deletedAt: null },
     },
   };
 }

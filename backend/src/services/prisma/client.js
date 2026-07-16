@@ -69,7 +69,7 @@ if (cachedPrisma && !shouldReusePrisma) {
   void cachedPrisma.$disconnect().catch(() => {});
 }
 
-const prisma =
+const basePrisma =
   (shouldReusePrisma ? cachedPrisma : null) ||
   new PrismaClient({
     datasourceUrl: runtimeDatabaseUrl(),
@@ -77,7 +77,32 @@ const prisma =
   });
 
 if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  globalForPrisma.prisma = basePrisma;
 }
+
+// Soft-deleted cases are hidden from every direct case read unless the caller
+// mentions deletedAt itself (pass `deletedAt: undefined` to opt out entirely).
+// Nested reads (e.g. client include { cases }) are NOT intercepted here and
+// must filter deletedAt explicitly.
+const hideDeleted = ({ args, query }) => {
+  const where = args.where || {};
+  if (!Object.hasOwn(where, "deletedAt") && !Object.hasOwn(where, "deleted_at")) {
+    args = { ...args, where: { ...where, deletedAt: null } };
+  }
+  return query(args);
+};
+
+const prisma = basePrisma.$extends({
+  query: {
+    case: {
+      findMany: hideDeleted,
+      findFirst: hideDeleted,
+      findFirstOrThrow: hideDeleted,
+      count: hideDeleted,
+      aggregate: hideDeleted,
+      groupBy: hideDeleted,
+    },
+  },
+});
 
 export default prisma;
