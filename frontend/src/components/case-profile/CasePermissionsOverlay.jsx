@@ -120,7 +120,7 @@ export default function CasePermissionsOverlay({ caseItem, onClose, onSaved }) {
                   <ShieldCheck className="h-5 w-5 text-violet-600" />
                   <h3 className="mt-3 font-semibold text-violet-950">What this controls</h3>
                   <p className="mt-2 text-sm leading-6 text-violet-800">Collaborators can open and work on this case. Their agency-level form and communication permissions still apply.</p>
-                  <p className="mt-3 text-sm leading-6 text-violet-800">Administrators always retain access. Client portal access is managed separately through Send Invite.</p>
+                  <p className="mt-3 text-sm leading-6 text-violet-800">Administrators always retain access. Client portal access is managed separately through the Portal Access card.</p>
                 </aside>
               </section>
 

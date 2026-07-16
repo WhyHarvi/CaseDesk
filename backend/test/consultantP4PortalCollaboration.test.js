@@ -149,5 +149,14 @@ test("case Manage Permissions controls owner and collaborator access without str
   assert.match(profile, /CasePermissionsOverlay/);
   assert.match(overlay, /Primary case owner/);
   assert.match(overlay, /Collaborating consultants/);
-  assert.match(overlay, /Client portal access is managed separately through Send Invite/);
+  assert.match(overlay, /Client portal access is managed separately through the Portal Access card/);
+});
+
+test("case options do not duplicate the existing portal access invitation controls", async () => {
+  const [options, summary] = await Promise.all([
+    source("../../frontend/src/components/case-profile/caseProfileUtils.js"),
+    source("../../frontend/src/components/case-profile/CaseProfileSummary.jsx"),
+  ]);
+  assert.doesNotMatch(options, /"Send Invite"/);
+  assert.match(summary, /<PortalAccessCard/);
 });
