@@ -68,8 +68,13 @@ export function downloadPortalAgreementFile(agreementId, filename = "agreement")
     });
 }
 
-export function signPortalAgreement(agreementId, { fullName, consent }) {
-  return api.post(`/client-portal/agreements/${agreementId}/sign`, { fullName, consent }).then((response) => response.data);
+export function signPortalAgreement(agreementId, { fullName, consent, signatureMethod, signatureImage }) {
+  return api.post(`/client-portal/agreements/${agreementId}/sign`, {
+    fullName,
+    consent,
+    signatureMethod,
+    signatureImage,
+  }).then((response) => response.data);
 }
 
 export function getPortalChat(caseId = "") {

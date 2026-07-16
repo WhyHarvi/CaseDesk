@@ -168,16 +168,31 @@ const agreementSelect = { id: true, title: true, correspondenceKind: true, corre
 const escapeHtml = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 
-function signatureBlockHtml({ signerName, signedAt }) {
+function signatureBlockHtml({ signerName, signedAt, signatureMethod = "typed", signatureImage = null }) {
   const formatted = new Intl.DateTimeFormat("en-CA", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }).format(signedAt);
+  const signatureMark = signatureMethod === "drawn" && signatureImage
+    ? `<img src="${signatureImage}" alt="Hand-drawn signature of ${escapeHtml(signerName)}" style="display:block;width:auto;max-width:320px;height:auto;max-height:120px;margin:12px 0 0;object-fit:contain;object-position:left center;" />`
+    : `<p style="margin:12px 0 0;font-family:'Brush Script MT','Segoe Script','Snell Roundhand',cursive;font-size:34px;line-height:1.2;color:#0f172a;">${escapeHtml(signerName)}</p>`;
   return [
     '<div data-casedesk-signature="true" style="margin-top:48px;padding:20px 24px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;page-break-inside:avoid;">',
     '<p style="margin:0;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:#64748b;font-weight:700;">Electronically signed</p>',
-    `<p style="margin:12px 0 0;font-family:'Brush Script MT','Segoe Script','Snell Roundhand',cursive;font-size:34px;line-height:1.2;color:#0f172a;">${escapeHtml(signerName)}</p>`,
+    signatureMark,
     `<p style="margin:8px 0 0;font-size:13px;color:#334155;font-weight:600;">${escapeHtml(signerName)}</p>`,
     `<p style="margin:2px 0 0;font-size:12px;color:#64748b;">Signed electronically via the CaseDesk client portal on ${escapeHtml(formatted)} (UTC).</p>`,
     "</div>",
   ].join("");
+}
+
+function drawnSignatureImage(value) {
+  if (typeof value !== "string" || value.length > 600_000) throw createHttpError(400, "Draw your signature inside the signature box.", "INVALID_SIGNATURE");
+  const match = value.match(/^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match) throw createHttpError(400, "The drawn signature image is invalid.", "INVALID_SIGNATURE");
+  const buffer = Buffer.from(match[1], "base64");
+  const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.length < pngHeader.length || buffer.length > 400_000 || !buffer.subarray(0, pngHeader.length).equals(pngHeader)) {
+    throw createHttpError(400, "The drawn signature image is invalid.", "INVALID_SIGNATURE");
+  }
+  return `data:image/png;base64,${buffer.toString("base64")}`;
 }
 
 function agreementDocumentHtml({ title, headerText, contentHtml, footerText }) {
@@ -545,7 +560,11 @@ export async function getPortalAgreementView(req, res) {
       orderBy: { createdAt: "desc" },
       select: { metadata: true, createdAt: true },
     });
-    if (signatureLog) signature = { signerName: signatureLog.metadata?.signerName || null, signedAt: signatureLog.metadata?.signedAt || signatureLog.createdAt };
+    if (signatureLog) signature = {
+      signerName: signatureLog.metadata?.signerName || null,
+      signedAt: signatureLog.metadata?.signedAt || signatureLog.createdAt,
+      method: signatureLog.metadata?.signatureMethod || "typed",
+    };
   } catch {
     signature = null;
   }
@@ -586,6 +605,8 @@ export async function signPortalAgreement(req, res) {
   const signerName = String(req.body?.fullName || "").trim().replace(/\s+/g, " ").slice(0, 160);
   if (!signerName) throw createHttpError(400, "Type your full legal name to sign.", "VALIDATION_ERROR");
   if (req.body?.consent !== true) throw createHttpError(400, "You must agree to sign electronically.", "CONSENT_REQUIRED");
+  const signatureMethod = req.body?.signatureMethod === "drawn" ? "drawn" : "typed";
+  const signatureImage = signatureMethod === "drawn" ? drawnSignatureImage(req.body?.signatureImage) : null;
 
   const agreement = await prisma.writtenDocument.findFirst({
     where: {
@@ -603,7 +624,7 @@ export async function signPortalAgreement(req, res) {
   const signedAt = new Date();
   // Stamp the signature into the document content itself so the signed
   // record is visible in the staff Writer and on the issued client file.
-  const signedContentHtml = `${agreement.contentHtml || ""}${signatureBlockHtml({ signerName, signedAt })}`;
+  const signedContentHtml = `${agreement.contentHtml || ""}${signatureBlockHtml({ signerName, signedAt, signatureMethod, signatureImage })}`;
   const signedFileHtml = agreementDocumentHtml({ ...agreement, contentHtml: signedContentHtml });
   const signedStorageKey = path.posix.join(req.auth.agencyId, agreement.caseId || `client-${link.clientId}`, `${randomUUID()}.html`);
   const signedFilename = `${String(agreement.title || "agreement").replace(/[^\w\s.-]/g, "").trim().slice(0, 120) || "agreement"} (signed).html`;
@@ -660,7 +681,7 @@ export async function signPortalAgreement(req, res) {
     caseId: agreement.caseId,
     action: "correspondence.portal_signed",
     details: `${agreement.title} signed electronically by ${signerName}`,
-    metadata: { writtenDocumentId: agreement.id, signerName, signedAt: signedAt.toISOString(), consent: true },
+    metadata: { writtenDocumentId: agreement.id, signerName, signedAt: signedAt.toISOString(), consent: true, signatureMethod },
   });
   res.json({ success: true, message: "Signed. Thank you — your agency has been notified." });
 }

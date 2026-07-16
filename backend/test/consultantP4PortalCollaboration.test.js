@@ -106,3 +106,26 @@ test("case E-Sign centre reuses the portal agreement lifecycle without manual si
   assert.match(workspace, /Awaiting client signature/);
   assert.doesNotMatch(workspace, /<option value="Signed">Signed<\/option>/);
 });
+
+test("client E-Sign supports typed and touch-drawn signatures rendered into the signed agreement", async () => {
+  const [portalController, agreementCard, signaturePad, portalApi] = await Promise.all([
+    source("../src/controllers/clientPortalController.js"),
+    source("../../frontend/src/components/client-portal/ClientAgreementCard.jsx"),
+    source("../../frontend/src/components/client-portal/SignaturePad.jsx"),
+    source("../../frontend/src/api/clientPortalApi.js"),
+  ]);
+
+  assert.match(signaturePad, /onPointerDown=\{startDrawing\}/);
+  assert.match(signaturePad, /touch-none/);
+  assert.match(signaturePad, /toDataURL\("image\/png"\)/);
+  assert.match(agreementCard, /Type signature/);
+  assert.match(agreementCard, /Draw signature/);
+  assert.match(agreementCard, /signatureMethod === "drawn" && !signatureImage/);
+  assert.match(portalApi, /signatureMethod/);
+  assert.match(portalApi, /signatureImage/);
+  assert.match(portalController, /data:image\\\/png;base64/);
+  assert.match(portalController, /buffer\.length > 400_000/);
+  assert.match(portalController, /alt="Hand-drawn signature/);
+  assert.match(portalController, /signatureMethod, signatureImage/);
+  assert.match(portalController, /signatureMethod \}/);
+});

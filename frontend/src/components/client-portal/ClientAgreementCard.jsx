@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { downloadPortalAgreementFile, getPortalAgreementView, signPortalAgreement, portalErrorMessage } from "../../api/clientPortalApi";
 import { usePortalToast } from "./ClientPortalToast";
 import { formatPortalDate } from "./ClientStatusCard";
+import SignaturePad from "./SignaturePad";
 
 const STATUS_TONE = {
   "Awaiting your signature": "bg-amber-100/90 text-amber-800",
@@ -116,6 +117,8 @@ function AgreementViewerSheet({ agreement, onClose, onSign }) {
 
 function SignSheet({ agreement, onClose, onSigned, onViewDocument }) {
   const [fullName, setFullName] = useState("");
+  const [signatureMethod, setSignatureMethod] = useState("typed");
+  const [signatureImage, setSignatureImage] = useState("");
   const [consent, setConsent] = useState(false);
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState("");
@@ -126,7 +129,12 @@ function SignSheet({ agreement, onClose, onSigned, onViewDocument }) {
     setSigning(true);
     setError("");
     try {
-      const result = await signPortalAgreement(agreement.id, { fullName, consent });
+      const result = await signPortalAgreement(agreement.id, {
+        fullName,
+        consent,
+        signatureMethod,
+        signatureImage: signatureMethod === "drawn" ? signatureImage : undefined,
+      });
       onSigned(result.message);
     } catch (reason) {
       setError(portalErrorMessage(reason, "The document could not be signed. Please try again."));
@@ -171,16 +179,35 @@ function SignSheet({ agreement, onClose, onSigned, onViewDocument }) {
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
             />
           </label>
-          {fullName.trim() ? (
+          <fieldset>
+            <legend className="text-sm font-semibold text-slate-800">Choose how to sign</legend>
+            <div className="mt-2 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
+              {[["typed", "Type signature"], ["drawn", "Draw signature"]].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={signing}
+                  onClick={() => setSignatureMethod(value)}
+                  className={["h-10 rounded-xl text-sm font-semibold transition", signatureMethod === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"].join(" ")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {signatureMethod === "drawn" ? (
+            <SignaturePad disabled={signing} onChange={setSignatureImage} />
+          ) : fullName.trim() ? (
             <div className="rounded-2xl bg-slate-50 px-4 py-3 text-center">
               <p className="font-[cursive] text-2xl text-slate-800">{fullName.trim()}</p>
-              <p className="mt-1 text-[11px] text-slate-400">Signature preview — this will be stamped on the document</p>
+              <p className="mt-1 text-[11px] text-slate-400">Typed signature preview</p>
             </div>
           ) : null}
 
           <label className="flex items-start gap-3 rounded-2xl border border-slate-200 px-4 py-3.5 text-[13px] leading-5 text-slate-600">
             <input type="checkbox" checked={consent} required onChange={(event) => setConsent(event.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-200" />
-            I have read this document and agree that typing my name here is my electronic signature, legally equivalent to my handwritten signature.
+            I have read this document and agree that the signature I provide is my electronic signature, legally equivalent to my handwritten signature.
           </label>
 
           {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
@@ -188,7 +215,7 @@ function SignSheet({ agreement, onClose, onSigned, onViewDocument }) {
 
         <footer className="border-t border-slate-100 px-5 py-4 pb-[max(env(safe-area-inset-bottom),1rem)]">
           <button
-            disabled={signing || !fullName.trim() || !consent}
+            disabled={signing || !fullName.trim() || !consent || (signatureMethod === "drawn" && !signatureImage)}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.22)] transition-all duration-200 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-40"
           >
             {signing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
