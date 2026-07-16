@@ -75,8 +75,12 @@ test("client case and follow-up removal paths preserve history", async () => {
     source("../../frontend/src/pages/FollowUps.jsx"),
   ]);
   assert.doesNotMatch(clientRoutes, /router\.delete/);
-  assert.doesNotMatch(caseRoutes, /router\.delete\("\/:id"/);
+  assert.match(caseRoutes, /router\.delete\("\/:id", asyncHandler\(softDeleteCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/restore", asyncHandler\(restoreCase\)\)/);
   assert.doesNotMatch(followUpRoutes, /router\.delete/);
+  assert.match(caseController, /export async function softDeleteCase[\s\S]*?data: \{ deletedAt: new Date\(\) \}/);
+  assert.match(caseController, /export async function restoreCase[\s\S]*?data: \{ deletedAt: null \}/);
+  assert.doesNotMatch(caseController, /prisma\.case\.delete(?:Many)?\(/);
   assert.match(caseController, /status: "Cancelled", isActive: false/);
   assert.match(caseController, /followUp\.updateMany/);
   assert.match(clientPage, /clients\/\$\{client\.id\}\/archive-impact/);
@@ -91,7 +95,7 @@ test("client payloads scope nested cases and never fabricate operational values"
     source("../src/controllers/clientController.js"),
     source("../../frontend/src/pages/Clients.jsx"),
   ]);
-  assert.match(controller, /cases: \{[\s\S]*where: caseAccessWhere\(req\)/);
+  assert.match(controller, /cases: \{[\s\S]*?where: \{ \.\.\.caseAccessWhere\(req\), deletedAt: null \}/);
   assert.match(controller, /caseId: \{ in: accessibleCaseIds \}/);
   assert.match(page, /currentCase\?\.clientDocuments/);
   assert.match(page, /currentCase\?\.payments/);
