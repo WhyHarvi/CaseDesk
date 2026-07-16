@@ -129,3 +129,25 @@ test("client E-Sign supports typed and touch-drawn signatures rendered into the 
   assert.match(portalController, /signatureMethod, signatureImage/);
   assert.match(portalController, /signatureMethod \}/);
 });
+
+test("case Manage Permissions controls owner and collaborator access without stranding active work", async () => {
+  const [controller, routes, toolbar, profile, overlay] = await Promise.all([
+    source("../src/controllers/caseController.js"),
+    source("../src/routes/caseRoutes.js"),
+    source("../../frontend/src/components/case-profile/CaseProfileSummary.jsx"),
+    source("../../frontend/src/pages/CaseProfile.jsx"),
+    source("../../frontend/src/components/case-profile/CasePermissionsOverlay.jsx"),
+  ]);
+
+  assert.match(routes, /\/:id\/permissions", requireRole\("admin"\)/);
+  assert.match(controller, /memberships: \{ some: \{ agencyId: req\.auth\.agencyId, role: "consultant", isActive: true \} \}/);
+  assert.match(controller, /assignmentType: "supporting"/);
+  assert.match(controller, /Reassign.*active work item/);
+  assert.match(controller, /case\.permissions_updated/);
+  assert.match(toolbar, /item === "Manage Permissions"/);
+  assert.match(toolbar, /canManagePermissions/);
+  assert.match(profile, /CasePermissionsOverlay/);
+  assert.match(overlay, /Primary case owner/);
+  assert.match(overlay, /Collaborating consultants/);
+  assert.match(overlay, /Client portal access is managed separately through Send Invite/);
+});

@@ -20,6 +20,7 @@ import StatementOfAccountOverlay from "../components/statements/StatementOfAccou
 import CommunicationSetupOverlay from "../components/case-profile/communication/CommunicationSetupOverlay";
 import CaseActionDialog from "../components/case-profile/CaseActionDialog";
 import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
+import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOverlay";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
@@ -76,6 +77,7 @@ export default function CaseProfile() {
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
   const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
   const [eSignCenterOpen, setESignCenterOpen] = useState(false);
+  const [permissionsOverlayOpen, setPermissionsOverlayOpen] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
   const [restoreError, setRestoreError] = useState("");
@@ -1576,6 +1578,14 @@ export default function CaseProfile() {
         <ESignCenterOverlay caseItem={caseItem} onClose={() => setESignCenterOpen(false)} />
       ) : null}
 
+      {permissionsOverlayOpen && role === "admin" ? (
+        <CasePermissionsOverlay
+          caseItem={caseItem}
+          onClose={() => setPermissionsOverlayOpen(false)}
+          onSaved={(permissions) => setCaseItem((current) => ({ ...current, assignedUser: permissions.owner, assignedUserId: permissions.owner?.id || null }))}
+        />
+      ) : null}
+
       <section className="space-y-8">
         {caseItem?.deletedAt ? (
           <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-rose-200/80 bg-rose-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(190,18,60,0.08)]">
@@ -1662,10 +1672,15 @@ export default function CaseProfile() {
         <CaseProfileToolbar
           activeToolbarTray={activeToolbarTray}
           setActiveToolbarTray={setActiveToolbarTray}
+          canManagePermissions={role === "admin" && !caseItem.deletedAt}
           onOpenWorkflow={openWorkflowOverlay}
           onOpenApplicants={() => {
             setActiveToolbarTray("");
             setApplicantsOverlayOpen(true);
+          }}
+          onOpenPermissions={() => {
+            setActiveToolbarTray("");
+            setPermissionsOverlayOpen(true);
           }}
           onOpenNotes={() => {
             setActiveToolbarTray("");

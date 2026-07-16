@@ -341,6 +341,126 @@ async function validateCaseAssignee(req, assignedUserId) {
   if (!user) throw createHttpError(400, "Assigned consultant was not found.", "VALIDATION_ERROR");
 }
 
+const caseAccessUserSelect = { id: true, fullName: true, email: true };
+
+async function casePermissionsData(req) {
+  const [caseItem, consultants] = await Promise.all([
+    prisma.case.findFirst({
+      where: { id: req.params.id, agencyId: req.auth.agencyId, deletedAt: null },
+      select: {
+        id: true,
+        caseType: true,
+        archivedAt: true,
+        assignedUser: { select: caseAccessUserSelect },
+        assignments: {
+          where: { status: "active", assignmentType: { in: ["supporting", "reviewer"] } },
+          select: { id: true, assignmentType: true, consultant: { select: caseAccessUserSelect } },
+          orderBy: { assignedAt: "asc" },
+        },
+      },
+    }),
+    prisma.user.findMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        status: "active",
+        memberships: { some: { agencyId: req.auth.agencyId, role: "consultant", isActive: true } },
+      },
+      select: caseAccessUserSelect,
+      orderBy: { fullName: "asc" },
+    }),
+  ]);
+  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  return {
+    caseId: caseItem.id,
+    caseType: caseItem.caseType,
+    archived: Boolean(caseItem.archivedAt),
+    owner: caseItem.assignedUser,
+    collaborators: caseItem.assignments.map((item) => ({ ...item.consultant, assignmentType: item.assignmentType })),
+    consultants,
+  };
+}
+
+export async function getCasePermissions(req, res) {
+  res.json({ data: await casePermissionsData(req) });
+}
+
+export async function updateCasePermissions(req, res) {
+  const ownerUserId = typeof req.body?.ownerUserId === "string" ? req.body.ownerUserId.trim() : "";
+  const suppliedCollaborators = Array.isArray(req.body?.collaboratorUserIds) ? req.body.collaboratorUserIds : [];
+  if (!ownerUserId) throw createHttpError(400, "Choose a primary consultant for this case.", "VALIDATION_ERROR");
+  if (suppliedCollaborators.length > 100 || suppliedCollaborators.some((id) => typeof id !== "string" || !id.trim())) {
+    throw createHttpError(400, "The collaborator list is invalid.", "VALIDATION_ERROR");
+  }
+  const collaboratorUserIds = [...new Set(suppliedCollaborators.map((id) => id.trim()))].filter((id) => id !== ownerUserId);
+  const requestedUserIds = [ownerUserId, ...collaboratorUserIds];
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const caseItem = await tx.case.findFirst({
+      where: { id: req.params.id, agencyId: req.auth.agencyId, deletedAt: null },
+      select: {
+        id: true,
+        clientId: true,
+        caseType: true,
+        assignedUserId: true,
+        archivedAt: true,
+        assignments: { where: { status: "active" }, select: { consultantUserId: true } },
+      },
+    });
+    if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+    if (caseItem.archivedAt) throw createHttpError(409, "Restore this case before changing team access.", "CASE_ARCHIVED");
+
+    const eligible = await tx.user.findMany({
+      where: {
+        id: { in: requestedUserIds },
+        agencyId: req.auth.agencyId,
+        status: "active",
+        memberships: { some: { agencyId: req.auth.agencyId, role: "consultant", isActive: true } },
+      },
+      select: caseAccessUserSelect,
+    });
+    if (eligible.length !== requestedUserIds.length) throw createHttpError(400, "One or more selected consultants are inactive or unavailable.", "VALIDATION_ERROR");
+
+    const currentAccess = new Set([caseItem.assignedUserId, ...caseItem.assignments.map((item) => item.consultantUserId)].filter(Boolean));
+    const nextAccess = new Set(requestedUserIds);
+    const removedUserIds = [...currentAccess].filter((id) => !nextAccess.has(id));
+    if (removedUserIds.length) {
+      const [tasks, followUps, appointments] = await Promise.all([
+        tx.caseWorkflowStep.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedToId: { in: removedUserIds }, isActive: true, status: "Pending" } }),
+        tx.followUp.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedUserId: { in: removedUserIds }, status: { in: ["Pending", "Overdue"] } } }),
+        tx.appointment.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedToId: { in: removedUserIds }, status: "Scheduled" } }),
+      ]);
+      const activeWorkCount = tasks + followUps + appointments;
+      if (activeWorkCount) {
+        throw createHttpError(409, `Reassign ${activeWorkCount} active work item${activeWorkCount === 1 ? "" : "s"} before removing this consultant's case access.`, "ACTIVE_CASE_WORK");
+      }
+    }
+
+    await tx.case.update({ where: { id: caseItem.id }, data: { assignedUserId: ownerUserId } });
+    await tx.caseAssignment.updateMany({
+      where: { agencyId: req.auth.agencyId, caseId: caseItem.id, status: "active" },
+      data: { status: "inactive" },
+    });
+    for (const consultantUserId of collaboratorUserIds) {
+      await tx.caseAssignment.upsert({
+        where: { agencyId_caseId_consultantUserId_assignmentType: { agencyId: req.auth.agencyId, caseId: caseItem.id, consultantUserId, assignmentType: "supporting" } },
+        create: { agencyId: req.auth.agencyId, caseId: caseItem.id, consultantUserId, assignmentType: "supporting", status: "active", assignedById: req.auth.userId },
+        update: { status: "active", assignedById: req.auth.userId, assignedAt: new Date() },
+      });
+    }
+    return { ...caseItem, owner: eligible.find((item) => item.id === ownerUserId), collaboratorCount: collaboratorUserIds.length };
+  });
+
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: updated.clientId,
+    caseId: updated.id,
+    action: "case.permissions_updated",
+    details: `Case access updated: ${updated.owner.fullName} is primary owner with ${updated.collaboratorCount} collaborator${updated.collaboratorCount === 1 ? "" : "s"}`,
+  });
+  res.json({ data: await casePermissionsData(req), message: "Case permissions updated." });
+}
+
 export async function createCaseDocumentChecklist(req, res) {
   const requestedDocuments = Array.isArray(req.body.documents) ? req.body.documents : [];
   const documents = uniqueDocumentNames(requestedDocuments);

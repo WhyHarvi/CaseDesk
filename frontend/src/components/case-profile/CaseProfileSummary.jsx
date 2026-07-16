@@ -107,7 +107,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, onOpenWorkflow, onOpenApplicants, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, onOpenWorkflow, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -115,13 +115,14 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, on
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems}
+            items={caseOptionItems.filter((item) => item !== "Manage Permissions" || canManagePermissions)}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
             onToggle={() => setActiveToolbarTray((current) => (current === "case-options" ? "" : "case-options"))}
             onSelect={(item) => {
               if (item === "Applicants") onOpenApplicants();
+              if (item === "Manage Permissions") onOpenPermissions?.();
               if (item === "E-Sign") onOpenESign?.();
               if (item === "Archive") onArchiveCase?.();
               if (item === "Close") onCloseCase?.();

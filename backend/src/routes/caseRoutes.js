@@ -5,12 +5,14 @@ import {
   closeCase,
   createCaseDocumentChecklist,
   getCaseById,
+  getCasePermissions,
   listCases,
   restoreCase,
   softDeleteCase,
   unarchiveCase,
   updateCaseDocumentAssignment,
   updateCase,
+  updateCasePermissions,
 } from "../controllers/caseController.js";
 import {
   getCaseAssessment,
@@ -31,13 +33,15 @@ import {
   removeCaseApplicant,
   updateCaseApplicant,
 } from "../controllers/caseApplicantController.js";
-import { requireCaseAccess } from "../middleware/authorization.js";
+import { requireCaseAccess, requireRole } from "../middleware/authorization.js";
 
 const router = Router();
 
 router.get("/", asyncHandler(listCases));
 router.post("/", asyncHandler(createCase));
 router.use("/:id", requireCaseAccess());
+router.get("/:id/permissions", requireRole("admin"), asyncHandler(getCasePermissions));
+router.put("/:id/permissions", requireRole("admin"), asyncHandler(updateCasePermissions));
 router.get("/:id/assessment", asyncHandler(getCaseAssessment));
 router.get("/:id/applicants", asyncHandler(listCaseApplicants));
 router.post("/:id/applicants", asyncHandler(createCaseApplicant));
