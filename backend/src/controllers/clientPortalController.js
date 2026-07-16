@@ -572,12 +572,12 @@ export async function servePortalAgreementFile(req, res) {
     select: { storageKey: true, originalFilename: true, mimeType: true },
   });
   if (!document?.storageKey) throw createHttpError(404, "No file is available for this agreement.", "NOT_FOUND");
-  const fullPath = await requireDocumentFile(document.storageKey);
+  const buffer = await requireDocumentFile(document.storageKey);
   const disposition = req.query.download === "1" ? "attachment" : "inline";
   if ((document.mimeType || "").includes("html")) res.setHeader("Content-Security-Policy", "sandbox");
   res.setHeader("Content-Disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(document.originalFilename || "agreement")}`);
   res.type(document.mimeType || "application/octet-stream");
-  res.sendFile(fullPath);
+  res.send(buffer);
 }
 
 export async function signPortalAgreement(req, res) {
@@ -609,7 +609,7 @@ export async function signPortalAgreement(req, res) {
       })
     : null;
 
-  await writeDocumentFile(signedStorageKey, signedBuffer);
+  await writeDocumentFile(signedStorageKey, signedBuffer, "text/html");
   let committed = false;
   try {
     await prisma.$transaction(async (tx) => {

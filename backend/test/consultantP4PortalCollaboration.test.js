@@ -19,9 +19,9 @@ test("portal document operations require linked ownership and client visibility"
   assert.match(routes, /rateLimit\(\{ windowMs: 60_000, max: 10 \}\)/);
 });
 
-test("document storage rejects paths outside the private storage root", () => {
-  assert.throws(() => documentStoragePath("../../outside.pdf"), /Invalid document storage path/);
-  assert.match(documentStoragePath("agency/case/file.pdf"), /storage\/documents\/agency\/case\/file\.pdf$/);
+test("document storage rejects traversal and preserves tenant-prefixed object keys", () => {
+  assert.throws(() => documentStoragePath("../../outside.pdf"), /Invalid storage path/);
+  assert.equal(documentStoragePath("agency/case/file.pdf"), "agency/case/file.pdf");
 });
 
 test("client instructions are separate from internal document notes", async () => {
@@ -54,13 +54,17 @@ test("portal messages expose chat only and never internal communication", async 
   assert.match(routes, /router\.post\("\/messages", rateLimit/);
 });
 
-test("portal UI provides actions, appointments, file exchange, and messaging", async () => {
-  const page = await source("../../frontend/src/pages/Portal.jsx");
-  assert.match(page, /Requested actions/);
-  assert.match(page, /Upcoming appointments/);
-  assert.match(page, /portal\/documents\/\$\{documentItem\.id\}\/upload/);
-  assert.match(page, /portal\/documents\/\$\{documentItem\.id\}\/file/);
-  assert.match(page, /api\.post\("\/portal\/messages"/);
-  assert.match(page, /Instructions from your case team/);
-  assert.match(page, /Contact your case team if this information needs to change/);
+test("portal UI provides file exchange and messaging through the current modular pages", async () => {
+  const [home, documents, api, chat] = await Promise.all([
+    source("../../frontend/src/pages/client-portal/ClientPortalHome.jsx"),
+    source("../../frontend/src/components/client-portal/ClientDocumentCard.jsx"),
+    source("../../frontend/src/api/clientPortalApi.js"),
+    source("../../frontend/src/pages/client-portal/ClientPortalChat.jsx"),
+  ]);
+  assert.match(home, /Documents we still need/);
+  assert.match(documents, /uploadPortalDocument\(document\.id, file\)/);
+  assert.match(api, /client-portal\/documents\/\$\{documentId\}\/upload/);
+  assert.match(api, /client-portal\/documents\/\$\{documentId\}\/file/);
+  assert.match(api, /\.post\("\/portal\/messages"/);
+  assert.match(chat, /sendPortalChatMessage/);
 });

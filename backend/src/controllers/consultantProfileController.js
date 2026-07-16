@@ -1,18 +1,10 @@
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import prisma from "../services/prisma/client.js";
+import { AVATAR_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
-
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(
-  process.env.PROFILE_STORAGE_PATH ||
-    process.env.DOCUMENT_STORAGE_PATH ||
-    path.join(moduleDirectory, "../../storage/documents"),
-);
 
 const profileSelect = {
   id: true,
@@ -25,14 +17,6 @@ const profileSelect = {
     select: { specializations: true },
   },
 };
-
-function storagePath(storageKey) {
-  const resolved = path.resolve(storageRoot, ...String(storageKey).split("/").filter(Boolean));
-  if (resolved !== storageRoot && !resolved.startsWith(`${storageRoot}${path.sep}`)) {
-    throw createHttpError(400, "Invalid avatar storage path.", "INVALID_STORAGE_PATH");
-  }
-  return resolved;
-}
 
 function publicProfile(user, stats = undefined) {
   return {
@@ -126,9 +110,7 @@ async function profileStats(req) {
 
 async function removeStoredAvatar(storageKey) {
   if (!storageKey) return;
-  await unlink(storagePath(storageKey)).catch((error) => {
-    if (error.code !== "ENOENT") throw error;
-  });
+  await removeStorageFile(AVATAR_BUCKET, storageKey);
 }
 
 export async function getMyProfile(req, res) {
@@ -146,8 +128,7 @@ export async function updateMyProfile(req, res) {
   if (req.file) {
     const image = detectedImage(req.file.buffer);
     const storageKey = path.posix.join(req.auth.agencyId, "profiles", req.auth.userId, `${randomUUID()}${image.extension}`);
-    await mkdir(path.dirname(storagePath(storageKey)), { recursive: true });
-    await writeFile(storagePath(storageKey), req.file.buffer, { flag: "wx" });
+    await uploadStorageFile(AVATAR_BUCKET, storageKey, req.file.buffer, image.mimeType);
     nextAvatar = { storageKey, mimeType: image.mimeType };
   }
 
@@ -194,15 +175,11 @@ export async function getMyAvatar(req, res) {
     throw profileDeploymentError(error);
   }
   if (!user?.avatarStorageKey) throw createHttpError(404, "No profile image is available.", "NOT_FOUND");
-  const filename = storagePath(user.avatarStorageKey);
-  try {
-    await access(filename);
-  } catch {
-    throw createHttpError(404, "The profile image could not be found.", "NOT_FOUND");
-  }
+  const buffer = await downloadStorageFile(AVATAR_BUCKET, user.avatarStorageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The profile image could not be found.", "NOT_FOUND");
   res.set("Cache-Control", "private, max-age=300");
   res.type(user.avatarMimeType || "application/octet-stream");
-  res.sendFile(filename);
+  res.send(buffer);
 }
 
 export async function deleteMyAvatar(req, res) {

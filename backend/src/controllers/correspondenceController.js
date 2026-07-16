@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prisma from "../services/prisma/client.js";
+import { copyStorageFile, DOCUMENT_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
 import { ensureDefaultCorrespondenceTemplates, getCorrespondenceContext, renderCorrespondenceHtml, templateMatchesCase } from "../services/correspondenceTemplateService.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
@@ -12,11 +11,6 @@ const templateInclude = { createdBy: { select: { id: true, fullName: true } }, u
 const documentInclude = { correspondenceTemplate: { select: { id: true, title: true, kind: true, category: true, versionNumber: true } }, clientDocument: { select: { id: true, documentName: true, originalFilename: true, storageKey: true, updatedAt: true } }, issuedClientDocument: { select: { id: true, documentName: true, originalFilename: true, storageKey: true, updatedAt: true } }, updatedBy: { select: { id: true, fullName: true } }, issuedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true } } };
 const kinds = new Set(["Agreement", "Letter"]);
 const correspondenceStatuses = new Set(["Draft", "ReadyToIssue", "Issued", "Signed", "Finalized"]);
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(process.env.DOCUMENT_STORAGE_PATH || path.join(moduleDirectory, "../../storage/documents"));
-
-function storagePath(storageKey) { return path.join(storageRoot, ...String(storageKey).split("/").filter(Boolean)); }
-
 function clean(value, max, fallback = "") { return String(value ?? fallback).trim().slice(0, max); }
 function tags(value) { return [...new Set((Array.isArray(value) ? value : []).map((item) => clean(item, 80).toLowerCase()).filter(Boolean))]; }
 
@@ -123,17 +117,15 @@ export async function updateCorrespondenceStatus(req, res) {
     if (!existing.clientDocument?.storageKey) throw createHttpError(409, "The saved working file is unavailable");
     const extension = path.extname(existing.clientDocument.originalFilename || "").toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12) || ".docx";
     copiedStorageKey = path.posix.join(req.user.agencyId, existing.caseId, `${randomUUID()}${extension}`);
-    const destination = storagePath(copiedStorageKey);
-    await mkdir(path.dirname(destination), { recursive: true });
     try {
-      await copyFile(storagePath(existing.clientDocument.storageKey), destination);
+      await copyStorageFile(DOCUMENT_BUCKET, existing.clientDocument.storageKey, copiedStorageKey);
       let normalizedName = normalizeDocumentName(existing.title);
       const duplicate = await prisma.clientDocument.findFirst({ where: { caseId: existing.caseId, normalizedName } });
       if (duplicate) normalizedName = normalizeDocumentName(`${existing.title} issued ${Date.now()}`);
       const published = await prisma.clientDocument.create({ data: { agencyId: req.user.agencyId, clientId: existing.clientId, caseId: existing.caseId, documentName: existing.title, normalizedName, visibility: "Client", status: "Uploaded", notes: `Issued ${existing.correspondenceKind.toLowerCase()} from CaseDesk Writer`, storageKey: copiedStorageKey, originalFilename: existing.clientDocument.originalFilename, mimeType: existing.clientDocument.mimeType, fileSize: existing.clientDocument.fileSize, receivedAt: new Date(), uploadedById: req.user.id } });
       publishedDocumentId = published.id;
     } catch (error) {
-      if (copiedStorageKey) await unlink(storagePath(copiedStorageKey)).catch(() => {});
+      if (copiedStorageKey) await removeStorageFile(DOCUMENT_BUCKET, copiedStorageKey).catch(() => {});
       throw error;
     }
   }
@@ -170,7 +162,7 @@ export async function deleteCaseCorrespondence(req, res) {
     linkedDocuments
       .map((item) => item.storageKey)
       .filter(Boolean)
-      .map((key) => unlink(storagePath(key)).catch(() => {})),
+      .map((key) => removeStorageFile(DOCUMENT_BUCKET, key).catch(() => {})),
   );
   await recordActivity({
     agencyId: req.user.agencyId,

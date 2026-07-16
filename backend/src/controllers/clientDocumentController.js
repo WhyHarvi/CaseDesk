@@ -138,7 +138,7 @@ export async function uploadClientDocumentFile(req, res) {
   const destinationClientId = existing?.clientId || targetCase?.clientId;
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.user.agencyId, destinationCaseId || `client-${destinationClientId}`, `${randomUUID()}${extension}`);
-  await writeDocumentFile(storageKey, req.file.buffer);
+  await writeDocumentFile(storageKey, req.file.buffer, req.file.mimetype);
 
   let committed = false;
   try {
@@ -206,13 +206,13 @@ export async function serveClientDocumentFile(req, res) {
   });
 
   if (!data?.storageKey) throw createHttpError(404, "No uploaded file is available for this document");
-  const fullPath = await requireDocumentFile(data.storageKey);
+  const buffer = await requireDocumentFile(data.storageKey);
 
   const disposition = req.query.download === "1" ? "attachment" : "inline";
   const filename = encodeURIComponent(data.originalFilename || "document");
   res.setHeader("Content-Disposition", `${disposition}; filename*=UTF-8''${filename}`);
   res.type(data.mimeType || "application/octet-stream");
-  res.sendFile(fullPath);
+  res.send(buffer);
 }
 
 export async function finalizeClientDocument(req, res) {

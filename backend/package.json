@@ -11,6 +11,9 @@
     "prisma:validate": "prisma validate",
     "db:seed": "node prisma/seed.js",
     "db:seed:chk": "node prisma/seed-chk.js",
+    "storage:configure": "node scripts/configure-storage.js",
+    "storage:migrate-local": "node scripts/migrate-local-storage.js --apply",
+    "storage:migrate-local:dry-run": "node scripts/migrate-local-storage.js",
     "test": "node --test test/**/*.test.js",
     "load:test:intake": "node scripts/load-test-lead-intake.js"
   },

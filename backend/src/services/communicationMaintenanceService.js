@@ -1,7 +1,5 @@
-import { unlink } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prisma from "./prisma/client.js";
+import { DOCUMENT_BUCKET, removeStorageFile } from "./supabaseStorage.js";
 import { applyCommunicationAutomations } from "./communicationAutomationService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
 
@@ -9,21 +7,8 @@ const INTERVAL_MS = Math.max(
   Number(process.env.COMMUNICATION_MAINTENANCE_MS) || 60_000,
   15_000,
 );
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(
-  process.env.DOCUMENT_STORAGE_PATH ||
-    path.join(moduleDirectory, "../../storage/documents"),
-);
 let timer = null;
 let running = false;
-
-function filePath(storageKey) {
-  const resolved = path.resolve(
-    storageRoot,
-    ...String(storageKey).split("/").filter(Boolean),
-  );
-  return resolved.startsWith(`${storageRoot}${path.sep}`) ? resolved : null;
-}
 
 async function wakeSnoozedConversations(now) {
   const items = await prisma.communicationConversation.findMany({
@@ -158,10 +143,7 @@ async function purgeExpiredTrash(now) {
     await Promise.all(
       messages
         .flatMap((item) => item.attachmentRecords)
-        .map((attachment) => {
-          const target = filePath(attachment.storageKey);
-          return target ? unlink(target).catch(() => {}) : Promise.resolve();
-        }),
+        .map((attachment) => removeStorageFile(DOCUMENT_BUCKET, attachment.storageKey).catch(() => {})),
     );
     await prisma.communicationConversation.deleteMany({
       where: {

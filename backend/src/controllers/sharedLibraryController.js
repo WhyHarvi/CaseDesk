@@ -1,28 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { access, copyFile, mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prisma from "../services/prisma/client.js";
+import { copyStorageFile, DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
 
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(process.env.DOCUMENT_STORAGE_PATH || path.join(moduleDirectory, "../../storage/documents"));
 const include = { uploadedBy: { select: { id: true, fullName: true } }, _count: { select: { clientDocuments: true } } };
 
 function requireLibraryManager(req) {
   if (req.user.role !== "admin") throw createHttpError(403, "Only administrators can manage the shared library");
 }
 
-function storagePath(storageKey) {
-  const resolved = path.resolve(storageRoot, storageKey);
-  if (!resolved.startsWith(`${storageRoot}${path.sep}`)) throw createHttpError(400, "Invalid shared-library storage path");
-  return resolved;
-}
-
 async function removeFile(storageKey) {
-  try { await unlink(storagePath(storageKey)); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (storageKey) await removeStorageFile(DOCUMENT_BUCKET, storageKey);
 }
 
 export async function listSharedLibraryDocuments(req, res) {
@@ -35,9 +26,7 @@ export async function uploadSharedLibraryDocument(req, res) {
   if (!req.file) throw createHttpError(400, "A shared-library file is required");
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.user.agencyId, "shared-library", `${randomUUID()}${extension}`);
-  const fullPath = storagePath(storageKey);
-  await mkdir(path.dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, req.file.buffer, { flag: "wx" });
+  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
   try {
     const data = await prisma.sharedLibraryDocument.create({ data: { agencyId: req.user.agencyId, uploadedById: req.user.id, title: String(req.body.title || req.file.originalname).trim(), category: String(req.body.category || "General").trim(), description: String(req.body.description || "").trim() || null, storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size }, include });
     await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "shared_library_document.uploaded", details: `${data.title} added to the shared library` });
@@ -56,12 +45,12 @@ export async function updateSharedLibraryDocument(req, res) {
 export async function serveSharedLibraryDocument(req, res) {
   const data = await prisma.sharedLibraryDocument.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
   if (!data) throw createHttpError(404, "Shared-library document not found");
-  const fullPath = storagePath(data.storageKey);
-  try { await access(fullPath); } catch { throw createHttpError(404, "Stored shared-library file was not found"); }
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "Stored shared-library file was not found");
   const disposition = req.query.download === "1" ? "attachment" : "inline";
   res.setHeader("Content-Disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(data.originalFilename)}`);
   res.type(data.mimeType);
-  res.sendFile(fullPath);
+  res.send(buffer);
 }
 
 export async function deleteSharedLibraryDocument(req, res) {
@@ -106,9 +95,7 @@ export async function addSharedLibraryDocumentToCase(req, res) {
 
       const extension = path.extname(resource.originalFilename).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
       copiedStorageKey = path.posix.join(req.user.agencyId, caseItem.id, `${randomUUID()}${extension}`);
-      const destination = storagePath(copiedStorageKey);
-      await mkdir(path.dirname(destination), { recursive: true });
-      await copyFile(storagePath(resource.storageKey), destination);
+      await copyStorageFile(DOCUMENT_BUCKET, resource.storageKey, copiedStorageKey);
       return tx.clientDocument.create({
         data: {
           documentName: resource.title,

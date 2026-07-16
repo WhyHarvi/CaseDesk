@@ -5,25 +5,22 @@ import {
   startOomaCall,
 } from "./communicationProviderService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { DOCUMENT_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
 
 const POLL_INTERVAL_MS = Math.max(Number(process.env.COMMUNICATION_OUTBOX_POLL_MS) || 2500, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.COMMUNICATION_OUTBOX_BATCH_SIZE) || 10, 1), 50);
 let timer = null;
 let running = false;
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(process.env.DOCUMENT_STORAGE_PATH || path.join(moduleDirectory, "../../storage/documents"));
 
 const text = (value, max = 1000) => String(value || "").slice(0, max);
 
 async function deliver(job) {
   const payload = job.payload && typeof job.payload === "object" ? job.payload : {};
-  const attachments = job.message.attachmentRecords.map((item) => ({
+  const attachments = await Promise.all(job.message.attachmentRecords.map(async (item) => ({
     filename: item.originalFilename,
-    path: path.resolve(storageRoot, ...String(item.storageKey).split("/").filter(Boolean)),
+    content: await downloadStorageFile(DOCUMENT_BUCKET, item.storageKey),
     contentType: item.mimeType,
-  }));
+  })));
   if (job.message.channel === "Email") {
     return sendEmailMessage({
       agencyId: job.agencyId,

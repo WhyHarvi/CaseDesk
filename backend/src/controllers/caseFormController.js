@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prisma from "../services/prisma/client.js";
+import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { buildCaseFormCatalog, getOfficialForm } from "../services/formProgramCatalog.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
@@ -10,8 +9,6 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, formPermissionKeys, getFormPermissions, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
 
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(process.env.DOCUMENT_STORAGE_PATH || path.join(moduleDirectory, "../../storage/documents"));
 const maxFileSize = 25 * 1024 * 1024;
 const statuses = new Set(["Assigned", "InformationMissing", "ReadyToFill", "InProgress", "ReadyForReview", "ChangesRequested", "Approved", "SignatureRequired", "Signed", "Finalized", "NotRequired"]);
 const requirements = new Set(["Required", "Conditional", "Optional"]);
@@ -23,15 +20,9 @@ const include = { uploadedBy: { select: { id: true, fullName: true } }, lockedBy
 const versionInclude = { createdBy: { select: { id: true, fullName: true } } };
 const reviewCommentInclude = { createdBy: { select: { id: true, fullName: true } }, resolvedBy: { select: { id: true, fullName: true } } };
 
-function storagePath(storageKey) {
-  const resolved = path.resolve(storageRoot, storageKey);
-  if (!resolved.startsWith(`${storageRoot}${path.sep}`)) throw createHttpError(400, "Invalid form storage path");
-  return resolved;
-}
-
 async function removeStoredFile(storageKey) {
   if (!storageKey) return;
-  try { await unlink(storagePath(storageKey)); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  await removeStorageFile(DOCUMENT_BUCKET, storageKey);
 }
 
 function hashBuffer(buffer) {
@@ -103,8 +94,8 @@ async function downloadOfficialForm(entry) {
 
 async function existingSnapshot(existing) {
   if (!existing.storageKey) return null;
-  let buffer;
-  try { buffer = await readFile(storagePath(existing.storageKey)); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, existing.storageKey, { allowMissing: true });
+  if (!buffer) return null;
   return {
     source: existing.currentCopyType === "Original" && existing.sourceDownloadedAt ? "OfficialImport" : "CustomUpload",
     copyType: existing.currentCopyType || (existing.sourceDownloadedAt ? "Original" : "Working"),
@@ -209,8 +200,7 @@ export async function createCustomCaseForm(req, res) {
   if (req.file) {
     const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
     storageKey = path.posix.join(req.user.agencyId, caseItem.id, "forms", `${randomUUID()}${extension}`);
-    await mkdir(path.dirname(storagePath(storageKey)), { recursive: true });
-    await writeFile(storagePath(storageKey), req.file.buffer, { flag: "wx" });
+    await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
   }
   try {
     const data = await prisma.caseForm.create({ data: { agencyId: req.user.agencyId, clientId: caseItem.clientId, caseId: caseItem.id, title, formNumber: String(req.body.formNumber || "").trim() || null, normalizedName: normalizedFormName(req.body.formNumber, title), source: "Custom", requirement, selectionReason: String(req.body.selectionReason || "Added by consultant").trim(), status: req.file ? "InProgress" : "Assigned", language, sourceRevision, versionStatus: req.file ? "Current" : "Unverified", currentCopyType: "Original", ...(req.file ? { storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size, fileHash, uploadedById: req.user.id, versions: { create: { agencyId: req.user.agencyId, versionNumber: 1, source: "CustomUpload", copyType: "Original", language, sourceRevision, fileHash, storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size, createdById: req.user.id } } } : {}) }, include });
@@ -233,8 +223,7 @@ async function storeUploadedCaseFormCopy(req, res, { versionSource, allowedCopyT
   const copyType = allowedCopyTypes.has(req.body.copyType) ? req.body.copyType : defaultCopyType;
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.user.agencyId, existing.caseId, "forms", `${randomUUID()}${extension}`);
-  await mkdir(path.dirname(storagePath(storageKey)), { recursive: true });
-  await writeFile(storagePath(storageKey), req.file.buffer, { flag: "wx" });
+  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
   const fileHash = hashBuffer(req.file.buffer);
   try {
     const data = await prisma.$transaction(async (tx) => {
@@ -281,8 +270,7 @@ export async function importOfficialCaseForm(req, res) {
   }
   const extension = path.extname(file.filename).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12) || ".pdf";
   const storageKey = path.posix.join(req.user.agencyId, existing.caseId, "forms", `${randomUUID()}${extension}`);
-  await mkdir(path.dirname(storagePath(storageKey)), { recursive: true });
-  await writeFile(storagePath(storageKey), file.buffer, { flag: "wx" });
+  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, file.buffer, file.mimeType);
   try {
     const data = await prisma.$transaction(async (tx) => {
       await appendVersion(tx, { existing, createdById: req.user.id, snapshot: { source: "OfficialImport", copyType: "Original", language: entry.language, sourceRevision: file.revision, fileHash, officialUrl: file.resolvedUrl, mappingVersion, storageKey, originalFilename: file.filename, mimeType: file.mimeType, fileSize: file.buffer.length, sourceDownloadedAt: downloadedAt } });
@@ -369,10 +357,11 @@ export async function listCaseFormVersions(req, res) {
 export async function serveCaseFormVersionFile(req, res) {
   const version = await prisma.caseFormVersion.findFirst({ where: { id: req.params.versionId, caseFormId: req.params.id, agencyId: req.user.agencyId } });
   if (!version) throw createHttpError(404, "Form version not found");
-  try { await access(storagePath(version.storageKey)); } catch { throw createHttpError(404, "The stored version file was not found"); }
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, version.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The stored version file was not found");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(version.originalFilename)}`);
   res.type(version.mimeType);
-  res.sendFile(storagePath(version.storageKey));
+  res.send(buffer);
 }
 
 export async function restoreCaseFormVersion(req, res) {
@@ -384,7 +373,7 @@ export async function restoreCaseFormVersion(req, res) {
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   if (!version) throw createHttpError(404, "Form version not found");
-  try { await access(storagePath(version.storageKey)); } catch { throw createHttpError(409, "The selected version file is unavailable"); }
+  if (!(await downloadStorageFile(DOCUMENT_BUCKET, version.storageKey, { allowMissing: true }))) throw createHttpError(409, "The selected version file is unavailable");
   const restoredAt = new Date();
   const data = await prisma.$transaction(async (tx) => {
     await appendVersion(tx, { existing, createdById: req.user.id, snapshot: { source: "Restored", copyType: version.copyType, language: version.language, sourceRevision: version.sourceRevision, fileHash: version.fileHash, officialUrl: version.officialUrl, mappingVersion: version.mappingVersion, storageKey: version.storageKey, originalFilename: version.originalFilename, mimeType: version.mimeType, fileSize: version.fileSize, sourceDownloadedAt: version.sourceDownloadedAt } });
@@ -398,10 +387,11 @@ export async function restoreCaseFormVersion(req, res) {
 export async function serveCaseFormFile(req, res) {
   const data = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { storageKey: true, originalFilename: true, mimeType: true } });
   if (!data?.storageKey) throw createHttpError(404, "No stored file is available for this form");
-  try { await access(storagePath(data.storageKey)); } catch { throw createHttpError(404, "The stored form file was not found"); }
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The stored form file was not found");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");
-  res.sendFile(storagePath(data.storageKey));
+  res.send(buffer);
 }
 
 export async function updateCaseForm(req, res) {

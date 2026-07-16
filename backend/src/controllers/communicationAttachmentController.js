@@ -1,17 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import prisma from "../services/prisma/client.js";
+import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
 import { requireCommunicationPermission } from "../services/communicationPermissions.js";
 import { createHttpError } from "../utils/http.js";
 
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const storageRoot = path.resolve(
-  process.env.DOCUMENT_STORAGE_PATH ||
-    path.join(moduleDirectory, "../../storage/documents"),
-);
 const inboundAllowedMimeTypes = new Set([
   "application/pdf",
   "application/msword",
@@ -31,16 +25,6 @@ const inboundAllowedMimeTypes = new Set([
   "application/rtf",
   "text/csv",
 ]);
-
-function storagePath(storageKey) {
-  const resolved = path.resolve(
-    storageRoot,
-    ...String(storageKey).split("/").filter(Boolean),
-  );
-  if (!resolved.startsWith(`${storageRoot}${path.sep}`))
-    throw createHttpError(400, "Invalid communication attachment path");
-  return resolved;
-}
 
 function extensionOf(filename) {
   return path
@@ -151,9 +135,7 @@ export async function storeInboundCommunicationAttachments({
       "communication",
       `${randomUUID()}${extensionOf(originalFilename)}`,
     );
-    const destination = storagePath(storageKey);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, buffer, { flag: "wx" });
+    await uploadStorageFile(DOCUMENT_BUCKET, storageKey, buffer, mimeType);
     try {
       const scan = await scanFile({
         buffer,
@@ -185,7 +167,7 @@ export async function storeInboundCommunicationAttachments({
         metadata: { attachmentId: record.id, scanStatus: record.scanStatus },
       });
     } catch (error) {
-      await unlink(destination).catch(() => {});
+      await removeStorageFile(DOCUMENT_BUCKET, storageKey).catch(() => {});
       throw error;
     }
   }
@@ -217,9 +199,7 @@ export async function uploadCommunicationAttachment(req, res) {
     "communication",
     `${randomUUID()}${extensionOf(req.file.originalname)}`,
   );
-  const destination = storagePath(storageKey);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await writeFile(destination, req.file.buffer, { flag: "wx" });
+  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
   try {
     const scan = await scanFile(req.file);
     const data = await prisma.communicationAttachment.create({
@@ -247,7 +227,7 @@ export async function uploadCommunicationAttachment(req, res) {
     });
     res.status(201).json({ data });
   } catch (error) {
-    await unlink(destination).catch(() => {});
+    await removeStorageFile(DOCUMENT_BUCKET, storageKey).catch(() => {});
     throw error;
   }
 }
@@ -265,17 +245,14 @@ export async function serveCommunicationAttachment(req, res) {
       409,
       "This attachment was rejected by the security scanner",
     );
-  try {
-    await access(storagePath(data.storageKey));
-  } catch {
-    throw createHttpError(404, "Stored attachment file was not found");
-  }
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "Stored attachment file was not found");
   res.setHeader("content-type", data.mimeType || "application/octet-stream");
   res.setHeader(
     "content-disposition",
     `inline; filename*=UTF-8''${encodeURIComponent(data.originalFilename)}`,
   );
-  res.sendFile(storagePath(data.storageKey));
+  res.send(buffer);
 }
 
 export async function deleteCommunicationAttachment(req, res) {
@@ -298,7 +275,7 @@ export async function deleteCommunicationAttachment(req, res) {
       "Sent communication attachments cannot be removed",
     );
   await prisma.communicationAttachment.delete({ where: { id: data.id } });
-  await unlink(storagePath(data.storageKey)).catch(() => {});
+  await removeStorageFile(DOCUMENT_BUCKET, data.storageKey).catch(() => {});
   await recordCommunicationAudit({
     agencyId: req.user.agencyId,
     userId: req.user.id,

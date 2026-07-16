@@ -164,7 +164,7 @@ export async function uploadPortalDocument(req, res) {
 
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.auth.agencyId, existing.caseId || `client-${link.clientId}`, `${randomUUID()}${extension}`);
-  await writeDocumentFile(storageKey, req.file.buffer);
+  await writeDocumentFile(storageKey, req.file.buffer, req.file.mimetype);
   let committed = false;
   try {
     const updated = await prisma.clientDocument.updateMany({
@@ -203,11 +203,11 @@ export async function servePortalDocument(req, res) {
     select: { storageKey: true, originalFilename: true, mimeType: true },
   });
   if (!data?.storageKey) throw createHttpError(404, "No file is available for this document.", "NOT_FOUND");
-  const fullPath = await requireDocumentFile(data.storageKey);
+  const buffer = await requireDocumentFile(data.storageKey);
   const disposition = req.query.download === "1" ? "attachment" : "inline";
   res.setHeader("Content-Disposition", `${disposition}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "document")}`);
   res.type(data.mimeType || "application/octet-stream");
-  res.sendFile(fullPath);
+  res.send(buffer);
 }
 
 export async function portalAppointments(req, res) {
