@@ -8,7 +8,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
 
   return (
     <div className="h-screen overflow-hidden bg-transparent text-slate-900">
-      <div className="mx-auto flex h-screen max-w-[1680px]">
+      <div className="flex h-screen w-full">
         <Sidebar collapsed={sidebarCollapsed} />
         <Sidebar
           mobile
@@ -35,7 +35,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
             }`}
           >
             <div
-              className={`${flushContent ? "h-full max-w-none" : "w-full max-w-7xl"} min-w-0 ${
+              className={`${flushContent ? "h-full" : "w-full"} min-w-0 ${
                 lockContentScroll ? "flex h-full min-h-0 flex-col" : ""
               }`}
             >
