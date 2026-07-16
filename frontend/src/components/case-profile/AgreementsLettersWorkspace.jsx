@@ -31,6 +31,17 @@ const statusStyles = {
 const inputClass =
   "mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100/60";
 
+function correspondenceStatusOptions(item) {
+  if (item.correspondenceStatus === "Finalized") return [["Finalized", "Finalized"]];
+  if (item.correspondenceStatus === "Signed") return [["Signed", "Signed by client"], ["Finalized", "Finalize"]];
+  if (item.correspondenceStatus === "Issued") {
+    return item.correspondenceKind === "Agreement"
+      ? [["Issued", "Awaiting client signature"]]
+      : [["Issued", "Issued"], ["Finalized", "Finalize"]];
+  }
+  return [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"], ["Issued", item.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]];
+}
+
 function formatDate(value) {
   if (!value) return "Not issued";
   const date = new Date(value);
@@ -366,8 +377,8 @@ function TemplateEditorOverlay({ template, saving, error, onClose, onSave }) {
   );
 }
 
-function CustomDraftOverlay({ saving, error, onClose, onCreate }) {
-  const [values, setValues] = useState({ kind: "Letter", title: "" });
+function CustomDraftOverlay({ saving, error, onClose, onCreate, agreementOnly = false }) {
+  const [values, setValues] = useState({ kind: agreementOnly ? "Agreement" : "Letter", title: "" });
   return createPortal(
     <div className="fixed inset-0 z-[420] flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-md">
       <button
@@ -396,8 +407,11 @@ function CustomDraftOverlay({ saving, error, onClose, onCreate }) {
             Agency and client details will be placed into an editable letterhead
             or agreement shell.
           </p>
-          <div className="mt-5 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
-            {["Letter", "Agreement"].map((kind) => (
+          {agreementOnly ? (
+            <div className="mt-5 inline-flex rounded-full bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700">Agreement requiring client signature</div>
+          ) : (
+            <div className="mt-5 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
+              {["Letter", "Agreement"].map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -406,8 +420,9 @@ function CustomDraftOverlay({ saving, error, onClose, onCreate }) {
               >
                 {kind}
               </button>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
           <label className="mt-5 block text-sm font-semibold text-slate-700">
             Document title
             <input
@@ -547,6 +562,7 @@ function TemplateCatalogOverlay({
   onSelect,
   onCustom,
   onClose,
+  agreementOnly = false,
 }) {
   return createPortal(
     <div className="fixed inset-0 z-[390] flex items-center justify-center bg-slate-950/25 p-3 backdrop-blur-md">
@@ -617,15 +633,19 @@ function TemplateCatalogOverlay({
               className="h-9 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none focus:border-sky-300"
             />
           </label>
-          <select
-            value={kind}
-            onChange={(event) => onKindChange(event.target.value)}
-            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
-          >
-            <option>All</option>
-            <option>Agreement</option>
-            <option>Letter</option>
-          </select>
+          {agreementOnly ? (
+            <span className="inline-flex h-9 items-center rounded-full bg-indigo-50 px-4 text-xs font-semibold text-indigo-700">Agreements only</span>
+          ) : (
+            <select
+              value={kind}
+              onChange={(event) => onKindChange(event.target.value)}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
+            >
+              <option>All</option>
+              <option>Agreement</option>
+              <option>Letter</option>
+            </select>
+          )}
         </div>
         <main className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -748,7 +768,8 @@ function DeleteCorrespondenceOverlay({
   );
 }
 
-export default function AgreementsLettersWorkspace({ caseItem }) {
+export default function AgreementsLettersWorkspace({ caseItem, eSignMode = false }) {
+  const readOnly = Boolean(caseItem.archivedAt || caseItem.deletedAt);
   const [templates, setTemplates] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -757,7 +778,7 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
   const [view, setView] = useState("drafts");
   const [catalogView, setCatalogView] = useState("suggested");
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const [kind, setKind] = useState("All");
+  const [kind, setKind] = useState(eSignMode ? "Agreement" : "All");
   const [search, setSearch] = useState("");
   const [preview, setPreview] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -789,6 +810,9 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
   useEffect(() => {
     load();
   }, [caseItem.id]);
+  useEffect(() => {
+    if (eSignMode) setKind("Agreement");
+  }, [eSignMode]);
   useEffect(() => {
     let channel;
     const refresh = (event) => {
@@ -829,6 +853,15 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
     }),
     [documents],
   );
+  const eSignCounts = useMemo(() => {
+    const agreements = documents.filter((item) => item.correspondenceKind === "Agreement");
+    return {
+      drafts: agreements.filter((item) => ["Draft", "ReadyToIssue"].includes(item.correspondenceStatus)).length,
+      awaiting: agreements.filter((item) => item.correspondenceStatus === "Issued").length,
+      signed: agreements.filter((item) => item.correspondenceStatus === "Signed").length,
+      finalized: agreements.filter((item) => item.correspondenceStatus === "Finalized").length,
+    };
+  }, [documents]);
   const visibleTemplates = useMemo(
     () =>
       templates.filter(
@@ -1036,32 +1069,39 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
               Client correspondence
             </p>
             <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
-              Agreements & Letters
+              {eSignMode ? "E-Sign Centre" : "Agreements & Letters"}
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Choose a case-aware precedent, review autofilled agency and client
-              details, then make final corrections in CaseDesk Writer.
+              {eSignMode
+                ? "Create agreements, send them to the client portal, monitor signatures, and finalize completed records."
+                : "Choose a case-aware precedent, review autofilled agency and client details, then make final corrections in CaseDesk Writer."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              disabled={readOnly}
               onClick={() => {
                 setCatalogView("suggested");
-                setKind("All");
+                setKind(eSignMode ? "Agreement" : "All");
                 setSearch("");
                 setCatalogOpen(true);
               }}
-              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)]"
+              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Plus className="h-4 w-4" />
-              Add
+              {eSignMode ? "Create agreement" : "Add"}
             </button>
           </div>
         </div>
         {documents.length ? (
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
+            {(eSignMode ? [
+              ["Drafts", eSignCounts.drafts, FilePenLine, "text-slate-700"],
+              ["Awaiting", eSignCounts.awaiting, Send, "text-violet-600"],
+              ["Signed", eSignCounts.signed, FileSignature, "text-amber-700"],
+              ["Finalized", eSignCounts.finalized, FileSignature, "text-emerald-600"],
+            ] : [
               [
                 "Agreements",
                 counts.agreements,
@@ -1071,7 +1111,7 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
               ["Letters", counts.letters, Mail, "text-sky-600"],
               ["Drafts", counts.drafts, FilePenLine, "text-slate-700"],
               ["Issued", counts.issued, Send, "text-emerald-600"],
-            ].map(([label, value, Icon, color]) => (
+            ]).map(([label, value, Icon, color]) => (
               <div
                 key={label}
                 className="rounded-2xl border border-white bg-white px-3 py-2.5 shadow-sm"
@@ -1116,15 +1156,17 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
                   className="h-9 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none focus:border-sky-300"
                 />
               </label>
-              <select
-                value={kind}
-                onChange={(event) => setKind(event.target.value)}
-                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
-              >
-                <option>All</option>
-                <option>Agreement</option>
-                <option>Letter</option>
-              </select>
+              {!eSignMode ? (
+                <select
+                  value={kind}
+                  onChange={(event) => setKind(event.target.value)}
+                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
+                >
+                  <option>All</option>
+                  <option>Agreement</option>
+                  <option>Letter</option>
+                </select>
+              ) : null}
             </div>
           </div>
           {error &&
@@ -1189,24 +1231,20 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
                 <select
                   value={item.correspondenceStatus || "Draft"}
                   onChange={(event) => updateStatus(item, event.target.value)}
-                  disabled={saving}
+                  disabled={saving || readOnly}
                   className={`h-8 rounded-full border-0 px-3 text-[10px] font-semibold outline-none ${statusStyles[item.correspondenceStatus || "Draft"]}`}
                 >
-                  <option value="Draft">Draft</option>
-                  <option value="ReadyToIssue">Ready to Issue</option>
-                  <option value="Issued">Issued</option>
-                  <option value="Signed">Signed</option>
-                  <option value="Finalized">Finalized</option>
+                  {correspondenceStatusOptions(item).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
                 <button
                   type="button"
                   onClick={() => openWriter(item)}
                   className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
                 >
-                  Edit
+                  {["Issued", "Signed", "Finalized"].includes(item.correspondenceStatus) ? "View" : "Edit"}
                   <ChevronRight className="h-3.5 w-3.5" />
                 </button>
-                <button
+                {!readOnly && !["Issued", "Signed", "Finalized"].includes(item.correspondenceStatus) ? <button
                   type="button"
                   onClick={() => {
                     setError("");
@@ -1216,7 +1254,7 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
                   aria-label={`Delete ${item.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                </button> : null}
               </div>
             </article>
           ))}
@@ -1231,13 +1269,14 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
               </p>
               <button
                 type="button"
+                disabled={readOnly}
                 onClick={() => {
                   setCatalogView("suggested");
-                  setKind("All");
+                  setKind(eSignMode ? "Agreement" : "All");
                   setSearch("");
                   setCatalogOpen(true);
                 }}
-                className="mt-5 inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.2)]"
+                className="mt-5 inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white shadow-[0_12px_28px_rgba(15,23,42,0.2)] disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Add an agreement or letter"
               >
                 <Plus className="h-5 w-5" />
@@ -1268,6 +1307,7 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
               setCatalogOpen(false);
               setError("");
             }}
+            agreementOnly={eSignMode}
           />
         ) : null}
         {preview ? (
@@ -1309,6 +1349,7 @@ export default function AgreementsLettersWorkspace({ caseItem }) {
               setError("");
             }}
             onCreate={createCustom}
+            agreementOnly={eSignMode}
           />
         ) : null}
         {versionTarget ? (

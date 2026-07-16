@@ -38,6 +38,17 @@ import { useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
 import { createDocxFile } from "../utils/writtenDocumentExport";
 
+function writerStatusOptions(document) {
+  if (document?.correspondenceStatus === "Finalized") return [["Finalized", "Finalized"]];
+  if (document?.correspondenceStatus === "Signed") return [["Signed", "Signed by client"], ["Finalized", "Finalize"]];
+  if (document?.correspondenceStatus === "Issued") {
+    return document.correspondenceKind === "Agreement"
+      ? [["Issued", "Awaiting client signature"]]
+      : [["Issued", "Issued"], ["Finalized", "Finalize"]];
+  }
+  return [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"], ["Issued", document?.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]];
+}
+
 const toolButton =
   "flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 disabled:opacity-35";
 const templates = [
@@ -105,6 +116,7 @@ export default function DocumentComposer() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [signatureName, setSignatureName] = useState("");
+  const documentLocked = ["Issued", "Signed", "Finalized"].includes(writtenDocument?.correspondenceStatus);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const revisionRef = useRef(0);
@@ -193,6 +205,10 @@ export default function DocumentComposer() {
       active = false;
     };
   }, [editor, id, navigate, writtenDocumentId]);
+
+  useEffect(() => {
+    editor?.setEditable(!documentLocked);
+  }, [documentLocked, editor]);
 
   useEffect(() => {
     if (!writtenDocument?.id || !editor || !dirty || hydratingRef.current)
@@ -437,6 +453,7 @@ export default function DocumentComposer() {
               <div className="flex min-w-0 items-center gap-2">
                 <input
                   value={title}
+                  disabled={documentLocked}
                   onChange={(event) => {
                     setTitle(event.target.value);
                     markChanged();
@@ -468,14 +485,10 @@ export default function DocumentComposer() {
                 onChange={(event) =>
                   updateCorrespondenceStatus(event.target.value)
                 }
-                disabled={saving}
+                disabled={saving || writtenDocument.correspondenceStatus === "Finalized"}
                 className="hidden h-9 rounded-xl border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 outline-none md:block"
               >
-                <option value="Draft">Draft</option>
-                <option value="ReadyToIssue">Ready to Issue</option>
-                <option value="Issued">Issued</option>
-                <option value="Signed">Signed</option>
-                <option value="Finalized">Finalized</option>
+                {writerStatusOptions(writtenDocument).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             ) : null}
             <span
@@ -509,7 +522,7 @@ export default function DocumentComposer() {
                   : (setSaveAsName(title === "Untitled Document" ? "" : title),
                     setSaveDialog("save"))
               }
-              disabled={saving}
+              disabled={saving || documentLocked}
               className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
             >
               <Save className="h-4 w-4" />
@@ -518,6 +531,11 @@ export default function DocumentComposer() {
           </div>
         </div>
       </header>
+      {documentLocked ? (
+        <div className="writer-chrome border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs font-semibold text-amber-800">
+          This issued record is locked. Use Save As to create a new editable draft.
+        </div>
+      ) : null}
       <div className="writer-chrome border-b border-slate-200 bg-white/80 px-4 py-2">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-1">
           <button

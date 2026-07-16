@@ -157,8 +157,9 @@ function clientAgreementsWhere(req, clientId) {
   return {
     agencyId: req.auth.agencyId,
     clientId,
-    correspondenceKind: { not: null },
+    correspondenceKind: "Agreement",
     correspondenceStatus: { in: ["Issued", "Signed", "Finalized"] },
+    case: { deletedAt: null, archivedAt: null },
   };
 }
 
@@ -587,7 +588,13 @@ export async function signPortalAgreement(req, res) {
   if (req.body?.consent !== true) throw createHttpError(400, "You must agree to sign electronically.", "CONSENT_REQUIRED");
 
   const agreement = await prisma.writtenDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, clientId: link.clientId, correspondenceKind: { not: null } },
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      clientId: link.clientId,
+      correspondenceKind: "Agreement",
+      case: { deletedAt: null, archivedAt: null },
+    },
     select: { id: true, title: true, correspondenceStatus: true, caseId: true, contentHtml: true, headerText: true, footerText: true, issuedClientDocumentId: true },
   });
   if (!agreement) throw createHttpError(404, "Agreement not found.", "NOT_FOUND");
@@ -614,7 +621,14 @@ export async function signPortalAgreement(req, res) {
   try {
     await prisma.$transaction(async (tx) => {
       const updated = await tx.writtenDocument.updateMany({
-        where: { id: agreement.id, agencyId: req.auth.agencyId, clientId: link.clientId, correspondenceStatus: "Issued" },
+        where: {
+          id: agreement.id,
+          agencyId: req.auth.agencyId,
+          clientId: link.clientId,
+          correspondenceKind: "Agreement",
+          correspondenceStatus: "Issued",
+          case: { deletedAt: null, archivedAt: null },
+        },
         data: { correspondenceStatus: "Signed", contentHtml: signedContentHtml },
       });
       if (updated.count !== 1) throw createHttpError(409, "This document changed while signing. Refresh and try again.", "AGREEMENT_CHANGED");

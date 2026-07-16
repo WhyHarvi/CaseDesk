@@ -83,3 +83,26 @@ test("mobile portal chat controls use an input-safe font size", async () => {
   assert.match(legacyComposer, /text-base/);
   assert.doesNotMatch(`${composer}${caseSelector}${legacyComposer}`, /text-xs|text-sm|text-\[(?:1[0-5])px\]/);
 });
+
+test("case E-Sign centre reuses the portal agreement lifecycle without manual signing bypasses", async () => {
+  const [portalController, correspondenceController, writtenController, toolbar, profile, overlay, workspace] = await Promise.all([
+    source("../src/controllers/clientPortalController.js"),
+    source("../src/controllers/correspondenceController.js"),
+    source("../src/controllers/writtenDocumentController.js"),
+    source("../../frontend/src/components/case-profile/CaseProfileSummary.jsx"),
+    source("../../frontend/src/pages/CaseProfile.jsx"),
+    source("../../frontend/src/components/case-profile/ESignCenterOverlay.jsx"),
+    source("../../frontend/src/components/case-profile/AgreementsLettersWorkspace.jsx"),
+  ]);
+
+  assert.match(portalController, /correspondenceKind: "Agreement"/);
+  assert.match(portalController, /case: \{ deletedAt: null, archivedAt: null \}/);
+  assert.match(correspondenceController, /Signed status is created only when the client completes the e-signature/);
+  assert.match(correspondenceController, /Invite this client to the portal before sending an agreement for signature/);
+  assert.match(writtenController, /Issued and signed documents are locked/);
+  assert.match(toolbar, /item === "E-Sign"/);
+  assert.match(profile, /ESignCenterOverlay/);
+  assert.match(overlay, /AgreementsLettersWorkspace caseItem=\{caseItem\} eSignMode/);
+  assert.match(workspace, /Awaiting client signature/);
+  assert.doesNotMatch(workspace, /<option value="Signed">Signed<\/option>/);
+});

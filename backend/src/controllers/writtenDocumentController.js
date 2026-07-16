@@ -40,6 +40,12 @@ async function findWrittenDocument(req) {
   return data;
 }
 
+function requireEditableDocument(document) {
+  if (["Issued", "Signed", "Finalized"].includes(document.correspondenceStatus)) {
+    throw createHttpError(409, "Issued and signed documents are locked. Create a new draft to make changes");
+  }
+}
+
 export async function createWrittenDocument(req, res) {
   const caseItem = await prisma.case.findFirst({
     where: { id: req.body.caseId, agencyId: req.user.agencyId },
@@ -86,6 +92,7 @@ export async function getWrittenDocument(req, res) {
 
 export async function updateWrittenDocumentDraft(req, res) {
   const existing = await findWrittenDocument(req);
+  requireEditableDocument(existing);
   const data = await prisma.writtenDocument.update({
     where: { id: existing.id },
     data: { ...contentPayload(req.body), status: "Draft", updatedBy: { connect: { id: req.user.id } } },
@@ -96,6 +103,7 @@ export async function updateWrittenDocumentDraft(req, res) {
 
 export async function saveWrittenDocumentVersion(req, res) {
   const existing = await findWrittenDocument(req);
+  requireEditableDocument(existing);
   const clientDocument = await prisma.clientDocument.findFirst({
     where: { id: req.body.clientDocumentId, agencyId: req.user.agencyId, caseId: existing.caseId, visibility: "Internal", storageKey: { not: null } },
   });
@@ -128,6 +136,7 @@ export async function saveWrittenDocumentVersion(req, res) {
 
 export async function restoreWrittenDocumentVersion(req, res) {
   const existing = await findWrittenDocument(req);
+  requireEditableDocument(existing);
   const version = await prisma.writtenDocumentVersion.findFirst({
     where: { id: req.params.versionId, writtenDocumentId: existing.id, agencyId: req.user.agencyId },
   });

@@ -19,6 +19,7 @@ import ActivitiesOverlay from "../components/case-profile/activities/ActivitiesO
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import CommunicationSetupOverlay from "../components/case-profile/communication/CommunicationSetupOverlay";
 import CaseActionDialog from "../components/case-profile/CaseActionDialog";
+import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
@@ -74,6 +75,7 @@ export default function CaseProfile() {
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
   const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
+  const [eSignCenterOpen, setESignCenterOpen] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
   const [restoreError, setRestoreError] = useState("");
@@ -1570,6 +1572,10 @@ export default function CaseProfile() {
         />
       ) : null}
 
+      {eSignCenterOpen ? (
+        <ESignCenterOverlay caseItem={caseItem} onClose={() => setESignCenterOpen(false)} />
+      ) : null}
+
       <section className="space-y-8">
         {caseItem?.deletedAt ? (
           <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-rose-200/80 bg-rose-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(190,18,60,0.08)]">
@@ -1672,6 +1678,10 @@ export default function CaseProfile() {
           onOpenStatement={() => {
             setActiveToolbarTray("");
             setStatementOverlayOpen(true);
+          }}
+          onOpenESign={() => {
+            setActiveToolbarTray("");
+            setESignCenterOpen(true);
           }}
           onArchiveCase={() => {
             setActiveToolbarTray("");

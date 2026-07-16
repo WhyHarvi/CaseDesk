@@ -14,9 +14,10 @@ const correspondenceStatuses = new Set(["Draft", "ReadyToIssue", "Issued", "Sign
 function clean(value, max, fallback = "") { return String(value ?? fallback).trim().slice(0, max); }
 function tags(value) { return [...new Set((Array.isArray(value) ? value : []).map((item) => clean(item, 80).toLowerCase()).filter(Boolean))]; }
 
-async function scopedCase(req, caseId) {
+async function scopedCase(req, caseId, { writable = false } = {}) {
   const data = await prisma.case.findFirst({ where: { id: caseId, agencyId: req.user.agencyId }, include: { client: true, assignedUser: true } });
   if (!data) throw createHttpError(404, "Case not found");
+  if (writable && (data.archivedAt || data.deletedAt)) throw createHttpError(409, "Restore this case before creating correspondence");
   return data;
 }
 
@@ -74,7 +75,7 @@ export async function restoreCorrespondenceTemplateVersion(req, res) {
 }
 
 export async function createCorrespondenceDraft(req, res) {
-  const [template, caseItem] = await Promise.all([prisma.correspondenceTemplate.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId, isActive: true } }), scopedCase(req, String(req.body.caseId || ""))]);
+  const [template, caseItem] = await Promise.all([prisma.correspondenceTemplate.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId, isActive: true } }), scopedCase(req, String(req.body.caseId || ""), { writable: true })]);
   if (!template) throw createHttpError(404, "Correspondence template not found");
   const context = await getCorrespondenceContext(req.user.agencyId, caseItem.id, req.user.id);
   const rendered = renderCorrespondenceHtml(template.contentHtml, context);
@@ -86,7 +87,7 @@ export async function createCorrespondenceDraft(req, res) {
 }
 
 export async function createCustomCorrespondenceDraft(req, res) {
-  const caseItem = await scopedCase(req, String(req.body.caseId || ""));
+  const caseItem = await scopedCase(req, String(req.body.caseId || ""), { writable: true });
   const kind = kinds.has(req.body.kind) ? req.body.kind : "Letter";
   const context = await getCorrespondenceContext(req.user.agencyId, caseItem.id, req.user.id);
   const title = clean(req.body.title, 200, `Custom ${kind}`) || `Custom ${kind}`;
@@ -106,9 +107,25 @@ export async function listCaseCorrespondence(req, res) {
 export async function updateCorrespondenceStatus(req, res) {
   const status = clean(req.body.status, 40);
   if (!correspondenceStatuses.has(status)) throw createHttpError(400, "Invalid correspondence status");
-  const existing = await prisma.writtenDocument.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId, correspondenceKind: { not: null } }, include: { clientDocument: true } });
+  const existing = await prisma.writtenDocument.findFirst({
+    where: { id: req.params.id, agencyId: req.user.agencyId, correspondenceKind: { not: null } },
+    include: { clientDocument: true, case: { select: { archivedAt: true, deletedAt: true } } },
+  });
   if (!existing) throw createHttpError(404, "Agreement or letter not found");
-  if (["Issued", "Signed", "Finalized"].includes(status) && !existing.clientDocumentId) throw createHttpError(409, "Save the document to CaseDesk before marking it issued or signed");
+  if (existing.case?.archivedAt || existing.case?.deletedAt) throw createHttpError(409, "Restore this case before changing its correspondence workflow");
+  if (status === "Signed") throw createHttpError(409, "Signed status is created only when the client completes the e-signature");
+  if (existing.correspondenceKind === "Agreement" && existing.correspondenceStatus === "Issued" && status !== "Issued") throw createHttpError(409, "This agreement is awaiting the client signature and cannot be moved backward");
+  if (existing.correspondenceStatus === "Signed" && !["Signed", "Finalized"].includes(status)) throw createHttpError(409, "A signed agreement can only be finalized");
+  if (existing.correspondenceStatus === "Finalized" && status !== "Finalized") throw createHttpError(409, "A finalized document cannot be moved backward");
+  if (existing.correspondenceKind === "Agreement" && status === "Finalized" && existing.correspondenceStatus !== "Signed") throw createHttpError(409, "The client must sign this agreement before it can be finalized");
+  if (["Issued", "Finalized"].includes(status) && !existing.clientDocumentId) throw createHttpError(409, "Save the document to CaseDesk before issuing it");
+  if (existing.correspondenceKind === "Agreement" && status === "Issued") {
+    const portalLink = await prisma.clientUser.findFirst({
+      where: { agencyId: req.user.agencyId, clientId: existing.clientId },
+      select: { id: true },
+    });
+    if (!portalLink) throw createHttpError(409, "Invite this client to the portal before sending an agreement for signature");
+  }
   const issued = ["Issued", "Signed", "Finalized"].includes(status);
   let publishedDocumentId = existing.issuedClientDocumentId;
   let copiedStorageKey = null;
@@ -142,9 +159,11 @@ export async function deleteCaseCorrespondence(req, res) {
       agencyId: req.user.agencyId,
       correspondenceKind: { not: null },
     },
-    include: { clientDocument: true, issuedClientDocument: true },
+    include: { clientDocument: true, issuedClientDocument: true, case: { select: { archivedAt: true, deletedAt: true } } },
   });
   if (!existing) throw createHttpError(404, "Agreement or letter not found");
+  if (existing.case?.archivedAt || existing.case?.deletedAt) throw createHttpError(409, "Restore this case before removing correspondence");
+  if (["Issued", "Signed", "Finalized"].includes(existing.correspondenceStatus)) throw createHttpError(409, "Issued and signed records cannot be deleted");
 
   const linkedDocuments = [existing.clientDocument, existing.issuedClientDocument].filter(Boolean);
   await prisma.$transaction(async (tx) => {
