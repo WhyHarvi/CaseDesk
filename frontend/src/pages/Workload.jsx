@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarDays, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import PageContainer from "../components/layout/PageContainer";
@@ -35,9 +35,10 @@ function WorkSection({ icon: Icon, title, count, empty, children, tone = "sky" }
 }
 
 function TaskRow({ item, overdue = false }) {
+  const inherited = ["case_owner", "case_assignment"].includes(item.assignmentSource);
   return (
     <Link to={`/app/cases/${item.case.id}`} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-sky-200 hover:bg-sky-50/30">
-      <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.title}</p><p className="mt-0.5 truncate text-xs text-slate-500">{item.case.client.fullName} · {item.case.caseType}</p></div>
+      <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.title}</p><p className="mt-0.5 truncate text-xs text-slate-500">{item.case.client.fullName} · {item.case.caseType}</p>{inherited ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-sky-600">Inherited from case owner</p> : null}</div>
       <div className="shrink-0 text-right"><p className={overdue ? "text-xs font-semibold text-rose-700" : "text-xs font-medium text-slate-600"}>{formatDate(item.dueAt)}</p><p className="mt-0.5 text-[11px] text-slate-400">{item.priority}</p></div>
     </Link>
   );
@@ -52,6 +53,15 @@ function DocumentRow({ item }) {
   return <Link to={target} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-amber-200 hover:bg-amber-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.documentName}</p><p className="truncate text-xs text-slate-500">{item.client.fullName}{item.case ? ` · ${item.case.caseType}` : ""}</p></div><ArrowRight className="h-4 w-4 shrink-0 text-slate-400" /></Link>;
 }
 
+function FollowUpRow({ item }) {
+  const target = item.case ? `/app/cases/${item.case.id}` : "/app/follow-ups";
+  return <Link to={target} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-violet-200 hover:bg-violet-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.title}</p><p className="truncate text-xs text-slate-500">{item.client?.fullName || item.case?.client?.fullName || "General follow-up"}</p></div><p className="shrink-0 text-xs font-medium text-slate-600">{formatDate(item.dueDate)}</p></Link>;
+}
+
+function AppointmentRow({ item }) {
+  return <Link to={`/app/cases/${item.case.id}`} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-emerald-200 hover:bg-emerald-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.subject}</p><p className="truncate text-xs text-slate-500">{item.client.fullName} · {item.case.caseType}</p></div><p className="shrink-0 text-xs font-medium text-slate-600">{formatDate(item.startsAt)}</p></Link>;
+}
+
 function WorkDetails({ workload }) {
   return (
     <div className="grid gap-4 xl:grid-cols-2">
@@ -61,11 +71,17 @@ function WorkDetails({ workload }) {
       <WorkSection icon={ListChecks} title="Pending Tasks" count={workload.pendingTasks - workload.overdueTasks} empty="No upcoming tasks.">
         {workload.pendingTaskItems.map((item) => <TaskRow key={item.id} item={item} />)}
       </WorkSection>
-      <WorkSection icon={FileClock} title="Documents Waiting for Review" count={workload.documentsWaitingReview} empty="No documents are waiting for review." tone="amber">
+      <WorkSection icon={FileClock} title="Documents Needing Action" count={workload.documentsWaitingReview} empty="No documents need attention." tone="amber">
         {workload.documentReviewItems.map((item) => <DocumentRow key={item.id} item={item} />)}
       </WorkSection>
       <WorkSection icon={BriefcaseBusiness} title="Active Cases" count={workload.activeCases} empty="No active cases.">
         {workload.activeCaseItems.map((item) => <CaseRow key={item.id} item={item} />)}
+      </WorkSection>
+      <WorkSection icon={CalendarClock} title="Open Follow-ups" count={workload.pendingFollowUps} empty="No open follow-ups.">
+        {workload.followUpItems.map((item) => <FollowUpRow key={item.id} item={item} />)}
+      </WorkSection>
+      <WorkSection icon={CalendarDays} title="Upcoming Appointments" count={workload.upcomingAppointments} empty="No upcoming appointments." tone="amber">
+        {workload.appointmentItems.map((item) => <AppointmentRow key={item.id} item={item} />)}
       </WorkSection>
     </div>
   );
@@ -83,7 +99,7 @@ function ConsultantWorkloadCard({ workload, open, onToggle }) {
         <div><p className="text-xs text-slate-400">Capacity</p><p className="mt-1 text-sm font-semibold text-slate-800">{workload.activeCases} / {workload.capacity}</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={workload.workloadPercentage >= 100 ? "h-full rounded-full bg-rose-500" : workload.workloadPercentage >= 75 ? "h-full rounded-full bg-amber-400" : "h-full rounded-full bg-emerald-500"} style={{ width: `${Math.min(workload.workloadPercentage, 100)}%` }} /></div></div>
         <div><p className="text-xs text-slate-400">Pending tasks</p><p className="mt-1 text-xl font-semibold text-slate-900">{workload.pendingTasks}</p></div>
         <div><p className="text-xs text-slate-400">Overdue</p><p className="mt-1 text-xl font-semibold text-rose-700">{workload.overdueTasks}</p></div>
-        <div><p className="text-xs text-slate-400">Reviews</p><p className="mt-1 text-xl font-semibold text-amber-700">{workload.documentsWaitingReview}</p></div>
+        <div><p className="text-xs text-slate-400">Documents</p><p className="mt-1 text-xl font-semibold text-amber-700">{workload.documentsWaitingReview}</p></div>
         <div className={["flex h-10 w-10 items-center justify-center rounded-full", riskTone].join(" ")}><ChevronDown className={["h-5 w-5 transition", open ? "rotate-180" : ""].join(" ")} /></div>
       </button>
       {open ? <div className="border-t border-slate-100 bg-slate-50/45 p-5"><WorkDetails workload={workload} /></div> : null}
@@ -94,7 +110,9 @@ function ConsultantWorkloadCard({ workload, open, onToggle }) {
 function TeamWorkload({ data }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(() => new Set());
-  const unassignedCount = data.unassigned.activeCases + data.unassigned.pendingTasks + data.unassigned.documentsWaitingReview;
+  const totalWork = (bucket) => bucket.activeCases + bucket.pendingTasks + bucket.documentsWaitingReview + bucket.pendingFollowUps + bucket.upcomingAppointments;
+  const unassignedCount = totalWork(data.unassigned);
+  const outsideTeamCount = totalWork(data.outsideTeam);
   const visibleConsultants = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return [...data.consultants]
@@ -109,19 +127,28 @@ function TeamWorkload({ data }) {
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <Metric label="Active consultants" value={data.summary.activeConsultants} tone="sky" />
         <Metric label="Case assignments" value={data.summary.activeCases} />
         <Metric label="Pending tasks" value={data.summary.pendingTasks} />
         <Metric label="Overdue tasks" value={data.summary.overdueTasks} tone={data.summary.overdueTasks ? "rose" : "slate"} />
-        <Metric label="Awaiting review" value={data.summary.documentsWaitingReview} tone={data.summary.documentsWaitingReview ? "amber" : "slate"} />
+        <Metric label="Documents needing action" value={data.summary.documentsWaitingReview} tone={data.summary.documentsWaitingReview ? "amber" : "slate"} />
+        <Metric label="Open follow-ups" value={data.summary.pendingFollowUps} />
+        <Metric label="Appointments" value={data.summary.upcomingAppointments} />
         <Metric label="Unassigned work" value={unassignedCount} tone={unassignedCount ? "rose" : "emerald"} />
       </div>
 
       {unassignedCount ? (
         <section className="rounded-3xl border border-rose-200 bg-rose-50/70 p-5">
-          <div className="mb-4 flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-700"><AlertTriangle className="h-5 w-5" /></div><div><h2 className="font-semibold text-rose-950">Unassigned work needs an owner</h2><p className="mt-1 text-sm text-rose-700">These cases or tasks are not assigned to an active consultant.</p></div></div>
+          <div className="mb-4 flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-700"><AlertTriangle className="h-5 w-5" /></div><div><h2 className="font-semibold text-rose-950">Unassigned work needs an owner</h2><p className="mt-1 text-sm text-rose-700">These items have neither an active direct assignee nor an active inherited case or client owner.</p></div></div>
           <WorkDetails workload={data.unassigned} />
+        </section>
+      ) : null}
+
+      {outsideTeamCount ? (
+        <section className="rounded-3xl border border-violet-200 bg-violet-50/70 p-5">
+          <div className="mb-4"><h2 className="font-semibold text-violet-950">Work owned outside the consultant roster</h2><p className="mt-1 text-sm text-violet-700">These items belong to active internal staff who are not part of this consultant capacity view, so they are not unassigned.</p></div>
+          <WorkDetails workload={data.outsideTeam} />
         </section>
       ) : null}
 
@@ -144,7 +171,7 @@ function PersonalWorkload({ data }) {
         <Metric label="Active cases" value={data.activeCases} tone="sky" />
         <Metric label="Pending tasks" value={data.pendingTasks} />
         <Metric label="Overdue tasks" value={data.overdueTasks} tone={data.overdueTasks ? "rose" : "slate"} />
-        <Metric label="Documents waiting" value={data.documentsWaitingReview} tone={data.documentsWaitingReview ? "amber" : "slate"} />
+        <Metric label="Documents needing action" value={data.documentsWaitingReview} tone={data.documentsWaitingReview ? "amber" : "slate"} />
         <Metric label="Case capacity" value={data.capacity} />
         <Metric label="Capacity used" value={`${data.workloadPercentage}%`} tone={data.workloadPercentage >= 90 ? "rose" : data.workloadPercentage >= 70 ? "amber" : "emerald"} />
       </div>

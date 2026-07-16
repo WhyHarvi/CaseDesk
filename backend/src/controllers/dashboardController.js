@@ -15,6 +15,7 @@ const caseSummarySelect = {
   updatedAt: true,
   client: { select: { id: true, fullName: true } },
 };
+const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
 
 function consultantTaskAccess(req) {
   if (req.auth.role === "admin") return {};
@@ -28,28 +29,29 @@ function consultantTaskAccess(req) {
 
 export function dashboardScopes(req) {
   const agencyWhere = { agencyId: req.auth.agencyId };
-  const caseWhere = { ...agencyWhere, ...caseAccessWhere(req) };
+  const activeCaseAccess = { deletedAt: null, status: { in: OPEN_CASE_STATUSES }, ...caseAccessWhere(req) };
+  const caseWhere = { ...agencyWhere, ...activeCaseAccess };
 
   return {
     agencyWhere,
     clientWhere: { ...agencyWhere, ...clientAccessWhere(req) },
     caseWhere,
-    taskWhere: { ...agencyWhere, ...consultantTaskAccess(req) },
-    appointmentWhere: req.auth.role === "admin"
-      ? agencyWhere
-      : { ...agencyWhere, case: caseAccessWhere(req) },
-    documentWhere: req.auth.role === "admin"
-      ? agencyWhere
-      : { ...agencyWhere, case: caseAccessWhere(req) },
-    followUpWhere: req.auth.role === "admin"
-      ? agencyWhere
-      : {
-          ...agencyWhere,
-          OR: [
-            { assignedUserId: req.auth.userId },
-            { case: caseAccessWhere(req) },
-          ],
-        },
+    taskWhere: { ...agencyWhere, ...consultantTaskAccess(req), case: activeCaseAccess },
+    appointmentWhere: { ...agencyWhere, case: activeCaseAccess },
+    documentWhere: {
+      ...agencyWhere,
+      OR: [
+        { case: activeCaseAccess },
+        { caseId: null, ...(req.auth.role === "admin" ? {} : { client: clientAccessWhere(req) }) },
+      ],
+    },
+    followUpWhere: {
+      ...agencyWhere,
+      AND: [
+        { OR: [{ caseId: null }, { case: activeCaseAccess }] },
+        ...(req.auth.role === "admin" ? [] : [{ OR: [{ assignedUserId: req.auth.userId }, { case: activeCaseAccess }] }]),
+      ],
+    },
     activityWhere: {
       ...agencyWhere,
       ...relatedRecordAccessWhere(req),
@@ -82,7 +84,8 @@ export async function getDashboardSummary(req, res) {
   const openFollowUpWhere = { ...followUpWhere, status: { not: "Completed" } };
   const waitingCaseWhere = {
     agencyId: req.auth.agencyId,
-    status: { not: "Closed" },
+    deletedAt: null,
+    status: { in: OPEN_CASE_STATUSES },
     AND: [
       caseAccessWhere(req),
       {
@@ -119,7 +122,7 @@ export async function getDashboardSummary(req, res) {
   ] = await Promise.all([
     prisma.client.count({ where: clientWhere }),
     prisma.client.count({ where: { ...clientWhere, status: "Active" } }),
-    prisma.case.count({ where: { ...caseWhere, status: { not: "Closed" } } }),
+    prisma.case.count({ where: caseWhere }),
     prisma.caseWorkflowStep.count({
       where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
     }),
@@ -154,7 +157,7 @@ export async function getDashboardSummary(req, res) {
     }),
     prisma.case.groupBy({
       by: ["stage"],
-      where: { ...caseWhere, status: { not: "Closed" } },
+      where: caseWhere,
       _count: { stage: true },
       orderBy: { stage: "asc" },
     }),

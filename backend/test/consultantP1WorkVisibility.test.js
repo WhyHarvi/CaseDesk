@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { resolveWorkOwner } from "../src/controllers/adminConsultantController.js";
 import { dashboardScopes } from "../src/controllers/dashboardController.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -58,29 +59,62 @@ test("my workload exposes actionable records and recovers from API errors", asyn
   assert.match(controller, /pendingTaskItems/);
   assert.match(controller, /overdueTaskItems/);
   assert.match(controller, /documentReviewItems/);
-  assert.match(controller, /consultantUserId: userId, status: "active"/);
+  assert.match(controller, /source: "case_owner"/);
+  assert.match(controller, /source: "case_assignment"/);
+  assert.match(controller, /assignmentSource: owner\.source/);
   assert.match(page, /Unable to load your workload/);
   assert.match(page, /Try again/);
   assert.match(page, /to=\{`\/app\/cases\/\$\{item\.case\.id\}`\}/);
 });
 
 test("admin workload shows agency consultants, assignments, and unassigned work", async () => {
-  const [controller, routes, page, dashboard, sidebar] = await Promise.all([
+  const [controller, routes, page, dashboard, sidebar, tasksWorkspace] = await Promise.all([
     source("../src/controllers/adminConsultantController.js"),
     source("../src/routes/adminRoutes.js"),
     source("../../frontend/src/pages/Workload.jsx"),
     source("../../frontend/src/components/dashboard/DashboardWorkRow.jsx"),
     source("../../frontend/src/components/layout/Sidebar.jsx"),
+    source("../../frontend/src/components/case-profile/TasksWorkspace.jsx"),
   ]);
 
   assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
-  assert.match(controller, /data: \{ summary, consultants, unassigned \}/);
-  assert.match(controller, /assignments: \{ none: \{ status: "active", consultantUserId: \{ in: activeConsultantIds \} \} \}/);
-  assert.match(controller, /case: \{ deletedAt: null, status: \{ not: "Closed" \} \}/);
+  assert.match(controller, /return \{ summary, consultants, unassigned: finalizeBucket\(unassignedBucket\), outsideTeam: finalizeBucket\(outsideTeamBucket\) \}/);
+  assert.match(controller, /memberships: \{ some: \{ agencyId, role: "consultant", isActive: true \} \}/);
+  assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
+  assert.match(controller, /pendingFollowUps: followUps\.length/);
+  assert.match(controller, /upcomingAppointments: appointments\.length/);
+  assert.match(controller, /activeCases: cases\.length/);
   assert.match(page, /isAdmin \? "\/admin\/consultants\/workload" : "\/consultants\/me\/workload"/);
   assert.match(page, /title=\{isAdmin \? "Team Workload" : "My Workload"\}/);
   assert.match(page, /Unassigned work needs an owner/);
   assert.match(page, /Consultant workload/);
   assert.match(dashboard, /isAdmin \? "View team workload" : "View all my work"/);
   assert.match(sidebar, /label: "Team Workload"/);
+  assert.match(tasksWorkspace, /\$\{caseItem\.assignedUser\.fullName\} \(case owner\)/);
+});
+
+test("work ownership inherits from the active case consultant before becoming unassigned", () => {
+  const agencyId = "agency-1";
+  const membership = (role = "consultant", isActive = true) => [{ agencyId, role, isActive }];
+  const consultant = { id: "consultant-1", status: "active", memberships: membership() };
+  const admin = { id: "admin-1", status: "active", memberships: membership("admin") };
+  const inactive = { id: "inactive-1", status: "disabled", memberships: membership() };
+  const activeConsultantIds = new Set([consultant.id]);
+
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: { assignedUser: consultant, assignments: [] } }), {
+    consultantId: consultant.id,
+    source: "case_owner",
+  });
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: admin, caseItem: { assignedUser: consultant, assignments: [] } }), {
+    consultantId: null,
+    source: "outside_team",
+  });
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: inactive, caseItem: { assignedUser: null, assignments: [{ assignmentType: "primary", consultant }] } }), {
+    consultantId: consultant.id,
+    source: "case_assignment",
+  });
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: { assignedUser: null, assignments: [] } }), {
+    consultantId: null,
+    source: "unassigned",
+  });
 });

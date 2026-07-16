@@ -579,7 +579,7 @@ export default function TasksWorkspace({
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <UserRound className="h-3 w-3" />
-                      {task.assignedTo?.fullName || "Unassigned"}
+                      {task.assignedTo?.fullName || (caseItem.assignedUser?.fullName ? `${caseItem.assignedUser.fullName} (case owner)` : "Unassigned")}
                     </span>
                   </span>
                 </span>

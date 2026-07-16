@@ -172,224 +172,206 @@ export async function resetConsultantPassword(req, res) {
   res.json({ success: true, message: "Password recovery email sent." });
 }
 
-async function workloadFor(agencyId, userId, capacity) {
-  const now = new Date();
-  const caseWhere = { agencyId, deletedAt: null, status: { not: "Closed" }, OR: [{ assignedUserId: userId }, { assignments: { some: { consultantUserId: userId, status: "active" } } }] };
-  const [activeCases, pendingTasks, overdueTasks, documentsWaitingReview] = await prisma.$transaction([
-    prisma.case.count({ where: caseWhere }),
-    prisma.caseWorkflowStep.count({ where: { agencyId, assignedToId: userId, status: "Pending", isActive: true } }),
-    prisma.caseWorkflowStep.count({ where: { agencyId, assignedToId: userId, status: "Pending", isActive: true, dueAt: { lt: now } } }),
-    prisma.clientDocument.count({ where: { agencyId, status: "UnderReview", case: caseWhere } }),
-  ]);
-  return { activeCases, pendingTasks, overdueTasks, documentsWaitingReview, capacity, workloadPercentage: Math.min(100, Math.round((activeCases / Math.max(capacity, 1)) * 100)) };
+const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
+const ACTION_DOCUMENT_STATUSES = ["Requested", "Uploaded", "UnderReview", "ChangesRequested"];
+
+const ownershipUserSelect = {
+  id: true,
+  status: true,
+  memberships: { select: { role: true, isActive: true, agencyId: true } },
+};
+
+const workloadCaseSelect = {
+  id: true,
+  caseType: true,
+  stage: true,
+  status: true,
+  nextAction: true,
+  updatedAt: true,
+  assignedUser: { select: ownershipUserSelect },
+  assignments: {
+    where: { status: "active" },
+    select: {
+      assignmentType: true,
+      consultant: { select: ownershipUserSelect },
+    },
+  },
+  client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
+};
+
+function activeRole(user, agencyId) {
+  if (!user || user.status !== "active") return null;
+  return user.memberships.find((membership) => membership.agencyId === agencyId && membership.isActive && ["admin", "consultant"].includes(membership.role))?.role || null;
 }
 
-async function workloadDetails(agencyId, userId) {
-  const now = new Date();
-  const caseWhere = {
-    agencyId,
-    deletedAt: null,
-    status: { not: "Closed" },
-    OR: [
-      { assignedUserId: userId },
-      { assignments: { some: { consultantUserId: userId, status: "active" } } },
-    ],
-  };
-  const caseSelect = {
-    id: true,
-    caseType: true,
-    stage: true,
-    status: true,
-    nextAction: true,
-    updatedAt: true,
-    client: { select: { id: true, fullName: true } },
-  };
-  const taskSelect = {
-    id: true,
-    title: true,
-    description: true,
-    priority: true,
-    dueAt: true,
-    case: { select: caseSelect },
-  };
-
-  const [activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems] = await prisma.$transaction([
-    prisma.case.findMany({
-      where: caseWhere,
-      orderBy: { updatedAt: "asc" },
-      take: 10,
-      select: caseSelect,
-    }),
-    prisma.caseWorkflowStep.findMany({
-      where: {
-        agencyId,
-        assignedToId: userId,
-        status: "Pending",
-        isActive: true,
-        OR: [{ dueAt: null }, { dueAt: { gte: now } }],
-      },
-      orderBy: [{ dueAt: "asc" }, { priority: "desc" }],
-      take: 10,
-      select: taskSelect,
-    }),
-    prisma.caseWorkflowStep.findMany({
-      where: {
-        agencyId,
-        assignedToId: userId,
-        status: "Pending",
-        isActive: true,
-        dueAt: { lt: now },
-      },
-      orderBy: { dueAt: "asc" },
-      take: 10,
-      select: taskSelect,
-    }),
-    prisma.clientDocument.findMany({
-      where: { agencyId, status: "UnderReview", case: caseWhere },
-      orderBy: { updatedAt: "asc" },
-      take: 10,
-      select: {
-        id: true,
-        documentName: true,
-        status: true,
-        updatedAt: true,
-        client: { select: { id: true, fullName: true } },
-        case: { select: { id: true, caseType: true } },
-      },
-    }),
-  ]);
-
-  return { activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems };
-}
-
-export async function myWorkload(req, res) {
-  const profile = await prisma.consultantProfile.findUnique({ where: { agencyId_userId: { agencyId: req.auth.agencyId, userId: req.auth.userId } } });
-  if (!profile) throw createHttpError(404, "Consultant profile not found.", "NOT_FOUND");
-  const [summary, details] = await Promise.all([
-    workloadFor(req.auth.agencyId, req.auth.userId, profile.maximumActiveCases),
-    workloadDetails(req.auth.agencyId, req.auth.userId),
-  ]);
-  res.json({ success: true, data: { ...summary, ...details } });
-}
-
-async function unassignedWorkload(agencyId, activeConsultantIds) {
-  const now = new Date();
-  const notOwnedByActiveConsultant = activeConsultantIds.length
-    ? { OR: [{ assignedUserId: null }, { assignedUserId: { notIn: activeConsultantIds } }] }
-    : { assignedUserId: null };
-  const notAssignedToActiveConsultant = activeConsultantIds.length
-    ? { OR: [{ assignedToId: null }, { assignedToId: { notIn: activeConsultantIds } }] }
-    : { assignedToId: null };
-  const caseWhere = {
-    agencyId,
-    deletedAt: null,
-    status: { not: "Closed" },
-    ...notOwnedByActiveConsultant,
-    assignments: { none: { status: "active", consultantUserId: { in: activeConsultantIds } } },
-  };
-  const taskWhere = {
-    agencyId,
-    AND: [notAssignedToActiveConsultant],
-    status: "Pending",
-    isActive: true,
-    case: { deletedAt: null, status: { not: "Closed" } },
-  };
-  const caseSelect = {
-    id: true,
-    caseType: true,
-    stage: true,
-    status: true,
-    nextAction: true,
-    updatedAt: true,
-    client: { select: { id: true, fullName: true } },
-  };
-  const taskSelect = {
-    id: true,
-    title: true,
-    description: true,
-    priority: true,
-    dueAt: true,
-    case: { select: caseSelect },
-  };
-  const documentWhere = { agencyId, status: "UnderReview", case: caseWhere };
-  const [activeCases, pendingTasks, overdueTasks, documentsWaitingReview, activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems] = await prisma.$transaction([
-    prisma.case.count({ where: caseWhere }),
-    prisma.caseWorkflowStep.count({ where: taskWhere }),
-    prisma.caseWorkflowStep.count({ where: { ...taskWhere, dueAt: { lt: now } } }),
-    prisma.clientDocument.count({ where: documentWhere }),
-    prisma.case.findMany({ where: caseWhere, orderBy: { updatedAt: "asc" }, take: 10, select: caseSelect }),
-    prisma.caseWorkflowStep.findMany({
-      where: { ...taskWhere, OR: [{ dueAt: null }, { dueAt: { gte: now } }] },
-      orderBy: [{ dueAt: "asc" }, { priority: "desc" }],
-      take: 10,
-      select: taskSelect,
-    }),
-    prisma.caseWorkflowStep.findMany({
-      where: { ...taskWhere, dueAt: { lt: now } },
-      orderBy: { dueAt: "asc" },
-      take: 10,
-      select: taskSelect,
-    }),
-    prisma.clientDocument.findMany({
-      where: documentWhere,
-      orderBy: { updatedAt: "asc" },
-      take: 10,
-      select: {
-        id: true,
-        documentName: true,
-        status: true,
-        updatedAt: true,
-        client: { select: { id: true, fullName: true } },
-        case: { select: { id: true, caseType: true } },
-      },
-    }),
-  ]);
+function emptyWorkloadBucket() {
   return {
-    activeCases,
-    pendingTasks,
-    overdueTasks,
-    documentsWaitingReview,
-    activeCaseItems,
-    pendingTaskItems,
-    overdueTaskItems,
-    documentReviewItems,
-  };
-}
-
-export async function agencyWorkloads(req, res) {
-  const profiles = await prisma.consultantProfile.findMany({ where: { agencyId: req.auth.agencyId, user: { status: "active" } }, include: { user: { select: { id: true, fullName: true, email: true } } } });
-  const consultants = [];
-  // Load one consultant snapshot at a time. Each helper batches its reads into
-  // one transaction so Supabase's session-mode connection pool stays bounded.
-  for (const profile of profiles) {
-    const summary = await workloadFor(req.auth.agencyId, profile.userId, profile.maximumActiveCases);
-    const details = await workloadDetails(req.auth.agencyId, profile.userId);
-    consultants.push({
-      consultant: profile.user,
-      profile: {
-        employeeId: profile.employeeId,
-        specializations: profile.specializations,
-        masteryLevel: profile.masteryLevel,
-      },
-      ...summary,
-      ...details,
-    });
-  }
-  const unassigned = await unassignedWorkload(req.auth.agencyId, profiles.map((profile) => profile.userId));
-  const summary = consultants.reduce((totals, item) => ({
-    ...totals,
-    activeCases: totals.activeCases + item.activeCases,
-    pendingTasks: totals.pendingTasks + item.pendingTasks,
-    overdueTasks: totals.overdueTasks + item.overdueTasks,
-    documentsWaitingReview: totals.documentsWaitingReview + item.documentsWaitingReview,
-    overloadedConsultants: totals.overloadedConsultants + (item.workloadPercentage >= 100 ? 1 : 0),
-  }), {
-    activeConsultants: consultants.length,
     activeCases: 0,
     pendingTasks: 0,
     overdueTasks: 0,
     documentsWaitingReview: 0,
-    overloadedConsultants: 0,
-  });
-  res.json({ success: true, data: { summary, consultants, unassigned } });
+    pendingFollowUps: 0,
+    upcomingAppointments: 0,
+    activeCaseItems: [],
+    pendingTaskItems: [],
+    overdueTaskItems: [],
+    documentReviewItems: [],
+    followUpItems: [],
+    appointmentItems: [],
+  };
+}
+
+export function resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser = null, caseItem = null, clientUser = null }) {
+  const explicitRole = activeRole(explicitUser, agencyId);
+  if (explicitRole) {
+    return activeConsultantIds.has(explicitUser.id)
+      ? { consultantId: explicitUser.id, source: "explicit" }
+      : { consultantId: null, source: "outside_team" };
+  }
+  const caseOwnerRole = activeRole(caseItem?.assignedUser, agencyId);
+  if (caseOwnerRole) {
+    return activeConsultantIds.has(caseItem.assignedUser.id)
+      ? { consultantId: caseItem.assignedUser.id, source: "case_owner" }
+      : { consultantId: null, source: "outside_team" };
+  }
+  const primaryAssignment = caseItem?.assignments?.find((assignment) => assignment.assignmentType === "primary" && activeConsultantIds.has(assignment.consultant.id));
+  if (primaryAssignment) return { consultantId: primaryAssignment.consultant.id, source: "case_assignment" };
+  const clientOwnerRole = activeRole(clientUser, agencyId);
+  if (clientOwnerRole) {
+    return activeConsultantIds.has(clientUser.id)
+      ? { consultantId: clientUser.id, source: "client_owner" }
+      : { consultantId: null, source: "outside_team" };
+  }
+  return { consultantId: null, source: "unassigned" };
+}
+
+function addWork(bucket, type, item, owner, now) {
+  const decorated = { ...item, assignmentSource: owner.source };
+  if (type === "case") {
+    bucket.activeCases += 1;
+    bucket.activeCaseItems.push(decorated);
+  } else if (type === "task") {
+    bucket.pendingTasks += 1;
+    if (item.dueAt && new Date(item.dueAt) < now) {
+      bucket.overdueTasks += 1;
+      bucket.overdueTaskItems.push(decorated);
+    } else {
+      bucket.pendingTaskItems.push(decorated);
+    }
+  } else if (type === "document") {
+    bucket.documentsWaitingReview += 1;
+    bucket.documentReviewItems.push(decorated);
+  } else if (type === "followUp") {
+    bucket.pendingFollowUps += 1;
+    bucket.followUpItems.push(decorated);
+  } else if (type === "appointment") {
+    bucket.upcomingAppointments += 1;
+    bucket.appointmentItems.push(decorated);
+  }
+}
+
+function finalizeBucket(bucket, capacity = null) {
+  const byDueDate = (left, right) => new Date(left.dueAt || left.dueDate || left.startsAt || 8640000000000000) - new Date(right.dueAt || right.dueDate || right.startsAt || 8640000000000000);
+  const byUpdatedAt = (left, right) => new Date(left.updatedAt) - new Date(right.updatedAt);
+  return {
+    ...bucket,
+    ...(capacity === null ? {} : { capacity, workloadPercentage: Math.min(100, Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100)) }),
+    activeCaseItems: bucket.activeCaseItems.sort(byUpdatedAt).slice(0, 10),
+    pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, 10),
+    overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, 10),
+    documentReviewItems: bucket.documentReviewItems.sort(byUpdatedAt).slice(0, 10),
+    followUpItems: bucket.followUpItems.sort(byDueDate).slice(0, 10),
+    appointmentItems: bucket.appointmentItems.sort(byDueDate).slice(0, 10),
+  };
+}
+
+async function loadAgencyWorkloads(agencyId) {
+  const now = new Date();
+  const [profiles, cases, tasks, documents, followUps, appointments] = await prisma.$transaction([
+    prisma.consultantProfile.findMany({
+      where: {
+        agencyId,
+        user: { status: "active", memberships: { some: { agencyId, role: "consultant", isActive: true } } },
+      },
+      include: { user: { select: { id: true, fullName: true, email: true } } },
+    }),
+    prisma.case.findMany({
+      where: { agencyId, deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
+      select: workloadCaseSelect,
+    }),
+    prisma.caseWorkflowStep.findMany({
+      where: { agencyId, status: "Pending", isActive: true, case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+      select: {
+        id: true, title: true, description: true, priority: true, dueAt: true,
+        assignedTo: { select: ownershipUserSelect },
+        case: { select: workloadCaseSelect },
+      },
+    }),
+    prisma.clientDocument.findMany({
+      where: { agencyId, status: { in: ACTION_DOCUMENT_STATUSES }, OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
+      select: {
+        id: true, documentName: true, status: true, updatedAt: true,
+        case: { select: workloadCaseSelect },
+        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
+      },
+    }),
+    prisma.followUp.findMany({
+      where: { agencyId, status: { in: ["Pending", "Overdue"] }, OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
+      select: {
+        id: true, title: true, description: true, status: true, dueDate: true,
+        assignedUser: { select: ownershipUserSelect },
+        case: { select: workloadCaseSelect },
+        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
+      },
+    }),
+    prisma.appointment.findMany({
+      where: { agencyId, status: "Scheduled", startsAt: { gte: now }, case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+      select: {
+        id: true, subject: true, startsAt: true, endsAt: true, location: true,
+        assignedTo: { select: ownershipUserSelect },
+        case: { select: workloadCaseSelect },
+        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
+      },
+    }),
+  ]);
+
+  const activeConsultantIds = new Set(profiles.map((profile) => profile.userId));
+  const buckets = new Map(profiles.map((profile) => [profile.userId, emptyWorkloadBucket()]));
+  const unassignedBucket = emptyWorkloadBucket();
+  const outsideTeamBucket = emptyWorkloadBucket();
+  const route = (type, item, owner) => addWork(owner.consultantId ? buckets.get(owner.consultantId) : owner.source === "outside_team" ? outsideTeamBucket : unassignedBucket, type, item, owner, now);
+
+  cases.forEach((item) => route("case", item, resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item })));
+  tasks.forEach((item) => route("task", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedTo, caseItem: item.case })));
+  documents.forEach((item) => route("document", item, resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item.case, clientUser: item.client.assignedUser })));
+  followUps.forEach((item) => route("followUp", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedUser, caseItem: item.case, clientUser: item.client.assignedUser })));
+  appointments.forEach((item) => route("appointment", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedTo, caseItem: item.case, clientUser: item.client.assignedUser })));
+
+  const consultants = profiles.map((profile) => ({
+    consultant: profile.user,
+    profile: { employeeId: profile.employeeId, specializations: profile.specializations, masteryLevel: profile.masteryLevel },
+    ...finalizeBucket(buckets.get(profile.userId), profile.maximumActiveCases),
+  }));
+  const summary = {
+    activeConsultants: consultants.length,
+    activeCases: cases.length,
+    pendingTasks: tasks.length,
+    overdueTasks: tasks.filter((item) => item.dueAt && new Date(item.dueAt) < now).length,
+    documentsWaitingReview: documents.length,
+    pendingFollowUps: followUps.length,
+    upcomingAppointments: appointments.length,
+    overloadedConsultants: consultants.filter((item) => item.workloadPercentage >= 100).length,
+  };
+  return { summary, consultants, unassigned: finalizeBucket(unassignedBucket), outsideTeam: finalizeBucket(outsideTeamBucket) };
+}
+
+export async function myWorkload(req, res) {
+  const workload = await loadAgencyWorkloads(req.auth.agencyId);
+  const data = workload.consultants.find((item) => item.consultant.id === req.auth.userId);
+  if (!data) throw createHttpError(404, "Active consultant profile not found.", "NOT_FOUND");
+  res.json({ success: true, data });
+}
+
+export async function agencyWorkloads(req, res) {
+  res.json({ success: true, data: await loadAgencyWorkloads(req.auth.agencyId) });
 }
