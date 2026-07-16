@@ -19,6 +19,10 @@ export default function Login() {
     event.preventDefault(); setLoading(true); setError("");
     try {
       const identity = await signIn(email, password);
+      if (!identity?.appUser || !identity?.membership) {
+        setError("Your account setup isn’t finished yet. Open the invitation link from your email to complete it, then sign in again.");
+        return;
+      }
       navigate(identity.appUser.mustChangePassword ? "/change-password" : homePathForRole(identity.membership.role), { replace: true });
     } catch (reason) { setError(reason.message || "Unable to sign in."); }
     finally { setLoading(false); }
