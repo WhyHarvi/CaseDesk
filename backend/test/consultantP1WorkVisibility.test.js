@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { resolveWorkOwner } from "../src/controllers/adminConsultantController.js";
-import { dashboardScopes } from "../src/controllers/dashboardController.js";
+import {
+  DASHBOARD_HIDDEN_ACTIVITY_ACTIONS,
+  dashboardScopes,
+} from "../src/controllers/dashboardController.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 const request = (role, userId = "consultant-1", agencyId = "agency-1") => ({
@@ -47,6 +50,13 @@ test("dashboard renders API work queues instead of placeholder arrays and inert 
   assert.match(stats, /dashboard\.stats\.tasksDueToday/);
   assert.match(controller, /reportingBounds\(now, timezone\)/);
   assert.match(controller, /AND: \[[\s\S]*caseAccessWhere\(req\)/);
+});
+
+test("dashboard recent activity hides session authentication noise", async () => {
+  const controller = await source("../src/controllers/dashboardController.js");
+
+  assert.deepEqual(DASHBOARD_HIDDEN_ACTIVITY_ACTIONS, ["USER_LOGIN", "USER_LOGOUT"]);
+  assert.match(controller, /action: \{ notIn: DASHBOARD_HIDDEN_ACTIVITY_ACTIONS \}/);
 });
 
 test("my workload exposes actionable records and recovers from API errors", async () => {

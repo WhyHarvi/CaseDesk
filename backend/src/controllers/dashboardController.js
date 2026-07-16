@@ -16,6 +16,7 @@ const caseSummarySelect = {
   client: { select: { id: true, fullName: true } },
 };
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
+export const DASHBOARD_HIDDEN_ACTIVITY_ACTIONS = Object.freeze(["USER_LOGIN", "USER_LOGOUT"]);
 
 function consultantTaskAccess(req) {
   if (req.auth.role === "admin") return {};
@@ -240,7 +241,12 @@ export async function getDashboardSummary(req, res) {
       select: caseSummarySelect,
     }),
     prisma.activityLog.findMany({
-      where: activityWhere,
+      where: {
+        AND: [
+          activityWhere,
+          { action: { notIn: DASHBOARD_HIDDEN_ACTIVITY_ACTIONS } },
+        ],
+      },
       orderBy: { createdAt: "desc" },
       take: 6,
       select: {
