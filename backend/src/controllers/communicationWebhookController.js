@@ -1,0 +1,635 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import prisma from "../services/prisma/client.js";
+import { recordCommunicationAudit } from "../services/communicationAudit.js";
+import { applyCommunicationAutomations } from "../services/communicationAutomationService.js";
+import {
+  communicationResolutionDueAt,
+  communicationResponseDueAt,
+} from "../services/communicationSlaService.js";
+import { createHttpError } from "../utils/http.js";
+import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
+
+const channels = new Set(["Email", "Sms", "Chat", "Call"]);
+const stopWords = new Set(["stop", "unsubscribe", "cancel", "end", "quit"]);
+
+const clean = (value, max = 500) =>
+  String(value ?? "")
+    .trim()
+    .slice(0, max);
+const array = (value, limit = 50) =>
+  Array.isArray(value) ? value.slice(0, limit) : [];
+const object = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+const date = (value) => {
+  const parsed = value ? new Date(value) : new Date();
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+const normalizePhone = (value) => clean(value, 80).replace(/[^+\d]/g, "");
+const httpsUrl = (value) => {
+  try {
+    const parsed = new URL(clean(value, 2000));
+    return parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+function verifySecret(req) {
+  const expected = clean(process.env.COMMUNICATION_WEBHOOK_SECRET, 500);
+  if (!expected)
+    throw createHttpError(
+      503,
+      "Communication webhook secret is not configured",
+    );
+  const supplied = clean(req.header("x-casedesk-webhook-secret"), 500);
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (
+    expectedBuffer.length !== suppliedBuffer.length ||
+    !timingSafeEqual(expectedBuffer, suppliedBuffer)
+  ) {
+    throw createHttpError(401, "Invalid communication webhook signature");
+  }
+}
+
+async function agencyContext(agencyId) {
+  const agency = await prisma.agency.findUnique({ where: { id: agencyId } });
+  if (!agency) throw createHttpError(404, "Agency not found");
+  const user = await prisma.user.findFirst({
+    where: { agencyId },
+    orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+  });
+  if (!user)
+    throw createHttpError(
+      409,
+      "Agency has no user available to own inbound communication",
+    );
+  return { agency, user };
+}
+
+async function findClient(agencyId, channel, senderAddress) {
+  if (!senderAddress) return null;
+  if (channel === "Email") {
+    return prisma.client.findFirst({
+      where: {
+        agencyId,
+        email: { equals: senderAddress, mode: "insensitive" },
+      },
+    });
+  }
+  const normalized = normalizePhone(senderAddress);
+  if (!normalized) return null;
+  const candidates = await prisma.client.findMany({
+    where: { agencyId, phone: { not: null } },
+    take: 500,
+  });
+  return (
+    candidates.find((client) => normalizePhone(client.phone) === normalized) ||
+    null
+  );
+}
+
+async function storeUnmatched({
+  agencyId,
+  channel,
+  provider,
+  providerMessageId,
+  senderAddress,
+  recipients,
+  subject,
+  bodyText,
+  occurredAt,
+  rawPayload,
+}) {
+  if (providerMessageId) {
+    const existing = await prisma.unmatchedCommunication.findFirst({
+      where: { agencyId, provider, providerMessageId },
+    });
+    if (existing) return { data: existing, unmatched: true, duplicate: true };
+  }
+  const data = await prisma.unmatchedCommunication.create({
+    data: {
+      agencyId,
+      channel,
+      provider,
+      providerMessageId,
+      senderAddress,
+      recipients,
+      subject,
+      bodyText,
+      occurredAt,
+      rawPayload,
+    },
+  });
+  await recordCommunicationAudit({
+    agencyId,
+    action: "communication.inbound_unmatched",
+    details: `${channel} received from ${senderAddress || "unknown sender"}`,
+    metadata: { unmatchedId: data.id, provider, providerMessageId },
+  });
+  return { data, unmatched: true, duplicate: false };
+}
+
+async function recordOptOut({
+  agencyId,
+  clientId,
+  channel,
+  senderAddress,
+  payload,
+  occurredAt,
+}) {
+  if (!["Sms", "Email"].includes(channel) || !senderAddress) return;
+  const address =
+    channel === "Sms"
+      ? normalizePhone(senderAddress)
+      : senderAddress.toLowerCase();
+  await prisma.communicationConsent.upsert({
+    where: { agencyId_channel_address: { agencyId, channel, address } },
+    create: {
+      agencyId,
+      clientId,
+      channel,
+      address,
+      status: "OptedOut",
+      source: "Inbound provider message",
+      purpose: "Client communication",
+      proof: payload,
+      optedOutAt: occurredAt,
+    },
+    update: {
+      clientId,
+      status: "OptedOut",
+      source: "Inbound provider message",
+      proof: payload,
+      optedOutAt: occurredAt,
+    },
+  });
+}
+
+export async function ingestInboundCommunication(payload) {
+  const agencyId = clean(payload.agencyId, 80);
+  const channel = channels.has(payload.channel) ? payload.channel : null;
+  const provider = clean(payload.provider, 80, "Webhook") || "Webhook";
+  const providerMessageId =
+    clean(
+      payload.providerMessageId || payload.messageId || payload.callId,
+      300,
+    ) || null;
+  const senderAddress =
+    clean(payload.senderAddress || payload.from, 320) || null;
+  const recipients = array(
+    payload.recipients || (payload.to ? [payload.to] : []),
+  )
+    .map((item) => clean(item, 320))
+    .filter(Boolean);
+  const subject = clean(payload.subject, 300) || null;
+  const bodyText =
+    clean(payload.bodyText || payload.body || payload.text, 20000) || null;
+  const occurredAt = date(payload.occurredAt || payload.timestamp);
+  if (!agencyId || !channel)
+    throw createHttpError(
+      400,
+      "agencyId and a valid communication channel are required",
+    );
+  const { user } = await agencyContext(agencyId);
+
+  if (providerMessageId) {
+    const duplicate = await prisma.communicationMessage.findFirst({
+      where: { agencyId, provider, providerMessageId },
+    });
+    if (duplicate)
+      return { data: duplicate, duplicate: true, unmatched: false };
+  }
+
+  const client = await findClient(agencyId, channel, senderAddress);
+  if (!client)
+    return storeUnmatched({
+      agencyId,
+      channel,
+      provider,
+      providerMessageId,
+      senderAddress,
+      recipients,
+      subject,
+      bodyText,
+      occurredAt,
+      rawPayload: payload,
+    });
+  const caseItem =
+    (await prisma.case.findFirst({
+      where: { agencyId, clientId: client.id, status: { not: "Closed" } },
+      orderBy: { updatedAt: "desc" },
+    })) ||
+    (await prisma.case.findFirst({
+      where: { agencyId, clientId: client.id },
+      orderBy: { updatedAt: "desc" },
+    }));
+  if (!caseItem)
+    return storeUnmatched({
+      agencyId,
+      channel,
+      provider,
+      providerMessageId,
+      senderAddress,
+      recipients,
+      subject,
+      bodyText,
+      occurredAt,
+      rawPayload: payload,
+    });
+  const responseDueAt = await communicationResponseDueAt(agencyId, occurredAt);
+  const resolutionDueAt = await communicationResolutionDueAt(
+    agencyId,
+    occurredAt,
+  );
+
+  const providerThreadId =
+    clean(payload.providerThreadId || payload.threadId, 300) || null;
+  const messageStatus =
+    channel === "Call"
+      ? clean(payload.disposition, 40).toLowerCase() === "missed"
+        ? "Missed"
+        : "Completed"
+      : "Received";
+  const data = await prisma.$transaction(async (tx) => {
+    let conversation = providerThreadId
+      ? await tx.communicationConversation.findFirst({
+          where: { agencyId, provider, providerThreadId, deletedAt: null },
+        })
+      : null;
+    if (!conversation && channel !== "Email") {
+      conversation = await tx.communicationConversation.findFirst({
+        where: {
+          agencyId,
+          clientId: client.id,
+          caseId: caseItem.id,
+          channel,
+          state: { not: "Closed" },
+          deletedAt: null,
+        },
+        orderBy: { lastMessageAt: "desc" },
+      });
+    }
+    if (!conversation) {
+      conversation = await tx.communicationConversation.create({
+        data: {
+          agencyId,
+          clientId: client.id,
+          caseId: caseItem.id,
+          channel,
+          subject,
+          provider,
+          providerThreadId,
+          lastMessageAt: occurredAt,
+          firstInboundAt: occurredAt,
+          lastInboundAt: occurredAt,
+          responseDueAt,
+          resolutionDueAt,
+          unreadCount: 0,
+          state: "WaitingOnAgency",
+          assignedToId:
+            caseItem.assignedUserId || client.assignedUserId || user.id,
+          createdById: user.id,
+        },
+      });
+    }
+    const message = await tx.communicationMessage.create({
+      data: {
+        agencyId,
+        clientId: client.id,
+        caseId: caseItem.id,
+        conversationId: conversation.id,
+        channel,
+        direction: "Inbound",
+        status: messageStatus,
+        senderAddress,
+        recipients,
+        subject,
+        bodyText,
+        bodyHtml: clean(payload.bodyHtml, 100000) || null,
+        provider,
+        providerMessageId,
+        emailMessageId:
+          clean(
+            payload.emailMessageId || payload.headers?.["message-id"],
+            500,
+          ) || null,
+        emailInReplyTo:
+          clean(
+            payload.emailInReplyTo || payload.headers?.["in-reply-to"],
+            500,
+          ) || null,
+        emailReferences: array(
+          payload.emailReferences || payload.headers?.references,
+        ),
+        occurredAt,
+        durationSeconds:
+          payload.durationSeconds == null
+            ? null
+            : Math.max(0, Number(payload.durationSeconds) || 0),
+        callDisposition: clean(payload.disposition, 80) || null,
+        callRecordingUrl: httpsUrl(
+          payload.recordingUrl || payload.callRecordingUrl,
+        ),
+        callTranscript:
+          clean(
+            payload.transcript ||
+              payload.callTranscript ||
+              payload.voicemailTranscript,
+            50000,
+          ) || null,
+        metadata: { webhook: true, providerPayload: object(payload.metadata) },
+        isRead: false,
+      },
+    });
+    await tx.communicationConversation.update({
+      where: { id: conversation.id },
+      data: {
+        lastMessageAt: occurredAt,
+        firstInboundAt: conversation.firstInboundAt || occurredAt,
+        lastInboundAt: occurredAt,
+        responseDueAt,
+        unreadCount: { increment: 1 },
+        state: "WaitingOnAgency",
+        isArchived: false,
+        subject: conversation.subject || subject,
+      },
+    });
+    await tx.communicationDeliveryEvent.create({
+      data: {
+        agencyId,
+        messageId: message.id,
+        type: "Received",
+        providerEventId: clean(payload.providerEventId, 300) || null,
+        providerTimestamp: occurredAt,
+        details: `${channel} received from provider`,
+        metadata: object(payload.metadata),
+      },
+    });
+    return message;
+  });
+  if (channel === "Sms" && stopWords.has(clean(bodyText, 40).toLowerCase())) {
+    await recordOptOut({
+      agencyId,
+      clientId: client.id,
+      channel,
+      senderAddress,
+      payload,
+      occurredAt,
+    });
+  }
+  await recordCommunicationAudit({
+    agencyId,
+    conversationId: data.conversationId,
+    messageId: data.id,
+    action: "communication.inbound_received",
+    details: `${channel} received from ${senderAddress || client.fullName}`,
+    metadata: { provider, providerMessageId },
+  });
+  const conversation = await prisma.communicationConversation.findUnique({
+    where: { id: data.conversationId },
+  });
+  await applyCommunicationAutomations({
+    agencyId,
+    trigger: "InboundReceived",
+    message: data,
+    conversation,
+    caseItem,
+    client,
+  });
+  return { data, duplicate: false, unmatched: false };
+}
+
+const eventStatus = {
+  queued: "Queued",
+  sent: "Sent",
+  accepted: "Sent",
+  delivered: "Delivered",
+  bounced: "Bounced",
+  failed: "Failed",
+  rejected: "Failed",
+  blocked: "Blocked",
+  optedout: "OptedOut",
+  completed: "Completed",
+  missed: "Missed",
+};
+
+export async function ingestCommunicationProviderEvent(payload) {
+  const agencyId = clean(payload.agencyId, 80);
+  const provider = clean(payload.provider, 80);
+  const providerMessageId = clean(
+    payload.providerMessageId || payload.messageId || payload.callId,
+    300,
+  );
+  const providerEventId =
+    clean(payload.providerEventId || payload.eventId, 300) || null;
+  const eventType = clean(payload.type || payload.event, 80)
+    .toLowerCase()
+    .replaceAll(/[^a-z]/g, "");
+  const status = eventStatus[eventType];
+  if (!agencyId || !provider || !providerMessageId || !status)
+    throw createHttpError(
+      400,
+      "Valid agency, provider message, and event status are required",
+    );
+  await agencyContext(agencyId);
+  if (
+    providerEventId &&
+    (await prisma.communicationDeliveryEvent.findFirst({
+      where: { agencyId, providerEventId },
+    }))
+  )
+    return { duplicate: true };
+  const message = await prisma.communicationMessage.findFirst({
+    where: { agencyId, provider, providerMessageId },
+  });
+  if (!message)
+    throw createHttpError(404, "Provider message is not yet known to CaseDesk");
+  const occurredAt = date(payload.occurredAt || payload.timestamp);
+  const failureReason = ["Failed", "Bounced", "Blocked"].includes(status)
+    ? clean(payload.reason || payload.error, 1000) ||
+      `${provider} reported ${status}`
+    : null;
+  const data = await prisma.$transaction(async (tx) => {
+    const updated = await tx.communicationMessage.update({
+      where: { id: message.id },
+      data: {
+        status,
+        ...(status === "Delivered" ? { deliveredAt: occurredAt } : {}),
+        ...(["Failed", "Bounced", "Blocked"].includes(status)
+          ? { failedAt: occurredAt, failureReason }
+          : {}),
+        ...(status === "Completed" && payload.durationSeconds != null
+          ? {
+              durationSeconds: Math.max(
+                0,
+                Number(payload.durationSeconds) || 0,
+              ),
+              callDisposition: clean(payload.disposition, 80) || "Completed",
+            }
+          : {}),
+        ...(status === "Missed" ? { callDisposition: "Missed" } : {}),
+        ...(httpsUrl(payload.recordingUrl || payload.callRecordingUrl)
+          ? {
+              callRecordingUrl: httpsUrl(
+                payload.recordingUrl || payload.callRecordingUrl,
+              ),
+            }
+          : {}),
+        ...(payload.transcript ||
+        payload.callTranscript ||
+        payload.voicemailTranscript
+          ? {
+              callTranscript: clean(
+                payload.transcript ||
+                  payload.callTranscript ||
+                  payload.voicemailTranscript,
+                50000,
+              ),
+            }
+          : {}),
+      },
+    });
+    await tx.communicationDeliveryEvent.create({
+      data: {
+        agencyId,
+        messageId: message.id,
+        type: status,
+        providerEventId,
+        providerTimestamp: occurredAt,
+        details: failureReason || `${provider} reported ${status}`,
+        metadata: object(payload.metadata),
+      },
+    });
+    return updated;
+  });
+  if (status === "OptedOut") {
+    const recipient = array(message.recipients)[0];
+    if (recipient)
+      await recordOptOut({
+        agencyId,
+        clientId: message.clientId,
+        channel: message.channel,
+        senderAddress: recipient,
+        payload,
+        occurredAt,
+      });
+  }
+  await recordCommunicationAudit({
+    agencyId,
+    conversationId: message.conversationId,
+    messageId: message.id,
+    action: `communication.${status.toLowerCase()}`,
+    details: failureReason || `${provider} reported ${status}`,
+    metadata: { providerEventId },
+  });
+  if (["Failed", "Bounced", "Blocked", "Missed"].includes(status)) {
+    const context = await prisma.communicationConversation.findUnique({
+      where: { id: message.conversationId },
+      include: { case: true, client: true },
+    });
+    if (context)
+      await applyCommunicationAutomations({
+        agencyId,
+        trigger: status === "Missed" ? "MissedCall" : "DeliveryFailed",
+        message: data,
+        conversation: context,
+        caseItem: context.case,
+        client: context.client,
+      });
+  }
+  return { data, duplicate: false };
+}
+
+export async function receiveCommunicationInboundWebhook(req, res) {
+  verifySecret(req);
+  const result = await ingestInboundCommunication(object(req.body));
+  res.status(result.duplicate ? 200 : 201).json(result);
+}
+
+export async function receiveCommunicationEventWebhook(req, res) {
+  verifySecret(req);
+  const result = await ingestCommunicationProviderEvent(object(req.body));
+  res.status(200).json(result);
+}
+
+export async function receiveOomaCommunicationWebhook(req, res) {
+  const tokenHash = createHash("sha256")
+    .update(clean(req.params.token, 200))
+    .digest("hex");
+  const settings = await prisma.agencyOomaSettings.findUnique({
+    where: { webhookTokenHash: tokenHash },
+  });
+  if (!settings || !settings.enabled)
+    throw createHttpError(404, "Ooma webhook endpoint not found");
+  const payload = object(req.body);
+  const eventName = clean(
+    payload.event || payload.type || payload.status,
+    80,
+  ).toLowerCase();
+  const providerMessageId =
+    payload.providerMessageId || payload.messageId || payload.callId;
+  const isLifecycleEvent = Boolean(
+    providerMessageId &&
+    [
+      "queued",
+      "sent",
+      "accepted",
+      "delivered",
+      "bounced",
+      "failed",
+      "rejected",
+      "blocked",
+      "optedout",
+      "opted_out",
+      "completed",
+      "missed",
+      "answered",
+      "disconnected",
+    ].includes(eventName.replaceAll(/[^a-z_]/g, "")),
+  );
+  let result;
+  if (isLifecycleEvent) {
+    const normalizedEvent =
+      eventName === "answered"
+        ? "accepted"
+        : eventName === "disconnected"
+          ? "completed"
+          : eventName;
+    result = await ingestCommunicationProviderEvent({
+      ...payload,
+      agencyId: settings.agencyId,
+      provider: "Ooma",
+      event: normalizedEvent,
+    });
+  } else {
+    const channel =
+      payload.channel === "Sms" || payload.channel === "Call"
+        ? payload.channel
+        : payload.body || payload.text || payload.message
+          ? "Sms"
+          : "Call";
+    result = await ingestInboundCommunication({
+      ...payload,
+      agencyId: settings.agencyId,
+      provider: "Ooma",
+      channel,
+      senderAddress:
+        payload.senderAddress || payload.from || payload.callerNumber,
+      recipients:
+        payload.recipients ||
+        (payload.to ? [payload.to] : [settings.fromNumber]),
+      bodyText:
+        payload.bodyText || payload.body || payload.text || payload.message,
+      disposition: payload.disposition || eventName || null,
+    });
+  }
+  await prisma.agencyOomaSettings.update({
+    where: { id: settings.id },
+    data: { lastWebhookAt: new Date() },
+  });
+  if (result.unmatched) {
+    await enqueueTrustedProviderLead({ agencyId: settings.agencyId, provider: "OOMA", eventId: payload.callId || payload.messageId || payload.providerMessageId, payload: { ...payload, phone: payload.senderAddress || payload.from || payload.callerNumber } });
+  }
+  res.status(result.duplicate ? 200 : 201).json(result);
+}

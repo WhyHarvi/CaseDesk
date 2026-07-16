@@ -1,0 +1,1675 @@
+import { ArrowUpRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import AssessmentOverlay from "../components/case-profile/AssessmentOverlay";
+import CaseWorkspaceTabs from "../components/case-profile/CaseWorkspaceTabs";
+import {
+  CaseProfileToolbar,
+  CaseProfileTopSection,
+} from "../components/case-profile/CaseProfileSummary";
+import {
+  WorkflowOverlay,
+  WorkflowTemplateCreateOverlay,
+} from "../components/case-profile/WorkflowEditorOverlay";
+import WorkflowTimeline from "../components/case-profile/WorkflowTimeline";
+import { normalizeDocumentName } from "../components/case-profile/documentNames";
+import ApplicantsOverlay from "../components/case-profile/applicants/ApplicantsOverlay";
+import NotesOverlay from "../components/case-profile/notes/NotesOverlay";
+import ActivitiesOverlay from "../components/case-profile/activities/ActivitiesOverlay";
+import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
+import CommunicationSetupOverlay from "../components/case-profile/communication/CommunicationSetupOverlay";
+import { useAuth } from "../auth/AuthContext";
+import {
+  buildBlankTemplateStep,
+  buildDraftStepFromTemplateStep,
+  buildDraftStepFromWorkflowStep,
+} from "../components/case-profile/workflowDrafts";
+import PageContainer from "../components/layout/PageContainer";
+import api from "../services/api";
+
+async function fetchAllCaseDocuments(caseId) {
+  const limit = 100;
+  const documents = [];
+  let page = 1;
+  let total = Infinity;
+
+  while (documents.length < total) {
+    const response = await api.get(
+      `/client-documents?caseId=${encodeURIComponent(caseId)}&page=${page}&limit=${limit}`,
+    );
+    const pageDocuments = Array.isArray(response.data.data)
+      ? response.data.data
+      : [];
+    documents.push(...pageDocuments);
+    total = Number(response.data.meta?.total ?? documents.length);
+    if (!pageDocuments.length) break;
+    page += 1;
+  }
+
+  return documents;
+}
+
+export default function CaseProfile() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { role } = useAuth();
+  const [caseItem, setCaseItem] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [followUps, setFollowUps] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [assessment, setAssessment] = useState(null);
+  const [workflowSteps, setWorkflowSteps] = useState([]);
+  const [workflowTemplates, setWorkflowTemplates] = useState([]);
+  const [workflowLoadError, setWorkflowLoadError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [activeToolbarTray, setActiveToolbarTray] = useState("");
+  const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
+  const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
+  const [notesOverlayOpen, setNotesOverlayOpen] = useState(false);
+  const [activitiesOverlayOpen, setActivitiesOverlayOpen] = useState(false);
+  const [statementOverlayOpen, setStatementOverlayOpen] = useState(false);
+  const [communicationSetup, setCommunicationSetup] = useState(null);
+  const [assessmentSaving, setAssessmentSaving] = useState(false);
+  const [assessmentError, setAssessmentError] = useState("");
+  const [dependantsSaving, setDependantsSaving] = useState(false);
+  const [dependantsError, setDependantsError] = useState("");
+  const [siblingsSaving, setSiblingsSaving] = useState(false);
+  const [siblingsError, setSiblingsError] = useState("");
+  const [parentsSaving, setParentsSaving] = useState(false);
+  const [parentsError, setParentsError] = useState("");
+  const [activityHistorySaving, setActivityHistorySaving] = useState(false);
+  const [activityHistoryError, setActivityHistoryError] = useState("");
+  const [addressHistorySaving, setAddressHistorySaving] = useState(false);
+  const [addressHistoryError, setAddressHistoryError] = useState("");
+  const [travelHistorySaving, setTravelHistorySaving] = useState(false);
+  const [travelHistoryError, setTravelHistoryError] = useState("");
+  const [identityPermitsSaving, setIdentityPermitsSaving] = useState(false);
+  const [identityPermitsError, setIdentityPermitsError] = useState("");
+  const [reminderSaving, setReminderSaving] = useState(false);
+  const [reminderError, setReminderError] = useState("");
+  const [questionnaireSaving, setQuestionnaireSaving] = useState(false);
+  const [questionnaireError, setQuestionnaireError] = useState("");
+  const [caseDocumentsSaving, setCaseDocumentsSaving] = useState(false);
+  const [caseDocumentsError, setCaseDocumentsError] = useState("");
+  const [profileQuestionnaireSaving, setProfileQuestionnaireSaving] =
+    useState(false);
+  const [profileQuestionnaireError, setProfileQuestionnaireError] =
+    useState("");
+  const [workHistorySaving, setWorkHistorySaving] = useState(false);
+  const [workHistoryError, setWorkHistoryError] = useState("");
+  const [educationHistorySaving, setEducationHistorySaving] = useState(false);
+  const [educationHistoryError, setEducationHistoryError] = useState("");
+  const [languageExamsSaving, setLanguageExamsSaving] = useState(false);
+  const [languageExamsError, setLanguageExamsError] = useState("");
+  const [spouseDetailsSaving, setSpouseDetailsSaving] = useState(false);
+  const [spouseDetailsError, setSpouseDetailsError] = useState("");
+  const [workflowOverlayOpen, setWorkflowOverlayOpen] = useState(false);
+  const [workflowDraftSteps, setWorkflowDraftSteps] = useState([]);
+  const [selectedWorkflowTemplateId, setSelectedWorkflowTemplateId] =
+    useState("");
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
+  const [savingWorkflowStepId, setSavingWorkflowStepId] = useState("");
+  const [showWorkflowTemplateForm, setShowWorkflowTemplateForm] =
+    useState(false);
+  const [creatingWorkflowTemplate, setCreatingWorkflowTemplate] =
+    useState(false);
+  const [deletingWorkflowTemplateId, setDeletingWorkflowTemplateId] =
+    useState("");
+  const [workflowTemplateForm, setWorkflowTemplateForm] = useState({
+    name: "",
+    caseType: "",
+  });
+  const [workflowTemplateDraftSteps, setWorkflowTemplateDraftSteps] = useState(
+    [],
+  );
+
+  useEffect(() => {
+    async function loadCaseProfile() {
+      try {
+        setLoading(true);
+
+        const results = await Promise.allSettled([
+          api.get(`/cases/${id}`),
+          fetchAllCaseDocuments(id),
+          api.get(`/payments?caseId=${id}`),
+          api.get(`/follow-ups?caseId=${id}`),
+          api.get(`/notes?caseId=${id}`),
+          api.get(`/activity-logs?caseId=${id}`),
+          api.get(`/cases/${id}/assessment`),
+          api.get(`/cases/${id}/workflow`),
+          api.get("/workflow-templates"),
+        ]);
+
+        const [
+          caseResult,
+          documentsResult,
+          paymentsResult,
+          followUpsResult,
+          notesResult,
+          activityResult,
+          assessmentResult,
+          workflowResult,
+          workflowTemplateResult,
+        ] = results;
+
+        if (caseResult.status !== "fulfilled") {
+          throw caseResult.reason;
+        }
+
+        setCaseItem(caseResult.value.data.data || null);
+        setDocuments(
+          documentsResult.status === "fulfilled" ? documentsResult.value : [],
+        );
+        setPayments(
+          paymentsResult.status === "fulfilled"
+            ? paymentsResult.value.data.data || []
+            : [],
+        );
+        setFollowUps(
+          followUpsResult.status === "fulfilled"
+            ? followUpsResult.value.data.data || []
+            : [],
+        );
+        setNotes(
+          notesResult.status === "fulfilled"
+            ? notesResult.value.data.data || []
+            : [],
+        );
+        setActivityLogs(
+          activityResult.status === "fulfilled"
+            ? activityResult.value.data.data || []
+            : [],
+        );
+        setAssessment(
+          assessmentResult.status === "fulfilled"
+            ? assessmentResult.value.data.data || null
+            : null,
+        );
+        setWorkflowTemplates(
+          workflowTemplateResult.status === "fulfilled"
+            ? workflowTemplateResult.value.data.data || []
+            : [],
+        );
+
+        if (workflowResult.status === "fulfilled") {
+          setWorkflowSteps(workflowResult.value.data.data?.steps || []);
+          setWorkflowLoadError("");
+        } else {
+          setWorkflowSteps([]);
+          setWorkflowLoadError(
+            workflowResult.reason?.response?.data?.message ||
+              "Workflow could not load. Refresh after the backend is restarted.",
+          );
+        }
+
+        setError("");
+      } catch (requestError) {
+        setError(
+          requestError.response?.data?.message || "Unable to load this case.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadCaseProfile();
+  }, [id]);
+
+  const paymentSummary = useMemo(() => {
+    const totals = payments.reduce(
+      (summary, payment) => ({
+        totalFee: summary.totalFee + Number(payment.totalFee || 0),
+        paidAmount: summary.paidAmount + Number(payment.paidAmount || 0),
+        balance: summary.balance + Number(payment.balance || 0),
+      }),
+      { totalFee: 0, paidAmount: 0, balance: 0 },
+    );
+
+    return {
+      ...totals,
+      status:
+        payments[0]?.status ||
+        (totals.balance <= 0 && totals.totalFee > 0
+          ? "Paid"
+          : totals.paidAmount > 0
+            ? "Partial"
+            : "Unpaid"),
+    };
+  }, [payments]);
+
+  const outstandingDocuments = useMemo(
+    () =>
+      documents.filter(
+        (document) =>
+          document.status === "Requested" ||
+          document.status === "ChangesRequested",
+      ),
+    [documents],
+  );
+
+  async function contactClient(channel) {
+    const needsEmail = channel === "Email";
+    const needsPhone = ["Sms", "Call"].includes(channel);
+    if ((needsEmail && !caseItem.client?.email) || (needsPhone && !caseItem.client?.phone)) {
+      setCommunicationSetup({ channel, reason: "contact", detail: "" });
+      return;
+    }
+
+    try {
+      const response = await api.get("/communications/providers");
+      const provider = response.data.data?.[channel] || {};
+      const permissions = response.data.meta?.permissions || {};
+      const permissionKey = { Email: "canSendEmail", Sms: "canSendSms", Call: "canInitiateCalls", Chat: "canUseChat" }[channel];
+      if (permissions[permissionKey] === false) {
+        setCommunicationSetup({ channel, reason: "permission", detail: "" });
+        return;
+      }
+      if (channel !== "Chat" && !provider.sendConfigured) {
+        setCommunicationSetup({ channel, reason: "provider", detail: provider.detail || "This communication provider is not connected." });
+        return;
+      }
+
+      const params = new URLSearchParams(location.search);
+      params.set("tab", "communication");
+      if (channel === "Chat") {
+        params.delete("compose");
+        params.set("chat", "1");
+      } else {
+        params.set("compose", channel);
+      }
+      navigate(`${location.pathname}?${params.toString()}`);
+    } catch (requestError) {
+      setCommunicationSetup({ channel, reason: "provider", detail: requestError.response?.data?.message || "Communication readiness could not be checked." });
+    }
+  }
+
+  const sortedWorkflowTemplates = useMemo(() => {
+    const currentCaseType = caseItem?.caseType || "";
+
+    return [...workflowTemplates].sort((left, right) => {
+      const leftMatches = left.caseType === currentCaseType ? 0 : 1;
+      const rightMatches = right.caseType === currentCaseType ? 0 : 1;
+
+      if (leftMatches !== rightMatches) {
+        return leftMatches - rightMatches;
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+  }, [caseItem?.caseType, workflowTemplates]);
+
+  async function saveAssessment(payload) {
+    try {
+      setAssessmentSaving(true);
+      setAssessmentError("");
+
+      const response = await api.patch(`/cases/${id}/assessment`, payload);
+      setAssessment(response.data.data || null);
+      setAssessmentOverlayOpen(false);
+    } catch (requestError) {
+      setAssessmentError(
+        requestError.response?.data?.message || "Unable to save assessment.",
+      );
+    } finally {
+      setAssessmentSaving(false);
+    }
+  }
+
+  async function saveWorkHistory({ entry, entries, meta }) {
+    try {
+      setWorkHistorySaving(true);
+      setWorkHistoryError("");
+
+      const currentFormData = assessment?.formData || {};
+      const currentWork = currentFormData.work || {};
+      const submittedEntries = Array.isArray(entries)
+        ? entries
+        : entry
+          ? [entry]
+          : [];
+      const nextEntries =
+        meta.hasWorkExperience === "Yes" ? submittedEntries : [];
+      const payload = {
+        formData: {
+          ...currentFormData,
+          work: {
+            ...currentWork,
+            ...meta,
+            workHistoryEntries: nextEntries,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      };
+
+      const response = await api.patch(`/cases/${id}/assessment`, payload);
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setWorkHistoryError(
+        requestError.response?.data?.message || "Unable to save work history.",
+      );
+      throw requestError;
+    } finally {
+      setWorkHistorySaving(false);
+    }
+  }
+
+  async function saveEducationHistory({ entries, yearSummary, meta }) {
+    try {
+      setEducationHistorySaving(true);
+      setEducationHistoryError("");
+
+      const currentFormData = assessment?.formData || {};
+      const currentEducation = currentFormData.education || {};
+      const submittedEntries = Array.isArray(entries) ? entries : [];
+      const nextEntries = meta.hasEducation === "Yes" ? submittedEntries : [];
+      const payload = {
+        formData: {
+          ...currentFormData,
+          education: {
+            ...currentEducation,
+            ...meta,
+            educationHistoryEntries: nextEntries,
+            yearSummary: meta.hasEducation === "Yes" ? yearSummary || {} : {},
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      };
+
+      const response = await api.patch(`/cases/${id}/assessment`, payload);
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setEducationHistoryError(
+        requestError.response?.data?.message ||
+          "Unable to save education history.",
+      );
+      throw requestError;
+    } finally {
+      setEducationHistorySaving(false);
+    }
+  }
+
+  async function saveLanguageExams({ entries, meta }) {
+    try {
+      setLanguageExamsSaving(true);
+      setLanguageExamsError("");
+
+      const currentFormData = assessment?.formData || {};
+      const currentLanguage = currentFormData.language || {};
+      const currentLanguageExams = currentFormData.languageExams || {};
+      const submittedEntries = Array.isArray(entries) ? entries : [];
+      const firstLanguageExam = submittedEntries.find(
+        (entry) => entry.officialLanguagePriority === "First official language",
+      );
+      const secondLanguageExam = submittedEntries.find(
+        (entry) =>
+          entry.officialLanguagePriority === "Second official language",
+      );
+      const emptyLanguageScores = {
+        approvedLanguageTest: submittedEntries.length ? "Yes" : "No",
+        firstLanguageTest: "",
+        firstLanguageListeningClb: "",
+        firstLanguageReadingClb: "",
+        firstLanguageWritingClb: "",
+        firstLanguageSpeakingClb: "",
+        secondLanguageTest: "Not applicable",
+        secondLanguageListeningClb: "",
+        secondLanguageReadingClb: "",
+        secondLanguageWritingClb: "",
+        secondLanguageSpeakingClb: "",
+      };
+      const firstLanguageScores = firstLanguageExam
+        ? {
+            firstLanguageTest: firstLanguageExam.testType || "",
+            firstLanguageListeningClb: firstLanguageExam.listening || "",
+            firstLanguageReadingClb: firstLanguageExam.reading || "",
+            firstLanguageWritingClb: firstLanguageExam.writing || "",
+            firstLanguageSpeakingClb: firstLanguageExam.speaking || "",
+          }
+        : {};
+      const secondLanguageScores = secondLanguageExam
+        ? {
+            secondLanguageTest: secondLanguageExam.testType || "",
+            secondLanguageListeningClb: secondLanguageExam.listening || "",
+            secondLanguageReadingClb: secondLanguageExam.reading || "",
+            secondLanguageWritingClb: secondLanguageExam.writing || "",
+            secondLanguageSpeakingClb: secondLanguageExam.speaking || "",
+          }
+        : {};
+      const payload = {
+        formData: {
+          ...currentFormData,
+          language: {
+            ...currentLanguage,
+            ...emptyLanguageScores,
+            ...firstLanguageScores,
+            ...secondLanguageScores,
+          },
+          languageExams: {
+            ...currentLanguageExams,
+            ...meta,
+            languageExamEntries: submittedEntries,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      };
+
+      const response = await api.patch(`/cases/${id}/assessment`, payload);
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setLanguageExamsError(
+        requestError.response?.data?.message ||
+          "Unable to save language exams.",
+      );
+      throw requestError;
+    } finally {
+      setLanguageExamsSaving(false);
+    }
+  }
+
+  async function saveDependants({ dependants, complete }) {
+    try {
+      setDependantsSaving(true);
+      setDependantsError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          dependantsAndChildren: {
+            ...(currentFormData.dependantsAndChildren || {}),
+            dependants: Array.isArray(dependants) ? dependants : [],
+            hasMoreDependants:
+              Array.isArray(dependants) && dependants.length > 1 ? "Yes" : "No",
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setDependantsError(
+        requestError.response?.data?.message ||
+          "Unable to save dependant information.",
+      );
+      throw requestError;
+    } finally {
+      setDependantsSaving(false);
+    }
+  }
+
+  async function saveSiblings({ siblings, complete }) {
+    try {
+      setSiblingsSaving(true);
+      setSiblingsError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          siblings: {
+            ...(currentFormData.siblings || {}),
+            siblings: Array.isArray(siblings) ? siblings : [],
+            hasMoreSiblings:
+              Array.isArray(siblings) && siblings.length > 1 ? "Yes" : "No",
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setSiblingsError(
+        requestError.response?.data?.message ||
+          "Unable to save sibling information.",
+      );
+      throw requestError;
+    } finally {
+      setSiblingsSaving(false);
+    }
+  }
+
+  async function saveParents({ mother, father, complete }) {
+    try {
+      setParentsSaving(true);
+      setParentsError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          parents: {
+            ...(currentFormData.parents || {}),
+            mother: mother || {},
+            father: father || {},
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setParentsError(
+        requestError.response?.data?.message ||
+          "Unable to save parent information.",
+      );
+      throw requestError;
+    } finally {
+      setParentsSaving(false);
+    }
+  }
+
+  async function saveActivityHistory({ entries, complete }) {
+    try {
+      setActivityHistorySaving(true);
+      setActivityHistoryError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          activityHistory: {
+            ...(currentFormData.activityHistory || {}),
+            entries: Array.isArray(entries) ? entries : [],
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setActivityHistoryError(
+        requestError.response?.data?.message ||
+          "Unable to save activity history.",
+      );
+      throw requestError;
+    } finally {
+      setActivityHistorySaving(false);
+    }
+  }
+
+  async function saveAddressHistory({ entries, complete }) {
+    try {
+      setAddressHistorySaving(true);
+      setAddressHistoryError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          addressHistory: {
+            ...(currentFormData.addressHistory || {}),
+            entries: Array.isArray(entries) ? entries : [],
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setAddressHistoryError(
+        requestError.response?.data?.message ||
+          "Unable to save address history.",
+      );
+      throw requestError;
+    } finally {
+      setAddressHistorySaving(false);
+    }
+  }
+
+  async function saveTravelHistory({ hasTravelled, entries }) {
+    try {
+      setTravelHistorySaving(true);
+      setTravelHistoryError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          travelHistory: {
+            ...(currentFormData.travelHistory || {}),
+            hasTravelled,
+            entries: Array.isArray(entries) ? entries : [],
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setTravelHistoryError(
+        requestError.response?.data?.message ||
+          "Unable to save travel history.",
+      );
+      throw requestError;
+    } finally {
+      setTravelHistorySaving(false);
+    }
+  }
+
+  async function saveIdentityPermits({ provideDetails, documents, complete }) {
+    try {
+      setIdentityPermitsSaving(true);
+      setIdentityPermitsError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          identityPermits: {
+            ...(currentFormData.identityPermits || {}),
+            provideDetails,
+            documents: Array.isArray(documents) ? documents : [],
+            complete,
+          },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setIdentityPermitsError(
+        requestError.response?.data?.message ||
+          "Unable to save identity and permit documents.",
+      );
+      throw requestError;
+    } finally {
+      setIdentityPermitsSaving(false);
+    }
+  }
+
+  async function createReminder(form) {
+    try {
+      setReminderSaving(true);
+      setReminderError("");
+      const metadata = [
+        `Expires: ${form.expires || "Not set"}`,
+        `Send reminder: ${form.sendReminder || "Not set"}`,
+        `Notifications: ${form.notifications}`,
+      ].join("\n");
+      const response = await api.post("/follow-ups", {
+        clientId: caseItem.clientId,
+        caseId: id,
+        title: form.subject,
+        description: `${form.message}\n\n${metadata}`,
+        dueDate: form.reminderDate,
+        status: "Pending",
+      });
+      setFollowUps((current) => [response.data.data, ...current]);
+    } catch (requestError) {
+      setReminderError(
+        requestError.response?.data?.message || "Unable to create reminder.",
+      );
+      throw requestError;
+    } finally {
+      setReminderSaving(false);
+    }
+  }
+
+  async function assignQuestionnaire(assignment) {
+    try {
+      setQuestionnaireSaving(true);
+      setQuestionnaireError("");
+      const currentFormData = assessment?.formData || {};
+      const currentAssignments = Array.isArray(
+        currentFormData.questionnaireAssignments,
+      )
+        ? currentFormData.questionnaireAssignments
+        : [];
+      const isDuplicate = currentAssignments.some(
+        (item) =>
+          item.categoryId === assignment.categoryId &&
+          item.applicationType === assignment.applicationType,
+      );
+      const now = new Date().toISOString();
+      const nextAssignments = isDuplicate
+        ? currentAssignments
+        : [
+            ...currentAssignments,
+            {
+              ...assignment,
+              id: `${assignment.categoryId}-${Date.now()}`,
+              status: "In progress",
+              sharing: "Shared",
+              assignedAt: now,
+              updatedAt: now,
+            },
+          ];
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          questionnaireAssignments: nextAssignments,
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setQuestionnaireError(
+        requestError.response?.data?.message ||
+          "Unable to assign questionnaire.",
+      );
+      throw requestError;
+    } finally {
+      setQuestionnaireSaving(false);
+    }
+  }
+
+  async function updateQuestionnaireAssignment(index, changes, remove = false) {
+    try {
+      setQuestionnaireSaving(true);
+      setQuestionnaireError("");
+      const currentFormData = assessment?.formData || {};
+      const currentAssignments = Array.isArray(
+        currentFormData.questionnaireAssignments,
+      )
+        ? currentFormData.questionnaireAssignments
+        : [];
+      const nextAssignments = remove
+        ? currentAssignments.filter((_, itemIndex) => itemIndex !== index)
+        : currentAssignments.map((item, itemIndex) =>
+            itemIndex === index
+              ? { ...item, ...changes, updatedAt: new Date().toISOString() }
+              : item,
+          );
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          questionnaireAssignments: nextAssignments,
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setQuestionnaireError(
+        requestError.response?.data?.message ||
+          "Unable to update questionnaire.",
+      );
+      throw requestError;
+    } finally {
+      setQuestionnaireSaving(false);
+    }
+  }
+
+  async function createCaseDocuments(names, metadata = {}) {
+    try {
+      setCaseDocumentsSaving(true);
+      setCaseDocumentsError("");
+      const existing = new Set(
+        documents
+          .filter((item) => item.status !== "NotRequired")
+          .map((item) => normalizeDocumentName(item.documentName)),
+      );
+      const uniqueNamesByKey = new Map();
+      names.forEach((name) => {
+        const documentName = String(name || "")
+          .trim()
+          .replace(/\s+/g, " ");
+        const key = normalizeDocumentName(documentName);
+        if (
+          documentName &&
+          key &&
+          !existing.has(key) &&
+          !uniqueNamesByKey.has(key)
+        )
+          uniqueNamesByKey.set(key, documentName);
+      });
+      const uniqueNames = [...uniqueNamesByKey.values()];
+      if (!uniqueNames.length) return [];
+      const response = await api.post(`/cases/${id}/document-checklist`, {
+        documents: uniqueNames,
+        programId: metadata.programId || null,
+        programName: metadata.programName || "Custom checklist",
+      });
+      const assigned = Array.isArray(response.data.data)
+        ? response.data.data
+        : [];
+      setDocuments((current) => {
+        const assignedById = new Map(assigned.map((item) => [item.id, item]));
+        const updated = current.map(
+          (item) => assignedById.get(item.id) || item,
+        );
+        const existingIds = new Set(current.map((item) => item.id));
+        return [
+          ...updated,
+          ...assigned.filter((item) => !existingIds.has(item.id)),
+        ];
+      });
+      return assigned;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message ||
+          "Unable to create document checklist.",
+      );
+      throw requestError;
+    } finally {
+      setCaseDocumentsSaving(false);
+    }
+  }
+
+  async function updateCaseDocumentAssignment(documentIds, status) {
+    try {
+      setCaseDocumentsError("");
+      const ids = Array.isArray(documentIds) ? documentIds : [documentIds];
+      const response = await api.patch(`/cases/${id}/document-assignment`, {
+        documentIds: ids,
+        status,
+      });
+      const updatedDocuments = Array.isArray(response.data.data)
+        ? response.data.data
+        : [];
+      const updatedById = new Map(
+        updatedDocuments.map((item) => [item.id, item]),
+      );
+      setDocuments((current) =>
+        current.map((item) => updatedById.get(item.id) || item),
+      );
+      return updatedDocuments;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message ||
+          "Unable to update document assignment.",
+      );
+      throw requestError;
+    }
+  }
+
+  async function markCaseDocumentReceived(documentId, file, onProgress) {
+    try {
+      setCaseDocumentsError("");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("documentId", documentId);
+      const response = await api.post("/client-documents/upload", formData, {
+        timeout: 60000,
+        onUploadProgress: (event) => {
+          if (event.total && onProgress)
+            onProgress(Math.round((event.loaded / event.total) * 100));
+        },
+      });
+      const updated = response.data.data;
+      setDocuments((current) =>
+        current.map((item) => (item.id === documentId ? updated : item)),
+      );
+      return updated;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message ||
+          "Unable to update document status.",
+      );
+      throw requestError;
+    }
+  }
+
+  async function uploadMyCaseDocument(file, onProgress) {
+    try {
+      setCaseDocumentsSaving(true);
+      setCaseDocumentsError("");
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("clientId", caseItem.clientId || caseItem.client?.id);
+      formData.append("caseId", id);
+      formData.append("documentName", file.name);
+      formData.append("visibility", "Internal");
+      const response = await api.post("/client-documents/upload", formData, {
+        timeout: 60000,
+        onUploadProgress: (event) => {
+          if (event.total && onProgress)
+            onProgress(Math.round((event.loaded / event.total) * 100));
+        },
+      });
+      const created = response.data.data;
+      setDocuments((current) => [...current, created]);
+      return created;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message || "Unable to upload document.",
+      );
+      throw requestError;
+    } finally {
+      setCaseDocumentsSaving(false);
+    }
+  }
+
+  async function refreshCaseDocuments() {
+    try {
+      setDocuments(await fetchAllCaseDocuments(id));
+      setCaseDocumentsError("");
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message ||
+          "Unable to refresh case documents.",
+      );
+    }
+  }
+
+  async function deleteCaseDocument(documentId) {
+    try {
+      setCaseDocumentsError("");
+      await api.delete(`/client-documents/${documentId}`);
+      setDocuments((current) =>
+        current.filter((item) => item.id !== documentId),
+      );
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message || "Unable to delete document.",
+      );
+      throw requestError;
+    }
+  }
+
+  async function finalizeCaseDocument(documentId) {
+    try {
+      setCaseDocumentsError("");
+      const response = await api.post(
+        `/client-documents/${documentId}/finalize`,
+      );
+      const updated = response.data.data;
+      setDocuments((current) =>
+        current.map((item) => (item.id === documentId ? updated : item)),
+      );
+      return updated;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message || "Unable to finalize document.",
+      );
+      throw requestError;
+    }
+  }
+
+  async function changeCaseDocumentStatus(documentId, status) {
+    if (status === "Finalized") return finalizeCaseDocument(documentId);
+    try {
+      setCaseDocumentsError("");
+      const response = await api.post(
+        `/client-documents/${documentId}/status`,
+        { status },
+      );
+      const updated = response.data.data;
+      setDocuments((current) =>
+        current.map((item) => (item.id === documentId ? updated : item)),
+      );
+      return updated;
+    } catch (requestError) {
+      setCaseDocumentsError(
+        requestError.response?.data?.message ||
+          "Unable to update document status.",
+      );
+      throw requestError;
+    }
+  }
+
+  async function saveProfileQuestionnaire(sectionId, values) {
+    try {
+      setProfileQuestionnaireSaving(true);
+      setProfileQuestionnaireError("");
+      const currentFormData = assessment?.formData || {};
+      const currentSections = currentFormData.profileQuestionnaires || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          profileQuestionnaires: { ...currentSections, [sectionId]: values },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setProfileQuestionnaireError(
+        requestError.response?.data?.message ||
+          "Unable to save application profile details.",
+      );
+      throw requestError;
+    } finally {
+      setProfileQuestionnaireSaving(false);
+    }
+  }
+
+  async function saveSpouseDetails(section, payload) {
+    try {
+      setSpouseDetailsSaving(true);
+      setSpouseDetailsError("");
+      const currentFormData = assessment?.formData || {};
+      const currentSpouse = currentFormData.spouse || {};
+      let spouseUpdate = {};
+
+      if (section === "work") {
+        const entries =
+          payload.meta.hasWorkExperience === "Yes" ? payload.entries || [] : [];
+        spouseUpdate = { ...payload.meta, workHistoryEntries: entries };
+      } else if (section === "education") {
+        const entries =
+          payload.meta.hasEducation === "Yes" ? payload.entries || [] : [];
+        spouseUpdate = {
+          ...payload.meta,
+          educationHistoryEntries: entries,
+          educationYearSummary:
+            payload.meta.hasEducation === "Yes"
+              ? payload.yearSummary || {}
+              : {},
+        };
+      } else {
+        const entries = payload.entries || [];
+        const firstExam = entries[0];
+        spouseUpdate = {
+          ...payload.meta,
+          languageExamEntries: entries,
+          spouseLanguageTest: firstExam?.testType || "Not applicable",
+          spouseLanguageListeningClb: firstExam?.listening || "",
+          spouseLanguageReadingClb: firstExam?.reading || "",
+          spouseLanguageWritingClb: firstExam?.writing || "",
+          spouseLanguageSpeakingClb: firstExam?.speaking || "",
+        };
+      }
+
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          spouse: { ...currentSpouse, ...spouseUpdate },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setSpouseDetailsError(
+        requestError.response?.data?.message ||
+          "Unable to save spouse details.",
+      );
+      throw requestError;
+    } finally {
+      setSpouseDetailsSaving(false);
+    }
+  }
+
+  function openWorkflowOverlay() {
+    const milestones = workflowSteps.filter((step) => !step.isStandaloneTask);
+    setWorkflowDraftSteps(milestones.map(buildDraftStepFromWorkflowStep));
+    setSelectedWorkflowTemplateId(
+      milestones.find((step) => step.templateId)?.templateId || "",
+    );
+    setShowWorkflowTemplateForm(false);
+    setWorkflowError("");
+    setWorkflowOverlayOpen(true);
+    setActiveToolbarTray("");
+  }
+
+  function openWorkflowTemplateForm() {
+    setWorkflowTemplateForm({
+      name: `${caseItem?.caseType || "Custom"} workflow`,
+      caseType: caseItem?.caseType || "",
+    });
+    setWorkflowTemplateDraftSteps([buildBlankTemplateStep()]);
+    setWorkflowError("");
+    setShowWorkflowTemplateForm(true);
+  }
+
+  function closeWorkflowTemplateForm() {
+    setShowWorkflowTemplateForm(false);
+    setWorkflowTemplateDraftSteps([]);
+    setWorkflowError("");
+  }
+
+  function closeWorkflowOverlay() {
+    setWorkflowOverlayOpen(false);
+    closeWorkflowTemplateForm();
+  }
+
+  function handleWorkflowTemplateFormChange(event) {
+    const { name, value } = event.target;
+
+    setWorkflowTemplateForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  }
+
+  async function createWorkflowTemplate(event) {
+    event.preventDefault();
+
+    const steps = workflowTemplateDraftSteps.filter((step) =>
+      step.title.trim(),
+    );
+
+    if (!steps.length) {
+      setWorkflowError(
+        "Add at least one active milestone before creating a workflow.",
+      );
+      return;
+    }
+
+    try {
+      setCreatingWorkflowTemplate(true);
+      setWorkflowError("");
+
+      const response = await api.post("/workflow-templates", {
+        name: workflowTemplateForm.name,
+        caseType: workflowTemplateForm.caseType,
+        steps: steps.map((step, index) => ({
+          title: step.title,
+          description: step.description || null,
+          sortOrder: index + 1,
+          priority: step.priority || "Normal",
+          isRequired: true,
+        })),
+      });
+
+      const createdTemplate = response.data.data;
+      setWorkflowTemplates((current) => [createdTemplate, ...current]);
+      setSelectedWorkflowTemplateId(createdTemplate.id);
+      setWorkflowDraftSteps(
+        (createdTemplate.steps || []).map(buildDraftStepFromTemplateStep),
+      );
+      setShowWorkflowTemplateForm(false);
+      setWorkflowTemplateDraftSteps([]);
+    } catch (requestError) {
+      setWorkflowError(
+        requestError.response?.data?.message ||
+          "Unable to create workflow template.",
+      );
+    } finally {
+      setCreatingWorkflowTemplate(false);
+    }
+  }
+
+  function updateWorkflowTemplateDraftStep(index, updates) {
+    setWorkflowTemplateDraftSteps((current) =>
+      current.map((step, stepIndex) =>
+        stepIndex === index ? { ...step, ...updates } : step,
+      ),
+    );
+  }
+
+  function moveWorkflowTemplateDraftStep(index, direction) {
+    setWorkflowTemplateDraftSteps((current) => {
+      const targetIndex = index + direction;
+
+      if (targetIndex < 0 || targetIndex >= current.length) {
+        return current;
+      }
+
+      const next = [...current];
+      const [step] = next.splice(index, 1);
+      next.splice(targetIndex, 0, step);
+
+      return next.map((item, itemIndex) => ({
+        ...item,
+        sortOrder: itemIndex + 1,
+      }));
+    });
+  }
+
+  function addWorkflowTemplateDraftStep() {
+    setWorkflowTemplateDraftSteps((current) => [
+      ...current,
+      buildBlankTemplateStep(current.length),
+    ]);
+  }
+
+  function removeWorkflowTemplateDraftStep(index) {
+    setWorkflowTemplateDraftSteps((current) =>
+      current
+        .filter((_, stepIndex) => stepIndex !== index)
+        .map((step, stepIndex) => ({
+          ...step,
+          sortOrder: stepIndex + 1,
+        })),
+    );
+  }
+
+  async function deleteWorkflowTemplate(template) {
+    if (template.isDefault) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${template.name}" workflow template?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingWorkflowTemplateId(template.id);
+      setWorkflowError("");
+      await api.delete(`/workflow-templates/${template.id}`);
+      setWorkflowTemplates((current) =>
+        current.filter((item) => item.id !== template.id),
+      );
+
+      if (selectedWorkflowTemplateId === template.id) {
+        setSelectedWorkflowTemplateId("");
+      }
+    } catch (requestError) {
+      setWorkflowError(
+        requestError.response?.data?.message ||
+          "Unable to delete workflow template.",
+      );
+    } finally {
+      setDeletingWorkflowTemplateId("");
+    }
+  }
+
+  function handleSelectWorkflowTemplate(template) {
+    setSelectedWorkflowTemplateId(template.id);
+    setWorkflowDraftSteps(
+      (template.steps || []).map(buildDraftStepFromTemplateStep),
+    );
+    setWorkflowError("");
+  }
+
+  function updateWorkflowDraftStep(index, updates) {
+    setWorkflowDraftSteps((current) =>
+      current.map((step, stepIndex) =>
+        stepIndex === index ? { ...step, ...updates } : step,
+      ),
+    );
+  }
+
+  function toggleWorkflowDraftStep(index) {
+    setWorkflowDraftSteps((current) =>
+      current.map((step, stepIndex) =>
+        stepIndex === index
+          ? { ...step, isActive: step.isActive === false }
+          : step,
+      ),
+    );
+  }
+
+  function moveWorkflowDraftStep(index, direction) {
+    setWorkflowDraftSteps((current) => {
+      const targetIndex = index + direction;
+
+      if (targetIndex < 0 || targetIndex >= current.length) {
+        return current;
+      }
+
+      const next = [...current];
+      const [step] = next.splice(index, 1);
+      next.splice(targetIndex, 0, step);
+
+      return next.map((item, itemIndex) => ({
+        ...item,
+        sortOrder: itemIndex + 1,
+      }));
+    });
+  }
+
+  function addWorkflowDraftStep() {
+    setWorkflowDraftSteps((current) => [
+      ...current,
+      {
+        localId: `custom-${Date.now()}`,
+        templateStepId: "",
+        title: "New milestone",
+        description: "",
+        sortOrder: current.length + 1,
+        priority: "Normal",
+        isActive: true,
+        status: "Pending",
+        completedAt: null,
+      },
+    ]);
+  }
+
+  function removeWorkflowDraftStep(index) {
+    setWorkflowDraftSteps((current) =>
+      current
+        .filter((_, stepIndex) => stepIndex !== index)
+        .map((step, stepIndex) => ({
+          ...step,
+          sortOrder: stepIndex + 1,
+        })),
+    );
+  }
+
+  async function saveWorkflowDraft() {
+    try {
+      setWorkflowSaving(true);
+      setWorkflowError("");
+
+      const response = await api.patch(`/cases/${id}/workflow`, {
+        templateId: selectedWorkflowTemplateId || null,
+        steps: workflowDraftSteps.map((step, index) => ({
+          templateStepId: step.templateStepId || null,
+          title: step.title,
+          description: step.description || null,
+          sortOrder: index + 1,
+          priority: step.priority || "Normal",
+          isActive: step.isActive !== false,
+          status: step.status || "Pending",
+          completedAt: step.completedAt || null,
+        })),
+      });
+
+      setWorkflowSteps(response.data.data || []);
+      setWorkflowOverlayOpen(false);
+    } catch (requestError) {
+      setWorkflowError(
+        requestError.response?.data?.message || "Unable to save workflow.",
+      );
+    } finally {
+      setWorkflowSaving(false);
+    }
+  }
+
+  async function toggleWorkflowStepStatus(step) {
+    const nextStatus = step.status === "Completed" ? "Pending" : "Completed";
+
+    try {
+      setSavingWorkflowStepId(step.id);
+      setWorkflowSteps((current) =>
+        current.map((item) =>
+          item.id === step.id
+            ? {
+                ...item,
+                status: nextStatus,
+                completedAt:
+                  nextStatus === "Completed"
+                    ? item.completedAt || new Date().toISOString()
+                    : null,
+              }
+            : item,
+        ),
+      );
+
+      const response = await api.patch(`/cases/${id}/workflow/${step.id}`, {
+        status: nextStatus,
+      });
+
+      setWorkflowSteps((current) =>
+        current.map((item) =>
+          item.id === step.id ? response.data.data : item,
+        ),
+      );
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          "Unable to update workflow step.",
+      );
+      setWorkflowSteps((current) =>
+        current.map((item) => (item.id === step.id ? step : item)),
+      );
+    } finally {
+      setSavingWorkflowStepId("");
+    }
+  }
+
+  async function createCaseTask(values) {
+    const response = await api.post(`/cases/${id}/tasks`, values);
+    const created = response.data.data;
+    setWorkflowSteps((current) =>
+      [...current, created].sort(
+        (left, right) => (left.sortOrder || 0) - (right.sortOrder || 0),
+      ),
+    );
+    return created;
+  }
+
+  async function updateCaseTask(task, values) {
+    const response = await api.patch(
+      `/cases/${id}/workflow/${task.id}`,
+      values,
+    );
+    const updated = response.data.data;
+    setWorkflowSteps((current) =>
+      current.map((item) => (item.id === task.id ? updated : item)),
+    );
+    return updated;
+  }
+
+  async function deleteCaseTask(task) {
+    const response = await api.patch(`/cases/${id}/tasks/${task.id}/cancel`);
+    const cancelled = response.data.data;
+    setWorkflowSteps((current) =>
+      current.map((item) => (item.id === task.id ? cancelled : item)),
+    );
+  }
+
+  if (loading) {
+    return (
+      <PageContainer title="Case file" description="Loading case details...">
+        <div className="space-y-6">
+          <div className="h-28 animate-pulse rounded-2xl bg-slate-100" />
+          <div className="h-56 animate-pulse rounded-2xl bg-slate-100" />
+        </div>
+      </PageContainer>
+    );
+  }
+
+  if (!caseItem) {
+    return (
+      <PageContainer
+        title="Case file"
+        description="Unable to load this case route."
+      >
+        <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
+          {error || "Try opening a case from the cases list."}
+        </div>
+      </PageContainer>
+    );
+  }
+
+  return (
+    <PageContainer
+      title="Case file"
+      description="Manage this case, communication, and access from one place."
+      actions={
+        caseItem.client?.id ? (
+          <Link
+            to={`/clients/${caseItem.client.id}`}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Client profile
+            <ArrowUpRight className="h-4 w-4" />
+          </Link>
+        ) : null
+      }
+    >
+      {error ? (
+        <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+
+      {workflowOverlayOpen ? (
+        <WorkflowOverlay
+          caseType={caseItem.caseType}
+          templates={sortedWorkflowTemplates}
+          selectedTemplateId={selectedWorkflowTemplateId}
+          draftSteps={workflowDraftSteps}
+          creatingTemplate={creatingWorkflowTemplate}
+          deletingTemplateId={deletingWorkflowTemplateId}
+          onSelectTemplate={handleSelectWorkflowTemplate}
+          onOpenTemplateForm={openWorkflowTemplateForm}
+          onDeleteTemplate={deleteWorkflowTemplate}
+          onUpdateStep={updateWorkflowDraftStep}
+          onToggleStep={toggleWorkflowDraftStep}
+          onMoveStep={moveWorkflowDraftStep}
+          onAddStep={addWorkflowDraftStep}
+          onRemoveStep={removeWorkflowDraftStep}
+          onClose={closeWorkflowOverlay}
+          onSave={saveWorkflowDraft}
+          saving={workflowSaving}
+          error={workflowError}
+        />
+      ) : null}
+
+      {workflowOverlayOpen && showWorkflowTemplateForm ? (
+        <WorkflowTemplateCreateOverlay
+          caseType={caseItem.caseType}
+          templateForm={workflowTemplateForm}
+          templateDraftSteps={workflowTemplateDraftSteps}
+          creatingTemplate={creatingWorkflowTemplate}
+          error={workflowError}
+          onTemplateFormChange={handleWorkflowTemplateFormChange}
+          onUpdateTemplateDraftStep={updateWorkflowTemplateDraftStep}
+          onMoveTemplateDraftStep={moveWorkflowTemplateDraftStep}
+          onAddTemplateDraftStep={addWorkflowTemplateDraftStep}
+          onRemoveTemplateDraftStep={removeWorkflowTemplateDraftStep}
+          onCreateTemplate={createWorkflowTemplate}
+          onClose={closeWorkflowTemplateForm}
+        />
+      ) : null}
+
+      {assessmentOverlayOpen ? (
+        <AssessmentOverlay
+          caseItem={caseItem}
+          assessment={assessment}
+          saving={assessmentSaving}
+          error={assessmentError}
+          onClose={() => {
+            setAssessmentOverlayOpen(false);
+            setAssessmentError("");
+          }}
+          onSave={saveAssessment}
+        />
+      ) : null}
+
+      {applicantsOverlayOpen ? (
+        <ApplicantsOverlay
+          caseItem={caseItem}
+          onClose={() => setApplicantsOverlayOpen(false)}
+        />
+      ) : null}
+
+      {notesOverlayOpen ? (
+        <NotesOverlay
+          caseItem={caseItem}
+          initialNotes={notes}
+          onNotesChange={setNotes}
+          onClose={() => setNotesOverlayOpen(false)}
+        />
+      ) : null}
+
+      {activitiesOverlayOpen ? (
+        <ActivitiesOverlay
+          caseItem={caseItem}
+          initialActivities={activityLogs}
+          onClose={() => setActivitiesOverlayOpen(false)}
+        />
+      ) : null}
+
+      {statementOverlayOpen && caseItem.client?.id ? (
+        <StatementOfAccountOverlay
+          clientId={caseItem.client.id}
+          initialCaseId={caseItem.id}
+          onClose={() => setStatementOverlayOpen(false)}
+        />
+      ) : null}
+
+      {communicationSetup ? (
+        <CommunicationSetupOverlay
+          {...communicationSetup}
+          caseItem={caseItem}
+          role={role}
+          onClose={() => setCommunicationSetup(null)}
+        />
+      ) : null}
+
+      <section className="space-y-8">
+        <CaseProfileTopSection
+          caseItem={caseItem}
+          paymentSummary={paymentSummary}
+          outstandingDocuments={outstandingDocuments}
+          onContactClient={contactClient}
+        />
+
+        <CaseProfileToolbar
+          activeToolbarTray={activeToolbarTray}
+          setActiveToolbarTray={setActiveToolbarTray}
+          onOpenWorkflow={openWorkflowOverlay}
+          onOpenApplicants={() => {
+            setActiveToolbarTray("");
+            setApplicantsOverlayOpen(true);
+          }}
+          onOpenNotes={() => {
+            setActiveToolbarTray("");
+            setNotesOverlayOpen(true);
+          }}
+          onOpenActivities={() => {
+            setActiveToolbarTray("");
+            setActivitiesOverlayOpen(true);
+          }}
+          onOpenStatement={() => {
+            setActiveToolbarTray("");
+            setStatementOverlayOpen(true);
+          }}
+        />
+
+        <WorkflowTimeline
+          steps={workflowSteps.filter((step) => !step.isStandaloneTask)}
+          loadError={workflowLoadError}
+          onToggleStep={toggleWorkflowStepStatus}
+          savingStepId={savingWorkflowStepId}
+          onOpen={openWorkflowOverlay}
+        />
+
+        <CaseWorkspaceTabs
+          caseItem={caseItem}
+          documents={documents}
+          followUps={followUps}
+          notes={notes}
+          activityLogs={activityLogs}
+          workflowSteps={workflowSteps}
+          paymentSummary={paymentSummary}
+          outstandingDocuments={outstandingDocuments}
+          assessment={assessment}
+          onConductAssessment={() => {
+            setAssessmentError("");
+            setAssessmentOverlayOpen(true);
+          }}
+          onSaveWorkHistory={saveWorkHistory}
+          savingWorkHistory={workHistorySaving}
+          workHistoryError={workHistoryError}
+          onSaveEducationHistory={saveEducationHistory}
+          savingEducationHistory={educationHistorySaving}
+          educationHistoryError={educationHistoryError}
+          onSaveLanguageExams={saveLanguageExams}
+          savingLanguageExams={languageExamsSaving}
+          languageExamsError={languageExamsError}
+          onSaveDependants={saveDependants}
+          savingDependants={dependantsSaving}
+          dependantsError={dependantsError}
+          onSaveSiblings={saveSiblings}
+          savingSiblings={siblingsSaving}
+          siblingsError={siblingsError}
+          onSaveParents={saveParents}
+          savingParents={parentsSaving}
+          parentsError={parentsError}
+          onSaveActivityHistory={saveActivityHistory}
+          savingActivityHistory={activityHistorySaving}
+          activityHistoryError={activityHistoryError}
+          onSaveAddressHistory={saveAddressHistory}
+          savingAddressHistory={addressHistorySaving}
+          addressHistoryError={addressHistoryError}
+          onSaveTravelHistory={saveTravelHistory}
+          savingTravelHistory={travelHistorySaving}
+          travelHistoryError={travelHistoryError}
+          onSaveIdentityPermits={saveIdentityPermits}
+          savingIdentityPermits={identityPermitsSaving}
+          identityPermitsError={identityPermitsError}
+          onCreateReminder={createReminder}
+          savingReminder={reminderSaving}
+          reminderError={reminderError}
+          onAssignQuestionnaire={assignQuestionnaire}
+          onUpdateQuestionnaire={updateQuestionnaireAssignment}
+          savingQuestionnaire={questionnaireSaving}
+          questionnaireError={questionnaireError}
+          onCreateCaseDocuments={createCaseDocuments}
+          onMarkCaseDocumentReceived={markCaseDocumentReceived}
+          onUpdateCaseDocumentAssignment={updateCaseDocumentAssignment}
+          onUploadMyCaseDocument={uploadMyCaseDocument}
+          onRefreshCaseDocuments={refreshCaseDocuments}
+          onDeleteCaseDocument={deleteCaseDocument}
+          onFinalizeCaseDocument={finalizeCaseDocument}
+          onChangeCaseDocumentStatus={changeCaseDocumentStatus}
+          savingCaseDocuments={caseDocumentsSaving}
+          caseDocumentsError={caseDocumentsError}
+          onCreateTask={createCaseTask}
+          onUpdateTask={updateCaseTask}
+          onDeleteTask={deleteCaseTask}
+          onSaveProfileQuestionnaire={saveProfileQuestionnaire}
+          savingProfileQuestionnaire={profileQuestionnaireSaving}
+          profileQuestionnaireError={profileQuestionnaireError}
+          onSaveSpouseDetails={saveSpouseDetails}
+          savingSpouseDetails={spouseDetailsSaving}
+          spouseDetailsError={spouseDetailsError}
+        />
+      </section>
+    </PageContainer>
+  );
+}

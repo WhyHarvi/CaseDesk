@@ -1,0 +1,33 @@
+{
+  "name": "casedesk-backend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "prisma generate",
+    "dev": "nodemon --ignore storage/** src/server.js",
+    "prestart": "prisma generate",
+    "start": "node src/server.js",
+    "prisma:validate": "prisma validate",
+    "db:seed": "node prisma/seed.js",
+    "db:seed:chk": "node prisma/seed-chk.js",
+    "test": "node --test test/**/*.test.js",
+    "load:test:intake": "node scripts/load-test-lead-intake.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "imapflow": "^1.4.7",
+    "libphonenumber-js": "^1.13.8",
+    "mailparser": "^3.9.14",
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.3",
+    "pdfkit": "^0.19.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "prisma": "^6.12.0"
+  }
+}

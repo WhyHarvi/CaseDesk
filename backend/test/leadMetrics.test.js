@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { conversionRate, reportingBounds } from "../src/modules/leads/lead.metrics.js";
+import { getLeadDashboard } from "../src/modules/leads/lead.dashboard.service.js";
+
+test("lead reporting uses the agency-local day and Monday week boundary", () => {
+  const bounds = reportingBounds(new Date("2026-07-14T15:00:00Z"), "America/Toronto");
+  assert.equal(bounds.todayStart.toISOString(), "2026-07-14T04:00:00.000Z");
+  assert.equal(bounds.tomorrowStart.toISOString(), "2026-07-15T04:00:00.000Z");
+  assert.equal(bounds.weekStart.toISOString(), "2026-07-13T04:00:00.000Z");
+});
+
+test("overall conversion rate is stable and safe for an empty funnel", () => {
+  assert.equal(conversionRate(3, 8), 37.5);
+  assert.equal(conversionRate(0, 0), 0);
+});
+
+test("consultant dashboard queries stay agency and owner scoped", async () => {
+  const leadWheres = [];
+  const relatedWheres = [];
+  const db = {
+    agency: { findUnique: async () => ({ timezone: "America/Toronto", defaultCurrency: "CAD" }) },
+    lead: {
+      count: async ({ where }) => { leadWheres.push(where); return 0; },
+      aggregate: async ({ where }) => { leadWheres.push(where); return { _sum: { estimatedValue: null } }; },
+      findMany: async ({ where }) => { leadWheres.push(where); return []; },
+      groupBy: async ({ where }) => { leadWheres.push(where); return []; },
+    },
+    leadFollowUp: { count: async ({ where }) => { relatedWheres.push(where); return 0; } },
+    leadConsultation: { count: async ({ where }) => { relatedWheres.push(where); return 0; } },
+  };
+  const req = { auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" } };
+
+  await getLeadDashboard(req, db, new Date("2026-07-14T15:00:00Z"));
+
+  assert.ok(leadWheres.every((where) => where.agencyId === "agency-1" && where.ownerUserId === "consultant-1"));
+  assert.ok(relatedWheres.every((where) => where.agencyId === "agency-1" && where.lead.agencyId === "agency-1" && where.lead.ownerUserId === "consultant-1"));
+});

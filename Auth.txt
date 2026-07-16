@@ -1,0 +1,283 @@
+The core authentication flow is implemented and working, but several production security controls are still incomplete. No code was changed during this review.
+
+All 103 backend tests pass, and the Prisma schema is valid.
+
+## Already implemented
+
+Compared with [Auth.txt](/Users/harvi/Emerks/casedesk/Auth.txt), CaseDesk currently has:
+
+- Public agency registration without requesting a password.
+- Secure Supabase invitation links.
+- Agency owner onboarding and account activation.
+- Consultant, Front Desk and client portal invitations.
+- Password recovery and password change.
+- Database-derived agency membership and roles.
+- User states: `invited`, `active`, `disabled`, `suspended`.
+- Agency onboarding and access states.
+- Disabled users and inactive memberships checked on every backend request.
+- Tenant isolation through agency-scoped queries and PostgreSQL RLS.
+- Admin/consultant/frontdesk/client route separation.
+- Durable database-backed rate limiting.
+- Service-role credentials confined to the backend.
+- Sensitive authentication data redacted from logs.
+- Generic public registration responses that avoid email enumeration.
+- Invitation/onboarding PII protected from direct Supabase access.
+
+## Production gaps
+
+| Priority | Missing control | Current problem |
+|---|---|---|
+| P0 | Read-only enforcement | `agency.accessStatus = read_only` only sets `req.auth.readOnly`; write endpoints do not enforce it. |
+| P0 | Forced-password backend enforcement | `mustChangePassword` is primarily enforced by frontend routing and can be bypassed with direct API calls. |
+| P0 | Supabase production configuration verification | Redirect URLs, SMTP, password policy, token lifetime, CAPTCHA and email templates cannot be confirmed from the repository. |
+| P0/P1 | MFA | No MFA/AAL2 requirement exists for admins or privileged operations. |
+| P1 | Session management | Users cannot view or revoke active sessions/devices. Password changes and resets do not explicitly invalidate every other session. |
+| P1 | Invitation lifecycle | No resend/cancel invitation endpoints or cleanup process for expired invitations. |
+| P1 | Authentication audit trail | Failed login, recovery request, MFA and token/session events are not captured by application audit logs. |
+| Conditional | Subscription enforcement | `Subscription` schema and subscription middleware described in `Auth.txt` are not implemented. |
+| P1 | Live authentication integration tests | Existing tests cover implementation structure and unit behavior, but not the complete live Supabase invitation/RLS/session lifecycle. |
+| P2 | Complete onboarding wizard | Timezone, admin job title/avatar, CRM defaults and workflow preferences are not part of onboarding. |
+
+## 1. Agency read-only access must be enforced
+
+The most immediate backend issue is in [authMiddleware.js](/Users/harvi/Emerks/casedesk/backend/src/middleware/authMiddleware.js:48).
+
+It currently creates:
+
+```js
+req.auth.readOnly = membership.agency.accessStatus === "read_only";
+```
+
+But nothing uses that value to block writes. A read-only agency can still make `POST`, `PATCH`, `PUT` and `DELETE` requests.
+
+Implement middleware such as:
+
+```js
+export function enforceAgencyAccess(req, res, next) {
+  if (req.auth.agencyAccessStatus === "blocked") {
+    return res.status(403).json({
+      success: false,
+      code: "AGENCY_BLOCKED",
+      message: "This workspace is currently blocked."
+    });
+  }
+
+  if (
+    req.auth.agencyAccessStatus === "read_only" &&
+    !["GET", "HEAD", "OPTIONS"].includes(req.method)
+  ) {
+    return res.status(403).json({
+      success: false,
+      code: "AGENCY_READ_ONLY",
+      message: "This workspace is currently read-only."
+    });
+  }
+
+  next();
+}
+```
+
+Billing, account recovery, data export and selected admin operations should be explicitly exempted.
+
+## 2. `mustChangePassword` is not a real backend restriction
+
+[AuthRoutes.jsx](/Users/harvi/Emerks/casedesk/frontend/src/auth/AuthRoutes.jsx) redirects most users to the password screen, but direct API calls remain possible.
+
+Additionally, `AdminRoute` does not check `mustChangePassword`, unlike `InternalRoute`.
+
+The backend should reject operational endpoints when either:
+
+```text
+users.must_change_password = true
+agency_members.must_change_password = true
+```
+
+Only these endpoints should remain accessible:
+
+- `GET /api/auth/me`
+- `POST /api/auth/change-password`
+- `POST /api/auth/logout`
+
+If temporary/demo passwords will never be used in production, the alternative is to remove this feature instead of presenting it as an enforced security control.
+
+## 3. Supabase production configuration must be verified
+
+These controls exist outside the repository and must be confirmed in the Supabase project:
+
+- Allowed redirect URLs:
+  - Production `/auth/accept-invite`
+  - Production `/auth/reset-password`
+- Production site URL.
+- Custom SMTP provider.
+- Branded invitation and recovery templates.
+- Invite/recovery token expiration.
+- Strong password policy.
+- Compromised-password protection, if supported by the selected plan.
+- CAPTCHA/bot protection.
+- Login and recovery rate limits.
+- Refresh-token reuse protection.
+- Appropriate access-token lifetime.
+- Service-role key present only in backend deployment secrets.
+- Local development URLs removed from production allowlists where unnecessary.
+
+Public registration is backend-rate-limited, but login and forgot-password requests go directly from the browser to Supabase. Their abuse protection therefore depends on Supabase configuration.
+
+## 4. MFA should be added
+
+There is currently no MFA implementation or AAL2 check.
+
+For immigration and client identity data, MFA should at minimum be required for:
+
+- Agency admins
+- Team-member administration
+- Password/security changes
+- Mail and communications configuration
+- Data export
+- Payment operations
+- Disabling users
+- Secret or webhook rotation
+
+Recommended flow:
+
+1. Enrol TOTP from Security Settings.
+2. Verify the challenge.
+3. Store/display whether MFA is enrolled.
+4. Require `aal2` for privileged routes.
+5. Provide recovery codes.
+6. Create an admin-assisted recovery procedure with audit logging.
+
+Frontend route hiding is insufficient; the backend must verify the Supabase authenticator assurance level.
+
+## 5. Session management is incomplete
+
+Current logout behavior:
+
+- Backend records `USER_LOGOUT`.
+- Frontend calls Supabase `signOut()`.
+
+Missing functionality:
+
+- List active sessions/devices.
+- Revoke one session.
+- “Sign out all other devices.”
+- Explicit global session revocation after account compromise.
+- Session metadata such as last used time, IP fingerprint and user agent.
+- Administrator-triggered session invalidation.
+
+Disabling a user is already safe because database status is checked on every request. However, the Supabase session should still be explicitly revoked to reduce residual exposure.
+
+## 6. Invitation lifecycle needs operational endpoints
+
+Agency invitations have an application-level expiration, but team-member invitations mainly depend on Supabase’s token expiration.
+
+Add admin/support operations:
+
+```text
+POST /api/admin/team-members/:id/resend-invitation
+POST /api/admin/team-members/:id/cancel-invitation
+POST /api/onboarding/resend
+```
+
+Rules should include:
+
+- Only `invited` users can be resent.
+- Old links should be invalidated where possible.
+- Rate-limit resend requests.
+- Record `INVITATION_RESENT` and `INVITATION_CANCELLED`.
+- Update `invitedAt` and `expiresAt`.
+- Periodically mark expired onboarding requests as `expired`.
+- Avoid creating duplicate application users or Auth identities.
+
+The manual invitation fallback is already useful, but it does not replace full lifecycle management.
+
+## 7. Authentication audit events need improvement
+
+`GET /api/auth/me` currently records `USER_LOGIN`, which means token restoration and routine identity refreshes can look like real logins.
+
+The application currently cannot record failed login attempts because login occurs directly through Supabase.
+
+Recommended security events:
+
+- Actual successful login
+- Failed login
+- Logout
+- Password changed
+- Recovery requested/completed
+- MFA enrolled/removed/challenged
+- Invitation created/resend/cancelled/accepted
+- User disabled/reactivated
+- Session revoked
+- Role or permission changed
+- Agency blocked/read-only/reactivated
+
+Options for Supabase events:
+
+- Supabase Auth hooks/log drains
+- An application auth callback
+- A controlled backend sign-in endpoint, if required
+
+Keep security audit events append-only and define retention and alerting.
+
+## 8. Subscription authorization is absent
+
+The schema contains agency onboarding/access state, but it does not contain the `Subscription` model described in `Auth.txt`.
+
+Missing:
+
+- Subscription record and statuses.
+- Trial dates.
+- Grace-period handling.
+- Subscription status in `req.auth`.
+- Read-versus-write subscription middleware.
+- Admin billing access during suspension.
+- Consultant/client behavior during past-due or suspended states.
+
+This is a production blocker only if paid subscriptions are part of the first launch. Otherwise, implement it before enabling billing—not as part of ordinary authentication.
+
+## 9. Onboarding is only partially complete
+
+Current onboarding captures the essential agency contact details, but the full `Auth.txt` wizard still needs:
+
+- Timezone
+- Agency logo
+- Admin job title
+- Admin phone/profile image separation
+- Default currency confirmation
+- Default case types
+- Document naming preference
+- Default workflow
+
+This is mainly onboarding/product work rather than an authentication vulnerability.
+
+## 10. Live security testing is still required
+
+The current test suite is green, but production auth needs tests against a dedicated Supabase test project:
+
+- Invitation can be accepted exactly once.
+- Expired invitation is rejected.
+- Cancelled invitation is rejected.
+- Disabled user with an existing JWT is rejected immediately.
+- Inactive membership is rejected.
+- Cross-agency reads and writes fail through RLS.
+- Front Desk cannot reach case/client data.
+- Password recovery token expires properly.
+- Password change invalidates the expected sessions.
+- Read-only agency cannot mutate data.
+- Blocked agency cannot access protected data.
+- Rate limits work across multiple backend instances.
+- Service-role credentials never appear in frontend output.
+
+## Recommended order
+
+1. Enforce `read_only` and `blocked` agency access centrally.
+2. Enforce `mustChangePassword` in the backend.
+3. Verify Supabase production Auth configuration and SMTP.
+4. Add admin MFA/AAL2.
+5. Add invitation resend/cancel/expiry management.
+6. Add session listing and revocation.
+7. Improve security audit events and alerts.
+8. Add live Supabase integration tests.
+9. Add subscription authorization when billing is enabled.
+10. Finish the full onboarding wizard.
+
+The existing core is suitable for controlled testing, but I would not call the authentication layer fully production-ready until the two bypassable controls—agency read-only mode and forced-password enforcement—are fixed and the Supabase production configuration is verified.

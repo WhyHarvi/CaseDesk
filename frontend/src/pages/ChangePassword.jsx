@@ -1,0 +1,12 @@
+import { useState } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
+import api from "../services/api";
+
+export default function ChangePassword() {
+  const { isAuthenticated, appUser, signOut } = useAuth(); const navigate = useNavigate();
+  const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  async function submit(event) { event.preventDefault(); if (password !== confirm) return setError("Passwords do not match."); setBusy(true); setError(""); try { await api.post("/auth/change-password", { password }); await signOut(); navigate("/login", { replace: true }); } catch (reason) { setError(reason.response?.data?.message || "Password could not be changed."); } finally { setBusy(false); } }
+  return <main className="flex min-h-screen items-center justify-center bg-slate-100 px-5"><form onSubmit={submit} className="w-full max-w-md rounded-3xl bg-white p-8 shadow-panel"><p className="text-sm font-semibold uppercase tracking-[.2em] text-sky-700">CaseDesk security</p><h1 className="mt-3 text-3xl font-semibold">Choose a new password</h1><p className="mt-2 text-sm leading-6 text-slate-500">{appUser?.mustChangePassword ? "Create a permanent password before you continue." : "After updating your password, you’ll sign in again on all devices."}</p>{[["New password", password, setPassword], ["Confirm password", confirm, setConfirm]].map(([label, value, setter]) => <label key={label} className="mt-5 block text-sm font-medium text-slate-700">{label}<input type="password" minLength={10} required value={value} onChange={(e) => setter(e.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" /></label>)}{error && <p className="mt-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}<button disabled={busy} className="mt-6 w-full rounded-2xl bg-sky-600 px-4 py-3 font-semibold text-white disabled:opacity-60">{busy ? "Updating…" : "Update password"}</button>{!appUser?.mustChangePassword ? <button type="button" onClick={() => navigate("/app/settings?section=security")} className="mt-3 w-full rounded-2xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50">Back to settings</button> : null}</form></main>;
+}

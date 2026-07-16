@@ -1,0 +1,287 @@
+import prisma from "../services/prisma/client.js";
+import {
+  caseAccessWhere,
+  clientAccessWhere,
+  relatedRecordAccessWhere,
+} from "../middleware/authorization.js";
+import { reportingBounds } from "../modules/leads/lead.metrics.js";
+
+const caseSummarySelect = {
+  id: true,
+  caseType: true,
+  stage: true,
+  status: true,
+  nextAction: true,
+  updatedAt: true,
+  client: { select: { id: true, fullName: true } },
+};
+
+function consultantTaskAccess(req) {
+  if (req.auth.role === "admin") return {};
+  return {
+    OR: [
+      { assignedToId: req.auth.userId },
+      { assignedToId: null, case: caseAccessWhere(req) },
+    ],
+  };
+}
+
+export function dashboardScopes(req) {
+  const agencyWhere = { agencyId: req.auth.agencyId };
+  const caseWhere = { ...agencyWhere, ...caseAccessWhere(req) };
+
+  return {
+    agencyWhere,
+    clientWhere: { ...agencyWhere, ...clientAccessWhere(req) },
+    caseWhere,
+    taskWhere: { ...agencyWhere, ...consultantTaskAccess(req) },
+    appointmentWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, case: caseAccessWhere(req) },
+    documentWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, case: caseAccessWhere(req) },
+    followUpWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : {
+          ...agencyWhere,
+          OR: [
+            { assignedUserId: req.auth.userId },
+            { case: caseAccessWhere(req) },
+          ],
+        },
+    activityWhere: {
+      ...agencyWhere,
+      ...relatedRecordAccessWhere(req),
+    },
+    paymentWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, client: clientAccessWhere(req) },
+  };
+}
+
+export async function getDashboardSummary(req, res) {
+  const {
+    clientWhere,
+    caseWhere,
+    taskWhere,
+    appointmentWhere,
+    documentWhere,
+    followUpWhere,
+    activityWhere,
+    paymentWhere,
+  } = dashboardScopes(req);
+  const now = new Date();
+  const agency = await prisma.agency.findUnique({
+    where: { id: req.auth.agencyId },
+    select: { timezone: true },
+  });
+  const timezone = agency?.timezone || "America/Toronto";
+  const { todayStart, tomorrowStart } = reportingBounds(now, timezone);
+  const pendingTaskWhere = { ...taskWhere, status: "Pending", isActive: true };
+  const openFollowUpWhere = { ...followUpWhere, status: { not: "Completed" } };
+  const waitingCaseWhere = {
+    agencyId: req.auth.agencyId,
+    status: { not: "Closed" },
+    AND: [
+      caseAccessWhere(req),
+      {
+        OR: [
+          { nextAction: null },
+          { nextAction: "" },
+          { workflowSteps: { none: { isActive: true, status: "Pending" } } },
+        ],
+      },
+    ],
+  };
+
+  const [
+    totalClients,
+    activeClients,
+    openCases,
+    tasksDueToday,
+    overdueTaskCount,
+    pendingDocuments,
+    followUpsDueToday,
+    overdueFollowUpCount,
+    appointmentsToday,
+    pendingPayments,
+    pendingPaymentTotals,
+    casePipelineRaw,
+    upcomingAppointments,
+    todayTasks,
+    overdueTasks,
+    documentActions,
+    upcomingFollowUps,
+    casesWaitingUpdateCount,
+    casesWaitingUpdate,
+    recentActivity,
+  ] = await Promise.all([
+    prisma.client.count({ where: clientWhere }),
+    prisma.client.count({ where: { ...clientWhere, status: "Active" } }),
+    prisma.case.count({ where: { ...caseWhere, status: { not: "Closed" } } }),
+    prisma.caseWorkflowStep.count({
+      where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
+    }),
+    prisma.caseWorkflowStep.count({
+      where: { ...pendingTaskWhere, dueAt: { lt: todayStart } },
+    }),
+    prisma.clientDocument.count({
+      where: {
+        ...documentWhere,
+        status: { in: ["Requested", "Uploaded", "UnderReview", "ChangesRequested"] },
+      },
+    }),
+    prisma.followUp.count({
+      where: { ...openFollowUpWhere, dueDate: { gte: todayStart, lt: tomorrowStart } },
+    }),
+    prisma.followUp.count({
+      where: { ...openFollowUpWhere, dueDate: { lt: todayStart } },
+    }),
+    prisma.appointment.count({
+      where: {
+        ...appointmentWhere,
+        status: "Scheduled",
+        startsAt: { gte: todayStart, lt: tomorrowStart },
+      },
+    }),
+    prisma.payment.count({
+      where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
+    }),
+    prisma.payment.aggregate({
+      where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
+      _sum: { balance: true },
+    }),
+    prisma.case.groupBy({
+      by: ["stage"],
+      where: { ...caseWhere, status: { not: "Closed" } },
+      _count: { stage: true },
+      orderBy: { stage: "asc" },
+    }),
+    prisma.appointment.findMany({
+      where: { ...appointmentWhere, status: "Scheduled", startsAt: { gte: now } },
+      orderBy: { startsAt: "asc" },
+      take: 5,
+      select: {
+        id: true,
+        subject: true,
+        location: true,
+        startsAt: true,
+        endsAt: true,
+        status: true,
+        case: { select: caseSummarySelect },
+        assignedTo: { select: { id: true, fullName: true } },
+      },
+    }),
+    prisma.caseWorkflowStep.findMany({
+      where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
+      orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
+      take: 5,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        priority: true,
+        dueAt: true,
+        case: { select: caseSummarySelect },
+      },
+    }),
+    prisma.caseWorkflowStep.findMany({
+      where: { ...pendingTaskWhere, dueAt: { lt: todayStart } },
+      orderBy: { dueAt: "asc" },
+      take: 5,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        priority: true,
+        dueAt: true,
+        case: { select: caseSummarySelect },
+      },
+    }),
+    prisma.clientDocument.findMany({
+      where: {
+        ...documentWhere,
+        status: { in: ["Requested", "Uploaded", "UnderReview", "ChangesRequested"] },
+      },
+      orderBy: { updatedAt: "asc" },
+      take: 5,
+      select: {
+        id: true,
+        documentName: true,
+        status: true,
+        updatedAt: true,
+        client: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true } },
+      },
+    }),
+    prisma.followUp.findMany({
+      where: openFollowUpWhere,
+      orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
+      take: 6,
+      select: {
+        id: true,
+        title: true,
+        dueDate: true,
+        status: true,
+        client: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true } },
+        assignedUser: { select: { id: true, fullName: true } },
+      },
+    }),
+    prisma.case.count({ where: waitingCaseWhere }),
+    prisma.case.findMany({
+      where: waitingCaseWhere,
+      orderBy: { updatedAt: "asc" },
+      take: 5,
+      select: caseSummarySelect,
+    }),
+    prisma.activityLog.findMany({
+      where: activityWhere,
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      select: {
+        id: true,
+        action: true,
+        details: true,
+        createdAt: true,
+        user: { select: { id: true, fullName: true } },
+        client: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true } },
+      },
+    }),
+  ]);
+
+  res.json({
+    data: {
+      timezone,
+      stats: {
+        totalClients,
+        activeClients,
+        openCases,
+        tasksDueToday,
+        overdueTasks: overdueTaskCount,
+        pendingDocuments,
+        followUpsDueToday,
+        overdueFollowUps: overdueFollowUpCount,
+        appointmentsToday,
+        pendingPayments,
+        pendingPaymentBalance: pendingPaymentTotals._sum.balance ?? 0,
+        casesWaitingUpdate: casesWaitingUpdateCount,
+      },
+      casePipeline: casePipelineRaw.map((item) => ({
+        stage: item.stage,
+        count: item._count.stage,
+      })),
+      upcomingAppointments,
+      todayTasks,
+      overdueTasks,
+      documentActions,
+      upcomingFollowUps,
+      casesWaitingUpdate,
+      recentActivity,
+    },
+  });
+}
+
+export default { getDashboardSummary };

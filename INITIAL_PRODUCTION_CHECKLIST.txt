@@ -1,0 +1,190 @@
+CASEDESK IMMIGRATION CRM - INITIAL USABLE PROTOTYPE CHECKLIST
+
+GOAL
+
+The system should allow an immigration agency to manage a client and their case from initial intake to case completion without depending on spreadsheets or manual database changes.
+
+MUST IMPLEMENT BEFORE LIVE USE
+
+1. User access and agency separation
+- Admin and employees can log in securely.
+- Admin can add, disable, and manage employees.
+- Every user and record belongs to an agency.
+- Employees can only see information from their own agency.
+- The backend gets agency_id from the logged-in user, never from the frontend.
+- Client portal users can only see their own information.
+
+2. Client management
+- Create, search, view, and update a client.
+- Store name, phone, email, address, language, and identification details.
+- Check phone and email before creating a duplicate client.
+- Assign a client to an employee.
+- Show all cases belonging to the client.
+- Keep important client records instead of permanently deleting them.
+
+3. Case management
+- Create a case for an existing client.
+- Store case type, status, stage, priority, assigned employee, and important dates.
+- Allow Admin or Manager to reassign a case.
+- Show a clear next action for every active case.
+- Allow a case to be marked completed, closed, cancelled, or inactive.
+- Record important case changes in the activity history.
+
+4. Applicants and family members
+- Add the primary applicant and additional applicants or dependants.
+- Store passport, date of birth, citizenship, marital status, and contact details.
+- Identify the relationship of each person to the primary applicant.
+- Allow applicant information to be updated from one place.
+- Prevent the same applicant from being added repeatedly to the same case.
+
+5. Immigration profile and assessment
+- Record immigration history, education, work history, language results, and current status.
+- Record the service or immigration program being assessed.
+- Save assessment notes, eligibility result, risks, and recommendations.
+- Record who completed the assessment and when.
+- Keep previous assessment information available for reference.
+
+6. Case workflow and tasks
+- Provide a simple workflow for each case type.
+- Show completed, current, and upcoming steps.
+- Create tasks with an assigned employee, due date, priority, and status.
+- Allow employees to complete, reschedule, or cancel a task.
+- Show overdue tasks clearly.
+- Do not leave an active case without a next action or pending task.
+
+7. Follow-ups, reminders, and appointments
+- Schedule client follow-ups with a date, time, employee, and reason.
+- Mark follow-ups completed and record the outcome.
+- Show follow-ups due today and overdue.
+- Book, reschedule, complete, or cancel appointments.
+- Show upcoming appointments on the employee dashboard.
+- Record missed appointments and the next action.
+
+8. Notes and activity timeline
+- Add internal notes to clients and cases.
+- Record calls, emails, messages, appointments, document changes, and status changes.
+- Show who performed each action and when.
+- Display all important activity in one chronological timeline.
+- Do not allow normal users to edit or delete important history silently.
+
+9. Document management
+- Upload documents to the correct client and case.
+- Use clear document names and document types.
+- Show document status: Requested, Uploaded, Under Review, Changes Requested, Approved, or Finalized.
+- Record who uploaded and reviewed each document.
+- Allow reviewers to add comments or request a replacement.
+- Prevent one agency from accessing another agency's documents.
+- Allow authorized users to download and preview documents.
+
+10. Immigration forms
+- Add the required forms for a case.
+- Store the form name, version, status, and assigned employee.
+- Fill forms using saved client and applicant information where possible.
+- Save form progress without losing previous information.
+- Support review, correction, approval, signature, and finalization steps.
+- Keep the finalized form and its version attached to the case.
+
+11. Agreements and letters
+- Create a service agreement or letter from a template.
+- Fill client and case information into the document.
+- Allow staff to review and edit the document.
+- Save the issued or finalized copy to the case.
+- Record when the document was created and issued.
+
+12. Client communication
+- Record incoming and outgoing email, SMS, phone, or chat communication.
+- Allow staff to add a communication note if a message is sent outside the CRM.
+- Link communication to the correct client and case.
+- Show communication history in chronological order.
+- Clearly separate internal notes from client-visible communication.
+
+13. Client portal
+- Allow a client to log in or use a secure invitation.
+- Show only the client's own cases, requests, documents, and messages.
+- Allow the client to upload requested documents.
+- Allow the client to see document or form status.
+- Allow the client to send and receive messages.
+- Do not expose internal notes, staff-only documents, or other clients.
+
+14. Fees and payments
+- Record agreed fees, invoices or charges, payments, refunds, and adjustments.
+- Show the total amount, paid amount, and outstanding balance.
+- Link billing records to the correct client and case.
+- Generate a basic statement of account.
+- Restrict financial changes to authorized employees.
+- Keep a history of payment changes.
+
+15. Employee dashboard
+- Show cases assigned to the logged-in employee.
+- Show tasks and follow-ups due today.
+- Show overdue tasks, missing documents, and upcoming appointments.
+- Show cases waiting for an employee update.
+- Each dashboard item should open the correct client or case.
+
+16. Search and navigation
+- Search clients by name, phone, email, or client number.
+- Search cases by case number, client, case type, status, or employee.
+- Open the complete client or case profile from search results.
+- Keep the main daily actions easy to find.
+
+17. Basic reports and management view
+- Show active, completed, closed, and overdue cases.
+- Show cases by type, stage, and assigned employee.
+- Show outstanding tasks, follow-ups, and document requests.
+- Show fees collected and outstanding balances.
+- Add simple filters for date, employee, case type, and status.
+
+18. Basic system controls
+- Allow Admin to manage employees and agency information.
+- Allow Admin to manage basic workflow and document templates.
+- Provide a simple audit or activity log.
+- Show clear errors when an action fails.
+- Prevent accidental duplicate submissions when a button is clicked twice.
+
+OPTIONAL INTAKE AND LEAD FEATURES FOR THE PROTOTYPE
+
+- Add a potential client or lead manually.
+- Convert a lead into a client without entering the same information again.
+- Keep the lead source and initial notes after conversion.
+- Advanced lead integrations and marketing reports are not required before the Immigration CRM is usable.
+
+MINIMUM END-TO-END TEST BEFORE LIVE USE
+
+1. Log in as an Admin and create an employee.
+2. Log in as the employee and confirm another agency's records are not visible.
+3. Create a client and confirm duplicate checking works.
+4. Create an immigration case for the client.
+5. Add the primary applicant and one dependant.
+6. Complete and save a basic immigration assessment.
+7. Start the correct case workflow and assign tasks.
+8. Request a document and upload it through the client portal.
+9. Review the document and request a replacement.
+10. Add an immigration form, save progress, review it, and finalize it.
+11. Create and save a service agreement or client letter.
+12. Record a client call, an internal note, and an outgoing message.
+13. Schedule a follow-up and an appointment.
+14. Confirm due and overdue work appears on the employee dashboard.
+15. Record a fee and payment and generate a statement of account.
+16. Confirm a Manager or Admin can inspect the complete case history.
+17. Complete or close the case and confirm it appears correctly in reports.
+18. Confirm the client portal does not show internal notes or staff-only files.
+
+NOT REQUIRED FOR THE INITIAL PROTOTYPE
+
+- AI eligibility decisions or document analysis
+- Advanced marketing automation
+- Two-way WhatsApp integration
+- Call recording and transcription
+- Advanced phone-system integration
+- Automatic government portal submission
+- Full accounting software integration
+- Mobile application
+- Advanced analytics
+- Multiple highly customizable workflows
+- Complex notification preferences
+- Large-scale performance optimization
+- Full production monitoring and high-availability infrastructure
+
+READY TO USE WHEN
+
+A real employee can create a client, manage an immigration case, collect and review documents, complete forms, communicate with the client, track work and payments, and close the case without asking a developer to update the database manually.

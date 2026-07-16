@@ -1,0 +1,263 @@
+
+
+
+
+For the **first usable production version**, the system must support one complete lead lifecycle:
+
+**Lead enters CRM → assigned → contacted → followed up → converted or lost → reported.**
+
+## Minimum features required
+
+### 1. Authentication and agency security
+
+- Admin and employee login
+- User roles: Admin, Manager, Staff
+- Every record linked to `agency_id`
+- Employees only see their agency’s data
+- Backend determines `agency_id`; never accept it from the frontend
+
+### 2. Universal lead intake
+
+At minimum, support:
+
+- Manual lead entry
+- Public website lead form
+- CSV import for existing leads
+- API/webhook endpoint for future integrations
+- “Quick Add Lead” form for phone calls, walk-ins and WhatsApp enquiries
+
+Direct integrations with Facebook, Instagram, Ooma and WhatsApp can follow later. Initially, their leads can enter through webhooks, Zapier/Make or manual capture.
+
+### 3. Lead information
+
+Each lead should contain:
+
+- Name
+- Phone
+- Email
+- Source
+- Interested service or case type
+- Assigned employee
+- Lead status
+- Priority
+- Created date
+- Last contacted date
+- Next follow-up date
+- Notes
+- Conversion or loss reason
+
+### 4. Duplicate prevention
+
+Before creating a lead, check:
+
+- Phone number
+- Email address
+- Existing client records
+
+Instead of silently creating duplicates, show the existing lead and allow staff to update it.
+
+### 5. Lead pipeline
+
+Use a simple initial pipeline:
+
+1. New
+2. Assigned
+3. Contact Attempted
+4. Contacted
+5. Consultation Scheduled
+6. Qualified
+7. Not Interested
+8. Follow-up Required
+9. Converted
+10. Lost
+
+Do not create dozens of stages initially.
+
+### 6. Lead assignment
+
+- Assign leads manually
+- Optional round-robin assignment
+- Show who currently owns the lead
+- Admin can reassign leads
+- Record every assignment change
+
+### 7. Contact and activity timeline
+
+Every action must be recorded:
+
+- Call attempted
+- Call connected
+- WhatsApp message sent
+- Email sent
+- Note added
+- Follow-up scheduled
+- Status changed
+- Employee changed
+- Lead converted or lost
+
+This timeline is essential because it shows exactly what employees have done.
+
+### 8. Follow-up system
+
+Every active lead should have a clear next action:
+
+- Next follow-up date and time
+- Assigned employee
+- Follow-up type
+- Priority
+- Reminder
+- Pending, completed or overdue status
+- Follow-up outcome
+
+A lead should not remain active without either a next follow-up or a final outcome.
+
+### 9. Employee work dashboard
+
+Each employee needs a dashboard showing:
+
+- New leads assigned today
+- Follow-ups due today
+- Overdue follow-ups
+- Leads not contacted
+- Recent activity
+- Consultations scheduled
+- Leads waiting for an update
+
+The main principle should be:
+
+> Every employee knows exactly whom to contact next.
+
+### 10. Lead details page
+
+One screen should show:
+
+- Contact information
+- Lead source
+- Current stage
+- Assigned employee
+- Full activity timeline
+- Notes
+- Follow-ups
+- Consultation information
+- Conversion status
+- Lost reason
+
+### 11. Conversion to client
+
+When a lead converts:
+
+- Create a client record
+- Link the original lead to the client
+- Preserve the lead timeline
+- Record conversion date
+- Record the employee responsible
+- Start the client intake or case workflow
+
+Avoid manually entering the same person again.
+
+### 12. Lost-lead tracking
+
+When marking a lead as lost, require a reason:
+
+- No response
+- Not interested
+- Price concern
+- Chose another agency
+- Not eligible
+- Invalid contact details
+- Duplicate
+- Follow-up missed
+- Other
+
+This is necessary for understanding why leads are being lost.
+
+### 13. Initial reports
+
+The first version should show:
+
+- Leads received
+- Leads by source
+- Leads by employee
+- Contacted versus not contacted
+- Follow-ups completed
+- Overdue follow-ups
+- Consultations booked
+- Converted leads
+- Lost leads
+- Conversion rate
+- Average response time
+- Loss reasons
+
+Filters should include employee, source, date range, status and service type.
+
+### 14. Admin controls
+
+Admin should be able to:
+
+- Add and disable employees
+- Reassign leads
+- View all employee activity
+- Manage lead sources
+- Manage pipeline stages
+- Export leads to CSV
+- View audit logs
+
+## Minimum lead sources for launch
+
+For the initial release, capture leads from:
+
+| Source | Initial solution |
+|---|---|
+| Phone calls | Quick Add Lead form |
+| Walk-ins | Quick Add Lead form |
+| WhatsApp | Manual entry or Zapier/Make webhook |
+| Website | Direct CRM form submission |
+| Facebook/Instagram | Meta lead webhook or Zapier/Make |
+| Existing Excel sheets | CSV import |
+| Referrals | Manual entry with referral source |
+
+## Essential automated rules
+
+The initial system should automatically:
+
+- Warn about duplicate leads
+- Record every status change
+- Mark missed follow-ups as overdue
+- Notify the assigned employee
+- Flag leads that have not been contacted
+- Require a loss reason
+- Record conversion details
+- Prevent deletion of important activity history
+
+## Features that can wait
+
+Do not block the first launch for:
+
+- AI lead scoring
+- Advanced marketing automation
+- WhatsApp two-way messaging
+- Call recording and transcription
+- Complex Ooma integration
+- Email campaigns
+- Client portal
+- Payment processing
+- Advanced analytics
+- Mobile application
+- Multiple custom pipelines
+
+## Initial release completion test
+
+The first version is ready when you can successfully test this scenario:
+
+1. A lead arrives from the website.
+2. The system detects whether it already exists.
+3. The lead is assigned to an employee.
+4. The employee calls and records the result.
+5. A follow-up is scheduled.
+6. The dashboard shows the follow-up on the correct day.
+7. A manager can inspect the complete timeline.
+8. The lead is converted into a client or marked lost.
+9. The conversion or loss appears correctly in reports.
+
+That is the minimum system needed to stop leads from being forgotten and begin measuring employee performance and actual conversion results.
+

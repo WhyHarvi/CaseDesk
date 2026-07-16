@@ -1,0 +1,14 @@
+import { Router } from "express";
+import { myWorkload } from "../controllers/adminConsultantController.js";
+import { requireRole } from "../middleware/authorization.js";
+import { asyncHandler } from "../utils/http.js";
+import { deleteMyAvatar, getMyAvatar, getMyProfile, updateMyProfile } from "../controllers/consultantProfileController.js";
+import { receiveProfileAvatar } from "../middleware/profileAvatarUpload.js";
+const router = Router();
+router.use(requireRole("consultant"));
+router.get("/me/profile", asyncHandler(getMyProfile));
+router.patch("/me/profile", receiveProfileAvatar, asyncHandler(updateMyProfile));
+router.get("/me/avatar", asyncHandler(getMyAvatar));
+router.delete("/me/avatar", asyncHandler(deleteMyAvatar));
+router.get("/me/workload", asyncHandler(myWorkload));
+export default router;

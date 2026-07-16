@@ -1,0 +1,1278 @@
+import {
+  BriefcaseBusiness,
+  Archive,
+  CalendarClock,
+  Download,
+  FileWarning,
+  FilterX,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Users,
+  X,
+} from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
+import api from "../services/api";
+
+const defaultFormState = {
+  fullName: "",
+  email: "",
+  phone: "",
+  dateOfBirth: "",
+  address: "",
+  preferredLanguage: "",
+  identificationType: "",
+  identificationNumber: "",
+  identificationCountry: "",
+  identificationExpiryDate: "",
+  status: "Lead",
+  assignedUserId: "",
+};
+
+const cardClassName =
+  "rounded-3xl border border-white/70 bg-white/75 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl";
+const pillClassName = "inline-flex items-center rounded-full px-3.5 py-1.5 text-xs font-semibold leading-none";
+
+function formatDateForInput(value) {
+  if (!value) {
+    return "";
+  }
+
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function formatRelativeDate(value) {
+  if (!value) {
+    return "Today";
+  }
+
+  const date = new Date(value);
+  const today = new Date();
+  const diffDays = Math.round((today.setHours(0, 0, 0, 0) - date.setHours(0, 0, 0, 0)) / 86400000);
+
+  if (diffDays <= 0) {
+    return "Today";
+  }
+
+  if (diffDays === 1) {
+    return "1 day ago";
+  }
+
+  if (diffDays < 7) {
+    return `${diffDays} days ago`;
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function getInitials(name) {
+  return (name || "Client")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("");
+}
+
+function normalizeStatus(status) {
+  if (!status) {
+    return "Lead";
+  }
+
+  if (status === "Inactive") {
+    return "Waiting";
+  }
+
+  return status;
+}
+
+function getStageStyles(stage) {
+  const styles = {
+    Lead: "bg-slate-100 text-slate-600",
+    Consultation: "bg-blue-100 text-blue-700",
+    "Retainer Pending": "bg-amber-100 text-amber-700",
+    "Documents Pending": "bg-orange-100 text-orange-700",
+    "Reviewing Documents": "bg-violet-100 text-violet-700",
+    "Application Preparing": "bg-teal-100 text-teal-700",
+    Submitted: "bg-indigo-100 text-indigo-700",
+    "Decision Received": "bg-emerald-100 text-emerald-700",
+    Closed: "bg-slate-200 text-slate-600",
+    Active: "bg-sky-100 text-sky-700",
+    Waiting: "bg-amber-100 text-amber-700",
+  };
+
+  return styles[stage] || "bg-slate-100 text-slate-600";
+}
+
+function getPaymentStyles(payment) {
+  if (payment === "Paid") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+
+  if (payment === "Partial") {
+    return "bg-amber-100 text-amber-700";
+  }
+
+  return "bg-rose-100 text-rose-700";
+}
+
+function getActionStyles(action) {
+  if (/(payment|collect|call)/i.test(action)) {
+    return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
+  }
+
+  if (/submit/i.test(action)) {
+    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
+  }
+
+  return "bg-sky-50 text-sky-700 ring-1 ring-sky-200";
+}
+
+function matchesView(client, view) {
+  switch (view) {
+    case "Active":
+      return client.normalizedStatus === "Active";
+    case "Pending Documents":
+      return client.missingDocs > 0;
+    case "Payment Due":
+      return client.paymentBalance > 0;
+    case "Follow-ups Due":
+      return client.followUpsDue > 0;
+    case "Closed":
+      return client.normalizedStatus === "Closed" || client.stage === "Closed";
+    default:
+      return true;
+  }
+}
+
+function buildClientViewModel(client) {
+  const currentCase = client.cases?.[0] || null;
+  const caseType = currentCase?.caseType || "No case";
+  const stage = currentCase?.stage || client.status || "Lead";
+  const nextAction = currentCase?.nextAction || "No next action";
+  const missingDocs = (currentCase?.clientDocuments || []).filter((document) => ["Requested", "ChangesRequested"].includes(document.status)).length;
+  const paymentTotals = (currentCase?.payments || []).reduce((summary, paymentItem) => ({
+    balance: summary.balance + Number(paymentItem.balance || 0),
+    paid: summary.paid + Number(paymentItem.paidAmount || 0),
+  }), { balance: 0, paid: 0 });
+  const payment = currentCase?.payments?.length ? (paymentTotals.balance > 0 ? `${new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(paymentTotals.balance)} due` : "Paid") : "No payment record";
+  const now = Date.now();
+  const followUpsDue = (currentCase?.followUps || []).filter((followUp) => !["Completed", "Cancelled"].includes(followUp.status) && followUp.dueDate && new Date(followUp.dueDate).getTime() <= now).length;
+  const updatedAt = currentCase?.updatedAt || client.updatedAt || client.createdAt;
+
+  return {
+    ...client,
+    caseType,
+    stage,
+    missingDocs,
+    payment,
+    paymentBalance: paymentTotals.balance,
+    followUpsDue,
+    nextAction,
+    hasCase: Boolean(currentCase),
+    normalizedStatus: normalizeStatus(client.status),
+    assignedName: client.assignedUser?.fullName || "Unassigned",
+    fileNumber: client.clientNumber || `CL-${String(client.id || "").slice(0, 8).toUpperCase()}`,
+    lastUpdatedLabel: formatRelativeDate(updatedAt),
+    initials: getInitials(client.fullName),
+  };
+}
+
+function ClientDrawer({
+  formState,
+  onChange,
+  onSubmit,
+  onCancel,
+  saving,
+  formError,
+  users,
+  isEditing,
+  closing,
+}) {
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm transition-all duration-300 ease-out ${
+        closing ? "opacity-0" : "opacity-100"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onCancel}
+        className="absolute inset-0 cursor-default"
+        aria-label="Close drawer"
+      />
+
+      <aside
+        className={`relative flex h-full w-full max-w-[720px] flex-col overflow-hidden border-l border-white/70 bg-gradient-to-br from-white via-slate-50 to-sky-50 shadow-[0_32px_120px_rgba(15,23,42,0.28)] backdrop-blur-2xl transition-all duration-300 ease-out ${
+          closing ? "translate-x-full scale-[0.98]" : "translate-x-0 scale-100"
+        }`}
+      >
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(15,23,42,0.08),transparent_32%)]" />
+
+        <div className="relative border-b border-slate-200/70 px-6 py-5 sm:px-8">
+          <div className="flex items-start justify-between gap-5">
+            <div>
+              <div className="inline-flex items-center rounded-full border border-sky-200/70 bg-sky-50/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+                Client intake
+              </div>
+
+              <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-950">
+                {isEditing ? "Edit client profile" : "Add new client"}
+              </h2>
+
+              <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                Save the core client details first. Case, documents, payments, and follow-ups can be handled from the client profile.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onCancel}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white/80 text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <form className="relative flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6 sm:px-8">
+            <section className="rounded-[1.75rem] border border-white/80 bg-white/75 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <div className="mb-5 flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-950">
+                    Client details
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Basic identity and contact information.
+                  </p>
+                </div>
+
+                <div className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 sm:block">
+                  Required *
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block md:col-span-2">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Full name *
+                  </span>
+                  <input
+                    required
+                    name="fullName"
+                    value={formState.fullName}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="Enter client name"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Email
+                  </span>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formState.email}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="client@example.com"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Phone
+                  </span>
+                  <input
+                    name="phone"
+                    value={formState.phone}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="+1 416 555 0100"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Date of birth
+                  </span>
+                  <input
+                    type="date"
+                    name="dateOfBirth"
+                    value={formState.dateOfBirth}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Status
+                  </span>
+                  <select
+                    name="status"
+                    value={formState.status}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                  >
+                    {["Lead", "Active", "Inactive", "Closed"].map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block md:col-span-2">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Preferred language</span>
+                  <input name="preferredLanguage" value={formState.preferredLanguage} onChange={onChange} maxLength={100} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="English, French..." />
+                </label>
+
+                <label className="block md:col-span-2">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Address
+                  </span>
+                  <textarea
+                    name="address"
+                    rows="3"
+                    value={formState.address}
+                    onChange={onChange}
+                    className="w-full resize-none rounded-2xl border border-slate-200/90 bg-white/90 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="Toronto, ON"
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="rounded-[1.75rem] border border-white/80 bg-white/75 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <div className="mb-5">
+                <h3 className="text-sm font-semibold text-slate-950">Identification</h3>
+                <p className="mt-1 text-sm text-slate-500">Record the primary identity document used for the file.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Document type</span><input name="identificationType" value={formState.identificationType} onChange={onChange} maxLength={100} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Passport" /></label>
+                <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Document number</span><input name="identificationNumber" value={formState.identificationNumber} onChange={onChange} maxLength={150} autoComplete="off" className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
+                <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Issuing country</span><input name="identificationCountry" value={formState.identificationCountry} onChange={onChange} maxLength={100} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
+                <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Expiry date</span><input type="date" name="identificationExpiryDate" value={formState.identificationExpiryDate} onChange={onChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
+              </div>
+            </section>
+
+            <section className="rounded-[1.75rem] border border-white/80 bg-white/75 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <div className="mb-5">
+                <h3 className="text-sm font-semibold text-slate-950">
+                  File ownership
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Assign the client to a staff member for follow-ups and daily work.
+                </p>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-700">
+                  Assigned consultant
+                </span>
+                <select
+                  name="assignedUserId"
+                  value={formState.assignedUserId}
+                  onChange={onChange}
+                  className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                >
+                  <option value="">Unassigned</option>
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.fullName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+
+            {formError ? (
+              <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                {formError}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="relative border-t border-slate-200/80 bg-white/85 px-6 py-4 shadow-[0_-18px_45px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:px-8">
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={onCancel}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex h-11 items-center justify-center rounded-2xl bg-slate-950 px-6 text-sm font-semibold text-white shadow-[0_18px_42px_rgba(15,23,42,0.24)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+              >
+                {saving ? "Saving..." : isEditing ? "Save changes" : "Create client"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, helper, accent }) {
+  const accentStyles = {
+    blue: "bg-sky-100 text-sky-700",
+    teal: "bg-teal-100 text-teal-700",
+    amber: "bg-amber-100 text-amber-700",
+    rose: "bg-rose-100 text-rose-700",
+  };
+
+  return (
+    <div className="flex max-h-[92px] min-h-[92px] items-center gap-4 rounded-2xl border border-white/70 bg-white/70 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+      <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${accentStyles[accent]}`}>
+        <Icon className="h-5 w-5" />
+      </div>
+      <div>
+        <p className="text-2xl font-bold tracking-tight text-slate-950">{value}</p>
+        <p className="mt-0.5 text-sm font-medium text-slate-600">{label}</p>
+        <p className="mt-1 text-xs text-slate-400">{helper}</p>
+      </div>
+    </div>
+  );
+}
+
+function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletingId }) {
+  const buttonRef = useRef(null);
+  const [menuPosition, setMenuPosition] = useState(null);
+  const menuWidth = 180;
+  const menuHeight = 104;
+  const viewportPadding = 12;
+
+  useEffect(() => {
+    if (!isOpen || !buttonRef.current) {
+      return;
+    }
+
+    function updateMenuPosition() {
+      if (!buttonRef.current) {
+        return;
+      }
+
+      const rect = buttonRef.current.getBoundingClientRect();
+      const preferredLeft = rect.right - menuWidth;
+      const maxLeft = window.innerWidth - menuWidth - viewportPadding;
+      const left = Math.max(viewportPadding, Math.min(preferredLeft, maxLeft));
+      const shouldOpenUp = rect.bottom + 8 + menuHeight > window.innerHeight - viewportPadding;
+      const top = shouldOpenUp
+        ? Math.max(viewportPadding, rect.top - menuHeight - 8)
+        : Math.min(rect.bottom + 8, window.innerHeight - menuHeight - viewportPadding);
+
+      setMenuPosition({
+        top,
+        left,
+      });
+    }
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [isOpen]);
+
+  return (
+    <div>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => onToggle(isOpen ? null : client.id)}
+        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+        aria-label={`More actions for ${client.fullName}`}
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+
+      {isOpen && menuPosition && typeof document !== "undefined"
+        ? createPortal(
+          <>
+          <button
+            type="button"
+            onClick={() => onToggle(null)}
+            className="fixed inset-0 z-[140] cursor-default bg-transparent"
+            aria-label="Close actions menu"
+          />
+          <div
+            className="fixed z-[150] min-w-[180px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_18px_40px_rgba(15,23,42,0.16)]"
+            style={{
+              top: `${menuPosition.top}px`,
+              left: `${menuPosition.left}px`,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onToggle(null);
+                onEdit(client);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50 hover:text-sky-700"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit client
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onToggle(null);
+                onDelete(client);
+              }}
+              disabled={deletingId === client.id}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Archive className="h-4 w-4" />
+              {deletingId === client.id ? "Archiving..." : "Archive client"}
+            </button>
+          </div>
+          </>,
+          document.body
+        )
+        : null}
+    </div>
+  );
+}
+
+function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen, deletingId }) {
+  return (
+    <div className={`${cardClassName} space-y-4 p-5`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+            {client.initials}
+          </div>
+          <div>
+            <Link to={`/clients/${client.id}`} className="font-semibold text-slate-900 transition hover:text-sky-700">
+              {client.fullName}
+            </Link>
+            <p className="text-sm text-slate-500">{client.email || client.phone || "No contact on file"}</p>
+            <p className="text-xs text-slate-400">{client.fileNumber}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <p className="text-slate-400">Case type</p>
+          <p className="mt-1 font-medium text-slate-700">{client.caseType}</p>
+        </div>
+        <div>
+          <p className="text-slate-400">Assigned</p>
+          <p className="mt-1 font-medium text-slate-700">{client.assignedName}</p>
+        </div>
+        <div>
+          <p className="text-slate-400">Payment</p>
+          <p className="mt-1 font-medium text-slate-700">{client.payment}</p>
+        </div>
+        <div>
+          <p className="text-slate-400">Updated</p>
+          <p className="mt-1 font-medium text-slate-700">{client.lastUpdatedLabel}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`${pillClassName} ${getStageStyles(client.stage)}`}>{client.stage}</span>
+        <span className={`${pillClassName} ${getActionStyles(client.nextAction)}`}>
+          {client.nextAction}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-slate-200/80 pt-4">
+        <p className={`text-sm font-medium ${client.missingDocs ? "text-amber-700" : "text-emerald-700"}`}>
+          {client.missingDocs ? `${client.missingDocs} missing docs` : "Documents complete"}
+        </p>
+        <ClientActionsMenu
+          client={client}
+          isOpen={isMenuOpen}
+          onToggle={onToggleMenu}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          deletingId={deletingId}
+        />
+      </div>
+    </div>
+  );
+}
+
+export default function Clients() {
+  const [clients, setClients] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [editingClient, setEditingClient] = useState(null);
+  const [formState, setFormState] = useState(defaultFormState);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
+  const [drawerClosing, setDrawerClosing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All Statuses");
+  const [caseTypeFilter, setCaseTypeFilter] = useState("All Case Types");
+  const [staffFilter, setStaffFilter] = useState("All Staff");
+  const [activeView, setActiveView] = useState("All Clients");
+  const [activeTabStyle, setActiveTabStyle] = useState(null);
+  const [activeActionMenuId, setActiveActionMenuId] = useState(null);
+  const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true
+  );
+  const tabsContainerRef = useRef(null);
+  const tabRefs = useRef({});
+
+  const isEditing = Boolean(editingClient);
+
+  async function loadClients() {
+    try {
+      setLoading(true);
+      const response = await api.get("/clients?limit=100");
+      setClients(response.data.data || []);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to load clients.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadUsers() {
+    try {
+      const response = await api.get("/leads/staff");
+      setUsers(response.data.data || []);
+    } catch (requestError) {
+      setUsers([]);
+    }
+  }
+
+  useEffect(() => {
+    loadClients();
+    loadUsers();
+  }, []);
+
+  useEffect(() => {
+    function updateLayoutMode() {
+      const nextIsDesktop = window.innerWidth >= 1024;
+      setIsDesktopLayout(nextIsDesktop);
+      setActiveActionMenuId(null);
+    }
+
+    updateLayoutMode();
+    window.addEventListener("resize", updateLayoutMode);
+
+    return () => {
+      window.removeEventListener("resize", updateLayoutMode);
+    };
+  }, []);
+
+  const enrichedClients = useMemo(
+    () => [...clients].sort((a, b) => a.fullName.localeCompare(b.fullName)).map(buildClientViewModel),
+    [clients]
+  );
+
+  const filteredClients = useMemo(() => {
+    return enrichedClients.filter((client) => {
+      const searchHaystack = [
+        client.fullName,
+        client.email,
+        client.emailNormalized,
+        client.phone,
+        client.phoneNormalized,
+        client.fileNumber,
+        client.caseType,
+        client.nextAction,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const normalizedQuery = searchQuery.toLowerCase();
+      const searchDigits = searchQuery.replace(/\D/g, "");
+      const matchesSearch = !searchQuery || searchHaystack.includes(normalizedQuery) || (searchDigits.length >= 7 && String(client.phoneNormalized || "").includes(searchDigits));
+      const matchesStatus = statusFilter === "All Statuses" || client.normalizedStatus === statusFilter;
+      const matchesCaseType = caseTypeFilter === "All Case Types" || client.caseType === caseTypeFilter;
+      const matchesStaff = staffFilter === "All Staff" || client.assignedName === staffFilter;
+      const matchesActiveView = matchesView(client, activeView);
+
+      return matchesSearch && matchesStatus && matchesCaseType && matchesStaff && matchesActiveView;
+    });
+  }, [activeView, caseTypeFilter, enrichedClients, searchQuery, staffFilter, statusFilter]);
+
+  const summary = useMemo(() => {
+    const activeCases = enrichedClients.filter((client) => client.normalizedStatus === "Active").length;
+    const documentsPending = enrichedClients.filter((client) => client.missingDocs > 0).length;
+    const followUpsDue = enrichedClients.reduce((total, client) => total + client.followUpsDue, 0);
+
+    return {
+      totalClients: enrichedClients.length,
+      activeCases,
+      documentsPending,
+      followUpsDue,
+    };
+  }, [enrichedClients]);
+
+  const hasActiveFilters =
+    Boolean(searchQuery) ||
+    statusFilter !== "All Statuses" ||
+    caseTypeFilter !== "All Case Types" ||
+    staffFilter !== "All Staff";
+
+  const caseTypeOptions = useMemo(
+    () => ["All Case Types", ...new Set(enrichedClients.map((client) => client.caseType).filter((value) => value && value !== "No case"))],
+    [enrichedClients]
+  );
+
+  const statusOptions = ["All Statuses", "Lead", "Active", "Waiting", "Closed"];
+  const staffOptions = useMemo(
+    () => ["All Staff", ...new Set(users.map((user) => user.fullName).filter(Boolean))],
+    [users]
+  );
+  const viewTabs = useMemo(
+    () =>
+      ["All Clients", "Active", "Pending Documents", "Payment Due", "Follow-ups Due", "Closed"].map((label) => ({
+        label,
+        count: enrichedClients.filter((client) => matchesView(client, label)).length,
+      })),
+    [enrichedClients]
+  );
+
+  useLayoutEffect(() => {
+    function updateActiveTabStyle() {
+      const activeTab = tabRefs.current[activeView];
+
+      if (!activeTab) {
+        return;
+      }
+
+      setActiveTabStyle({
+        width: activeTab.offsetWidth,
+        height: activeTab.offsetHeight,
+        left: activeTab.offsetLeft,
+        top: activeTab.offsetTop,
+      });
+    }
+
+    updateActiveTabStyle();
+    window.addEventListener("resize", updateActiveTabStyle);
+
+    return () => {
+      window.removeEventListener("resize", updateActiveTabStyle);
+    };
+  }, [activeView, viewTabs]);
+
+  function resetForm() {
+    setActiveActionMenuId(null);
+    setDrawerClosing(true);
+
+    window.setTimeout(() => {
+      setFormState(defaultFormState);
+      setEditingClient(null);
+      setFormError("");
+      setShowForm(false);
+      setDrawerClosing(false);
+    }, 260);
+  }
+
+  function openCreateForm() {
+    setActiveActionMenuId(null);
+    setEditingClient(null);
+    setFormState(defaultFormState);
+    setFormError("");
+    setShowForm(true);
+  }
+
+  function openEditForm(client) {
+    setActiveActionMenuId(null);
+    setEditingClient(client);
+    setFormState({
+      fullName: client.fullName || "",
+      email: client.email || "",
+      phone: client.phone || "",
+      dateOfBirth: formatDateForInput(client.dateOfBirth),
+      address: client.address || "",
+      preferredLanguage: client.preferredLanguage || "",
+      identificationType: client.identificationType || "",
+      identificationNumber: client.identificationNumber || "",
+      identificationCountry: client.identificationCountry || "",
+      identificationExpiryDate: formatDateForInput(client.identificationExpiryDate),
+      status: client.status || "Lead",
+      assignedUserId: client.assignedUser?.id || "",
+    });
+    setFormError("");
+    setShowForm(true);
+  }
+
+  function handleInputChange(event) {
+    const { name, value } = event.target;
+    setFormState((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    try {
+      setSaving(true);
+      setFormError("");
+
+      const payload = {
+        ...formState,
+        email: formState.email.trim(),
+        phone: formState.phone.trim(),
+        address: formState.address.trim(),
+        assignedUserId: formState.assignedUserId || "",
+      };
+
+      if (!payload.email) {
+        delete payload.email;
+      }
+
+      if (!payload.phone) {
+        delete payload.phone;
+      }
+
+      if (!payload.address) {
+        delete payload.address;
+      }
+
+      ["dateOfBirth", "identificationExpiryDate"].forEach((field) => {
+        if (!payload[field]) delete payload[field];
+      });
+
+      if (isEditing) {
+        await api.patch(`/clients/${editingClient.id}`, payload);
+      } else {
+        await api.post("/clients", payload);
+      }
+
+      await loadClients();
+      resetForm();
+    } catch (requestError) {
+      setFormError(requestError.response?.data?.message || "Unable to save client.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(client) {
+    let impact;
+    try {
+      const response = await api.get(`/clients/${client.id}/archive-impact`);
+      impact = response.data.data.impact;
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to check the client history before archiving.");
+      return;
+    }
+    const otherHistory = impact.notes + impact.followUps + impact.activity;
+    const history = [
+      `${impact.cases} case${impact.cases === 1 ? "" : "s"}`,
+      `${impact.documents} document${impact.documents === 1 ? "" : "s"}`,
+      `${impact.payments} payment${impact.payments === 1 ? "" : "s"}`,
+      `${otherHistory} other history item${otherHistory === 1 ? "" : "s"}`,
+    ].join(", ");
+    const confirmed = window.confirm(`Archive ${client.fullName} (${client.fileNumber})?\n\nThis profile has ${history}. Nothing will be permanently deleted. Archived clients are removed from the daily directory.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setActiveActionMenuId(null);
+      setDeletingId(client.id);
+      await api.patch(`/clients/${client.id}/archive`);
+      setClients((current) => current.filter((entry) => entry.id !== client.id));
+
+      if (editingClient?.id === client.id) {
+        resetForm();
+      }
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to archive client.");
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  function clearFilters() {
+    setSearchQuery("");
+    setStatusFilter("All Statuses");
+    setCaseTypeFilter("All Case Types");
+    setStaffFilter("All Staff");
+  }
+
+  return (
+    <section className="space-y-6">
+      <div className="space-y-5">
+        <section className="rounded-3xl border border-white/70 bg-white/75 px-6 py-5 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-3xl font-bold tracking-tight text-slate-950">Clients</h2>
+              <p className="mt-1 text-sm text-slate-500">Know exactly which client needs what today.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white/80 px-4 text-sm font-medium text-slate-600 transition hover:bg-white"
+              >
+                <Download className="h-4 w-4" />
+                Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={openCreateForm}
+                className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-950 bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:bg-slate-800"
+              >
+                <Plus className="h-4 w-4" />
+                Add Client
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard icon={Users} label="Total Clients" value={summary.totalClients} helper="All profiles in the workspace" accent="blue" />
+          <StatCard
+            icon={BriefcaseBusiness}
+            label="Active Cases"
+            value={summary.activeCases}
+            helper="Files currently moving forward"
+            accent="teal"
+          />
+          <StatCard
+            icon={FileWarning}
+            label="Documents Pending"
+            value={summary.documentsPending}
+            helper="Clients needing document follow-up"
+            accent="amber"
+          />
+          <StatCard
+            icon={CalendarClock}
+            label="Follow-ups Due"
+            value={summary.followUpsDue}
+            helper="Tasks that need attention today"
+            accent="rose"
+          />
+        </section>
+
+        <section className="relative isolate z-0 overflow-hidden rounded-3xl border border-white/80 bg-white/62 p-2.5 shadow-[0_20px_55px_rgba(15,23,42,0.12)] ring-1 ring-white/45 backdrop-blur-2xl">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/28 via-transparent to-sky-100/18" />
+          <div ref={tabsContainerRef} className="relative z-10 flex flex-wrap gap-2">
+            {activeTabStyle ? (
+              <div
+                className="pointer-events-none absolute rounded-2xl border border-sky-200/90 bg-sky-200 shadow-[0_14px_32px_rgba(56,189,248,0.28)] transition-all duration-500 ease-out"
+                style={{
+                  width: `${activeTabStyle.width}px`,
+                  height: `${activeTabStyle.height}px`,
+                  transform: `translate(${activeTabStyle.left}px, ${activeTabStyle.top}px)`,
+                }}
+              />
+            ) : null}
+            {viewTabs.map((tab) => {
+              const active = activeView === tab.label;
+
+              return (
+                <button
+                  key={tab.label}
+                  ref={(element) => {
+                    tabRefs.current[tab.label] = element;
+                  }}
+                  type="button"
+                  onClick={() => setActiveView(tab.label)}
+                  className={`relative z-10 inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium transition duration-300 ${
+                    active
+                      ? "border border-transparent bg-transparent text-slate-950"
+                      : "border border-transparent bg-white/18 text-slate-600 hover:bg-white/82 hover:shadow-sm"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      active ? "bg-white/60 text-slate-900 ring-1 ring-white/60" : "bg-slate-100/90 text-slate-500"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="relative z-10 rounded-3xl border border-white/70 bg-white/70 p-4 shadow-[0_12px_35px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search clients by name, phone, email, or file number..."
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white/90 pl-11 pr-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="h-12 min-w-[170px] rounded-2xl border border-slate-200 bg-white/90 px-4 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
+              >
+                {statusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={caseTypeFilter}
+                onChange={(event) => setCaseTypeFilter(event.target.value)}
+                className="h-12 min-w-[170px] rounded-2xl border border-slate-200 bg-white/90 px-4 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
+              >
+                {caseTypeOptions.map((caseType) => (
+                  <option key={caseType} value={caseType}>
+                    {caseType}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={staffFilter}
+                onChange={(event) => setStaffFilter(event.target.value)}
+                className="h-12 min-w-[170px] rounded-2xl border border-slate-200 bg-white/90 px-4 text-sm text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 sm:col-span-2 xl:col-span-1"
+              >
+                {staffOptions.map((staff) => (
+                  <option key={staff} value={staff}>
+                    {staff}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {hasActiveFilters ? (
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 bg-white/90 px-3 text-sm font-medium text-slate-500 transition hover:text-sky-700"
+              >
+                <FilterX className="h-4 w-4" />
+                Clear
+              </button>
+            </div>
+          ) : null}
+        </section>
+
+        <section className={`${cardClassName} relative z-10 overflow-visible`}>
+          <div className="border-b border-slate-200/60 px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Client directory</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Showing {filteredClients.length} of {enrichedClients.length}{" "}
+                  {enrichedClients.length === 1 ? "client" : "clients"}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                  Focused daily ops
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-500 transition hover:bg-slate-50"
+                >
+                  Recently updated
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {error ? <div className="mx-5 mt-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6">{error}</div> : null}
+
+          {loading ? (
+            <div className="space-y-3 p-5 sm:p-6">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-20 animate-pulse rounded-[1.5rem] border border-slate-200/60 bg-white/70"
+                />
+              ))}
+            </div>
+          ) : filteredClients.length ? (
+            <>
+              {isDesktopLayout ? (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="border-b border-slate-200/55 bg-white/82 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    <tr>
+                      <th className="px-6 py-4">Client</th>
+                      <th className="px-4 py-4">Case Type</th>
+                      <th className="px-4 py-4">Stage</th>
+                      <th className="px-4 py-4">Missing Docs</th>
+                      <th className="px-4 py-4">Payment</th>
+                      <th className="px-4 py-4">Next Action</th>
+                      <th className="px-4 py-4">Assigned To</th>
+                      <th className="px-4 py-4">Updated</th>
+                      <th className="px-6 py-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredClients.map((client) => (
+                      <tr key={client.id} className="border-b border-slate-100 transition hover:bg-sky-50/50">
+                        <td className="px-6 py-5">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+                              {client.initials}
+                            </div>
+                            <div>
+                              <Link
+                                to={`/clients/${client.id}`}
+                                className="font-semibold text-slate-900 transition hover:text-sky-700"
+                              >
+                                {client.fullName}
+                              </Link>
+                              <p className="text-slate-500">{client.email || client.phone || "No contact on file"}</p>
+                              <p className="text-xs text-slate-400">{client.fileNumber}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-5">
+                          <span className={`${pillClassName} bg-slate-100 text-slate-700`}>
+                            {client.caseType}
+                          </span>
+                        </td>
+                        <td className="px-4 py-5">
+                          <span className={`${pillClassName} ${getStageStyles(client.stage)}`}>
+                            {client.stage}
+                          </span>
+                        </td>
+                        <td className="px-4 py-5">
+                          <span
+                            className={`${pillClassName} ${
+                              client.missingDocs
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-emerald-50 text-emerald-700"
+                            }`}
+                          >
+                            {client.missingDocs ? `${client.missingDocs} missing` : "Complete"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-5">
+                          <span className={`${pillClassName} ${getPaymentStyles(client.payment)}`}>
+                            {client.payment}
+                          </span>
+                        </td>
+                        <td className="px-4 py-5">
+                          <span className={`${pillClassName} ${getActionStyles(client.nextAction)}`}>
+                            {client.nextAction}
+                          </span>
+                        </td>
+                        <td className="px-4 py-5">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
+                              {getInitials(client.assignedName)}
+                            </div>
+                            <span className="font-medium text-slate-700">{client.assignedName}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-5 font-medium text-slate-600">{client.lastUpdatedLabel}</td>
+                        <td className="px-6 py-5">
+                          <div className="flex items-center justify-end">
+                            <ClientActionsMenu
+                              client={client}
+                              isOpen={activeActionMenuId === client.id}
+                              onToggle={setActiveActionMenuId}
+                              onEdit={openEditForm}
+                              onDelete={handleDelete}
+                              deletingId={deletingId}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              ) : (
+              <div className="grid gap-4 p-5 sm:p-6">
+                {filteredClients.map((client) => (
+                  <ClientsMobileCard
+                    key={client.id}
+                    client={client}
+                    onEdit={openEditForm}
+                    onDelete={handleDelete}
+                    onToggleMenu={setActiveActionMenuId}
+                    isMenuOpen={activeActionMenuId === client.id}
+                    deletingId={deletingId}
+                  />
+                ))}
+              </div>
+              )}
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+                <Users className="h-7 w-7" />
+              </div>
+              <h3 className="mt-5 text-xl font-semibold text-slate-900">No clients found</h3>
+              <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                Add your first client or adjust your filters to see results.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={openCreateForm}
+                  className="inline-flex h-11 items-center gap-2 rounded-2xl bg-gradient-to-r from-slate-900 via-sky-900 to-sky-700 px-4 text-sm font-semibold text-white shadow-[0_18px_45px_rgba(2,132,199,0.22)]"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Client
+                </button>
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600"
+                >
+                  <FilterX className="h-4 w-4" />
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {showForm ? (
+        <ClientDrawer
+          formState={formState}
+          onChange={handleInputChange}
+          onSubmit={handleSubmit}
+          onCancel={resetForm}
+          saving={saving}
+          formError={formError}
+          users={users}
+          isEditing={isEditing}
+          closing={drawerClosing}
+        />
+      ) : null}
+    </section>
+  );
+}

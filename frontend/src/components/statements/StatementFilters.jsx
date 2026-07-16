@@ -1,0 +1,16 @@
+export default function StatementFilters({ filters, setFilters, options, generating, error, onGenerate }) {
+  const update = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+
+  return (
+    <form onSubmit={onGenerate} className="statement-no-print rounded-[1.5rem] border border-slate-200/80 bg-slate-50/75 p-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block"><span className="text-xs font-semibold text-slate-700">Transactions</span><select value={filters.periodMode} onChange={(event) => update("periodMode", event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100"><option value="all">All transactions</option><option value="custom">Custom date range</option></select></label>
+        <label className="block"><span className="text-xs font-semibold text-slate-700">Case</span><select value={filters.caseId} onChange={(event) => update("caseId", event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100"><option value="">All Cases</option>{options.cases.map((item) => <option key={item.id} value={item.id}>{item.caseType}</option>)}</select></label>
+        {filters.periodMode === "custom" ? <><label className="block"><span className="text-xs font-semibold text-slate-700">From</span><input required type="date" value={filters.from} onChange={(event) => update("from", event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label><label className="block"><span className="text-xs font-semibold text-slate-700">To</span><input required type="date" value={filters.to} onChange={(event) => update("to", event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label></> : null}
+        {options.currencies.length > 1 ? <label className="block"><span className="text-xs font-semibold text-slate-700">Currency</span><select value={filters.currency} onChange={(event) => update("currency", event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100">{options.currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></label> : null}
+      </div>
+      {error ? <p className="mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p> : null}
+      <div className="mt-4 flex justify-end"><button type="submit" disabled={generating} className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_25px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 disabled:opacity-50">{generating ? "Generating…" : "Generate preview"}</button></div>
+    </form>
+  );
+}

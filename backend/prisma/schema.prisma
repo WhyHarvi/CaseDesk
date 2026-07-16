@@ -1,0 +1,2482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model ApiRateLimitBucket {
+  key       String   @id
+  count     Int      @default(1)
+  resetAt   DateTime @map("reset_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([resetAt])
+  @@map("api_rate_limit_buckets")
+}
+
+enum UserRole {
+  admin
+  consultant
+  frontdesk
+  client
+  staff
+  manager
+  accountant
+}
+
+enum AccountStatus {
+  active
+  disabled
+  invited
+  suspended
+}
+
+enum AgencyOnboardingStatus {
+  pending_setup
+  active
+  incomplete
+  rejected
+}
+
+enum AgencyAccessStatus {
+  active
+  read_only
+  blocked
+}
+
+enum OnboardingRequestStatus {
+  pending
+  invited
+  completed
+  expired
+  rejected
+  failed
+}
+
+enum AssignmentType {
+  primary
+  supporting
+  reviewer
+}
+
+enum AssignmentStatus {
+  active
+  inactive
+}
+
+enum ClientStatus {
+  Lead
+  Active
+  Inactive
+  Closed
+}
+
+enum DocumentStatus {
+  Requested
+  Uploaded
+  UnderReview      @map("Under Review")
+  ChangesRequested @map("Changes Requested")
+  Approved
+  Finalized
+  NotRequired      @map("Not Required")
+}
+
+enum DocumentVisibility {
+  Client
+  Internal
+}
+
+enum FormStatus {
+  Assigned
+  InformationMissing @map("Information Missing")
+  ReadyToFill        @map("Ready to Fill")
+  InProgress         @map("In Progress")
+  ReadyForReview     @map("Ready for Review")
+  ChangesRequested   @map("Changes Requested")
+  Approved
+  SignatureRequired  @map("Signature Required")
+  Signed
+  Finalized
+  NotRequired        @map("Not Required")
+}
+
+enum FormSource {
+  Catalog
+  Custom
+}
+
+enum FormRequirement {
+  Required
+  Conditional
+  Optional
+}
+
+enum FormVersionStatus {
+  Unverified
+  Current
+  UpdateAvailable     @map("Update Available")
+  UnsupportedRevision @map("Unsupported Revision")
+  SourceUnavailable   @map("Source Unavailable")
+  PortalOnly          @map("Portal Only")
+}
+
+enum CaseFormVersionSource {
+  OfficialImport @map("Official Import")
+  CustomUpload   @map("Custom Upload")
+  BrowserSave    @map("Browser Save")
+  Restored
+  Finalized
+}
+
+enum FormCopyType {
+  Original
+  Working
+  Filled
+  ClientSigned @map("Client Signed")
+  Finalized
+}
+
+enum CorrespondenceKind {
+  Agreement
+  Letter
+}
+
+enum AppointmentStatus {
+  Scheduled
+  Completed
+  Cancelled
+}
+
+enum CommunicationChannel {
+  Email
+  Sms
+  Chat
+  Call
+}
+
+enum CommunicationDirection {
+  Inbound
+  Outbound
+  Internal
+}
+
+enum CommunicationStatus {
+  Draft
+  Scheduled
+  Queued
+  Sending
+  Sent
+  Delivered
+  Bounced
+  Failed
+  Blocked
+  OptedOut
+  Cancelled
+  Received
+  Completed
+  Missed
+}
+
+enum CommunicationConversationState {
+  Open
+  WaitingOnClient @map("Waiting on Client")
+  WaitingOnAgency @map("Waiting on Agency")
+  Snoozed
+  Closed
+}
+
+enum CommunicationPriority {
+  Low
+  Normal
+  High
+  Urgent
+}
+
+enum CommunicationOutboxStatus {
+  Pending
+  Processing
+  Completed
+  Failed
+  Cancelled
+}
+
+enum CommunicationConsentStatus {
+  Unknown
+  Consented
+  OptedOut  @map("Opted Out")
+}
+
+enum CommunicationAttachmentStatus {
+  Pending
+  Clean
+  Rejected
+}
+
+enum FollowUpStatus {
+  Pending
+  Completed
+  Overdue
+  Cancelled
+}
+
+enum PaymentStatus {
+  Unpaid
+  Partial
+  Paid
+  Refunded
+}
+
+enum CaseWorkflowStepStatus {
+  Pending
+  Completed
+  Cancelled
+}
+
+enum WorkflowStepPriority {
+  Low
+  Normal
+  High
+  Urgent
+}
+
+enum LeadStatus {
+  OPEN
+  CONVERTED
+  LOST
+  NURTURE
+  DUPLICATE
+  DO_NOT_CONTACT
+  ARCHIVED
+}
+
+enum LeadStage {
+  NEW
+  ASSIGNED
+  CONTACTING
+  CONNECTED
+  QUALIFIED
+  CONSULTATION_BOOKED
+  CONSULTATION_COMPLETED
+  RETAINER_PENDING
+  PAYMENT_PENDING
+  READY_TO_CONVERT
+}
+
+enum LeadPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum LeadTemperature {
+  COLD
+  WARM
+  HOT
+}
+
+enum LeadSourceType {
+  PHONE
+  OOMA
+  WHATSAPP
+  FACEBOOK
+  INSTAGRAM
+  SOCIAL_FORM
+  SOCIAL_MESSAGE
+  WEBSITE
+  GOOGLE_ADS
+  EMAIL
+  WALK_IN
+  REFERRAL
+  EVENT
+  EMPLOYEE_PHONE
+  CSV_IMPORT
+  OTHER
+}
+
+enum LeadActivityType {
+  LEAD_CREATED
+  INCOMING_CALL
+  OUTGOING_CALL
+  MISSED_CALL
+  WHATSAPP_RECEIVED
+  WHATSAPP_SENT
+  SMS_RECEIVED
+  SMS_SENT
+  EMAIL_RECEIVED
+  EMAIL_SENT
+  INTERNAL_NOTE
+  STAGE_CHANGED
+  ASSIGNMENT_CHANGED
+  FOLLOW_UP_CREATED
+  FOLLOW_UP_COMPLETED
+  CONSULTATION_BOOKED
+  CONSULTATION_RESCHEDULED
+  CONSULTATION_COMPLETED
+  CONSULTATION_CANCELLED
+  CONSULTATION_NO_SHOW
+  AGREEMENT_PREPARED
+  AGREEMENT_SENT
+  AGREEMENT_SIGNED
+  PAYMENT_REQUESTED
+  PAYMENT_RECEIVED
+  LEAD_CONVERTED
+  LEAD_LOST
+  LEAD_MOVED_TO_NURTURE
+  LEAD_REACTIVATED
+  LEAD_MERGED
+}
+
+enum LeadActivityDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum LeadActivityChannel {
+  PHONE
+  OOMA
+  WHATSAPP
+  SMS
+  EMAIL
+  SOCIAL
+  WEBSITE
+  IN_PERSON
+  SYSTEM
+  OTHER
+}
+
+enum LeadFollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum LeadAssignmentType {
+  MANUAL
+  ROUND_ROBIN
+  RULE_BASED
+  REASSIGNMENT
+  SYSTEM
+}
+
+enum LeadLostReason {
+  NO_RESPONSE
+  NOT_INTERESTED
+  NOT_ELIGIBLE
+  PRICE_CONCERN
+  SELECTED_ANOTHER_CONSULTANT
+  CONSULTATION_NO_SHOW
+  AGREEMENT_NOT_SIGNED
+  PAYMENT_NOT_COMPLETED
+  SERVICE_NOT_OFFERED
+  WRONG_CONTACT_INFORMATION
+  DUPLICATE
+  DO_NOT_CONTACT
+  OTHER
+}
+
+enum LeadRetainerStatus {
+  NOT_REQUIRED
+  NOT_PREPARED
+  PREPARED
+  SENT
+  VIEWED
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+enum LeadInitialPaymentStatus {
+  NOT_REQUESTED
+  REQUESTED
+  PARTIAL
+  PAID
+  FAILED
+  REFUNDED
+  WAIVED
+}
+
+enum LeadQualificationOutcome {
+  QUALIFIED
+  MORE_INFORMATION_REQUIRED
+  CONSULTATION_REQUIRED
+  NOT_ELIGIBLE
+  FUTURE_OPPORTUNITY
+  SERVICE_NOT_OFFERED
+}
+
+enum LeadConsultationStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+  NO_SHOW
+}
+
+enum LeadConsultationOutcome {
+  READY_TO_PROCEED
+  AGREEMENT_REQUIRED
+  PAYMENT_REQUIRED
+  FOLLOW_UP_REQUIRED
+  NOT_ELIGIBLE
+  NOT_INTERESTED
+  FUTURE_OPPORTUNITY
+  LOST
+}
+
+enum LeadIncomingEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  DUPLICATE_REVIEW
+  FAILED
+}
+
+enum LeadImportBatchStatus {
+  PREVIEW
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum LeadImportRowStatus {
+  VALID
+  INVALID
+  QUEUED
+  PROCESSED
+  DUPLICATE
+  FAILED
+}
+
+enum LeadDuplicateStatus {
+  PENDING
+  CONFIRMED
+  DISMISSED
+}
+
+model Agency {
+  id                             String                          @id @default(uuid())
+  name                           String
+  slug                           String?                         @unique
+  status                         AccountStatus                   @default(active)
+  onboardingStatus               AgencyOnboardingStatus          @default(pending_setup) @map("onboarding_status")
+  accessStatus                   AgencyAccessStatus              @default(active) @map("access_status")
+  phone                          String?
+  email                          String?
+  address                        String?
+  city                           String?
+  province                       String?
+  country                        String?
+  postalCode                     String?                         @map("postal_code")
+  legalName                      String?                         @map("legal_name")
+  website                        String?
+  logoUrl                        String?                         @map("logo_url")
+  businessNumber                 String?                         @map("business_number")
+  taxNumber                      String?                         @map("tax_number")
+  defaultCurrency                String                          @default("CAD") @map("default_currency")
+  locale                         String                          @default("en-CA")
+  timezone                       String                          @default("America/Toronto")
+  paymentInstructions            String?                         @map("payment_instructions")
+  createdAt                      DateTime                        @default(now()) @map("created_at")
+  updatedAt                      DateTime                        @updatedAt @map("updated_at")
+  users                          User[]
+  memberships                    AgencyMember[]
+  consultantProfiles             ConsultantProfile[]
+  clientUsers                    ClientUser[]
+  caseAssignments                CaseAssignment[]
+  clients                        Client[]
+  cases                          Case[]
+  documentTemplates              DocumentTemplate[]
+  clientDocuments                ClientDocument[]
+  notes                          Note[]
+  followUps                      FollowUp[]
+  payments                       Payment[]
+  activityLogs                   ActivityLog[]
+  workflowTemplates              WorkflowTemplate[]
+  workflowTemplateSteps          WorkflowTemplateStep[]
+  caseWorkflowSteps              CaseWorkflowStep[]
+  caseAssessments                CaseAssessment[]
+  sharedLibraryDocuments         SharedLibraryDocument[]
+  writtenDocuments               WrittenDocument[]
+  writtenDocumentVersions        WrittenDocumentVersion[]
+  caseForms                      CaseForm[]
+  caseFormVersions               CaseFormVersion[]
+  caseFormReviewComments         CaseFormReviewComment[]
+  agencyFormTemplates            AgencyFormTemplate[]
+  agencyFormTemplateVersions     AgencyFormTemplateVersion[]
+  formPermissions                FormPermission[]
+  caseFormAuditEvents            CaseFormAuditEvent[]
+  correspondenceTemplates        CorrespondenceTemplate[]
+  correspondenceTemplateVersions CorrespondenceTemplateVersion[]
+  appointments                   Appointment[]
+  communicationConversations     CommunicationConversation[]
+  communicationMessages          CommunicationMessage[]
+  communicationDeliveryEvents    CommunicationDeliveryEvent[]
+  communicationOutboxJobs        CommunicationOutbox[]
+  communicationPermissions       CommunicationPermission[]
+  communicationConsents          CommunicationConsent[]
+  communicationTemplates         CommunicationTemplate[]
+  communicationUnmatchedItems    UnmatchedCommunication[]
+  communicationAuditEvents       CommunicationAuditEvent[]
+  communicationAttachments       CommunicationAttachment[]
+  communicationRetentionPolicy   CommunicationRetentionPolicy?
+  communicationPreferences       CommunicationPreference[]
+  communicationAutomationRules   CommunicationAutomationRule[]
+  communicationSlaPolicy         CommunicationSlaPolicy?
+  clientCommunicationAccesses    ClientCommunicationAccess[]
+  immigrationProfiles            ImmigrationProfile[]
+  immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
+  mailSettings                   AgencyMailSettings?
+  oomaSettings                   AgencyOomaSettings?
+  accountStatements              AccountStatementGeneration[]
+  leadSequence                   AgencyLeadSequence?
+  clientSequence                 AgencyClientSequence?
+  leadSources                    LeadSource[]
+  leadCampaigns                  LeadCampaign[]
+  leads                          Lead[]
+  leadActivities                 LeadActivity[]
+  leadStageHistory               LeadStageHistory[]
+  leadAssignmentHistory          LeadAssignmentHistory[]
+  leadFollowUps                  LeadFollowUp[]
+  leadLostDetails                LeadLostDetail[]
+  leadConversions                LeadConversion[]
+  leadQualifications             LeadQualification[]
+  leadConsultations              LeadConsultation[]
+  leadIntakeForms                LeadIntakeForm[]
+  leadIncomingEvents             LeadIncomingEvent[]
+  leadImportBatches              LeadImportBatch[]
+  leadImportRows                 LeadImportRow[]
+  leadDuplicateCandidates        LeadDuplicateCandidate[]
+  leadSourceConnections          LeadSourceConnection[]
+  onboardingRequests             OnboardingRequest[]
+
+  @@map("agencies")
+}
+
+model AgencyMailSettings {
+  id                     String    @id @default(uuid())
+  agencyId               String    @unique @map("agency_id")
+  provider               String    @default("Custom")
+  displayName            String?   @map("display_name")
+  emailAddress           String    @map("email_address")
+  smtpHost               String    @map("smtp_host")
+  smtpPort               Int       @map("smtp_port")
+  smtpSecure             Boolean   @default(true) @map("smtp_secure")
+  smtpUsername           String    @map("smtp_username")
+  smtpPasswordEncrypted  String    @map("smtp_password_encrypted")
+  imapHost               String?   @map("imap_host")
+  imapPort               Int?      @map("imap_port")
+  imapSecure             Boolean   @default(true) @map("imap_secure")
+  imapUsername           String?   @map("imap_username")
+  imapPasswordEncrypted  String?   @map("imap_password_encrypted")
+  inboundEnabled         Boolean   @default(false) @map("inbound_enabled")
+  lastSyncedUid          BigInt?   @map("last_synced_uid")
+  lastInboundSyncAt      DateTime? @map("last_inbound_sync_at")
+  lastInboundSyncStatus  String?   @map("last_inbound_sync_status")
+  lastInboundSyncMessage String?   @map("last_inbound_sync_message")
+  enabled                Boolean   @default(true)
+  lastTestedAt           DateTime? @map("last_tested_at")
+  lastTestStatus         String?   @map("last_test_status")
+  lastTestMessage        String?   @map("last_test_message")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+  agency                 Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("agency_mail_settings")
+}
+
+model AgencyOomaSettings {
+  id                    String    @id @default(uuid())
+  agencyId              String    @unique @map("agency_id")
+  apiBaseUrl            String    @map("api_base_url")
+  apiKeyEncrypted       String    @map("api_key_encrypted")
+  fromNumber            String    @map("from_number")
+  smsSendPath           String?   @map("sms_send_path")
+  callStartPath         String?   @map("call_start_path")
+  authHeader            String    @default("authorization") @map("auth_header")
+  authPrefix            String    @default("Bearer") @map("auth_prefix")
+  webhookTokenEncrypted String?   @map("webhook_token_encrypted")
+  webhookTokenHash      String?   @unique @map("webhook_token_hash")
+  lastWebhookAt         DateTime? @map("last_webhook_at")
+  enabled               Boolean   @default(true)
+  smsEnabled            Boolean   @default(true) @map("sms_enabled")
+  callsEnabled          Boolean   @default(true) @map("calls_enabled")
+  lastSmsTestedAt       DateTime? @map("last_sms_tested_at")
+  lastSmsTestStatus     String?   @map("last_sms_test_status")
+  lastSmsTestMessage    String?   @map("last_sms_test_message")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  agency                Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("agency_ooma_settings")
+}
+
+model User {
+  id                                  String                          @id @default(uuid())
+  agencyId                            String                          @map("agency_id")
+  authUserId                          String?                         @unique @map("auth_user_id") @db.Uuid
+  fullName                            String                          @map("full_name")
+  email                               String                          @unique
+  role                                UserRole
+  status                              AccountStatus                   @default(active)
+  mustChangePassword                  Boolean                         @default(false) @map("must_change_password")
+  phone                               String?
+  jobTitle                            String?                         @map("job_title")
+  avatarStorageKey                    String?                         @map("avatar_storage_key")
+  avatarMimeType                      String?                         @map("avatar_mime_type")
+  licenseNumber                       String?                         @map("license_number")
+  createdAt                           DateTime                        @default(now()) @map("created_at")
+  updatedAt                           DateTime                        @updatedAt @map("updated_at")
+  agency                              Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  memberships                         AgencyMember[]
+  consultantProfiles                  ConsultantProfile[]
+  clientUsers                         ClientUser[]
+  caseAssignments                     CaseAssignment[]                @relation("AssignedConsultant")
+  assignedCaseAssignments             CaseAssignment[]                @relation("CaseAssignmentActor")
+  assignedClients                     Client[]                        @relation("AssignedClientUser")
+  assignedCases                       Case[]                          @relation("AssignedCaseUser")
+  notes                               Note[]
+  assignedFollowUps                   FollowUp[]                      @relation("AssignedFollowUpUser")
+  activityLogs                        ActivityLog[]
+  caseAssessments                     CaseAssessment[]
+  uploadedDocuments                   ClientDocument[]                @relation("UploadedDocumentUser")
+  reviewedDocuments                   ClientDocument[]                @relation("ReviewedDocumentUser")
+  uploadedSharedLibraryDocuments      SharedLibraryDocument[]         @relation("UploadedSharedLibraryUser")
+  createdWrittenDocuments             WrittenDocument[]               @relation("CreatedWrittenDocumentUser")
+  updatedWrittenDocuments             WrittenDocument[]               @relation("UpdatedWrittenDocumentUser")
+  writtenDocumentVersions             WrittenDocumentVersion[]
+  uploadedCaseForms                   CaseForm[]                      @relation("UploadedCaseFormUser")
+  createdCaseFormVersions             CaseFormVersion[]               @relation("CreatedCaseFormVersionUser")
+  createdCaseFormReviewComments       CaseFormReviewComment[]         @relation("CreatedCaseFormReviewCommentUser")
+  resolvedCaseFormReviewComments      CaseFormReviewComment[]         @relation("ResolvedCaseFormReviewCommentUser")
+  uploadedAgencyFormTemplates         AgencyFormTemplate[]            @relation("UploadedAgencyFormTemplateUser")
+  createdAgencyFormTemplateVersions   AgencyFormTemplateVersion[]     @relation("CreatedAgencyFormTemplateVersionUser")
+  formPermission                      FormPermission?
+  lockedCaseForms                     CaseForm[]                      @relation("LockedCaseFormUser")
+  caseFormAuditEvents                 CaseFormAuditEvent[]
+  assignedCaseTasks                   CaseWorkflowStep[]              @relation("AssignedCaseTaskUser")
+  createdCorrespondenceTemplates      CorrespondenceTemplate[]        @relation("CreatedCorrespondenceTemplateUser")
+  updatedCorrespondenceTemplates      CorrespondenceTemplate[]        @relation("UpdatedCorrespondenceTemplateUser")
+  correspondenceTemplateVersions      CorrespondenceTemplateVersion[]
+  issuedWrittenDocuments              WrittenDocument[]               @relation("IssuedWrittenDocumentUser")
+  assignedAppointments                Appointment[]                   @relation("AssignedAppointmentUser")
+  createdAppointments                 Appointment[]                   @relation("CreatedAppointmentUser")
+  createdCommunicationConversations   CommunicationConversation[]     @relation("CreatedCommunicationConversationUser")
+  assignedCommunicationConversations  CommunicationConversation[]     @relation("AssignedCommunicationConversationUser")
+  deletedCommunicationConversations   CommunicationConversation[]     @relation("DeletedCommunicationConversationUser")
+  sentCommunicationMessages           CommunicationMessage[]          @relation("SenderCommunicationMessageUser")
+  deletedCommunicationMessages        CommunicationMessage[]          @relation("DeletedCommunicationMessageUser")
+  communicationPermission             CommunicationPermission?
+  createdCommunicationTemplates       CommunicationTemplate[]         @relation("CreatedCommunicationTemplateUser")
+  updatedCommunicationTemplates       CommunicationTemplate[]         @relation("UpdatedCommunicationTemplateUser")
+  uploadedCommunicationAttachments    CommunicationAttachment[]       @relation("UploadedCommunicationAttachmentUser")
+  communicationAuditEvents            CommunicationAuditEvent[]
+  createdCommunicationAutomationRules CommunicationAutomationRule[]   @relation("CreatedCommunicationAutomationRuleUser")
+  updatedCommunicationAutomationRules CommunicationAutomationRule[]   @relation("UpdatedCommunicationAutomationRuleUser")
+  createdClientCommunicationAccesses  ClientCommunicationAccess[]     @relation("CreatedClientCommunicationAccessUser")
+  generatedAccountStatements          AccountStatementGeneration[]    @relation("GeneratedAccountStatementUser")
+  ownedLeads                          Lead[]                          @relation("LeadOwnerUser")
+  nextActionLeads                     Lead[]                          @relation("LeadNextActionOwnerUser")
+  performedLeadActivities             LeadActivity[]                  @relation("LeadActivityPerformerUser")
+  changedLeadStages                   LeadStageHistory[]              @relation("LeadStageActorUser")
+  previousLeadAssignments             LeadAssignmentHistory[]         @relation("LeadPreviousOwnerUser")
+  newLeadAssignments                  LeadAssignmentHistory[]         @relation("LeadNewOwnerUser")
+  assignedLeadChanges                 LeadAssignmentHistory[]         @relation("LeadAssignmentActorUser")
+  assignedLeadFollowUps               LeadFollowUp[]                  @relation("LeadFollowUpAssigneeUser")
+  completedLeadFollowUps              LeadFollowUp[]                  @relation("LeadFollowUpCompleterUser")
+  lostLeads                           LeadLostDetail[]                @relation("LeadLostActorUser")
+  convertedLeads                      LeadConversion[]                @relation("LeadConversionActorUser")
+  completedLeadQualifications         LeadQualification[]             @relation("LeadQualificationActorUser")
+  leadConsultations                   LeadConsultation[]              @relation("LeadConsultantUser")
+  createdLeadConsultations            LeadConsultation[]              @relation("LeadConsultationCreatorUser")
+  ownedLeadIntakeForms                LeadIntakeForm[]                @relation("LeadIntakeFormOwnerUser")
+  uploadedLeadImportBatches           LeadImportBatch[]               @relation("LeadImportUploaderUser")
+  ownedLeadSourceConnections          LeadSourceConnection[]          @relation("LeadSourceConnectionOwnerUser")
+  onboardingRequests                  OnboardingRequest[]
+
+  @@index([agencyId])
+  @@index([authUserId])
+  @@index([agencyId, status])
+  @@map("users")
+}
+
+model AgencyMember {
+  id                 String   @id @default(uuid())
+  agencyId           String   @map("agency_id")
+  userId             String   @map("user_id")
+  role               UserRole
+  isActive           Boolean  @default(true) @map("is_active")
+  permissions        Json     @default("{}")
+  mustChangePassword Boolean  @default(false) @map("must_change_password")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  agency             Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, userId])
+  @@index([userId, isActive])
+  @@index([agencyId, role, isActive])
+  @@map("agency_members")
+}
+
+model OnboardingRequest {
+  id              String                  @id @default(uuid())
+  email           String                  @unique
+  fullName        String                  @map("full_name")
+  agencyName      String                  @map("agency_name")
+  phone           String?
+  country         String?
+  status          OnboardingRequestStatus @default(pending)
+  agencyId        String?                 @map("agency_id")
+  userId          String?                 @map("user_id")
+  authUserId      String?                 @unique @map("auth_user_id") @db.Uuid
+  termsAcceptedAt DateTime                @map("terms_accepted_at")
+  invitedAt       DateTime?               @map("invited_at")
+  completedAt     DateTime?               @map("completed_at")
+  expiresAt       DateTime?               @map("expires_at")
+  failureCode     String?                 @map("failure_code")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  agency          Agency?                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user            User?                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+  @@index([agencyId])
+  @@map("onboarding_requests")
+}
+
+model ConsultantProfile {
+  id                 String   @id @default(uuid())
+  agencyId           String   @map("agency_id")
+  userId             String   @map("user_id")
+  employeeId         String?  @map("employee_id")
+  specializations    String[] @default([])
+  masteryLevel       String?  @map("mastery_level")
+  maximumActiveCases Int      @default(20) @map("maximum_active_cases")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  agency             Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, userId])
+  @@unique([agencyId, employeeId])
+  @@index([agencyId])
+  @@map("consultant_profiles")
+}
+
+model ClientUser {
+  id           String   @id @default(uuid())
+  agencyId     String   @map("agency_id")
+  clientId     String   @map("client_id")
+  userId       String   @map("user_id")
+  relationship String?
+  isPrimary    Boolean  @default(true) @map("is_primary")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  agency       Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, clientId, userId])
+  @@index([agencyId, userId])
+  @@index([clientId])
+  @@map("client_users")
+}
+
+model CaseAssignment {
+  id               String           @id @default(uuid())
+  agencyId         String           @map("agency_id")
+  caseId           String           @map("case_id")
+  consultantUserId String           @map("consultant_user_id")
+  assignmentType   AssignmentType   @default(primary) @map("assignment_type")
+  status           AssignmentStatus @default(active)
+  assignedById     String?          @map("assigned_by")
+  assignedAt       DateTime         @default(now()) @map("assigned_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case             Case             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  consultant       User             @relation("AssignedConsultant", fields: [consultantUserId], references: [id], onDelete: Cascade)
+  assignedBy       User?            @relation("CaseAssignmentActor", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, caseId, consultantUserId, assignmentType])
+  @@index([agencyId, consultantUserId, status])
+  @@index([caseId, status])
+  @@map("case_assignments")
+}
+
+model Client {
+  id                         String                       @id @default(uuid())
+  agencyId                   String                       @map("agency_id")
+  clientNumber               String                       @map("client_number")
+  fullName                   String                       @map("full_name")
+  phone                      String?
+  phoneNormalized            String?                      @map("phone_normalized")
+  email                      String?
+  emailNormalized            String?                      @map("email_normalized")
+  dateOfBirth                DateTime?                    @map("date_of_birth")
+  address                    String?
+  preferredLanguage          String?                      @map("preferred_language")
+  identificationType         String?                      @map("identification_type")
+  identificationNumber       String?                      @map("identification_number")
+  identificationCountry      String?                      @map("identification_country")
+  identificationExpiryDate   DateTime?                    @map("identification_expiry_date")
+  status                     ClientStatus
+  archivedAt                 DateTime?                    @map("archived_at")
+  assignedUserId             String?                      @map("assigned_user_id")
+  createdAt                  DateTime                     @default(now()) @map("created_at")
+  updatedAt                  DateTime                     @updatedAt @map("updated_at")
+  agency                     Agency                       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignedUser               User?                        @relation("AssignedClientUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  cases                      Case[]
+  clientDocuments            ClientDocument[]
+  writtenDocuments           WrittenDocument[]
+  notes                      Note[]
+  followUps                  FollowUp[]
+  payments                   Payment[]
+  activityLogs               ActivityLog[]
+  caseAssessments            CaseAssessment[]
+  caseForms                  CaseForm[]
+  appointments               Appointment[]
+  communicationConversations CommunicationConversation[]
+  communicationMessages      CommunicationMessage[]
+  communicationConsents      CommunicationConsent[]
+  communicationPreference    CommunicationPreference?
+  communicationAccesses      ClientCommunicationAccess[]
+  portalUsers                ClientUser[]
+  accountStatements          AccountStatementGeneration[]
+  convertedFromLead          Lead?                        @relation("LeadConvertedClient")
+  leadConversions            LeadConversion[]
+
+  @@unique([agencyId, clientNumber])
+  @@unique([agencyId, phoneNormalized])
+  @@unique([agencyId, emailNormalized])
+  @@index([agencyId])
+  @@index([agencyId, archivedAt])
+  @@index([assignedUserId])
+  @@map("clients")
+}
+
+model Case {
+  id                         String                         @id @default(uuid())
+  agencyId                   String                         @map("agency_id")
+  clientId                   String                         @map("client_id")
+  assignedUserId             String?                        @map("assigned_user_id")
+  caseType                   String                         @map("case_type")
+  stage                      String
+  status                     String
+  priority                   String                         @default("Normal")
+  nextAction                 String?                        @map("next_action")
+  submittedAt                DateTime?                      @map("submitted_at")
+  decisionAt                 DateTime?                      @map("decision_at")
+  createdAt                  DateTime                       @default(now()) @map("created_at")
+  updatedAt                  DateTime                       @updatedAt @map("updated_at")
+  agency                     Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                     Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  assignedUser               User?                          @relation("AssignedCaseUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  clientDocuments            ClientDocument[]
+  writtenDocuments           WrittenDocument[]
+  notes                      Note[]
+  followUps                  FollowUp[]
+  payments                   Payment[]
+  activityLogs               ActivityLog[]
+  workflowSteps              CaseWorkflowStep[]
+  assessment                 CaseAssessment?
+  caseForms                  CaseForm[]
+  appointments               Appointment[]
+  communicationConversations CommunicationConversation[]
+  communicationMessages      CommunicationMessage[]
+  communicationAccesses      ClientCommunicationAccess[]
+  immigrationProfileAccesses ImmigrationProfileCaseAccess[]
+  accountStatements          AccountStatementGeneration[]
+  assignments                CaseAssignment[]
+  convertedFromLead          Lead?                          @relation("LeadConvertedCase")
+  leadConversions            LeadConversion[]
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([assignedUserId])
+  @@map("cases")
+}
+
+model ImmigrationProfile {
+  id                      String                         @id @default(uuid())
+  agencyId                String                         @map("agency_id")
+  profileType             String                         @default("Applicant") @map("profile_type")
+  givenNames              String                         @map("given_names")
+  familyName              String                         @map("family_name")
+  dateOfBirth             DateTime?                      @map("date_of_birth")
+  relationship            String?
+  uci                     String?
+  applicationNumber       String?                        @map("application_number")
+  communicationEmail      String?                        @map("communication_email")
+  loginUsername           String?                        @map("login_username")
+  loginUsernameNormalized String?                        @map("login_username_normalized")
+  passwordHash            String?                        @map("password_hash")
+  createdAt               DateTime                       @default(now()) @map("created_at")
+  updatedAt               DateTime                       @updatedAt @map("updated_at")
+  agency                  Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseAccesses            ImmigrationProfileCaseAccess[]
+
+  @@unique([agencyId, loginUsernameNormalized])
+  @@index([agencyId])
+  @@map("immigration_profiles")
+}
+
+model ImmigrationProfileCaseAccess {
+  id        String             @id @default(uuid())
+  agencyId  String             @map("agency_id")
+  profileId String             @map("profile_id")
+  caseId    String             @map("case_id")
+  createdAt DateTime           @default(now()) @map("created_at")
+  agency    Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  profile   ImmigrationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  case      Case               @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, caseId])
+  @@index([agencyId])
+  @@index([caseId])
+  @@map("immigration_profile_case_accesses")
+}
+
+model Appointment {
+  id           String            @id @default(uuid())
+  agencyId     String            @map("agency_id")
+  clientId     String            @map("client_id")
+  caseId       String            @map("case_id")
+  subject      String
+  location     String?
+  calendar     String            @default("Case Calendar")
+  startsAt     DateTime          @map("starts_at")
+  endsAt       DateTime          @map("ends_at")
+  description  String?
+  assignedToId String?           @map("assigned_to_id")
+  createdById  String            @map("created_by_id")
+  status       AppointmentStatus @default(Scheduled)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  agency       Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case         Case              @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  assignedTo   User?             @relation("AssignedAppointmentUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy    User              @relation("CreatedAppointmentUser", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId])
+  @@index([caseId, startsAt])
+  @@index([clientId])
+  @@index([assignedToId])
+  @@map("appointments")
+}
+
+model CommunicationConversation {
+  id               String                         @id @default(uuid())
+  agencyId         String                         @map("agency_id")
+  clientId         String                         @map("client_id")
+  caseId           String                         @map("case_id")
+  channel          CommunicationChannel
+  subject          String?
+  provider         String?
+  providerThreadId String?                        @map("provider_thread_id")
+  assignedToId     String?                        @map("assigned_to_id")
+  state            CommunicationConversationState @default(Open)
+  priority         CommunicationPriority          @default(Normal)
+  tags             Json                           @default("[]")
+  unreadCount      Int                            @default(0) @map("unread_count")
+  lastInboundAt    DateTime?                      @map("last_inbound_at")
+  firstInboundAt   DateTime?                      @map("first_inbound_at")
+  lastOutboundAt   DateTime?                      @map("last_outbound_at")
+  snoozedUntil     DateTime?                      @map("snoozed_until")
+  responseDueAt    DateTime?                      @map("response_due_at")
+  resolutionDueAt  DateTime?                      @map("resolution_due_at")
+  firstRespondedAt DateTime?                      @map("first_responded_at")
+  lastMessageAt    DateTime                       @default(now()) @map("last_message_at")
+  isArchived       Boolean                        @default(false) @map("is_archived")
+  legalHold        Boolean                        @default(false) @map("legal_hold")
+  deletedAt        DateTime?                      @map("deleted_at")
+  deletedById      String?                        @map("deleted_by_id")
+  createdById      String                         @map("created_by_id")
+  createdAt        DateTime                       @default(now()) @map("created_at")
+  updatedAt        DateTime                       @updatedAt @map("updated_at")
+  agency           Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client           Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case             Case                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy        User                           @relation("CreatedCommunicationConversationUser", fields: [createdById], references: [id], onDelete: Restrict)
+  assignedTo       User?                          @relation("AssignedCommunicationConversationUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+  deletedBy        User?                          @relation("DeletedCommunicationConversationUser", fields: [deletedById], references: [id], onDelete: SetNull)
+  messages         CommunicationMessage[]
+
+  @@index([agencyId])
+  @@index([caseId, lastMessageAt])
+  @@index([clientId])
+  @@index([channel])
+  @@index([agencyId, state, lastMessageAt])
+  @@index([assignedToId, state])
+  @@index([agencyId, responseDueAt, state])
+  @@index([agencyId, resolutionDueAt, state])
+  @@index([deletedAt])
+  @@map("communication_conversations")
+}
+
+model CommunicationMessage {
+  id                String                       @id @default(uuid())
+  agencyId          String                       @map("agency_id")
+  clientId          String                       @map("client_id")
+  caseId            String                       @map("case_id")
+  conversationId    String                       @map("conversation_id")
+  channel           CommunicationChannel
+  direction         CommunicationDirection
+  status            CommunicationStatus
+  senderUserId      String?                      @map("sender_user_id")
+  senderAddress     String?                      @map("sender_address")
+  recipients        Json                         @default("[]")
+  cc                Json                         @default("[]")
+  bcc               Json                         @default("[]")
+  replyTo           String?                      @map("reply_to")
+  subject           String?
+  bodyText          String?                      @map("body_text")
+  bodyHtml          String?                      @map("body_html")
+  provider          String?
+  providerMessageId String?                      @map("provider_message_id")
+  idempotencyKey    String?                      @map("idempotency_key")
+  parentMessageId   String?                      @map("parent_message_id")
+  emailMessageId    String?                      @map("email_message_id")
+  emailInReplyTo    String?                      @map("email_in_reply_to")
+  emailReferences   Json                         @default("[]") @map("email_references")
+  occurredAt        DateTime                     @default(now()) @map("occurred_at")
+  scheduledAt       DateTime?                    @map("scheduled_at")
+  sentAt            DateTime?                    @map("sent_at")
+  deliveredAt       DateTime?                    @map("delivered_at")
+  failedAt          DateTime?                    @map("failed_at")
+  failureReason     String?                      @map("failure_reason")
+  durationSeconds   Int?                         @map("duration_seconds")
+  callDisposition   String?                      @map("call_disposition")
+  callRecordingUrl  String?                      @map("call_recording_url")
+  callTranscript    String?                      @map("call_transcript")
+  attachments       Json                         @default("[]")
+  metadata          Json                         @default("{}")
+  isRead            Boolean                      @default(true) @map("is_read")
+  deletedAt         DateTime?                    @map("deleted_at")
+  deletedById       String?                      @map("deleted_by_id")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+  agency            Agency                       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client            Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case              Case                         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  conversation      CommunicationConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUser        User?                        @relation("SenderCommunicationMessageUser", fields: [senderUserId], references: [id], onDelete: SetNull)
+  deletedBy         User?                        @relation("DeletedCommunicationMessageUser", fields: [deletedById], references: [id], onDelete: SetNull)
+  parentMessage     CommunicationMessage?        @relation("CommunicationMessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies           CommunicationMessage[]       @relation("CommunicationMessageReplies")
+  deliveryEvents    CommunicationDeliveryEvent[]
+  outboxJobs        CommunicationOutbox[]
+  attachmentRecords CommunicationAttachment[]
+
+  @@unique([agencyId, idempotencyKey])
+  @@unique([agencyId, provider, providerMessageId])
+  @@index([agencyId])
+  @@index([caseId, occurredAt])
+  @@index([conversationId, occurredAt])
+  @@index([clientId])
+  @@index([channel])
+  @@index([status])
+  @@index([providerMessageId])
+  @@index([scheduledAt, status])
+  @@index([deletedAt])
+  @@map("communication_messages")
+}
+
+model CommunicationDeliveryEvent {
+  id                String               @id @default(uuid())
+  agencyId          String               @map("agency_id")
+  messageId         String               @map("message_id")
+  type              String
+  providerEventId   String?              @map("provider_event_id")
+  providerTimestamp DateTime?            @map("provider_timestamp")
+  details           String?
+  metadata          Json                 @default("{}")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  agency            Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message           CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, providerEventId])
+  @@index([messageId, createdAt])
+  @@index([agencyId, type])
+  @@map("communication_delivery_events")
+}
+
+model CommunicationOutbox {
+  id          String                    @id @default(uuid())
+  agencyId    String                    @map("agency_id")
+  messageId   String                    @map("message_id")
+  operation   String                    @default("send")
+  payload     Json                      @default("{}")
+  status      CommunicationOutboxStatus @default(Pending)
+  attempts    Int                       @default(0)
+  maxAttempts Int                       @default(5) @map("max_attempts")
+  availableAt DateTime                  @default(now()) @map("available_at")
+  lockedAt    DateTime?                 @map("locked_at")
+  completedAt DateTime?                 @map("completed_at")
+  lastError   String?                   @map("last_error")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  agency      Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message     CommunicationMessage      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([messageId])
+  @@map("communication_outbox")
+}
+
+model CommunicationPermission {
+  id                 String   @id @default(uuid())
+  agencyId           String   @map("agency_id")
+  userId             String   @unique @map("user_id")
+  canView            Boolean  @default(true) @map("can_view")
+  canSendEmail       Boolean  @default(true) @map("can_send_email")
+  canSendSms         Boolean  @default(true) @map("can_send_sms")
+  canUseChat         Boolean  @default(true) @map("can_use_chat")
+  canInitiateCalls   Boolean  @default(true) @map("can_initiate_calls")
+  canExport          Boolean  @default(false) @map("can_export")
+  canDelete          Boolean  @default(false) @map("can_delete")
+  canManageConsent   Boolean  @default(false) @map("can_manage_consent")
+  canManageTemplates Boolean  @default(false) @map("can_manage_templates")
+  canManageProviders Boolean  @default(false) @map("can_manage_providers")
+  canViewAll         Boolean  @default(true) @map("can_view_all")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  agency             Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("communication_permissions")
+}
+
+model CommunicationConsent {
+  id          String                     @id @default(uuid())
+  agencyId    String                     @map("agency_id")
+  clientId    String                     @map("client_id")
+  channel     CommunicationChannel
+  address     String
+  status      CommunicationConsentStatus @default(Unknown)
+  source      String?
+  purpose     String?
+  proof       Json                       @default("{}")
+  consentedAt DateTime?                  @map("consented_at")
+  optedOutAt  DateTime?                  @map("opted_out_at")
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
+  agency      Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client      Client                     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, channel, address])
+  @@index([clientId, channel])
+  @@index([agencyId, status])
+  @@map("communication_consents")
+}
+
+model CommunicationTemplate {
+  id          String               @id @default(uuid())
+  agencyId    String               @map("agency_id")
+  channel     CommunicationChannel
+  name        String
+  subject     String?
+  bodyText    String               @map("body_text")
+  bodyHtml    String?              @map("body_html")
+  category    String?
+  language    String               @default("English")
+  isActive    Boolean              @default(true) @map("is_active")
+  createdById String               @map("created_by_id")
+  updatedById String               @map("updated_by_id")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  agency      Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy   User                 @relation("CreatedCommunicationTemplateUser", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User                 @relation("UpdatedCommunicationTemplateUser", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([agencyId, name])
+  @@index([agencyId, channel, isActive])
+  @@map("communication_templates")
+}
+
+model CommunicationAttachment {
+  id               String                        @id @default(uuid())
+  agencyId         String                        @map("agency_id")
+  messageId        String                        @map("message_id")
+  storageKey       String                        @map("storage_key")
+  originalFilename String                        @map("original_filename")
+  mimeType         String                        @map("mime_type")
+  fileSize         Int                           @map("file_size")
+  fileHash         String                        @map("file_hash")
+  scanStatus       CommunicationAttachmentStatus @default(Pending) @map("scan_status")
+  scanDetails      String?                       @map("scan_details")
+  uploadedById     String                        @map("uploaded_by_id")
+  createdAt        DateTime                      @default(now()) @map("created_at")
+  agency           Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message          CommunicationMessage          @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy       User                          @relation("UploadedCommunicationAttachmentUser", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([messageId])
+  @@index([agencyId, scanStatus])
+  @@map("communication_attachments")
+}
+
+model UnmatchedCommunication {
+  id                String               @id @default(uuid())
+  agencyId          String               @map("agency_id")
+  channel           CommunicationChannel
+  provider          String
+  providerMessageId String?              @map("provider_message_id")
+  senderAddress     String?              @map("sender_address")
+  recipients        Json                 @default("[]")
+  subject           String?
+  bodyText          String?              @map("body_text")
+  occurredAt        DateTime             @default(now()) @map("occurred_at")
+  rawPayload        Json                 @default("{}") @map("raw_payload")
+  resolvedAt        DateTime?            @map("resolved_at")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  agency            Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, provider, providerMessageId])
+  @@index([agencyId, resolvedAt, occurredAt])
+  @@map("unmatched_communications")
+}
+
+model CommunicationAuditEvent {
+  id             String   @id @default(uuid())
+  agencyId       String   @map("agency_id")
+  userId         String?  @map("user_id")
+  conversationId String?  @map("conversation_id")
+  messageId      String?  @map("message_id")
+  action         String
+  details        String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  agency         Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([messageId, createdAt])
+  @@map("communication_audit_events")
+}
+
+model CommunicationRetentionPolicy {
+  id               String   @id @default(uuid())
+  agencyId         String   @unique @map("agency_id")
+  retentionDays    Int      @default(2555) @map("retention_days")
+  trashDays        Int      @default(30) @map("trash_days")
+  allowStaffDelete Boolean  @default(false) @map("allow_staff_delete")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  agency           Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("communication_retention_policies")
+}
+
+model CommunicationPreference {
+  id               String                @id @default(uuid())
+  agencyId         String                @map("agency_id")
+  clientId         String                @unique @map("client_id")
+  preferredChannel CommunicationChannel? @map("preferred_channel")
+  language         String                @default("English")
+  timezone         String                @default("America/Toronto")
+  quietHoursStart  String?               @map("quiet_hours_start")
+  quietHoursEnd    String?               @map("quiet_hours_end")
+  allowEmail       Boolean               @default(true) @map("allow_email")
+  allowSms         Boolean               @default(true) @map("allow_sms")
+  allowChat        Boolean               @default(true) @map("allow_chat")
+  allowCalls       Boolean               @default(true) @map("allow_calls")
+  doNotContact     Boolean               @default(false) @map("do_not_contact")
+  notes            String?
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  agency           Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client           Client                @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId, doNotContact])
+  @@map("communication_preferences")
+}
+
+model CommunicationAutomationRule {
+  id          String                @id @default(uuid())
+  agencyId    String                @map("agency_id")
+  name        String
+  trigger     String
+  channel     CommunicationChannel?
+  conditions  Json                  @default("{}")
+  actions     Json                  @default("{}")
+  isActive    Boolean               @default(true) @map("is_active")
+  sortOrder   Int                   @default(0) @map("sort_order")
+  lastRunAt   DateTime?             @map("last_run_at")
+  runCount    Int                   @default(0) @map("run_count")
+  createdById String                @map("created_by_id")
+  updatedById String                @map("updated_by_id")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+  agency      Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy   User                  @relation("CreatedCommunicationAutomationRuleUser", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User                  @relation("UpdatedCommunicationAutomationRuleUser", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([agencyId, name])
+  @@index([agencyId, trigger, isActive])
+  @@map("communication_automation_rules")
+}
+
+model CommunicationSlaPolicy {
+  id                   String   @id @default(uuid())
+  agencyId             String   @unique @map("agency_id")
+  firstResponseMinutes Int      @default(240) @map("first_response_minutes")
+  resolutionHours      Int      @default(48) @map("resolution_hours")
+  businessHoursOnly    Boolean  @default(false) @map("business_hours_only")
+  timezone             String   @default("America/Toronto")
+  businessHoursStart   String   @default("09:00") @map("business_hours_start")
+  businessHoursEnd     String   @default("17:00") @map("business_hours_end")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  agency               Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("communication_sla_policies")
+}
+
+model ClientCommunicationAccess {
+  id          String    @id @default(uuid())
+  agencyId    String    @map("agency_id")
+  clientId    String    @map("client_id")
+  caseId      String    @map("case_id")
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  agency      Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client      Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case        Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy   User      @relation("CreatedClientCommunicationAccessUser", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, caseId, revokedAt])
+  @@index([expiresAt])
+  @@map("client_communication_accesses")
+}
+
+model WorkflowTemplate {
+  id          String                 @id @default(uuid())
+  agencyId    String                 @map("agency_id")
+  caseType    String                 @map("case_type")
+  name        String
+  description String?
+  isDefault   Boolean                @default(false) @map("is_default")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  agency      Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  steps       WorkflowTemplateStep[]
+  caseSteps   CaseWorkflowStep[]
+
+  @@index([agencyId])
+  @@index([agencyId, caseType])
+  @@map("workflow_templates")
+}
+
+model WorkflowTemplateStep {
+  id          String               @id @default(uuid())
+  agencyId    String               @map("agency_id")
+  templateId  String               @map("template_id")
+  title       String
+  description String?
+  sortOrder   Int                  @map("sort_order")
+  priority    WorkflowStepPriority @default(Normal)
+  isRequired  Boolean              @default(true) @map("is_required")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  agency      Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  template    WorkflowTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  caseSteps   CaseWorkflowStep[]
+
+  @@index([agencyId])
+  @@index([templateId])
+  @@map("workflow_template_steps")
+}
+
+model CaseWorkflowStep {
+  id               String                 @id @default(uuid())
+  agencyId         String                 @map("agency_id")
+  caseId           String                 @map("case_id")
+  templateId       String?                @map("template_id")
+  templateStepId   String?                @map("template_step_id")
+  title            String
+  description      String?
+  sortOrder        Int                    @map("sort_order")
+  priority         WorkflowStepPriority   @default(Normal)
+  isActive         Boolean                @default(true) @map("is_active")
+  status           CaseWorkflowStepStatus @default(Pending)
+  completedAt      DateTime?              @map("completed_at")
+  isStandaloneTask Boolean                @default(false) @map("is_standalone_task")
+  assignedToId     String?                @map("assigned_to_id")
+  dueAt            DateTime?              @map("due_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  agency           Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case             Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  template         WorkflowTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateStep     WorkflowTemplateStep?  @relation(fields: [templateStepId], references: [id], onDelete: SetNull)
+  assignedTo       User?                  @relation("AssignedCaseTaskUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([caseId])
+  @@index([templateId])
+  @@index([templateStepId])
+  @@index([assignedToId])
+  @@index([caseId, isStandaloneTask])
+  @@map("case_workflow_steps")
+}
+
+model CaseAssessment {
+  id               String    @id @default(uuid())
+  agencyId         String    @map("agency_id")
+  clientId         String    @map("client_id")
+  caseId           String    @unique @map("case_id")
+  userId           String?   @map("user_id")
+  formData         Json      @default("{}") @map("form_data")
+  crsScore         Int       @default(0) @map("crs_score")
+  crsBreakdown     Json      @default("{}") @map("crs_breakdown")
+  declaredComplete Boolean   @default(false) @map("declared_complete")
+  declaredAt       DateTime? @map("declared_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  agency           Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client           Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case             Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, caseId])
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([userId])
+  @@map("case_assessments")
+}
+
+model DocumentTemplate {
+  id           String   @id @default(uuid())
+  agencyId     String   @map("agency_id")
+  caseType     String   @map("case_type")
+  documentName String   @map("document_name")
+  isRequired   Boolean  @default(true) @map("is_required")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  agency       Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("document_templates")
+}
+
+model ClientDocument {
+  id                            String                 @id @default(uuid())
+  agencyId                      String                 @map("agency_id")
+  clientId                      String                 @map("client_id")
+  caseId                        String?                @map("case_id")
+  documentName                  String                 @map("document_name")
+  normalizedName                String?                @map("normalized_name")
+  status                        DocumentStatus
+  notes                         String?
+  clientInstructions            String?                @map("client_instructions")
+  receivedAt                    DateTime?              @map("received_at")
+  reviewedAt                    DateTime?              @map("reviewed_at")
+  visibility                    DocumentVisibility     @default(Client)
+  storageKey                    String?                @map("storage_key")
+  originalFilename              String?                @map("original_filename")
+  mimeType                      String?                @map("mime_type")
+  fileSize                      Int?                   @map("file_size")
+  uploadedById                  String?                @map("uploaded_by_id")
+  reviewedById                  String?                @map("reviewed_by_id")
+  sourceSharedLibraryDocumentId String?                @map("source_shared_library_document_id")
+  createdAt                     DateTime               @default(now()) @map("created_at")
+  updatedAt                     DateTime               @updatedAt @map("updated_at")
+  agency                        Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                        Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                          Case?                  @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  uploadedBy                    User?                  @relation("UploadedDocumentUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  reviewedBy                    User?                  @relation("ReviewedDocumentUser", fields: [reviewedById], references: [id], onDelete: SetNull)
+  sourceSharedLibraryDocument   SharedLibraryDocument? @relation(fields: [sourceSharedLibraryDocumentId], references: [id], onDelete: Restrict)
+  writtenDocument               WrittenDocument?       @relation("WorkingWrittenDocument")
+  issuedWrittenDocument         WrittenDocument?       @relation("IssuedWrittenDocument")
+
+  @@unique([caseId, normalizedName])
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([uploadedById])
+  @@index([reviewedById])
+  @@index([sourceSharedLibraryDocumentId])
+  @@map("client_documents")
+}
+
+model CaseForm {
+  id                         String                  @id @default(uuid())
+  agencyId                   String                  @map("agency_id")
+  clientId                   String                  @map("client_id")
+  caseId                     String                  @map("case_id")
+  catalogId                  String?                 @map("catalog_id")
+  sourceAgencyFormTemplateId String?                 @map("source_agency_form_template_id")
+  formNumber                 String?                 @map("form_number")
+  title                      String
+  normalizedName             String                  @map("normalized_name")
+  source                     FormSource              @default(Custom)
+  requirement                FormRequirement         @default(Required)
+  selectionReason            String?                 @map("selection_reason")
+  officialUrl                String?                 @map("official_url")
+  sourceRevision             String?                 @map("source_revision")
+  language                   String                  @default("English")
+  fileHash                   String?                 @map("file_hash")
+  sourceDownloadedAt         DateTime?               @map("source_downloaded_at")
+  mappingVersion             String?                 @map("mapping_version")
+  versionStatus              FormVersionStatus       @default(Unverified) @map("version_status")
+  currentCopyType            FormCopyType            @default(Original) @map("current_copy_type")
+  availableRevision          String?                 @map("available_revision")
+  lastVersionCheckedAt       DateTime?               @map("last_version_checked_at")
+  status                     FormStatus              @default(Assigned)
+  storageKey                 String?                 @map("storage_key")
+  originalFilename           String?                 @map("original_filename")
+  mimeType                   String?                 @map("mime_type")
+  fileSize                   Int?                    @map("file_size")
+  uploadedById               String?                 @map("uploaded_by_id")
+  lockedAt                   DateTime?               @map("locked_at")
+  lockedById                 String?                 @map("locked_by_id")
+  createdAt                  DateTime                @default(now()) @map("created_at")
+  updatedAt                  DateTime                @updatedAt @map("updated_at")
+  agency                     Agency                  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                     Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                       Case                    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  uploadedBy                 User?                   @relation("UploadedCaseFormUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  lockedBy                   User?                   @relation("LockedCaseFormUser", fields: [lockedById], references: [id], onDelete: SetNull)
+  versions                   CaseFormVersion[]
+  reviewComments             CaseFormReviewComment[]
+  sourceAgencyFormTemplate   AgencyFormTemplate?     @relation(fields: [sourceAgencyFormTemplateId], references: [id], onDelete: Restrict)
+  auditEvents                CaseFormAuditEvent[]
+
+  @@unique([caseId, normalizedName])
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([uploadedById])
+  @@index([sourceAgencyFormTemplateId])
+  @@index([lockedById])
+  @@map("case_forms")
+}
+
+model CaseFormVersion {
+  id                 String                @id @default(uuid())
+  agencyId           String                @map("agency_id")
+  caseFormId         String                @map("case_form_id")
+  versionNumber      Int                   @map("version_number")
+  source             CaseFormVersionSource
+  copyType           FormCopyType          @default(Working) @map("copy_type")
+  language           String                @default("English")
+  sourceRevision     String?               @map("source_revision")
+  fileHash           String                @map("file_hash")
+  officialUrl        String?               @map("official_url")
+  mappingVersion     String?               @map("mapping_version")
+  storageKey         String                @map("storage_key")
+  originalFilename   String                @map("original_filename")
+  mimeType           String                @map("mime_type")
+  fileSize           Int                   @map("file_size")
+  sourceDownloadedAt DateTime?             @map("source_downloaded_at")
+  createdById        String                @map("created_by_id")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  agency             Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseForm           CaseForm              @relation(fields: [caseFormId], references: [id], onDelete: Cascade)
+  createdBy          User                  @relation("CreatedCaseFormVersionUser", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([caseFormId, versionNumber])
+  @@index([agencyId])
+  @@index([caseFormId])
+  @@index([createdById])
+  @@map("case_form_versions")
+}
+
+model CaseFormReviewComment {
+  id           String    @id @default(uuid())
+  agencyId     String    @map("agency_id")
+  caseFormId   String    @map("case_form_id")
+  pageNumber   Int?      @map("page_number")
+  fieldName    String?   @map("field_name")
+  comment      String
+  resolvedAt   DateTime? @map("resolved_at")
+  createdById  String    @map("created_by_id")
+  resolvedById String?   @map("resolved_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  agency       Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseForm     CaseForm  @relation(fields: [caseFormId], references: [id], onDelete: Cascade)
+  createdBy    User      @relation("CreatedCaseFormReviewCommentUser", fields: [createdById], references: [id], onDelete: Restrict)
+  resolvedBy   User?     @relation("ResolvedCaseFormReviewCommentUser", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([caseFormId])
+  @@index([createdById])
+  @@index([resolvedById])
+  @@map("case_form_review_comments")
+}
+
+model AgencyFormTemplate {
+  id               String                      @id @default(uuid())
+  agencyId         String                      @map("agency_id")
+  title            String
+  formNumber       String?                     @map("form_number")
+  normalizedName   String                      @map("normalized_name")
+  category         String                      @default("General")
+  description      String?
+  language         String                      @default("English")
+  sourceRevision   String?                     @map("source_revision")
+  storageKey       String                      @map("storage_key")
+  originalFilename String                      @map("original_filename")
+  mimeType         String                      @map("mime_type")
+  fileSize         Int                         @map("file_size")
+  fileHash         String                      @map("file_hash")
+  currentVersion   Int                         @default(1) @map("current_version")
+  uploadedById     String                      @map("uploaded_by_id")
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  updatedAt        DateTime                    @updatedAt @map("updated_at")
+  agency           Agency                      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  uploadedBy       User                        @relation("UploadedAgencyFormTemplateUser", fields: [uploadedById], references: [id], onDelete: Restrict)
+  versions         AgencyFormTemplateVersion[]
+  caseForms        CaseForm[]
+
+  @@unique([agencyId, normalizedName])
+  @@index([agencyId])
+  @@index([uploadedById])
+  @@map("agency_form_templates")
+}
+
+model AgencyFormTemplateVersion {
+  id                   String             @id @default(uuid())
+  agencyId             String             @map("agency_id")
+  agencyFormTemplateId String             @map("agency_form_template_id")
+  versionNumber        Int                @map("version_number")
+  sourceRevision       String?            @map("source_revision")
+  storageKey           String             @map("storage_key")
+  originalFilename     String             @map("original_filename")
+  mimeType             String             @map("mime_type")
+  fileSize             Int                @map("file_size")
+  fileHash             String             @map("file_hash")
+  createdById          String             @map("created_by_id")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  agency               Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyFormTemplate   AgencyFormTemplate @relation(fields: [agencyFormTemplateId], references: [id], onDelete: Cascade)
+  createdBy            User               @relation("CreatedAgencyFormTemplateVersionUser", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([agencyFormTemplateId, versionNumber])
+  @@index([agencyId])
+  @@index([agencyFormTemplateId])
+  @@index([createdById])
+  @@map("agency_form_template_versions")
+}
+
+model FormPermission {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  userId      String   @unique @map("user_id")
+  canAssign   Boolean  @default(true) @map("can_assign")
+  canEdit     Boolean  @default(true) @map("can_edit")
+  canReview   Boolean  @default(true) @map("can_review")
+  canApprove  Boolean  @default(false) @map("can_approve")
+  canFinalize Boolean  @default(false) @map("can_finalize")
+  canDelete   Boolean  @default(false) @map("can_delete")
+  canUnlock   Boolean  @default(false) @map("can_unlock")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("form_permissions")
+}
+
+model CaseFormAuditEvent {
+  id         String    @id @default(uuid())
+  agencyId   String    @map("agency_id")
+  caseFormId String?   @map("case_form_id")
+  caseId     String    @map("case_id")
+  clientId   String    @map("client_id")
+  formTitle  String    @map("form_title")
+  formNumber String?   @map("form_number")
+  event      String
+  details    String?
+  metadata   Json?
+  userId     String?   @map("user_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  agency     Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseForm   CaseForm? @relation(fields: [caseFormId], references: [id], onDelete: SetNull)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([caseFormId])
+  @@index([caseId])
+  @@index([userId])
+  @@map("case_form_audit_events")
+}
+
+model WrittenDocument {
+  id                       String                   @id @default(uuid())
+  agencyId                 String                   @map("agency_id")
+  clientId                 String                   @map("client_id")
+  caseId                   String                   @map("case_id")
+  clientDocumentId         String?                  @unique @map("client_document_id")
+  issuedClientDocumentId   String?                  @unique @map("issued_client_document_id")
+  title                    String
+  contentHtml              String                   @default("") @map("content_html")
+  headerText               String?                  @map("header_text")
+  footerText               String?                  @map("footer_text")
+  showPageNumbers          Boolean                  @default(true) @map("show_page_numbers")
+  status                   String                   @default("Draft")
+  createdById              String                   @map("created_by_id")
+  updatedById              String                   @map("updated_by_id")
+  correspondenceTemplateId String?                  @map("correspondence_template_id")
+  correspondenceKind       CorrespondenceKind?      @map("correspondence_kind")
+  correspondenceStatus     String?                  @map("correspondence_status")
+  issuedAt                 DateTime?                @map("issued_at")
+  issuedById               String?                  @map("issued_by_id")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+  agency                   Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                   Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                     Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  clientDocument           ClientDocument?          @relation("WorkingWrittenDocument", fields: [clientDocumentId], references: [id], onDelete: SetNull)
+  issuedClientDocument     ClientDocument?          @relation("IssuedWrittenDocument", fields: [issuedClientDocumentId], references: [id], onDelete: SetNull)
+  createdBy                User                     @relation("CreatedWrittenDocumentUser", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy                User                     @relation("UpdatedWrittenDocumentUser", fields: [updatedById], references: [id], onDelete: Restrict)
+  issuedBy                 User?                    @relation("IssuedWrittenDocumentUser", fields: [issuedById], references: [id], onDelete: SetNull)
+  correspondenceTemplate   CorrespondenceTemplate?  @relation(fields: [correspondenceTemplateId], references: [id], onDelete: SetNull)
+  versions                 WrittenDocumentVersion[]
+
+  @@index([agencyId])
+  @@index([caseId])
+  @@index([clientId])
+  @@index([correspondenceTemplateId])
+  @@index([caseId, correspondenceKind])
+  @@index([issuedById])
+  @@map("written_documents")
+}
+
+model CorrespondenceTemplate {
+  id               String                          @id @default(uuid())
+  agencyId         String                          @map("agency_id")
+  slug             String
+  title            String
+  kind             CorrespondenceKind
+  category         String
+  description      String?
+  contentHtml      String                          @map("content_html")
+  caseTags         String[]                        @default([]) @map("case_tags")
+  sourceName       String?                         @map("source_name")
+  sourceUrl        String?                         @map("source_url")
+  isSystemDefault  Boolean                         @default(false) @map("is_system_default")
+  isActive         Boolean                         @default(true) @map("is_active")
+  versionNumber    Int                             @default(1) @map("version_number")
+  createdById      String?                         @map("created_by_id")
+  updatedById      String?                         @map("updated_by_id")
+  createdAt        DateTime                        @default(now()) @map("created_at")
+  updatedAt        DateTime                        @updatedAt @map("updated_at")
+  agency           Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy        User?                           @relation("CreatedCorrespondenceTemplateUser", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy        User?                           @relation("UpdatedCorrespondenceTemplateUser", fields: [updatedById], references: [id], onDelete: SetNull)
+  versions         CorrespondenceTemplateVersion[]
+  writtenDocuments WrittenDocument[]
+
+  @@unique([agencyId, slug])
+  @@index([agencyId, kind])
+  @@index([agencyId, category])
+  @@map("correspondence_templates")
+}
+
+model CorrespondenceTemplateVersion {
+  id                       String                 @id @default(uuid())
+  agencyId                 String                 @map("agency_id")
+  correspondenceTemplateId String                 @map("correspondence_template_id")
+  versionNumber            Int                    @map("version_number")
+  title                    String
+  kind                     CorrespondenceKind
+  category                 String
+  description              String?
+  contentHtml              String                 @map("content_html")
+  caseTags                 String[]               @default([]) @map("case_tags")
+  createdById              String?                @map("created_by_id")
+  createdAt                DateTime               @default(now()) @map("created_at")
+  agency                   Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  correspondenceTemplate   CorrespondenceTemplate @relation(fields: [correspondenceTemplateId], references: [id], onDelete: Cascade)
+  createdBy                User?                  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([correspondenceTemplateId, versionNumber])
+  @@index([agencyId])
+  @@index([correspondenceTemplateId])
+  @@index([createdById])
+  @@map("correspondence_template_versions")
+}
+
+model WrittenDocumentVersion {
+  id                String          @id @default(uuid())
+  agencyId          String          @map("agency_id")
+  writtenDocumentId String          @map("written_document_id")
+  versionNumber     Int             @map("version_number")
+  title             String
+  contentHtml       String          @map("content_html")
+  headerText        String?         @map("header_text")
+  footerText        String?         @map("footer_text")
+  showPageNumbers   Boolean         @default(true) @map("show_page_numbers")
+  clientDocumentId  String?         @map("client_document_id")
+  createdById       String          @map("created_by_id")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  agency            Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  writtenDocument   WrittenDocument @relation(fields: [writtenDocumentId], references: [id], onDelete: Cascade)
+  createdBy         User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([writtenDocumentId, versionNumber])
+  @@index([agencyId])
+  @@index([writtenDocumentId])
+  @@map("written_document_versions")
+}
+
+model SharedLibraryDocument {
+  id               String           @id @default(uuid())
+  agencyId         String           @map("agency_id")
+  uploadedById     String?          @map("uploaded_by_id")
+  title            String
+  category         String           @default("General")
+  description      String?
+  storageKey       String           @map("storage_key")
+  originalFilename String           @map("original_filename")
+  mimeType         String           @map("mime_type")
+  fileSize         Int              @map("file_size")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  uploadedBy       User?            @relation("UploadedSharedLibraryUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  clientDocuments  ClientDocument[]
+
+  @@index([agencyId])
+  @@index([uploadedById])
+  @@index([category])
+  @@map("shared_library_documents")
+}
+
+model Note {
+  id            String   @id @default(uuid())
+  agencyId      String   @map("agency_id")
+  clientId      String?  @map("client_id")
+  caseId        String?  @map("case_id")
+  userId        String?  @map("user_id")
+  content       String
+  clientVisible Boolean  @default(false) @map("client_visible")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  agency        Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case          Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([userId])
+  @@map("notes")
+}
+
+model FollowUp {
+  id             String         @id @default(uuid())
+  agencyId       String         @map("agency_id")
+  clientId       String?        @map("client_id")
+  caseId         String?        @map("case_id")
+  assignedUserId String?        @map("assigned_user_id")
+  title          String
+  description    String?
+  dueDate        DateTime?      @map("due_date")
+  status         FollowUpStatus
+  completedAt    DateTime?      @map("completed_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  agency         Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client         Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case           Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assignedUser   User?          @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([assignedUserId])
+  @@map("follow_ups")
+}
+
+model Payment {
+  id         String        @id @default(uuid())
+  agencyId   String        @map("agency_id")
+  clientId   String?       @map("client_id")
+  caseId     String?       @map("case_id")
+  totalFee   Decimal       @map("total_fee") @db.Decimal(10, 2)
+  paidAmount Decimal       @map("paid_amount") @db.Decimal(10, 2)
+  balance    Decimal       @db.Decimal(10, 2)
+  status     PaymentStatus
+  currency   String        @default("CAD")
+  notes      String?
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+  agency     Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client     Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case       Case?         @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([caseId])
+  @@map("payments")
+}
+
+model AccountStatementGeneration {
+  id              String    @id @default(uuid())
+  sequence        Int       @unique @default(autoincrement())
+  statementNumber String    @unique @map("statement_number")
+  agencyId        String    @map("agency_id")
+  clientId        String    @map("client_id")
+  caseId          String?   @map("case_id")
+  generatedById   String    @map("generated_by_id")
+  dateFrom        DateTime? @map("date_from")
+  dateTo          DateTime? @map("date_to")
+  currency        String
+  generatedAt     DateTime  @default(now()) @map("generated_at")
+  agency          Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client          Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case            Case?     @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  generatedBy     User      @relation("GeneratedAccountStatementUser", fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, clientId, generatedAt])
+  @@index([caseId])
+  @@map("account_statement_generations")
+}
+
+model ActivityLog {
+  id         String   @id @default(uuid())
+  agencyId   String   @map("agency_id")
+  userId     String?  @map("user_id")
+  clientId   String?  @map("client_id")
+  caseId     String?  @map("case_id")
+  action     String
+  details    String?
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now()) @map("created_at")
+  agency     Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  client     Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case       Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([userId])
+  @@index([clientId])
+  @@index([caseId])
+  @@index([agencyId, action, createdAt])
+  @@map("activity_logs")
+}
+
+model AgencyLeadSequence {
+  agencyId  String   @id @map("agency_id")
+  nextValue Int      @default(1) @map("next_value")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("agency_lead_sequences")
+}
+
+model AgencyClientSequence {
+  agencyId  String   @id @map("agency_id")
+  nextValue Int      @default(1) @map("next_value")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("agency_client_sequences")
+}
+
+model LeadSource {
+  id             String                 @id @default(uuid())
+  agencyId       String                 @map("agency_id")
+  name           String
+  type           LeadSourceType
+  isActive       Boolean                @default(true) @map("is_active")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  agency         Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  campaigns      LeadCampaign[]
+  leads          Lead[]
+  intakeForms    LeadIntakeForm[]
+  incomingEvents LeadIncomingEvent[]
+  importBatches  LeadImportBatch[]
+  connections    LeadSourceConnection[]
+
+  @@unique([agencyId, name])
+  @@index([agencyId, type, isActive])
+  @@map("lead_sources")
+}
+
+model LeadCampaign {
+  id             String                 @id @default(uuid())
+  agencyId       String                 @map("agency_id")
+  sourceId       String                 @map("source_id")
+  name           String
+  externalId     String?                @map("external_id")
+  startDate      DateTime?              @map("start_date")
+  endDate        DateTime?              @map("end_date")
+  budget         Decimal?               @db.Decimal(12, 2)
+  isActive       Boolean                @default(true) @map("is_active")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  agency         Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  source         LeadSource             @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  leads          Lead[]
+  intakeForms    LeadIntakeForm[]
+  incomingEvents LeadIncomingEvent[]
+  connections    LeadSourceConnection[]
+
+  @@unique([agencyId, sourceId, name])
+  @@index([agencyId, isActive])
+  @@index([sourceId])
+  @@map("lead_campaigns")
+}
+
+model Lead {
+  id                       String                   @id @default(uuid())
+  agencyId                 String                   @map("agency_id")
+  leadNumber               String                   @map("lead_number")
+  firstName                String?                  @map("first_name")
+  lastName                 String?                  @map("last_name")
+  phone                    String?
+  phoneNormalized          String?                  @map("phone_normalized")
+  email                    String?
+  emailNormalized          String?                  @map("email_normalized")
+  country                  String?
+  province                 String?
+  preferredLanguage        String?                  @map("preferred_language")
+  currentImmigrationStatus String?                  @map("current_immigration_status")
+  immigrationInterest      String?                  @map("immigration_interest")
+  status                   LeadStatus               @default(OPEN)
+  stage                    LeadStage                @default(NEW)
+  priority                 LeadPriority             @default(NORMAL)
+  temperature              LeadTemperature          @default(COLD)
+  ownerUserId              String                   @map("owner_user_id")
+  originalSourceId         String                   @map("original_source_id")
+  campaignId               String?                  @map("campaign_id")
+  initialMessage           String?                  @map("initial_message")
+  estimatedValue           Decimal?                 @map("estimated_value") @db.Decimal(12, 2)
+  nextActionType           String?                  @map("next_action_type")
+  nextActionDescription    String?                  @map("next_action_description")
+  nextActionAt             DateTime?                @map("next_action_at")
+  nextActionOwnerId        String?                  @map("next_action_owner_id")
+  firstContactDueAt        DateTime?                @map("first_contact_due_at")
+  firstContactAt           DateTime?                @map("first_contact_at")
+  firstConnectedAt         DateTime?                @map("first_connected_at")
+  lastContactAt            DateTime?                @map("last_contact_at")
+  retainerStatus           LeadRetainerStatus       @default(NOT_PREPARED) @map("retainer_status")
+  initialPaymentStatus     LeadInitialPaymentStatus @default(NOT_REQUESTED) @map("initial_payment_status")
+  convertedClientId        String?                  @unique @map("converted_client_id")
+  convertedCaseId          String?                  @unique @map("converted_case_id")
+  convertedAt              DateTime?                @map("converted_at")
+  lostAt                   DateTime?                @map("lost_at")
+  nurtureUntil             DateTime?                @map("nurture_until")
+  version                  Int                      @default(1)
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+  deletedAt                DateTime?                @map("deleted_at")
+  agency                   Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  owner                    User                     @relation("LeadOwnerUser", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  nextActionOwner          User?                    @relation("LeadNextActionOwnerUser", fields: [nextActionOwnerId], references: [id], onDelete: SetNull)
+  originalSource           LeadSource               @relation(fields: [originalSourceId], references: [id], onDelete: Restrict)
+  campaign                 LeadCampaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  convertedClient          Client?                  @relation("LeadConvertedClient", fields: [convertedClientId], references: [id], onDelete: SetNull)
+  convertedCase            Case?                    @relation("LeadConvertedCase", fields: [convertedCaseId], references: [id], onDelete: SetNull)
+  activities               LeadActivity[]
+  stageHistory             LeadStageHistory[]
+  assignmentHistory        LeadAssignmentHistory[]
+  followUps                LeadFollowUp[]
+  lostDetail               LeadLostDetail?
+  conversion               LeadConversion?
+  qualification            LeadQualification?
+  consultations            LeadConsultation[]
+  incomingEvents           LeadIncomingEvent[]
+  duplicateCandidates      LeadDuplicateCandidate[]
+  importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
+
+  @@unique([agencyId, leadNumber])
+  @@index([agencyId, status])
+  @@index([agencyId, stage])
+  @@index([agencyId, ownerUserId])
+  @@index([agencyId, nextActionAt])
+  @@index([agencyId, createdAt])
+  @@index([agencyId, phoneNormalized])
+  @@index([agencyId, emailNormalized])
+  @@index([agencyId, originalSourceId])
+  @@index([agencyId, campaignId])
+  @@map("leads")
+}
+
+model LeadActivity {
+  id              String                 @id @default(uuid())
+  agencyId        String                 @map("agency_id")
+  leadId          String                 @map("lead_id")
+  activityType    LeadActivityType       @map("activity_type")
+  direction       LeadActivityDirection?
+  channel         LeadActivityChannel?
+  outcome         String?
+  title           String
+  description     String?
+  durationSeconds Int?                   @map("duration_seconds")
+  performedById   String?                @map("performed_by")
+  externalId      String?                @map("external_id")
+  metadata        Json                   @default("{}")
+  occurredAt      DateTime               @default(now()) @map("occurred_at")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  agency          Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead            Lead                   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  performedBy     User?                  @relation("LeadActivityPerformerUser", fields: [performedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, leadId, occurredAt])
+  @@index([agencyId, activityType, occurredAt])
+  @@map("lead_activities")
+}
+
+model LeadStageHistory {
+  id            String     @id @default(uuid())
+  agencyId      String     @map("agency_id")
+  leadId        String     @map("lead_id")
+  previousStage LeadStage? @map("previous_stage")
+  newStage      LeadStage  @map("new_stage")
+  changedById   String?    @map("changed_by")
+  reason        String?
+  createdAt     DateTime   @default(now()) @map("created_at")
+  agency        Agency     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead          Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  changedBy     User?      @relation("LeadStageActorUser", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, leadId, createdAt])
+  @@map("lead_stage_history")
+}
+
+model LeadAssignmentHistory {
+  id              String             @id @default(uuid())
+  agencyId        String             @map("agency_id")
+  leadId          String             @map("lead_id")
+  previousOwnerId String?            @map("previous_owner_id")
+  newOwnerId      String             @map("new_owner_id")
+  assignedById    String?            @map("assigned_by")
+  assignmentType  LeadAssignmentType @default(MANUAL) @map("assignment_type")
+  reason          String?
+  createdAt       DateTime           @default(now()) @map("created_at")
+  agency          Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead            Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  previousOwner   User?              @relation("LeadPreviousOwnerUser", fields: [previousOwnerId], references: [id], onDelete: SetNull)
+  newOwner        User               @relation("LeadNewOwnerUser", fields: [newOwnerId], references: [id], onDelete: Restrict)
+  assignedBy      User?              @relation("LeadAssignmentActorUser", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, leadId, createdAt])
+  @@index([agencyId, newOwnerId, createdAt])
+  @@map("lead_assignment_history")
+}
+
+model LeadFollowUp {
+  id                String             @id @default(uuid())
+  agencyId          String             @map("agency_id")
+  leadId            String             @map("lead_id")
+  assignedUserId    String             @map("assigned_user_id")
+  type              String
+  description       String
+  dueAt             DateTime           @map("due_at")
+  status            LeadFollowUpStatus @default(PENDING)
+  completedAt       DateTime?          @map("completed_at")
+  completedById     String?            @map("completed_by")
+  completionOutcome String?            @map("completion_outcome")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  agency            Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead              Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignedUser      User               @relation("LeadFollowUpAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  completedBy       User?              @relation("LeadFollowUpCompleterUser", fields: [completedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, assignedUserId, status, dueAt])
+  @@index([agencyId, leadId, dueAt])
+  @@map("lead_follow_ups")
+}
+
+model LeadLostDetail {
+  id                  String         @id @default(uuid())
+  agencyId            String         @map("agency_id")
+  leadId              String         @unique @map("lead_id")
+  reasonCode          LeadLostReason @map("reason_code")
+  notes               String?
+  lostById            String         @map("lost_by")
+  lastContactAt       DateTime?      @map("last_contact_at")
+  attemptCount        Int            @default(0) @map("attempt_count")
+  reactivationAllowed Boolean        @default(false) @map("reactivation_allowed")
+  reactivationAt      DateTime?      @map("reactivation_at")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  agency              Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead                Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lostBy              User           @relation("LeadLostActorUser", fields: [lostById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, reasonCode, createdAt])
+  @@map("lead_lost_details")
+}
+
+model LeadConversion {
+  id             String   @id @default(uuid())
+  agencyId       String   @map("agency_id")
+  leadId         String   @unique @map("lead_id")
+  clientId       String   @map("client_id")
+  caseId         String?  @map("case_id")
+  convertedById  String   @map("converted_by")
+  estimatedValue Decimal? @map("estimated_value") @db.Decimal(12, 2)
+  actualValue    Decimal? @map("actual_value") @db.Decimal(12, 2)
+  convertedAt    DateTime @default(now()) @map("converted_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  agency         Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  case           Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  convertedBy    User     @relation("LeadConversionActorUser", fields: [convertedById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, convertedAt])
+  @@index([clientId])
+  @@index([caseId])
+  @@map("lead_conversions")
+}
+
+model LeadQualification {
+  id                       String                   @id @default(uuid())
+  agencyId                 String                   @map("agency_id")
+  leadId                   String                   @unique @map("lead_id")
+  immigrationService       String?                  @map("immigration_service")
+  currentCountry           String?                  @map("current_country")
+  currentImmigrationStatus String?                  @map("current_immigration_status")
+  statusExpiryDate         DateTime?                @map("status_expiry_date")
+  preferredDestination     String?                  @map("preferred_destination")
+  education                String?
+  workExperience           String?                  @map("work_experience")
+  languageTest             String?                  @map("language_test")
+  previousRefusals         Boolean?                 @map("previous_refusals")
+  familyStatus             String?                  @map("family_status")
+  estimatedBudget          Decimal?                 @map("estimated_budget") @db.Decimal(12, 2)
+  preferredConsultationAt  DateTime?                @map("preferred_consultation_at")
+  urgency                  LeadPriority?
+  notes                    String?
+  eligibilityConfidence    Int?                     @map("eligibility_confidence")
+  outcome                  LeadQualificationOutcome
+  completedById            String                   @map("completed_by")
+  completedAt              DateTime                 @default(now()) @map("completed_at")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+  agency                   Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead                     Lead                     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  completedBy              User                     @relation("LeadQualificationActorUser", fields: [completedById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, outcome, completedAt])
+  @@map("lead_qualifications")
+}
+
+model LeadConsultation {
+  id                 String                   @id @default(uuid())
+  agencyId           String                   @map("agency_id")
+  leadId             String                   @map("lead_id")
+  consultantUserId   String                   @map("consultant_user_id")
+  createdById        String                   @map("created_by_id")
+  startAt            DateTime                 @map("start_at")
+  endAt              DateTime                 @map("end_at")
+  timezone           String                   @default("America/Toronto")
+  appointmentType    String                   @map("appointment_type")
+  status             LeadConsultationStatus   @default(SCHEDULED)
+  fee                Decimal?                 @db.Decimal(10, 2)
+  paymentStatus      String                   @default("UNPAID") @map("payment_status")
+  confirmationStatus String                   @default("PENDING") @map("confirmation_status")
+  reminderStatus     String                   @default("PENDING") @map("reminder_status")
+  location           String?
+  meetingUrl         String?                  @map("meeting_url")
+  outcome            LeadConsultationOutcome?
+  notes              String?
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+  agency             Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead               Lead                     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  consultant         User                     @relation("LeadConsultantUser", fields: [consultantUserId], references: [id], onDelete: Restrict)
+  createdBy          User                     @relation("LeadConsultationCreatorUser", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, startAt])
+  @@index([agencyId, consultantUserId, startAt])
+  @@index([agencyId, leadId, startAt])
+  @@map("lead_consultations")
+}
+
+model LeadIntakeForm {
+  id                   String              @id @default(uuid())
+  agencyId             String              @map("agency_id")
+  sourceId             String              @map("source_id")
+  campaignId           String?             @map("campaign_id")
+  ownerUserId          String              @map("owner_user_id")
+  name                 String
+  publicToken          String              @unique @map("public_token")
+  isActive             Boolean             @default(true) @map("is_active")
+  requireConsent       Boolean             @default(true) @map("require_consent")
+  firstResponseMinutes Int                 @default(15) @map("first_response_minutes")
+  successMessage       String?             @map("success_message")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  agency               Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  source               LeadSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  campaign             LeadCampaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  owner                User                @relation("LeadIntakeFormOwnerUser", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  incomingEvents       LeadIncomingEvent[]
+
+  @@unique([agencyId, name])
+  @@index([agencyId, isActive])
+  @@map("lead_intake_forms")
+}
+
+model LeadIncomingEvent {
+  id                  String                   @id @default(uuid())
+  agencyId            String                   @map("agency_id")
+  sourceId            String                   @map("source_id")
+  campaignId          String?                  @map("campaign_id")
+  intakeFormId        String?                  @map("intake_form_id")
+  sourceConnectionId  String?                  @map("source_connection_id")
+  importBatchId       String?                  @map("import_batch_id")
+  importRowId         String?                  @unique @map("import_row_id")
+  processedLeadId     String?                  @map("processed_lead_id")
+  channel             String
+  idempotencyKey      String                   @map("idempotency_key")
+  rawPayload          Json                     @map("raw_payload")
+  normalizedPayload   Json?                    @map("normalized_payload")
+  status              LeadIncomingEventStatus  @default(PENDING)
+  attempts            Int                      @default(0)
+  maxAttempts         Int                      @default(5) @map("max_attempts")
+  availableAt         DateTime                 @default(now()) @map("available_at")
+  lockedAt            DateTime?                @map("locked_at")
+  processedAt         DateTime?                @map("processed_at")
+  lastError           String?                  @map("last_error")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  agency              Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  source              LeadSource               @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  campaign            LeadCampaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  intakeForm          LeadIntakeForm?          @relation(fields: [intakeFormId], references: [id], onDelete: SetNull)
+  sourceConnection    LeadSourceConnection?    @relation(fields: [sourceConnectionId], references: [id], onDelete: SetNull)
+  importBatch         LeadImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  importRow           LeadImportRow?           @relation(fields: [importRowId], references: [id], onDelete: SetNull)
+  processedLead       Lead?                    @relation(fields: [processedLeadId], references: [id], onDelete: SetNull)
+  duplicateCandidates LeadDuplicateCandidate[]
+
+  @@unique([agencyId, idempotencyKey])
+  @@index([status, availableAt])
+  @@index([agencyId, createdAt])
+  @@index([sourceConnectionId, createdAt])
+  @@map("lead_incoming_events")
+}
+
+model LeadSourceConnection {
+  id                     String              @id @default(uuid())
+  agencyId               String              @map("agency_id")
+  sourceId               String              @map("source_id")
+  campaignId             String?             @map("campaign_id")
+  ownerUserId            String              @map("owner_user_id")
+  provider               String              @default("WEBSITE")
+  name                   String
+  publicToken            String              @unique @map("public_token")
+  signingSecretEncrypted String              @map("signing_secret_encrypted")
+  accessTokenEncrypted   String?             @map("access_token_encrypted")
+  isActive               Boolean             @default(true) @map("is_active")
+  firstResponseMinutes   Int                 @default(15) @map("first_response_minutes")
+  allowedOrigins         Json                @default("[]") @map("allowed_origins")
+  lastEventAt            DateTime?           @map("last_event_at")
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+  agency                 Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  source                 LeadSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  campaign               LeadCampaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  owner                  User                @relation("LeadSourceConnectionOwnerUser", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  incomingEvents         LeadIncomingEvent[]
+
+  @@unique([agencyId, name])
+  @@index([agencyId, provider, isActive])
+  @@map("lead_source_connections")
+}
+
+model LeadImportBatch {
+  id             String                @id @default(uuid())
+  agencyId       String                @map("agency_id")
+  sourceId       String                @map("source_id")
+  uploadedById   String                @map("uploaded_by_id")
+  fileName       String                @map("file_name")
+  status         LeadImportBatchStatus @default(PREVIEW)
+  totalRows      Int                   @default(0) @map("total_rows")
+  validRows      Int                   @default(0) @map("valid_rows")
+  invalidRows    Int                   @default(0) @map("invalid_rows")
+  processedRows  Int                   @default(0) @map("processed_rows")
+  duplicateRows  Int                   @default(0) @map("duplicate_rows")
+  failedRows     Int                   @default(0) @map("failed_rows")
+  settings       Json                  @default("{}")
+  committedAt    DateTime?             @map("committed_at")
+  completedAt    DateTime?             @map("completed_at")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+  agency         Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  source         LeadSource            @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  uploadedBy     User                  @relation("LeadImportUploaderUser", fields: [uploadedById], references: [id], onDelete: Restrict)
+  rows           LeadImportRow[]
+  incomingEvents LeadIncomingEvent[]
+
+  @@index([agencyId, createdAt])
+  @@index([agencyId, status])
+  @@map("lead_import_batches")
+}
+
+model LeadImportRow {
+  id               String              @id @default(uuid())
+  agencyId         String              @map("agency_id")
+  batchId          String              @map("batch_id")
+  rowNumber        Int                 @map("row_number")
+  rawData          Json                @map("raw_data")
+  normalizedData   Json?               @map("normalized_data")
+  validationErrors Json                @default("[]") @map("validation_errors")
+  status           LeadImportRowStatus
+  createdLeadId    String?             @map("created_lead_id")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+  agency           Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  batch            LeadImportBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  createdLead      Lead?               @relation("LeadImportCreatedLead", fields: [createdLeadId], references: [id], onDelete: SetNull)
+  incomingEvent    LeadIncomingEvent?
+
+  @@unique([batchId, rowNumber])
+  @@index([agencyId, status])
+  @@map("lead_import_rows")
+}
+
+model LeadDuplicateCandidate {
+  id              String              @id @default(uuid())
+  agencyId        String              @map("agency_id")
+  incomingEventId String              @map("incoming_event_id")
+  candidateLeadId String              @map("candidate_lead_id")
+  score           Int
+  reasons         Json                @default("[]")
+  status          LeadDuplicateStatus @default(PENDING)
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  agency          Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  incomingEvent   LeadIncomingEvent   @relation(fields: [incomingEventId], references: [id], onDelete: Cascade)
+  candidateLead   Lead                @relation(fields: [candidateLeadId], references: [id], onDelete: Cascade)
+
+  @@unique([incomingEventId, candidateLeadId])
+  @@index([agencyId, status, createdAt])
+  @@map("lead_duplicate_candidates")
+}
