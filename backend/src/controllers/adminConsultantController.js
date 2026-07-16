@@ -174,8 +174,8 @@ export async function resetConsultantPassword(req, res) {
 
 async function workloadFor(agencyId, userId, capacity) {
   const now = new Date();
-  const caseWhere = { agencyId, status: { not: "Closed" }, OR: [{ assignedUserId: userId }, { assignments: { some: { consultantUserId: userId, status: "active" } } }] };
-  const [activeCases, pendingTasks, overdueTasks, documentsWaitingReview] = await Promise.all([
+  const caseWhere = { agencyId, deletedAt: null, status: { not: "Closed" }, OR: [{ assignedUserId: userId }, { assignments: { some: { consultantUserId: userId, status: "active" } } }] };
+  const [activeCases, pendingTasks, overdueTasks, documentsWaitingReview] = await prisma.$transaction([
     prisma.case.count({ where: caseWhere }),
     prisma.caseWorkflowStep.count({ where: { agencyId, assignedToId: userId, status: "Pending", isActive: true } }),
     prisma.caseWorkflowStep.count({ where: { agencyId, assignedToId: userId, status: "Pending", isActive: true, dueAt: { lt: now } } }),
@@ -188,6 +188,7 @@ async function workloadDetails(agencyId, userId) {
   const now = new Date();
   const caseWhere = {
     agencyId,
+    deletedAt: null,
     status: { not: "Closed" },
     OR: [
       { assignedUserId: userId },
@@ -212,7 +213,7 @@ async function workloadDetails(agencyId, userId) {
     case: { select: caseSelect },
   };
 
-  const [activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems] = await Promise.all([
+  const [activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems] = await prisma.$transaction([
     prisma.case.findMany({
       where: caseWhere,
       orderBy: { updatedAt: "asc" },
@@ -271,8 +272,124 @@ export async function myWorkload(req, res) {
   res.json({ success: true, data: { ...summary, ...details } });
 }
 
+async function unassignedWorkload(agencyId, activeConsultantIds) {
+  const now = new Date();
+  const notOwnedByActiveConsultant = activeConsultantIds.length
+    ? { OR: [{ assignedUserId: null }, { assignedUserId: { notIn: activeConsultantIds } }] }
+    : { assignedUserId: null };
+  const notAssignedToActiveConsultant = activeConsultantIds.length
+    ? { OR: [{ assignedToId: null }, { assignedToId: { notIn: activeConsultantIds } }] }
+    : { assignedToId: null };
+  const caseWhere = {
+    agencyId,
+    deletedAt: null,
+    status: { not: "Closed" },
+    ...notOwnedByActiveConsultant,
+    assignments: { none: { status: "active", consultantUserId: { in: activeConsultantIds } } },
+  };
+  const taskWhere = {
+    agencyId,
+    AND: [notAssignedToActiveConsultant],
+    status: "Pending",
+    isActive: true,
+    case: { deletedAt: null, status: { not: "Closed" } },
+  };
+  const caseSelect = {
+    id: true,
+    caseType: true,
+    stage: true,
+    status: true,
+    nextAction: true,
+    updatedAt: true,
+    client: { select: { id: true, fullName: true } },
+  };
+  const taskSelect = {
+    id: true,
+    title: true,
+    description: true,
+    priority: true,
+    dueAt: true,
+    case: { select: caseSelect },
+  };
+  const documentWhere = { agencyId, status: "UnderReview", case: caseWhere };
+  const [activeCases, pendingTasks, overdueTasks, documentsWaitingReview, activeCaseItems, pendingTaskItems, overdueTaskItems, documentReviewItems] = await prisma.$transaction([
+    prisma.case.count({ where: caseWhere }),
+    prisma.caseWorkflowStep.count({ where: taskWhere }),
+    prisma.caseWorkflowStep.count({ where: { ...taskWhere, dueAt: { lt: now } } }),
+    prisma.clientDocument.count({ where: documentWhere }),
+    prisma.case.findMany({ where: caseWhere, orderBy: { updatedAt: "asc" }, take: 10, select: caseSelect }),
+    prisma.caseWorkflowStep.findMany({
+      where: { ...taskWhere, OR: [{ dueAt: null }, { dueAt: { gte: now } }] },
+      orderBy: [{ dueAt: "asc" }, { priority: "desc" }],
+      take: 10,
+      select: taskSelect,
+    }),
+    prisma.caseWorkflowStep.findMany({
+      where: { ...taskWhere, dueAt: { lt: now } },
+      orderBy: { dueAt: "asc" },
+      take: 10,
+      select: taskSelect,
+    }),
+    prisma.clientDocument.findMany({
+      where: documentWhere,
+      orderBy: { updatedAt: "asc" },
+      take: 10,
+      select: {
+        id: true,
+        documentName: true,
+        status: true,
+        updatedAt: true,
+        client: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true } },
+      },
+    }),
+  ]);
+  return {
+    activeCases,
+    pendingTasks,
+    overdueTasks,
+    documentsWaitingReview,
+    activeCaseItems,
+    pendingTaskItems,
+    overdueTaskItems,
+    documentReviewItems,
+  };
+}
+
 export async function agencyWorkloads(req, res) {
   const profiles = await prisma.consultantProfile.findMany({ where: { agencyId: req.auth.agencyId, user: { status: "active" } }, include: { user: { select: { id: true, fullName: true, email: true } } } });
-  const data = await Promise.all(profiles.map(async (profile) => ({ consultant: profile.user, ...(await workloadFor(req.auth.agencyId, profile.userId, profile.maximumActiveCases)) })));
-  res.json({ success: true, data });
+  const consultants = [];
+  // Load one consultant snapshot at a time. Each helper batches its reads into
+  // one transaction so Supabase's session-mode connection pool stays bounded.
+  for (const profile of profiles) {
+    const summary = await workloadFor(req.auth.agencyId, profile.userId, profile.maximumActiveCases);
+    const details = await workloadDetails(req.auth.agencyId, profile.userId);
+    consultants.push({
+      consultant: profile.user,
+      profile: {
+        employeeId: profile.employeeId,
+        specializations: profile.specializations,
+        masteryLevel: profile.masteryLevel,
+      },
+      ...summary,
+      ...details,
+    });
+  }
+  const unassigned = await unassignedWorkload(req.auth.agencyId, profiles.map((profile) => profile.userId));
+  const summary = consultants.reduce((totals, item) => ({
+    ...totals,
+    activeCases: totals.activeCases + item.activeCases,
+    pendingTasks: totals.pendingTasks + item.pendingTasks,
+    overdueTasks: totals.overdueTasks + item.overdueTasks,
+    documentsWaitingReview: totals.documentsWaitingReview + item.documentsWaitingReview,
+    overloadedConsultants: totals.overloadedConsultants + (item.workloadPercentage >= 100 ? 1 : 0),
+  }), {
+    activeConsultants: consultants.length,
+    activeCases: 0,
+    pendingTasks: 0,
+    overdueTasks: 0,
+    documentsWaitingReview: 0,
+    overloadedConsultants: 0,
+  });
+  res.json({ success: true, data: { summary, consultants, unassigned } });
 }

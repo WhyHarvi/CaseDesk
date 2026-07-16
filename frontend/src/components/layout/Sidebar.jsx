@@ -75,6 +75,13 @@ const adminNavigation = [
     disabled: false,
   },
   {
+    label: "Team Workload",
+    to: "/app/workload",
+    icon: Gauge,
+    description: "Capacity and assignments",
+    disabled: false,
+  },
+  {
     label: "Settings",
     to: "/app/settings",
     icon: Settings,

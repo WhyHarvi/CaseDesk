@@ -63,3 +63,24 @@ test("my workload exposes actionable records and recovers from API errors", asyn
   assert.match(page, /Try again/);
   assert.match(page, /to=\{`\/app\/cases\/\$\{item\.case\.id\}`\}/);
 });
+
+test("admin workload shows agency consultants, assignments, and unassigned work", async () => {
+  const [controller, routes, page, dashboard, sidebar] = await Promise.all([
+    source("../src/controllers/adminConsultantController.js"),
+    source("../src/routes/adminRoutes.js"),
+    source("../../frontend/src/pages/Workload.jsx"),
+    source("../../frontend/src/components/dashboard/DashboardWorkRow.jsx"),
+    source("../../frontend/src/components/layout/Sidebar.jsx"),
+  ]);
+
+  assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
+  assert.match(controller, /data: \{ summary, consultants, unassigned \}/);
+  assert.match(controller, /assignments: \{ none: \{ status: "active", consultantUserId: \{ in: activeConsultantIds \} \} \}/);
+  assert.match(controller, /case: \{ deletedAt: null, status: \{ not: "Closed" \} \}/);
+  assert.match(page, /isAdmin \? "\/admin\/consultants\/workload" : "\/consultants\/me\/workload"/);
+  assert.match(page, /title=\{isAdmin \? "Team Workload" : "My Workload"\}/);
+  assert.match(page, /Unassigned work needs an owner/);
+  assert.match(page, /Consultant workload/);
+  assert.match(dashboard, /isAdmin \? "View team workload" : "View all my work"/);
+  assert.match(sidebar, /label: "Team Workload"/);
+});

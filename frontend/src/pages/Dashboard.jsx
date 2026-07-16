@@ -3,9 +3,11 @@ import DashboardBottomRow from "../components/dashboard/DashboardBottomRow";
 import DashboardWorkRow from "../components/dashboard/DashboardWorkRow";
 import DashboardStats from "../components/dashboard/DashboardStats";
 import PageContainer from "../components/layout/PageContainer";
+import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 
 export default function Dashboard() {
+  const { role } = useAuth();
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -40,7 +42,7 @@ export default function Dashboard() {
 
       <DashboardStats dashboard={dashboard} loading={loading} />
 
-      <DashboardWorkRow dashboard={dashboard} loading={loading} />
+      <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
 
       <DashboardBottomRow dashboard={dashboard} loading={loading} />
     </PageContainer>

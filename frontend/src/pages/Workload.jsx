@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, FileClock, ListChecks, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import PageContainer from "../components/layout/PageContainer";
 import api from "../services/api";
 
@@ -42,7 +43,119 @@ function TaskRow({ item, overdue = false }) {
   );
 }
 
+function CaseRow({ item }) {
+  return <Link to={`/app/cases/${item.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-sky-200 hover:bg-sky-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client.fullName}</p><p className="truncate text-xs text-slate-500">{item.caseType} · {item.stage}</p></div><ArrowRight className="h-4 w-4 shrink-0 text-slate-400" /></Link>;
+}
+
+function DocumentRow({ item }) {
+  const target = item.case ? `/app/cases/${item.case.id}` : `/app/clients/${item.client.id}`;
+  return <Link to={target} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-amber-200 hover:bg-amber-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.documentName}</p><p className="truncate text-xs text-slate-500">{item.client.fullName}{item.case ? ` · ${item.case.caseType}` : ""}</p></div><ArrowRight className="h-4 w-4 shrink-0 text-slate-400" /></Link>;
+}
+
+function WorkDetails({ workload }) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <WorkSection icon={AlertTriangle} title="Overdue Tasks" count={workload.overdueTasks} empty="No overdue tasks." tone="rose">
+        {workload.overdueTaskItems.map((item) => <TaskRow key={item.id} item={item} overdue />)}
+      </WorkSection>
+      <WorkSection icon={ListChecks} title="Pending Tasks" count={workload.pendingTasks - workload.overdueTasks} empty="No upcoming tasks.">
+        {workload.pendingTaskItems.map((item) => <TaskRow key={item.id} item={item} />)}
+      </WorkSection>
+      <WorkSection icon={FileClock} title="Documents Waiting for Review" count={workload.documentsWaitingReview} empty="No documents are waiting for review." tone="amber">
+        {workload.documentReviewItems.map((item) => <DocumentRow key={item.id} item={item} />)}
+      </WorkSection>
+      <WorkSection icon={BriefcaseBusiness} title="Active Cases" count={workload.activeCases} empty="No active cases.">
+        {workload.activeCaseItems.map((item) => <CaseRow key={item.id} item={item} />)}
+      </WorkSection>
+    </div>
+  );
+}
+
+function ConsultantWorkloadCard({ workload, open, onToggle }) {
+  const riskTone = workload.overdueTasks > 0 ? "text-rose-700 bg-rose-50" : workload.workloadPercentage >= 90 ? "text-amber-700 bg-amber-50" : "text-emerald-700 bg-emerald-50";
+  return (
+    <article className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white/85 shadow-sm">
+      <button type="button" onClick={onToggle} className="grid w-full gap-4 p-5 text-left transition hover:bg-slate-50/70 lg:grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(90px,.55fr))_44px] lg:items-center">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 font-semibold text-sky-700"><UserRound className="h-5 w-5" /></div>
+          <div className="min-w-0"><p className="truncate font-semibold text-slate-950">{workload.consultant.fullName}</p><p className="truncate text-xs text-slate-500">{workload.profile.masteryLevel || workload.consultant.email}</p></div>
+        </div>
+        <div><p className="text-xs text-slate-400">Capacity</p><p className="mt-1 text-sm font-semibold text-slate-800">{workload.activeCases} / {workload.capacity}</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={workload.workloadPercentage >= 100 ? "h-full rounded-full bg-rose-500" : workload.workloadPercentage >= 75 ? "h-full rounded-full bg-amber-400" : "h-full rounded-full bg-emerald-500"} style={{ width: `${Math.min(workload.workloadPercentage, 100)}%` }} /></div></div>
+        <div><p className="text-xs text-slate-400">Pending tasks</p><p className="mt-1 text-xl font-semibold text-slate-900">{workload.pendingTasks}</p></div>
+        <div><p className="text-xs text-slate-400">Overdue</p><p className="mt-1 text-xl font-semibold text-rose-700">{workload.overdueTasks}</p></div>
+        <div><p className="text-xs text-slate-400">Reviews</p><p className="mt-1 text-xl font-semibold text-amber-700">{workload.documentsWaitingReview}</p></div>
+        <div className={["flex h-10 w-10 items-center justify-center rounded-full", riskTone].join(" ")}><ChevronDown className={["h-5 w-5 transition", open ? "rotate-180" : ""].join(" ")} /></div>
+      </button>
+      {open ? <div className="border-t border-slate-100 bg-slate-50/45 p-5"><WorkDetails workload={workload} /></div> : null}
+    </article>
+  );
+}
+
+function TeamWorkload({ data }) {
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(() => new Set());
+  const unassignedCount = data.unassigned.activeCases + data.unassigned.pendingTasks + data.unassigned.documentsWaitingReview;
+  const visibleConsultants = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return [...data.consultants]
+      .filter((item) => !needle || [item.consultant.fullName, item.consultant.email, item.profile.masteryLevel, ...(item.profile.specializations || [])].some((value) => String(value || "").toLowerCase().includes(needle)))
+      .sort((left, right) => right.overdueTasks - left.overdueTasks || right.workloadPercentage - left.workloadPercentage || left.consultant.fullName.localeCompare(right.consultant.fullName));
+  }, [data.consultants, query]);
+  const toggle = (id) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <Metric label="Active consultants" value={data.summary.activeConsultants} tone="sky" />
+        <Metric label="Case assignments" value={data.summary.activeCases} />
+        <Metric label="Pending tasks" value={data.summary.pendingTasks} />
+        <Metric label="Overdue tasks" value={data.summary.overdueTasks} tone={data.summary.overdueTasks ? "rose" : "slate"} />
+        <Metric label="Awaiting review" value={data.summary.documentsWaitingReview} tone={data.summary.documentsWaitingReview ? "amber" : "slate"} />
+        <Metric label="Unassigned work" value={unassignedCount} tone={unassignedCount ? "rose" : "emerald"} />
+      </div>
+
+      {unassignedCount ? (
+        <section className="rounded-3xl border border-rose-200 bg-rose-50/70 p-5">
+          <div className="mb-4 flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-700"><AlertTriangle className="h-5 w-5" /></div><div><h2 className="font-semibold text-rose-950">Unassigned work needs an owner</h2><p className="mt-1 text-sm text-rose-700">These cases or tasks are not assigned to an active consultant.</p></div></div>
+          <WorkDetails workload={data.unassigned} />
+        </section>
+      ) : null}
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="text-xl font-semibold text-slate-950">Consultant workload</h2><p className="mt-1 text-sm text-slate-500">Open a consultant to see their current cases, tasks, and review queue.</p></div>
+          <label className="relative block w-full sm:w-80"><Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search consultants" className="h-10 w-full rounded-full border border-slate-200 bg-white pl-10 pr-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
+        </div>
+        {visibleConsultants.map((item) => <ConsultantWorkloadCard key={item.consultant.id} workload={item} open={expanded.has(item.consultant.id)} onToggle={() => toggle(item.consultant.id)} />)}
+        {!visibleConsultants.length ? <div className="rounded-3xl border border-dashed border-slate-200 bg-white/60 p-10 text-center text-sm text-slate-500">{query ? "No consultants match your search." : "No active consultants are available."}</div> : null}
+      </section>
+    </>
+  );
+}
+
+function PersonalWorkload({ data }) {
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <Metric label="Active cases" value={data.activeCases} tone="sky" />
+        <Metric label="Pending tasks" value={data.pendingTasks} />
+        <Metric label="Overdue tasks" value={data.overdueTasks} tone={data.overdueTasks ? "rose" : "slate"} />
+        <Metric label="Documents waiting" value={data.documentsWaitingReview} tone={data.documentsWaitingReview ? "amber" : "slate"} />
+        <Metric label="Case capacity" value={data.capacity} />
+        <Metric label="Capacity used" value={`${data.workloadPercentage}%`} tone={data.workloadPercentage >= 90 ? "rose" : data.workloadPercentage >= 70 ? "amber" : "emerald"} />
+      </div>
+      <WorkDetails workload={data} />
+    </>
+  );
+}
+
 export default function Workload() {
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -50,57 +163,27 @@ export default function Workload() {
   const loadWorkload = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get("/consultants/me/workload");
+      const response = await api.get(isAdmin ? "/admin/consultants/workload" : "/consultants/me/workload");
       setData(response.data.data);
       setError("");
     } catch (requestError) {
-      setError(requestError.response?.data?.message || "Unable to load your workload.");
+      setError(requestError.response?.data?.message || (isAdmin ? "Unable to load the team workload." : "Unable to load your workload."));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => { loadWorkload(); }, [loadWorkload]);
 
   return (
     <PageContainer
-      title="My Workload"
-      description="Your assigned cases, deadlines, and documents requiring review."
+      title={isAdmin ? "Team Workload" : "My Workload"}
+      description={isAdmin ? "See who is handling each case, where capacity is tight, and what needs attention across your agency." : "Your assigned cases, deadlines, and documents requiring review."}
       actions={<button type="button" onClick={loadWorkload} disabled={loading} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} />Refresh</button>}
     >
-      {error ? (
-        <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><button type="button" onClick={loadWorkload} className="font-semibold underline">Try again</button></div>
-      ) : null}
-
-      {loading && !data ? <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading your assigned work…</div> : null}
-
-      {data ? (
-        <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-            <Metric label="Active cases" value={data.activeCases} tone="sky" />
-            <Metric label="Pending tasks" value={data.pendingTasks} />
-            <Metric label="Overdue tasks" value={data.overdueTasks} tone={data.overdueTasks ? "rose" : "slate"} />
-            <Metric label="Documents waiting" value={data.documentsWaitingReview} tone={data.documentsWaitingReview ? "amber" : "slate"} />
-            <Metric label="Case capacity" value={data.capacity} />
-            <Metric label="Capacity used" value={`${data.workloadPercentage}%`} tone={data.workloadPercentage >= 90 ? "rose" : data.workloadPercentage >= 70 ? "amber" : "emerald"} />
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <WorkSection icon={AlertTriangle} title="Overdue Tasks" count={data.overdueTaskItems.length} empty="No overdue tasks." tone="rose">
-              {data.overdueTaskItems.map((item) => <TaskRow key={item.id} item={item} overdue />)}
-            </WorkSection>
-            <WorkSection icon={ListChecks} title="Pending Tasks" count={data.pendingTaskItems.length} empty="No pending tasks assigned to you.">
-              {data.pendingTaskItems.map((item) => <TaskRow key={item.id} item={item} />)}
-            </WorkSection>
-            <WorkSection icon={FileClock} title="Documents Waiting for Review" count={data.documentReviewItems.length} empty="No documents are waiting for your review." tone="amber">
-              {data.documentReviewItems.map((item) => <Link key={item.id} to={`/app/cases/${item.case.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-amber-200 hover:bg-amber-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.documentName}</p><p className="truncate text-xs text-slate-500">{item.client.fullName} · {item.case.caseType}</p></div><ArrowRight className="h-4 w-4 shrink-0 text-slate-400" /></Link>)}
-            </WorkSection>
-            <WorkSection icon={BriefcaseBusiness} title="Assigned Cases" count={data.activeCaseItems.length} empty="No active cases are assigned to you.">
-              {data.activeCaseItems.map((item) => <Link key={item.id} to={`/app/cases/${item.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-sky-200 hover:bg-sky-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client.fullName}</p><p className="truncate text-xs text-slate-500">{item.caseType} · {item.stage}</p></div><ArrowRight className="h-4 w-4 shrink-0 text-slate-400" /></Link>)}
-            </WorkSection>
-          </div>
-        </>
-      ) : null}
+      {error ? <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><button type="button" onClick={loadWorkload} className="font-semibold underline">Try again</button></div> : null}
+      {loading && !data ? <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading {isAdmin ? "team" : "your"} workload…</div> : null}
+      {data ? (isAdmin ? <TeamWorkload data={data} /> : <PersonalWorkload data={data} />) : null}
     </PageContainer>
   );
 }

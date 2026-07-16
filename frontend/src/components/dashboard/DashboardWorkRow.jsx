@@ -117,7 +117,8 @@ function WorkItemRow({ item, timezone }) {
   );
 }
 
-export default function DashboardWorkRow({ dashboard, loading }) {
+export default function DashboardWorkRow({ dashboard, loading, role }) {
+  const isAdmin = role === "admin";
   const timezone = dashboard?.timezone || "America/Toronto";
   const appointments = dashboard?.upcomingAppointments || [];
   const workItems = buildWorkItems(dashboard);
@@ -163,7 +164,7 @@ export default function DashboardWorkRow({ dashboard, loading }) {
           icon={ListChecks}
           iconClass="bg-sky-50 text-sky-600"
           title="Priority Work"
-          subtitle="Overdue and current actions on your cases"
+          subtitle={isAdmin ? "Overdue and current actions across your agency" : "Overdue and current actions on your cases"}
           chip={`${workCount} open`}
           chipClass="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"
         />
@@ -175,7 +176,7 @@ export default function DashboardWorkRow({ dashboard, loading }) {
           {!workItems.overdue.length && !workItems.current.length ? <EmptyState loading={loading}>You have no open work items.</EmptyState> : null}
         </div>
         <div className="mt-4 border-t border-slate-100 pt-4">
-          <Link to="/app/workload" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">View all work <ArrowRight className="h-3.5 w-3.5" /></Link>
+          <Link to="/app/workload" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">{isAdmin ? "View team workload" : "View all my work"} <ArrowRight className="h-3.5 w-3.5" /></Link>
         </div>
       </article>
 
