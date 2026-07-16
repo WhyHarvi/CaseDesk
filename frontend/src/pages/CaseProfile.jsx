@@ -18,6 +18,7 @@ import NotesOverlay from "../components/case-profile/notes/NotesOverlay";
 import ActivitiesOverlay from "../components/case-profile/activities/ActivitiesOverlay";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import CommunicationSetupOverlay from "../components/case-profile/communication/CommunicationSetupOverlay";
+import CaseCloseDialog from "../components/case-profile/CaseCloseDialog";
 import { useAuth } from "../auth/AuthContext";
 import {
   buildBlankTemplateStep,
@@ -69,6 +70,7 @@ export default function CaseProfile() {
   const [activeToolbarTray, setActiveToolbarTray] = useState("");
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
+  const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
   const [notesOverlayOpen, setNotesOverlayOpen] = useState(false);
   const [activitiesOverlayOpen, setActivitiesOverlayOpen] = useState(false);
   const [statementOverlayOpen, setStatementOverlayOpen] = useState(false);
@@ -1587,6 +1589,27 @@ export default function CaseProfile() {
           onOpenStatement={() => {
             setActiveToolbarTray("");
             setStatementOverlayOpen(true);
+          }}
+          onCloseCase={() => {
+            setActiveToolbarTray("");
+            setCloseCaseDialogOpen(true);
+          }}
+        />
+
+        <CaseCloseDialog
+          open={closeCaseDialogOpen}
+          caseItem={caseItem}
+          onClose={() => setCloseCaseDialogOpen(false)}
+          onClosed={(closedCase) => {
+            setCaseItem((current) => ({ ...current, ...closedCase }));
+            setFollowUps((current) =>
+              current.map((followUp) =>
+                ["Pending", "Overdue"].includes(followUp.status) ? { ...followUp, status: "Cancelled" } : followUp,
+              ),
+            );
+            setWorkflowSteps((current) =>
+              current.map((step) => (step.status === "Pending" ? { ...step, status: "Cancelled", isActive: false } : step)),
+            );
           }}
         />
 
