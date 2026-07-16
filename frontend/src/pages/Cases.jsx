@@ -20,7 +20,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
-import CaseTrashOverlay from "../components/cases/CaseTrashOverlay";
 import api from "../services/api";
 
 const STAGE_OPTIONS = [
@@ -36,6 +35,12 @@ const STAGE_OPTIONS = [
 ];
 const STATUS_OPTIONS = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 const PRIORITY_OPTIONS = ["Low", "Normal", "High", "Urgent"];
+const REGISTER_VIEWS = [
+  { id: "active", label: "Active Cases", icon: BriefcaseBusiness },
+  { id: "closed", label: "Closed", icon: CheckCircle2 },
+  { id: "archived", label: "Archived", icon: Archive },
+  { id: "trash", label: "Trash", icon: Trash2 },
+];
 
 const defaultFormState = {
   clientId: "",
@@ -457,27 +462,34 @@ function CaseDocumentProgress({ summary }) {
   );
 }
 
-function EmptyState({ onCreate }) {
+function EmptyState({ onCreate, view }) {
+  const copy = {
+    active: ["No active cases", "Newly created and reopened cases will appear here."],
+    closed: ["No closed cases", "Cases appear here after their active work has been completed."],
+    archived: ["No archived cases", "Closed cases that you archive will remain available here."],
+    trash: ["Trash is empty", "Cases moved to Trash will appear here until they are restored."],
+  }[view];
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sky-100 text-sky-700">
         <BriefcaseBusiness className="h-7 w-7" />
       </div>
       <h3 className="mt-5 text-xl font-semibold text-slate-950">
-        No cases yet
+        {copy[0]}
       </h3>
       <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-        Create your first case to start tracking stages, documents, payments,
-        and next actions.
+        {copy[1]}
       </p>
-      <button
-        type="button"
-        onClick={onCreate}
-        className="mt-6 inline-flex h-11 items-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_18px_45px_rgba(15,23,42,0.22)] transition hover:bg-slate-800"
-      >
-        <Plus className="h-4 w-4" />
-        New Case
-      </button>
+      {view === "active" ? (
+        <button
+          type="button"
+          onClick={onCreate}
+          className="mt-6 inline-flex h-11 items-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_18px_45px_rgba(15,23,42,0.22)] transition hover:bg-slate-800"
+        >
+          <Plus className="h-4 w-4" />
+          New Case
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -537,9 +549,17 @@ function CaseActionsMenu({
   onEdit,
   onDelete,
   deletingId,
+  registerView,
 }) {
   const buttonRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState(null);
+  const lifecycleAction = {
+    active: { label: "Close case", busy: "Closing…", icon: CheckCircle2, tone: "text-amber-700 hover:bg-amber-50" },
+    closed: { label: "Archive case", busy: "Archiving…", icon: Archive, tone: "text-violet-700 hover:bg-violet-50" },
+    archived: { label: "Restore from archive", busy: "Restoring…", icon: RefreshCw, tone: "text-emerald-700 hover:bg-emerald-50" },
+    trash: { label: "Restore from Trash", busy: "Restoring…", icon: RefreshCw, tone: "text-emerald-700 hover:bg-emerald-50" },
+  }[registerView];
+  const LifecycleIcon = lifecycleAction.icon;
 
   useEffect(() => {
     if (!isOpen || !buttonRef.current) {
@@ -608,17 +628,19 @@ function CaseActionsMenu({
                   left: `${menuPosition.left}px`,
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() => {
-                    onToggle(null);
-                    onEdit(item);
-                  }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50 hover:text-sky-700"
-                >
-                  <Pencil className="h-4 w-4" />
-                  Edit case
-                </button>
+                {registerView === "active" || registerView === "closed" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onToggle(null);
+                      onEdit(item);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50 hover:text-sky-700"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Edit case
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => {
@@ -626,10 +648,10 @@ function CaseActionsMenu({
                     onDelete(item);
                   }}
                   disabled={deletingId === item.id}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${lifecycleAction.tone}`}
                 >
-                  <Archive className="h-4 w-4" />
-                  {deletingId === item.id ? "Closing..." : "Close case"}
+                  <LifecycleIcon className="h-4 w-4" />
+                  {deletingId === item.id ? lifecycleAction.busy : lifecycleAction.label}
                 </button>
               </div>
             </>,
@@ -648,6 +670,7 @@ function CaseMobileCard({
   onToggleMenu,
   isMenuOpen,
   deletingId,
+  registerView,
 }) {
   return (
     <article className="rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_14px_35px_rgba(15,23,42,0.06)]">
@@ -723,7 +746,8 @@ function CaseMobileCard({
           <select
             value={item.stage}
             onChange={(event) => onStageChange(item, event.target.value)}
-            className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
+            disabled={registerView !== "active"}
+            className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
           >
             {STAGE_OPTIONS.map((stage) => (
               <option key={stage} value={stage}>
@@ -741,6 +765,7 @@ function CaseMobileCard({
             onEdit={onEdit}
             onDelete={onDelete}
             deletingId={deletingId}
+            registerView={registerView}
           />
         </div>
       </div>
@@ -1160,8 +1185,9 @@ export default function Cases() {
     priority: "all",
   });
   const [refreshing, setRefreshing] = useState(false);
-  const [trashOpen, setTrashOpen] = useState(false);
+  const [registerView, setRegisterView] = useState("active");
   const [activeActionMenuId, setActiveActionMenuId] = useState(null);
+  const loadRequestRef = useRef(0);
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth >= 1024 : true,
   );
@@ -1169,8 +1195,8 @@ export default function Cases() {
   const isEditing = Boolean(editingCase);
 
   useEffect(() => {
-    loadWorkspaceData();
-  }, []);
+    loadWorkspaceData({ view: registerView });
+  }, [registerView]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -1211,7 +1237,8 @@ export default function Cases() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showForm, viewingCase]);
 
-  async function loadWorkspaceData({ quiet = false } = {}) {
+  async function loadWorkspaceData({ quiet = false, view = registerView } = {}) {
+    const requestId = ++loadRequestRef.current;
     try {
       if (quiet) {
         setRefreshing(true);
@@ -1220,7 +1247,7 @@ export default function Cases() {
       }
 
       const results = await Promise.allSettled([
-        api.get("/cases"),
+        api.get("/cases", { params: { view } }),
         api.get("/clients"),
         api.get("/leads/staff"),
         api.get("/client-documents"),
@@ -1234,6 +1261,8 @@ export default function Cases() {
         documentsResult,
         paymentsResult,
       ] = results;
+
+      if (requestId !== loadRequestRef.current) return;
 
       if (casesResult.status !== "fulfilled") {
         throw casesResult.reason;
@@ -1262,10 +1291,13 @@ export default function Cases() {
       );
       setError("");
     } catch (requestError) {
+      if (requestId !== loadRequestRef.current) return;
       setError(requestError.response?.data?.message || "Unable to load cases.");
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }
 
@@ -1530,9 +1562,12 @@ export default function Cases() {
   }
 
   async function handleDelete(item) {
-    const confirmed = window.confirm(
-      `Close the ${item.caseType} case for ${item.clientName}? Open tasks, follow-ups, and appointments will be cancelled and the history will be preserved.`,
-    );
+    const confirmation = registerView === "active"
+      ? `Close the ${item.caseType} case for ${item.clientName}? Open tasks, follow-ups, and appointments will be cancelled and the history will be preserved.`
+      : registerView === "closed"
+        ? `Archive the ${item.caseType} case for ${item.clientName}? Its complete history will be retained.`
+        : null;
+    const confirmed = confirmation ? window.confirm(confirmation) : true;
 
     if (!confirmed) {
       return;
@@ -1541,15 +1576,27 @@ export default function Cases() {
     try {
       setActiveActionMenuId(null);
       setDeletingId(item.id);
-      const response = await api.patch(`/cases/${item.id}/close`);
-      const closed = response.data.data;
-      setCases((current) => current.map((entry) => entry.id === item.id ? closed : entry));
+      const endpoint = {
+        active: "close",
+        closed: "archive",
+        archived: "unarchive",
+        trash: "restore",
+      }[registerView];
+      await api.patch(`/cases/${item.id}/${endpoint}`);
+      setCases((current) => current.filter((entry) => entry.id !== item.id));
+      const successMessage = {
+        active: "Case moved to Closed.",
+        closed: "Case archived.",
+        archived: "Case restored to Closed.",
+        trash: "Case restored.",
+      }[registerView];
+      setToast({ type: "success", message: successMessage });
       if (editingCase?.id === item.id || viewingCase?.id === item.id) {
         closeDrawers();
       }
     } catch (requestError) {
       setError(
-        requestError.response?.data?.message || "Unable to close case.",
+        requestError.response?.data?.message || "Unable to update this case.",
       );
     } finally {
       setDeletingId("");
@@ -1568,15 +1615,6 @@ export default function Cases() {
   return (
     <>
       <Toast toast={toast} onDismiss={() => setToast(null)} />
-
-      <CaseTrashOverlay
-        open={trashOpen}
-        onClose={() => setTrashOpen(false)}
-        onRestored={(restored) => {
-          setToast({ type: "success", message: `${restored.caseType} restored.` });
-          loadWorkspaceData({ quiet: true });
-        }}
-      />
 
       <section className="min-h-screen px-1 py-1">
         <div className="mx-auto w-full max-w-[1560px] space-y-6">
@@ -1606,14 +1644,6 @@ export default function Cases() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTrashOpen(true)}
-                  className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white/85 px-4 text-sm font-medium text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Trash
-                </button>
-                <button
-                  type="button"
                   onClick={() => loadWorkspaceData({ quiet: true })}
                   className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white/85 text-slate-600 transition hover:bg-white"
                   aria-label="Refresh cases"
@@ -1634,15 +1664,15 @@ export default function Cases() {
             </div>
           </section>
 
-          {loading ? (
+          {loading && registerView === "active" ? (
             <KpiSkeleton />
-          ) : (
+          ) : registerView === "active" ? (
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <StatCard
                 icon={BriefcaseBusiness}
                 label="Total Cases"
                 value={summary.totalCases}
-                helper="All files in the workspace"
+                helper="Files in the active register"
                 accent="blue"
               />
               <StatCard
@@ -1667,7 +1697,7 @@ export default function Cases() {
                 accent="rose"
               />
             </section>
-          )}
+          ) : null}
 
           <div className="space-y-2">
             <section>
@@ -1695,13 +1725,42 @@ export default function Cases() {
                         Case register
                       </h2>
                       <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                        Today&apos;s attention list
+                        {REGISTER_VIEWS.find((item) => item.id === registerView)?.label}
                       </span>
                     </div>
                     <p className="mt-1 text-sm text-slate-500">
                       Showing {filteredCases.length} of {enrichedCases.length}{" "}
-                      {enrichedCases.length === 1 ? "case" : "cases"}
+                      {enrichedCases.length === 1 ? "case" : "cases"} in this register
                     </p>
+                    <div className="scrollbar-hidden -mx-1 mt-4 overflow-x-auto px-1 pb-1">
+                      <div className="flex min-w-max gap-2" role="tablist" aria-label="Case register views">
+                        {REGISTER_VIEWS.map(({ id, label, icon: Icon }) => {
+                          const selected = registerView === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              role="tab"
+                              aria-selected={selected}
+                              onClick={() => {
+                                setActiveActionMenuId(null);
+                                setSearchQuery("");
+                                setFilters({ caseType: "all", stage: "all", status: "all", staff: "all", priority: "all" });
+                                setRegisterView(id);
+                              }}
+                              className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition ${
+                                selected
+                                  ? "border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.16)]"
+                                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-950"
+                              }`}
+                            >
+                              <Icon className="h-4 w-4" />
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1722,7 +1781,7 @@ export default function Cases() {
                   ))}
                 </div>
               ) : !enrichedCases.length ? (
-                <EmptyState onCreate={openCreateForm} />
+                <EmptyState onCreate={openCreateForm} view={registerView} />
               ) : !filteredCases.length ? (
                 <NoResultsState onClear={clearFilters} />
               ) : (
@@ -1788,13 +1847,14 @@ export default function Cases() {
                                 <div className="space-y-2">
                                   <select
                                     value={item.stage}
+                                    disabled={registerView !== "active"}
                                     onChange={(event) =>
                                       handleStageChange(
                                         item,
                                         event.target.value,
                                       )
                                     }
-                                    className="h-10 w-[190px] rounded-xl border border-slate-200 bg-white/80 px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
+                                    className="h-10 w-[190px] rounded-xl border border-slate-200 bg-white/80 px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                                   >
                                     {STAGE_OPTIONS.map((stage) => (
                                       <option key={stage} value={stage}>
@@ -1865,6 +1925,7 @@ export default function Cases() {
                                     onEdit={openEditForm}
                                     onDelete={handleDelete}
                                     deletingId={deletingId}
+                                    registerView={registerView}
                                   />
                                 </div>
                               </td>
@@ -1885,6 +1946,7 @@ export default function Cases() {
                           onToggleMenu={setActiveActionMenuId}
                           isMenuOpen={activeActionMenuId === item.id}
                           deletingId={deletingId}
+                          registerView={registerView}
                         />
                       ))}
                     </div>

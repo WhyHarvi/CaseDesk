@@ -309,7 +309,7 @@ async function portalData(req) {
       select: { name: true, email: true, phone: true, address: true, city: true, province: true, country: true, postalCode: true, logoUrl: true, paymentInstructions: true, defaultCurrency: true },
     }),
     prisma.case.findFirst({
-      where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+      where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
       orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
       select: { id: true, caseType: true, stage: true, status: true, submittedAt: true, decisionAt: true, createdAt: true, updatedAt: true, assignedUser: { select: { fullName: true } } },
     }),
@@ -428,7 +428,7 @@ export async function getPortalTimeline(req, res) {
 export async function getPortalQuestionnaires(req, res) {
   const link = await linkedClient(req);
   const caseItem = await prisma.case.findFirst({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     select: { id: true, caseType: true },
   });
@@ -459,7 +459,7 @@ export async function savePortalQuestionnaireAnswers(req, res) {
   }
 
   const caseItem = await prisma.case.findFirst({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     select: { id: true },
   });
@@ -494,7 +494,7 @@ export async function savePortalQuestionnaireAnswers(req, res) {
 export async function submitPortalQuestionnaire(req, res) {
   const link = await linkedClient(req);
   const caseItem = await prisma.case.findFirst({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
     select: { id: true },
   });

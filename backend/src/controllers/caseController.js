@@ -43,6 +43,25 @@ export const CASE_STAGES = ["Lead", "Consultation", "Retainer Pending", "Documen
 export const CASE_STATUSES = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 export const CASE_PRIORITIES = ["Low", "Normal", "High", "Urgent"];
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
+const TERMINAL_CASE_STATUS_LIST = [...TERMINAL_CASE_STATUSES];
+
+export function caseRegisterWhere(req) {
+  const view = req.query.view || (req.query.trash === "1" ? "trash" : "active");
+  if (view === "trash") return { deletedAt: { not: null } };
+  if (view === "archived") return { deletedAt: null, archivedAt: { not: null } };
+  if (view === "closed") {
+    return {
+      deletedAt: null,
+      archivedAt: null,
+      status: { in: TERMINAL_CASE_STATUS_LIST },
+    };
+  }
+  return {
+    deletedAt: null,
+    archivedAt: null,
+    status: { notIn: TERMINAL_CASE_STATUS_LIST },
+  };
+}
 
 function validateCasePayload(payload, existing = null) {
   const resolved = { ...payload };
@@ -81,8 +100,10 @@ const controller = createCrudController({
     ...(req.query.clientId ? { clientId: req.query.clientId } : {}),
     ...(req.query.assignedUserId ? { assignedUserId: req.query.assignedUserId } : {}),
     ...(req.query.caseType ? { caseType: req.query.caseType } : {}),
-    ...(req.query.status ? { status: req.query.status } : {}),
-    ...(req.query.trash === "1" ? { deletedAt: { not: null } } : {}),
+    AND: [
+      caseRegisterWhere(req),
+      ...(req.query.status ? [{ status: req.query.status }] : []),
+    ],
   }),
   activityEntity: "case",
 });
@@ -569,6 +590,65 @@ export async function restoreCase(req, res) {
     caseId: existing.id,
     action: "case.restored",
     details: `${existing.caseType} restored from trash`,
+  });
+  res.json({ data });
+}
+
+export async function archiveCase(req, res) {
+  const existing = await prisma.case.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...caseAccessWhere(req),
+      deletedAt: null,
+    },
+    select: { id: true, clientId: true, caseType: true, status: true, archivedAt: true },
+  });
+  if (!existing) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  if (existing.archivedAt) throw createHttpError(409, "Case is already archived.", "CASE_ALREADY_ARCHIVED");
+  if (!TERMINAL_CASE_STATUSES.has(existing.status)) {
+    throw createHttpError(409, "Close this case before archiving it.", "CASE_MUST_BE_CLOSED");
+  }
+  const data = await prisma.case.update({
+    where: { id: existing.id },
+    data: { archivedAt: new Date() },
+    include,
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.id,
+    action: "case.archived",
+    details: `${existing.caseType} archived; history retained`,
+  });
+  res.json({ data });
+}
+
+export async function unarchiveCase(req, res) {
+  const existing = await prisma.case.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...caseAccessWhere(req),
+      deletedAt: null,
+      archivedAt: { not: null },
+    },
+    select: { id: true, clientId: true, caseType: true },
+  });
+  if (!existing) throw createHttpError(404, "No archived case was found to restore.", "NOT_FOUND");
+  const data = await prisma.case.update({
+    where: { id: existing.id },
+    data: { archivedAt: null },
+    include,
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.id,
+    action: "case.unarchived",
+    details: `${existing.caseType} restored from archive`,
   });
   res.json({ data });
 }

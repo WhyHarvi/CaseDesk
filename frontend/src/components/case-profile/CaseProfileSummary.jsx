@@ -107,7 +107,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, onOpenWorkflow, onOpenApplicants, onOpenNotes, onOpenActivities, onOpenStatement, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, onOpenWorkflow, onOpenApplicants, onOpenNotes, onOpenActivities, onOpenStatement, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -122,6 +122,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, on
             onToggle={() => setActiveToolbarTray((current) => (current === "case-options" ? "" : "case-options"))}
             onSelect={(item) => {
               if (item === "Applicants") onOpenApplicants();
+              if (item === "Archive") onArchiveCase?.();
               if (item === "Close") onCloseCase?.();
               if (item === "Delete") onDeleteCase?.();
             }}

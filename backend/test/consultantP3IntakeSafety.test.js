@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { caseRegisterWhere } from "../src/controllers/caseController.js";
 import { assertNoContactDuplicate, normalizeContact } from "../src/services/contactDuplicateService.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -64,29 +65,64 @@ test("cases use controlled lifecycle values and persistent priority", async () =
   assert.doesNotMatch(page, /item\.priority \|\|\s*\(urgent/);
 });
 
+test("case register views are mutually exclusive and active by default", () => {
+  assert.deepEqual(caseRegisterWhere({ query: {} }), {
+    deletedAt: null,
+    archivedAt: null,
+    status: { notIn: ["Completed", "Closed", "Cancelled", "Inactive"] },
+  });
+  assert.deepEqual(caseRegisterWhere({ query: { view: "closed" } }), {
+    deletedAt: null,
+    archivedAt: null,
+    status: { in: ["Completed", "Closed", "Cancelled", "Inactive"] },
+  });
+  assert.deepEqual(caseRegisterWhere({ query: { view: "archived" } }), {
+    deletedAt: null,
+    archivedAt: { not: null },
+  });
+  assert.deepEqual(caseRegisterWhere({ query: { view: "trash" } }), {
+    deletedAt: { not: null },
+  });
+});
+
 test("client case and follow-up removal paths preserve history", async () => {
-  const [clientRoutes, caseRoutes, followUpRoutes, caseController, clientPage, casesPage, followUpsPage] = await Promise.all([
+  const [schema, clientRoutes, caseRoutes, followUpRoutes, caseController, clientPage, casesPage, caseProfile, followUpsPage] = await Promise.all([
+    source("../prisma/schema.prisma"),
     source("../src/routes/clientRoutes.js"),
     source("../src/routes/caseRoutes.js"),
     source("../src/routes/followUpRoutes.js"),
     source("../src/controllers/caseController.js"),
     source("../../frontend/src/pages/Clients.jsx"),
     source("../../frontend/src/pages/Cases.jsx"),
+    source("../../frontend/src/pages/CaseProfile.jsx"),
     source("../../frontend/src/pages/FollowUps.jsx"),
   ]);
   assert.doesNotMatch(clientRoutes, /router\.delete/);
   assert.match(caseRoutes, /router\.delete\("\/:id", asyncHandler\(softDeleteCase\)\)/);
   assert.match(caseRoutes, /router\.patch\("\/:id\/restore", asyncHandler\(restoreCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/archive", asyncHandler\(archiveCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/unarchive", asyncHandler\(unarchiveCase\)\)/);
   assert.doesNotMatch(followUpRoutes, /router\.delete/);
   assert.match(caseController, /export async function softDeleteCase[\s\S]*?data: \{ deletedAt: new Date\(\) \}/);
   assert.match(caseController, /export async function restoreCase[\s\S]*?data: \{ deletedAt: null \}/);
+  assert.match(caseController, /export async function archiveCase[\s\S]*?data: \{ archivedAt: new Date\(\) \}/);
+  assert.match(caseController, /export async function unarchiveCase[\s\S]*?data: \{ archivedAt: null \}/);
+  assert.match(caseController, /Close this case before archiving it/);
+  assert.match(schema, /archivedAt\s+DateTime\?\s+@map\("archived_at"\)/);
   assert.doesNotMatch(caseController, /prisma\.case\.delete(?:Many)?\(/);
   assert.match(caseController, /status: "Cancelled", isActive: false/);
   assert.match(caseController, /followUp\.updateMany/);
   assert.match(clientPage, /clients\/\$\{client\.id\}\/archive-impact/);
   assert.match(clientPage, /clients\/\$\{client\.id\}\/archive/);
   assert.match(clientPage, /Nothing will be permanently deleted/);
-  assert.match(casesPage, /cases\/\$\{item\.id\}\/close/);
+  assert.match(casesPage, /\{ id: "active", label: "Active Cases"/);
+  assert.match(casesPage, /\{ id: "closed", label: "Closed"/);
+  assert.match(casesPage, /\{ id: "archived", label: "Archived"/);
+  assert.match(casesPage, /\{ id: "trash", label: "Trash"/);
+  assert.match(casesPage, /api\.get\("\/cases", \{ params: \{ view \} \}\)/);
+  assert.doesNotMatch(casesPage, /CaseTrashOverlay/);
+  assert.match(caseProfile, /cases\/\$\{caseItem\.id\}\/archive/);
+  assert.match(caseProfile, /Restore from archive/);
   assert.match(followUpsPage, /follow-ups\/\$\{item\.id\}\/cancel/);
 });
 

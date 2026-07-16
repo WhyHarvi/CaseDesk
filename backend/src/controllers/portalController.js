@@ -23,7 +23,7 @@ const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 
 async function linkedCase(req, clientId, caseId) {
   const data = await prisma.case.findFirst({
-    where: { id: clean(caseId, 80), agencyId: req.auth.agencyId, clientId },
+    where: { id: clean(caseId, 80), agencyId: req.auth.agencyId, clientId, deletedAt: null, archivedAt: null },
     select: { id: true, clientId: true, caseType: true, stage: true, status: true, assignedUserId: true },
   });
   if (!data) throw createHttpError(404, "Application not found.", "NOT_FOUND");
@@ -125,7 +125,7 @@ export async function setPortalAccountAccess(req, res) {
 export async function portalMe(req, res) {
   const link = await linkedClient(req);
   const currentApplication = await prisma.case.findFirst({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId, status: { not: "Closed" } },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null, status: { not: "Closed" } },
     orderBy: { updatedAt: "desc" }, select: { id: true, caseType: true, stage: true, status: true, nextAction: true },
   });
   res.json({ success: true, data: { client: { id: link.client.id, fullName: link.client.fullName }, currentApplication } });
@@ -134,7 +134,7 @@ export async function portalMe(req, res) {
 export async function portalApplications(req, res) {
   const link = await linkedClient(req);
   const data = await prisma.case.findMany({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
     select: { id: true, caseType: true, stage: true, status: true, nextAction: true, submittedAt: true, decisionAt: true, updatedAt: true },
     orderBy: { updatedAt: "desc" },
   });
@@ -223,7 +223,7 @@ export async function portalAppointments(req, res) {
 export async function portalActions(req, res) {
   const link = await linkedClient(req);
   const [cases, documents, appointments] = await Promise.all([
-    prisma.case.findMany({ where: { agencyId: req.auth.agencyId, clientId: link.clientId, status: { not: "Closed" }, nextAction: { not: null } }, select: { id: true, caseType: true, nextAction: true, stage: true }, orderBy: { updatedAt: "desc" } }),
+    prisma.case.findMany({ where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null, status: { not: "Closed" }, nextAction: { not: null } }, select: { id: true, caseType: true, nextAction: true, stage: true }, orderBy: { updatedAt: "desc" } }),
     prisma.clientDocument.findMany({ where: { agencyId: req.auth.agencyId, clientId: link.clientId, visibility: "Client", status: { in: ["Requested", "ChangesRequested"] } }, select: { id: true, caseId: true, documentName: true, status: true, clientInstructions: true }, orderBy: { updatedAt: "desc" } }),
     prisma.appointment.findMany({ where: { agencyId: req.auth.agencyId, clientId: link.clientId, status: "Scheduled", endsAt: { gte: new Date() } }, select: { id: true, caseId: true, subject: true, location: true, startsAt: true, endsAt: true, status: true, assignedTo: { select: { fullName: true } }, case: { select: { caseType: true } } }, orderBy: { startsAt: "asc" }, take: 20 }),
   ]);
@@ -233,7 +233,7 @@ export async function portalActions(req, res) {
 export async function portalMessages(req, res) {
   const link = await linkedClient(req);
   const cases = await prisma.case.findMany({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
     select: { id: true, caseType: true, stage: true, status: true },
     orderBy: { updatedAt: "desc" },
   });

@@ -1,4 +1,4 @@
-import { ArrowUpRight, FolderCheck, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowUpRight, FolderCheck, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import AssessmentOverlay from "../components/case-profile/AssessmentOverlay";
@@ -73,9 +73,12 @@ export default function CaseProfile() {
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
+  const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
   const [restoreError, setRestoreError] = useState("");
+  const [unarchivingCase, setUnarchivingCase] = useState(false);
+  const [unarchiveError, setUnarchiveError] = useState("");
   const [notesOverlayOpen, setNotesOverlayOpen] = useState(false);
   const [activitiesOverlayOpen, setActivitiesOverlayOpen] = useState(false);
   const [statementOverlayOpen, setStatementOverlayOpen] = useState(false);
@@ -1604,6 +1607,44 @@ export default function CaseProfile() {
               {restoringCase ? "Restoring…" : "Restore case"}
             </button>
           </article>
+        ) : caseItem?.archivedAt ? (
+          <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-violet-200/80 bg-violet-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(109,40,217,0.08)]">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-600">
+                <Archive className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-violet-950">This case is archived</p>
+                <p className="text-sm text-violet-700/80">
+                  Its complete history is retained outside the active register.{unarchiveError ? ` ${unarchiveError}` : ""}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={unarchivingCase}
+              onClick={async () => {
+                setUnarchivingCase(true);
+                setUnarchiveError("");
+                try {
+                  const response = await api.patch(`/cases/${caseItem.id}/unarchive`);
+                  setCaseItem((current) => ({ ...current, ...response.data.data }));
+                } catch (requestError) {
+                  setUnarchiveError(requestError.response?.data?.message || "Unable to restore this case from archive.");
+                } finally {
+                  setUnarchivingCase(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-60"
+            >
+              {unarchivingCase ? (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              ) : (
+                <ArchiveRestore className="h-4 w-4" />
+              )}
+              {unarchivingCase ? "Restoring…" : "Restore from archive"}
+            </button>
+          </article>
         ) : null}
         <CaseProfileTopSection
           caseItem={caseItem}
@@ -1632,6 +1673,10 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setStatementOverlayOpen(true);
           }}
+          onArchiveCase={() => {
+            setActiveToolbarTray("");
+            setArchiveCaseDialogOpen(true);
+          }}
           onCloseCase={() => {
             setActiveToolbarTray("");
             setCloseCaseDialogOpen(true);
@@ -1640,6 +1685,29 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setDeleteCaseDialogOpen(true);
           }}
+        />
+
+        <CaseActionDialog
+          open={archiveCaseDialogOpen}
+          onClose={() => setArchiveCaseDialogOpen(false)}
+          icon={Archive}
+          iconWrapClassName="bg-violet-50 text-violet-600"
+          title="Archive this case?"
+          message="It will leave the normal and closed registers while its documents, payments, communications, and activity history remain available."
+          confirmLabel="Archive case"
+          workingLabel="Archiving…"
+          confirmClassName="bg-violet-600 hover:bg-violet-500"
+          successTitle="Case archived"
+          successMessage="You can restore it from the Archived register."
+          blocked={
+            caseItem?.archivedAt
+              ? { title: "Already archived", message: "Restore this case from archive before archiving it again." }
+              : !TERMINAL_CASE_STATUSES.has(caseItem?.status)
+                ? { title: "Close this case first", message: "Archiving stores completed case history. Close the active case before moving it to the archive." }
+                : null
+          }
+          action={async () => (await api.patch(`/cases/${caseItem.id}/archive`)).data.data}
+          onSuccess={(archivedCase) => setCaseItem((current) => ({ ...current, ...archivedCase }))}
         />
 
         <CaseActionDialog

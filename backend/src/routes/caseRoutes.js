@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  archiveCase,
   createCase,
   closeCase,
   createCaseDocumentChecklist,
@@ -7,6 +8,7 @@ import {
   listCases,
   restoreCase,
   softDeleteCase,
+  unarchiveCase,
   updateCaseDocumentAssignment,
   updateCase,
 } from "../controllers/caseController.js";
@@ -53,6 +55,8 @@ router.patch("/:id/workflow/:stepId", asyncHandler(updateCaseWorkflowStep));
 router.get("/:id", asyncHandler(getCaseById));
 router.patch("/:id", asyncHandler(updateCase));
 router.patch("/:id/close", asyncHandler(closeCase));
+router.patch("/:id/archive", asyncHandler(archiveCase));
+router.patch("/:id/unarchive", asyncHandler(unarchiveCase));
 router.delete("/:id", asyncHandler(softDeleteCase));
 router.patch("/:id/restore", asyncHandler(restoreCase));
 
