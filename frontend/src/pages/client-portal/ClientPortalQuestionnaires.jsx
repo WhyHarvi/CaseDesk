@@ -16,8 +16,8 @@ import { formatPortalDate } from "../../components/client-portal/ClientStatusCar
 import { profileQuestionnaireSections } from "../../components/case-profile/ProfileQuestionnaireSection";
 import { collectionConfigs, parentFields } from "../../components/case-profile/ProfileCollectionQuestionnaire";
 
-const inputClass = "mt-1.5 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
-const textareaClass = "mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
+const inputClass = "mt-1.5 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
+const textareaClass = "mt-1.5 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
 
 const COLLECTION_META = {
   identityPermits: { config: collectionConfigs.identity },

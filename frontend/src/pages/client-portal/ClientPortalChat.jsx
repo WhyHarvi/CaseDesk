@@ -162,7 +162,7 @@ export default function ClientPortalChat() {
             <select
               value={selectedCaseId}
               onChange={(event) => load({ caseId: event.target.value })}
-              className="mt-0.5 w-full max-w-[220px] truncate rounded-lg border-0 bg-transparent p-0 text-xs text-slate-500 outline-none"
+              className="mt-0.5 w-full max-w-[220px] truncate rounded-lg border-0 bg-transparent p-0 text-base text-slate-500 outline-none"
               aria-label="Switch application"
             >
               {cases.map((item) => <option key={item.id} value={item.id}>{item.caseType}</option>)}
@@ -226,7 +226,7 @@ export default function ClientPortalChat() {
             maxLength={5000}
             disabled={!cases.length}
             placeholder={cases.length ? "Type a message" : "Chat unavailable"}
-            className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-[15px] leading-5 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
+            className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-5 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
             style={{ height: "auto" }}
             onInput={(event) => {
               event.target.style.height = "auto";

@@ -214,7 +214,7 @@ export default function ClientChatPortal() {
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-6 outline-none"
+              className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 outline-none"
               placeholder="Write a message…"
             />
             <button

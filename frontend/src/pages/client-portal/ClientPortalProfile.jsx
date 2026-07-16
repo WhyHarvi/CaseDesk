@@ -9,7 +9,7 @@ import ClientPortalEmptyState from "../../components/client-portal/ClientPortalE
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { usePortalToast } from "../../components/client-portal/ClientPortalToast";
 
-const inputClass = "mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 text-[15px] text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
+const inputClass = "mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 text-base text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
 
 export default function ClientPortalProfile() {
   const { overview, loading, error, refresh } = usePortalData();
@@ -83,7 +83,7 @@ export default function ClientPortalProfile() {
           </label>
           <label className="mt-4 block text-sm font-medium text-slate-700">
             <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-slate-400" />Address</span>
-            <textarea value={form.address} maxLength={300} rows={3} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} placeholder="Your current address" className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" />
+            <textarea value={form.address} maxLength={300} rows={3} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} placeholder="Your current address" className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" />
           </label>
 
           {saveError ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{saveError}</p> : null}

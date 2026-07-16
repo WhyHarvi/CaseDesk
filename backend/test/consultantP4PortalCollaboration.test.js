@@ -68,3 +68,18 @@ test("portal UI provides file exchange and messaging through the current modular
   assert.match(api, /\.post\("\/portal\/messages"/);
   assert.match(chat, /sendPortalChatMessage/);
 });
+
+test("mobile portal chat controls use an input-safe font size", async () => {
+  const [chat, legacyChat] = await Promise.all([
+    source("../../frontend/src/pages/client-portal/ClientPortalChat.jsx"),
+    source("../../frontend/src/pages/ClientChatPortal.jsx"),
+  ]);
+  const composer = chat.slice(chat.indexOf("<textarea"), chat.indexOf("/>", chat.indexOf("<textarea")));
+  const caseSelector = chat.slice(chat.indexOf("<select"), chat.indexOf("</select>"));
+  const legacyComposer = legacyChat.slice(legacyChat.indexOf("<textarea"), legacyChat.indexOf("/>", legacyChat.indexOf("<textarea")));
+
+  assert.match(composer, /text-base/);
+  assert.match(caseSelector, /text-base/);
+  assert.match(legacyComposer, /text-base/);
+  assert.doesNotMatch(`${composer}${caseSelector}${legacyComposer}`, /text-xs|text-sm|text-\[(?:1[0-5])px\]/);
+});

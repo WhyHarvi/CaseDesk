@@ -168,7 +168,7 @@ function SignSheet({ agreement, onClose, onSigned, onViewDocument }) {
               maxLength={160}
               onChange={(event) => setFullName(event.target.value)}
               placeholder="e.g. Rajdeep Singh"
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-[15px] outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
             />
           </label>
           {fullName.trim() ? (
