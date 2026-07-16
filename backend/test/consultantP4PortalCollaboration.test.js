@@ -160,3 +160,16 @@ test("case options do not duplicate the existing portal access invitation contro
   assert.doesNotMatch(options, /"Send Invite"/);
   assert.match(summary, /<PortalAccessCard/);
 });
+
+test("private case chat migration restores scoped Supabase Realtime policies", async () => {
+  const migration = await source("../prisma/migrations/20260716220000_restore_realtime_case_chat_policies/migration.sql");
+  assert.match(migration, /to_regclass\('realtime\.messages'\)/);
+  assert.match(migration, /RAISE EXCEPTION/);
+  assert.match(migration, /CREATE POLICY "casedesk_private_case_chat_read"/);
+  assert.match(migration, /FOR SELECT\s+TO authenticated/);
+  assert.match(migration, /CREATE POLICY "casedesk_private_case_chat_write"/);
+  assert.match(migration, /FOR INSERT\s+TO authenticated/);
+  assert.match(migration, /SELECT auth\.jwt\(\) ->> 'agency_id'/);
+  assert.match(migration, /SELECT auth\.jwt\(\) ->> 'case_id'/);
+  assert.match(migration, /realtime\.topic\(\)/);
+});
