@@ -24,9 +24,7 @@ import ClientPortalProfile from "../pages/client-portal/ClientPortalProfile";
 import ClientPortalHelp from "../pages/client-portal/ClientPortalHelp";
 import Workload from "../pages/Workload";
 import ChangePassword from "../pages/ChangePassword";
-import RegisterAgency from "../pages/RegisterAgency";
 import AcceptInvite from "../pages/AcceptInvite";
-import ForgotPassword from "../pages/ForgotPassword";
 import ResetPassword from "../pages/ResetPassword";
 import LeadsPage from "../modules/leads/pages/LeadsPage";
 import LeadDashboardPage from "../modules/leads/pages/LeadDashboardPage";
@@ -43,9 +41,9 @@ export default function AppRoutes() {
   return <Routes>
     <Route path="/" element={<HomeRedirect />} />
     <Route path="/login" element={<Login />} />
-    <Route path="/register" element={<RegisterAgency />} />
+    <Route path="/register" element={<Navigate to="/login" replace />} />
     <Route path="/auth/accept-invite" element={<AcceptInvite />} />
-    <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+    <Route path="/auth/forgot-password" element={<Navigate to="/login?forgot=1" replace />} />
     <Route path="/auth/reset-password" element={<ResetPassword />} />
     <Route path="/change-password" element={<ChangePassword />} />
     <Route path="/client-chat/:token" element={<ClientChatPortal />} />

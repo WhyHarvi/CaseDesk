@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Barlow:wght@300;400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -25,6 +27,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background: transparent;
+  overflow-x: hidden;
 }
 
 #root {
@@ -76,4 +79,97 @@ input {
   .statement-no-print {
     display: none !important;
   }
+}
+
+/* ---------- Liquid glass login ---------- */
+.liquid-glass-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-radius: 32px;
+  border: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  position: relative;
+  overflow: hidden;
+}
+.liquid-glass-card::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.5) 0%,
+    rgba(255,255,255,0.18) 25%,
+    rgba(255,255,255,0)   45%,
+    rgba(255,255,255,0)   65%,
+    rgba(255,255,255,0.18) 85%,
+    rgba(255,255,255,0.5) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.liquid-glass-card::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 20%),
+    rgba(255,255,255,0.28), transparent 60%);
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  transition: background .15s ease;
+}
+.liquid-glass-card.state-error::after {
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 20%),
+    rgba(255,90,90,0.35), transparent 60%);
+}
+.liquid-glass-card.state-success::after {
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 20%),
+    rgba(140,255,200,0.35), transparent 60%);
+}
+
+.glass-input {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 9999px;
+  color: white;
+  transition: border-color .25s ease, box-shadow .25s ease, background .25s ease;
+}
+.glass-input::placeholder { color: rgba(255,255,255,0.4); }
+.glass-input:focus,
+.glass-input:focus-within {
+  outline: none;
+  border-color: rgba(255,255,255,0.4);
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.1);
+}
+.glass-input.input-error {
+  border-color: rgba(255,90,90,0.6);
+  box-shadow: 0 0 0 4px rgba(255,90,90,0.12);
+}
+
+.glass-button-primary {
+  background: rgba(255,255,255,0.92);
+  color: #000;
+  border-radius: 9999px;
+  border: none;
+}
+.glass-button-secondary {
+  background: rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: #fff;
+  border-radius: 9999px;
+}
+
+.login-title {
+  font-family: 'Instrument Serif', serif;
+  font-style: italic;
+  font-size: clamp(36px, 4.5vw, 56px);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: white;
+  text-align: center;
 }

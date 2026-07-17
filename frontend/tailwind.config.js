@@ -19,6 +19,13 @@ export default {
       },
       boxShadow: {
         panel: "0 18px 40px -24px rgba(28, 45, 74, 0.45)"
+      },
+      fontFamily: {
+        heading: ["Instrument Serif", "serif"],
+        body: ["Barlow", "sans-serif"]
+      },
+      borderRadius: {
+        card: "32px"
       }
     },
   },

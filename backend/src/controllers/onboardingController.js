@@ -33,6 +33,10 @@ const acceptedResponse = (res) => res.status(202).json({
 });
 
 export async function registerAgency(req, res) {
+  // New workspace registration is closed. Flip ALLOW_AGENCY_REGISTRATION=1 to reopen.
+  if (process.env.ALLOW_AGENCY_REGISTRATION !== "1") {
+    throw createHttpError(403, "New registrations are currently closed.", "REGISTRATION_DISABLED");
+  }
   const input = {
     fullName: text(req.body?.fullName, "Full name"),
     workEmail: email(req.body?.workEmail),
