@@ -16,7 +16,7 @@ const inboundDefaults = {
 };
 
 function requireAdmin(req) {
-  if (req.user.role !== "admin") throw createHttpError(403, "Only agency administrators can manage the email connection");
+  if (req.user.role !== "admin") throw createHttpError(403, "Only workspace administrators can manage the email connection");
 }
 
 function publicSettings(settings, canManage) {
@@ -120,6 +120,6 @@ export async function deleteMailSettings(req, res) {
   requireAdmin(req);
   const existing = await prisma.agencyMailSettings.findUnique({ where: { agencyId: req.user.agencyId } });
   if (existing) await prisma.agencyMailSettings.delete({ where: { id: existing.id } });
-  await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "settings.mail_disconnected", details: "Agency email connection removed" });
+  await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "settings.mail_disconnected", details: "Workspace email connection removed" });
   res.status(204).send();
 }

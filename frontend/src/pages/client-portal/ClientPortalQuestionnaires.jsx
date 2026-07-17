@@ -308,9 +308,9 @@ function AssignmentSheet({ assignment, answers, onClose, onOpenStep, onSubmit, s
       onClose={onClose}
       footer={
         assignment.submitted ? (
-          <p className="flex items-center justify-center gap-2 py-1 text-sm font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Submitted — your agency is reviewing your answers</p>
+          <p className="flex items-center justify-center gap-2 py-1 text-sm font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Submitted — your consultant is reviewing your answers</p>
         ) : assignment.locked ? (
-          <p className="flex items-center justify-center gap-2 py-1 text-sm font-semibold text-slate-500"><Lock className="h-4 w-4" />Locked by your agency</p>
+          <p className="flex items-center justify-center gap-2 py-1 text-sm font-semibold text-slate-500"><Lock className="h-4 w-4" />Locked by your consultant</p>
         ) : (
           <button
             type="button"

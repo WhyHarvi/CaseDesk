@@ -47,7 +47,7 @@ export default function ClientPaymentCard({ payment, compact = false }) {
           </div>
         </div>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-slate-500">Your agency has not recorded any fees for your file yet.</p>
+        <p className="mt-3 text-sm leading-6 text-slate-500">Your consultant has not recorded any fees for your file yet.</p>
       )}
 
       {compact ? (

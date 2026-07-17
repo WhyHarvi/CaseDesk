@@ -248,7 +248,7 @@ export function WorkflowTemplateCreateOverlay({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{caseType || "Custom"} workflow</p>
             <h2 className="mt-1 text-lg font-semibold text-slate-950">Create workflow template</h2>
-            <p className="mt-1 max-w-xl text-sm text-slate-500">Start from a blank workflow and save it as a reusable template for this agency.</p>
+            <p className="mt-1 max-w-xl text-sm text-slate-500">Start from a blank workflow and save it as a reusable template for this workspace.</p>
           </div>
           <button
             type="button"

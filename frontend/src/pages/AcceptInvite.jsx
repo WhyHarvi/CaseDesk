@@ -48,11 +48,11 @@ export default function AcceptInvite() {
   if (loading) return <AuthShell title="Opening your invitation" description="Verifying your secure setup link…" compact><div className="mx-auto mt-10 h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /></AuthShell>;
   if (!context) return <AuthShell title="Invitation unavailable" description="The setup link could not be opened." backTo="/login" compact><div className="mt-8"><FormMessage error>{error}</FormMessage></div></AuthShell>;
 
-  return <AuthShell title={context.requiresAgencySetup ? "Set up your agency" : "Finish your account"} description={context.requiresAgencySetup ? "Choose a password and confirm the agency details CaseDesk will use in your templates." : `You’re joining ${context.agencyName}. Choose a secure password to continue.`} backTo="/login">
+  return <AuthShell title={context.requiresAgencySetup ? "Set up your workspace" : "Finish your account"} description={context.requiresAgencySetup ? "Choose a password and confirm the workspace details CaseDesk will use in your templates." : `You’re joining ${context.agencyName}. Choose a secure password to continue.`} backTo="/login">
     <form onSubmit={submit} className="mt-8 grid gap-5 sm:grid-cols-2">
       {context.requiresAgencySetup && <>
-        <FormField label="Agency name"><input className={fieldClass} value={form.agencyName} onChange={update("agencyName")} required /></FormField>
-        <FormField label="Agency email"><input className={fieldClass} type="email" value={form.agencyEmail} onChange={update("agencyEmail")} required /></FormField>
+        <FormField label="Workspace name"><input className={fieldClass} value={form.agencyName} onChange={update("agencyName")} required /></FormField>
+        <FormField label="Workspace email"><input className={fieldClass} type="email" value={form.agencyEmail} onChange={update("agencyEmail")} required /></FormField>
         <FormField label="Phone"><input className={fieldClass} value={form.phone} onChange={update("phone")} autoComplete="tel" required /></FormField>
         <FormField label="Street address"><input className={fieldClass} value={form.address} onChange={update("address")} autoComplete="street-address" required /></FormField>
         <FormField label="City"><input className={fieldClass} value={form.city} onChange={update("city")} autoComplete="address-level2" required /></FormField>

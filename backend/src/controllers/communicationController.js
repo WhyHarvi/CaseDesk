@@ -293,7 +293,7 @@ async function requireCommunicationDeletePolicy(req) {
   if (!policy?.allowStaffDelete)
     throw createHttpError(
       403,
-      "The agency retention policy does not allow staff to move communication records to Trash",
+      "The workspace retention policy does not allow staff to move communication records to Trash",
     );
 }
 
@@ -351,7 +351,7 @@ export async function updateCommunicationPermissions(req, res) {
   const user = await prisma.user.findFirst({
     where: { id: req.params.userId, agencyId: req.user.agencyId },
   });
-  if (!user) throw createHttpError(404, "Agency user not found");
+  if (!user) throw createHttpError(404, "Workspace user not found");
   const values = Object.fromEntries(
     communicationPermissionKeys
       .filter((key) => typeof req.body[key] === "boolean")

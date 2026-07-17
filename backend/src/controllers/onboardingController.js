@@ -36,7 +36,7 @@ export async function registerAgency(req, res) {
   const input = {
     fullName: text(req.body?.fullName, "Full name"),
     workEmail: email(req.body?.workEmail),
-    agencyName: text(req.body?.agencyName, "Agency name"),
+    agencyName: text(req.body?.agencyName, "Workspace name"),
     phone: text(req.body?.phone, "Phone", 40, false),
     country: text(req.body?.country, "Country", 80),
   };
@@ -118,7 +118,7 @@ export async function registerAgency(req, res) {
     throw createHttpError(503, "We could not send the invitation. Please try again later.", "INVITE_DELIVERY_FAILED");
   }
 
-  await recordActivity({ agencyId: records.agency.id, userId: records.user.id, action: "AGENCY_INVITED", details: "Agency owner invitation sent" });
+  await recordActivity({ agencyId: records.agency.id, userId: records.user.id, action: "AGENCY_INVITED", details: "Workspace owner invitation sent" });
   return acceptedResponse(res);
 }
 
@@ -150,7 +150,7 @@ export async function completeAgencyOnboarding(req, res) {
   }
   const request = req.onboardingRequest;
   const agency = {
-    name: text(req.body?.agencyName || request.agency.name, "Agency name"),
+    name: text(req.body?.agencyName || request.agency.name, "Workspace name"),
     email: email(req.body?.agencyEmail || request.email),
     phone: text(req.body?.phone, "Phone", 40),
     address: text(req.body?.address, "Address", 200),
@@ -178,7 +178,7 @@ export async function completeAgencyOnboarding(req, res) {
     }),
     prisma.onboardingRequest.update({ where: { id: request.id }, data: { status: "completed", completedAt, failureCode: null } }),
   ]);
-  await recordActivity({ agencyId: request.agencyId, userId: request.userId, action: "AGENCY_ONBOARDING_COMPLETED", details: "Agency owner activated the workspace" });
+  await recordActivity({ agencyId: request.agencyId, userId: request.userId, action: "AGENCY_ONBOARDING_COMPLETED", details: "Workspace owner activated the workspace" });
   res.json({ success: true, message: "Your CaseDesk workspace is ready." });
 }
 

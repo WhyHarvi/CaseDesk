@@ -204,7 +204,7 @@ function TrashOverlay({ count, busy, error, onClose, onConfirm }) {
         </h3>
         <p className="mt-2 text-sm leading-6 text-slate-500">
           The records disappear from the active timeline but remain recoverable
-          under the agency retention policy. Legal-hold records are always
+          under the workspace retention policy. Legal-hold records are always
           protected.
         </p>
         {error ? (
@@ -1216,7 +1216,7 @@ export default function CommunicationWorkspace({ caseItem }) {
           <div className="scrollbar-hidden flex shrink-0 overflow-x-auto rounded-full bg-slate-100 p-1">
             {[
               { id: "timeline", label: "Case timeline", icon: Archive },
-              { id: "inbox", label: "Agency inbox", icon: Inbox },
+              { id: "inbox", label: "Workspace inbox", icon: Inbox },
               { id: "unassigned", label: "Unassigned", icon: UsersRound },
               { id: "analytics", label: "Insights", icon: BarChart3 },
               { id: "trash", label: "Trash", icon: Trash2 },

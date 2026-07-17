@@ -164,7 +164,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
           icon={ListChecks}
           iconClass="bg-sky-50 text-sky-600"
           title="Priority Work"
-          subtitle={isAdmin ? "Overdue and current actions across your agency" : "Overdue and current actions on your cases"}
+          subtitle={isAdmin ? "Overdue and current actions across your workspace" : "Overdue and current actions on your cases"}
           chip={`${workCount} open`}
           chipClass="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"
         />

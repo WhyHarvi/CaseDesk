@@ -257,7 +257,7 @@ function TemplateEditorOverlay({ template, saving, error, onClose, onSave }) {
         <header className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-600">
-              Agency precedent · Version {template.versionNumber}
+              Workspace precedent · Version {template.versionNumber}
             </p>
             <h2 className="mt-1 text-xl font-semibold">Correct template</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -404,7 +404,7 @@ function CustomDraftOverlay({ saving, error, onClose, onCreate, agreementOnly = 
             Write a custom document
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            Agency and client details will be placed into an editable letterhead
+            Workspace and client details will be placed into an editable letterhead
             or agreement shell.
           </p>
           {agreementOnly ? (
@@ -1074,7 +1074,7 @@ export default function AgreementsLettersWorkspace({ caseItem, eSignMode = false
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
               {eSignMode
                 ? "Create agreements, send them to the client portal, monitor signatures, and finalize completed records."
-                : "Choose a case-aware precedent, review autofilled agency and client details, then make final corrections in CaseDesk Writer."}
+                : "Choose a case-aware precedent, review autofilled workspace and client details, then make final corrections in CaseDesk Writer."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

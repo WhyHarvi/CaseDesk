@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
 
-const calendars = ["Case Calendar", "Agency Calendar", "Personal Calendar"];
+const calendars = ["Case Calendar", "Workspace Calendar", "Personal Calendar"];
 const inputClass =
   "mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-normal text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100/60";
 

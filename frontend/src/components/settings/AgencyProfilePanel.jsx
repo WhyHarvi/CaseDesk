@@ -80,7 +80,7 @@ export default function AgencyProfilePanel() {
         setForm(formFromAgency(response.data.data));
       })
       .catch((reason) => {
-        if (active) setError(reason.response?.data?.message || "The agency profile could not be loaded.");
+        if (active) setError(reason.response?.data?.message || "The workspace profile could not be loaded.");
       })
       .finally(() => active && setLoading(false));
     return () => {
@@ -118,11 +118,11 @@ export default function AgencyProfilePanel() {
       const response = await api.patch("/settings/agency-profile", form);
       setAgency(response.data.data);
       setForm(formFromAgency(response.data.data));
-      setNotice("Agency profile updated successfully.");
+      setNotice("Workspace profile updated successfully.");
       setEditing(false);
       await refreshIdentity();
     } catch (reason) {
-      setError(reason.response?.data?.message || "The agency profile could not be updated.");
+      setError(reason.response?.data?.message || "The workspace profile could not be updated.");
     } finally {
       setSaving(false);
     }
@@ -256,7 +256,7 @@ export default function AgencyProfilePanel() {
 
       <div className="flex justify-center border-b border-slate-200">
         <div className="-mb-px border-t border-slate-950 px-5 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-950">
-          Agency details
+          Workspace details
         </div>
       </div>
 
@@ -312,7 +312,7 @@ export default function AgencyProfilePanel() {
                     Cancel
                   </button>
                   <h3 id="edit-agency-title" className="font-semibold text-slate-950">
-                    Edit agency profile
+                    Edit workspace profile
                   </h3>
                   <button disabled={saving} className="justify-self-end text-sm font-semibold text-sky-600 disabled:opacity-50">
                     {saving ? "Saving…" : "Done"}
@@ -332,14 +332,14 @@ export default function AgencyProfilePanel() {
 
                   <div className="space-y-5 p-6">
                     <div className="grid gap-5 sm:grid-cols-2">
-                      <Field label="Agency name">
-                        <TextInput value={form.name} maxLength={160} required onChange={set("name")} placeholder="Maple Leaf Immigration" />
+                      <Field label="Workspace name">
+                        <TextInput value={form.name} maxLength={160} required onChange={set("name")} placeholder="Your company name" />
                       </Field>
                       <Field label="Legal name">
-                        <TextInput value={form.legalName} maxLength={200} onChange={set("legalName")} placeholder="Maple Leaf Immigration Inc." />
+                        <TextInput value={form.legalName} maxLength={200} onChange={set("legalName")} placeholder="Registered business name" />
                       </Field>
                       <Field label="Public email">
-                        <TextInput type="email" value={form.email} maxLength={254} required onChange={set("email")} placeholder="hello@agency.com" />
+                        <TextInput type="email" value={form.email} maxLength={254} required onChange={set("email")} placeholder="hello@company.com" />
                       </Field>
                       <Field label="Phone">
                         <TextInput value={form.phone} maxLength={40} onChange={set("phone")} placeholder="+1 (416) 555-0199" />
@@ -347,7 +347,7 @@ export default function AgencyProfilePanel() {
                     </div>
 
                     <Field label="Website">
-                      <TextInput value={form.website} maxLength={200} onChange={set("website")} placeholder="www.agency.com" />
+                      <TextInput value={form.website} maxLength={200} onChange={set("website")} placeholder="www.company.com" />
                     </Field>
 
                     <Field label="Office address">

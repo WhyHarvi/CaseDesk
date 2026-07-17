@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 
 const channels = {
-  Email: { label: "email", title: "Agency email", icon: Mail, section: "agency-email" },
+  Email: { label: "email", title: "Workspace email", icon: Mail, section: "agency-email" },
   Call: { label: "calls", title: "Phone & SMS", icon: PhoneCall, section: "agency-phone" },
   Sms: { label: "SMS", title: "Phone & SMS", icon: Smartphone, section: "agency-phone" },
   Chat: { label: "secure chat", title: "Communication", icon: MessageSquareText, section: "communication-controls" },
@@ -28,10 +28,10 @@ export default function CommunicationSetupOverlay({ channel, reason, detail, cas
             {missingContact
               ? `${caseItem.client?.fullName || "This client"} does not have the contact detail needed for ${config.label}. Add it to the client record, then return here to contact them through CaseDesk.`
               : permissionMissing
-                ? `Your account does not currently have permission to use ${config.label}. Ask an agency administrator to update your communication permissions.`
+                ? `Your account does not currently have permission to use ${config.label}. Ask a workspace administrator to update your communication permissions.`
                 : isAdmin
                   ? `${config.label.charAt(0).toUpperCase() + config.label.slice(1)} is not connected for this agency. Complete the setup in Settings, then return here to contact the client.`
-                  : `${config.label.charAt(0).toUpperCase() + config.label.slice(1)} is not connected for this agency. Ask an agency administrator to complete the setup in Settings.`}
+                  : `${config.label.charAt(0).toUpperCase() + config.label.slice(1)} is not connected for this agency. Ask a workspace administrator to complete the setup in Settings.`}
           </p>
           {detail && !missingContact ? <p className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">{detail}</p> : null}
         </div>

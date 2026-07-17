@@ -29,7 +29,7 @@ async function validateReferences(tx, agencyId, values) {
     tx.leadSource.findFirst({ where: { id: values.originalSourceId, agencyId, isActive: true }, select: { id: true } }),
     values.campaignId ? tx.leadCampaign.findFirst({ where: { id: values.campaignId, agencyId, sourceId: values.originalSourceId, isActive: true }, select: { id: true } }) : null,
   ]);
-  if (users.length !== userIds.length) throw createHttpError(400, "Lead owner must be active agency staff.", "INVALID_LEAD_OWNER");
+  if (users.length !== userIds.length) throw createHttpError(400, "Lead owner must be active workspace staff.", "INVALID_LEAD_OWNER");
   if (!source) throw createHttpError(400, "Lead source is not available for this agency.", "INVALID_LEAD_SOURCE");
   if (values.campaignId && !campaign) throw createHttpError(400, "Campaign does not belong to the selected source.", "INVALID_LEAD_CAMPAIGN");
 }
@@ -312,7 +312,7 @@ export async function createConsultation(req, db = prisma) {
       where: { id: values.consultantUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: "consultant" } } },
       select: { id: true },
     });
-    if (!consultant) throw createHttpError(400, "Consultant must be active agency staff.", "INVALID_CONSULTANT");
+    if (!consultant) throw createHttpError(400, "Consultant must be active workspace staff.", "INVALID_CONSULTANT");
 
     const consultation = await tx.leadConsultation.create({ data: { ...values, agencyId, leadId: lead.id, createdById: actorId, status: "SCHEDULED" }, include: consultationInclude });
     const stageOrder = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];

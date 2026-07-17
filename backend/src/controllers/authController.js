@@ -77,7 +77,7 @@ export async function acceptMemberInvitation(req, res) {
   const user = req.invitedAppUser;
   const membership = req.invitedMembership;
   if (membership.agency.onboardingStatus !== "active") {
-    throw createHttpError(409, "Complete agency onboarding before activating this account.", "AGENCY_SETUP_REQUIRED");
+    throw createHttpError(409, "Complete workspace onboarding before activating this account.", "AGENCY_SETUP_REQUIRED");
   }
   if (user.status !== "invited") throw createHttpError(409, "This invitation has already been completed.", "INVITATION_COMPLETED");
   await updateAuthenticatedUser(req.accessToken, { password, data: { full_name: user.fullName } });

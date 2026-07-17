@@ -9,7 +9,7 @@ const ACTION_META = {
   payment: { icon: CreditCard, label: "View payments" },
   waiting: { icon: Clock4, label: null },
   submitted: { icon: CheckCircle2, label: null },
-  decision: { icon: Sparkles, label: "Contact agency" },
+  decision: { icon: Sparkles, label: "Contact consultant" },
   closed: { icon: CheckCircle2, label: null },
   none: { icon: CheckCircle2, label: null },
 };

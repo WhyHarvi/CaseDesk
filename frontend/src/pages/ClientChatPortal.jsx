@@ -146,7 +146,7 @@ export default function ClientChatPortal() {
         </header>
         <div className="border-b border-slate-100 bg-sky-50/60 px-5 py-3 text-xs leading-5 text-sky-800 sm:px-6">
           Hello {data.client.fullName}. Messages here become part of your case
-          record. For emergencies or filing deadlines, call the agency directly.
+          record. For emergencies or filing deadlines, call your consultant directly.
         </div>
         {error ? (
           <p className="mx-4 mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-xs text-rose-700">

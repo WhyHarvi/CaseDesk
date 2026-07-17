@@ -34,7 +34,7 @@ const states = [
 const priorities = ["Low", "Normal", "High", "Urgent"];
 const stateLabel = (value) =>
   ({
-    WaitingOnAgency: "Waiting on agency",
+    WaitingOnAgency: "Waiting on team",
     WaitingOnClient: "Waiting on client",
   })[value] || value;
 const formatWhen = (value) =>
@@ -79,7 +79,7 @@ function MessageCard({ message }) {
               <p className="truncate text-xs font-semibold text-slate-800">
                 {message.senderUser?.fullName ||
                   message.senderAddress ||
-                  (inbound ? "Client" : "Agency")}
+                  (inbound ? "Client" : "Team")}
               </p>
               <p className="text-[10px] text-slate-400">
                 {formatWhen(message.occurredAt)}

@@ -235,7 +235,7 @@ export default function AgencyMailSettingsPanel() {
         if (active)
           setError(
             requestError.response?.data?.message ||
-              "Agency email settings could not be loaded.",
+              "Workspace email settings could not be loaded.",
           );
       })
       .finally(() => {
@@ -401,7 +401,7 @@ export default function AgencyMailSettingsPanel() {
             Client communication
           </p>
           <h2 className="mt-1 text-[28px] font-semibold leading-9 tracking-[-0.03em] text-slate-950">
-            Agency Email
+            Workspace Email
           </h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
             Connect the mailbox your team will use to send emails directly from
@@ -424,7 +424,7 @@ export default function AgencyMailSettingsPanel() {
 
       {!form.canManage ? (
         <div className="rounded-3xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-800">
-          Only an agency administrator can change mailbox details. You can still
+          Only a workspace administrator can change mailbox details. You can still
           see whether email is connected.
         </div>
       ) : null}
@@ -505,10 +505,10 @@ export default function AgencyMailSettingsPanel() {
       <form onSubmit={saveAndTest} className="space-y-5">
         <section>
           <p className="text-sm font-semibold text-slate-900">
-            Who provides your agency email?
+            Who provides your workspace email?
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            Choose the service where your agency mailbox is hosted.
+            Choose the service where your workspace mailbox is hosted.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {providers.map((provider) => (
@@ -545,7 +545,7 @@ export default function AgencyMailSettingsPanel() {
                 value={form.displayName}
                 onChange={(event) => update("displayName", event.target.value)}
                 className={inputClass}
-                placeholder="North Star Immigration"
+                placeholder="Your company name"
               />
             </label>
             <label className="text-sm font-semibold text-slate-800">
@@ -568,7 +568,7 @@ export default function AgencyMailSettingsPanel() {
                   }));
                 }}
                 className={inputClass}
-                placeholder="hello@youragency.ca"
+                placeholder="hello@yourcompany.ca"
               />
             </label>
           </div>
@@ -732,7 +732,7 @@ export default function AgencyMailSettingsPanel() {
                         update("smtpUsername", event.target.value)
                       }
                       className={inputClass}
-                      placeholder="hello@youragency.ca"
+                      placeholder="hello@yourcompany.ca"
                     />
                   </label>
                   <label className="text-sm font-semibold text-slate-800">
@@ -812,7 +812,7 @@ export default function AgencyMailSettingsPanel() {
                             update("imapUsername", event.target.value)
                           }
                           className={inputClass}
-                          placeholder="hello@youragency.ca"
+                          placeholder="hello@yourcompany.ca"
                         />
                       </label>
                       <label className="text-sm font-semibold text-slate-800">

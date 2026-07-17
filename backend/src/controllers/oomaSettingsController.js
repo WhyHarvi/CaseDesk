@@ -22,7 +22,7 @@ function requireAdmin(req) {
   if (req.user.role !== "admin")
     throw createHttpError(
       403,
-      "Only agency administrators can manage the Ooma connection",
+      "Only workspace administrators can manage the Ooma connection",
     );
 }
 

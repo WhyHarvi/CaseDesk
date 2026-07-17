@@ -10,9 +10,9 @@ import { usePortalData } from "../../components/client-portal/ClientPortalLayout
 
 const GROUPS = [
   { status: "Required", title: "Documents we still need", copy: "Upload these so your file can keep moving.", defaultOpen: true },
-  { status: "Needs Changes", title: "Needs your attention", copy: "Your agency asked for changes to these files.", defaultOpen: true },
+  { status: "Needs Changes", title: "Needs your attention", copy: "Your consultant asked for changes to these files.", defaultOpen: true },
   { status: "Uploaded", title: "Uploaded and waiting for review", copy: "We received these and will review them soon.", defaultOpen: true },
-  { status: "Under Review", title: "Being reviewed", copy: "Your agency is reviewing these documents.", defaultOpen: false },
+  { status: "Under Review", title: "Being reviewed", copy: "Your consultant is reviewing these documents.", defaultOpen: false },
   { status: "Accepted", title: "Accepted documents", copy: "Nothing more to do for these.", defaultOpen: false },
   { status: "Not Required", title: "Not required", copy: "These are not needed for your application.", defaultOpen: false },
 ];
@@ -121,7 +121,7 @@ export default function ClientPortalDocuments() {
         <ClientPortalEmptyState
           icon={FileText}
           title="No documents requested yet"
-          copy="When your agency prepares your document checklist, every item will appear here with clear upload instructions."
+          copy="When your consultant prepares your document checklist, every item will appear here with clear upload instructions."
         />
       )}
     </div>

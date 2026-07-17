@@ -119,7 +119,7 @@ function WorkloadReport({ report }) {
 }
 
 function Definition({ children }) {
-  return <section className="rounded-2xl border border-slate-200/70 bg-slate-50 px-5 py-4"><h2 className="text-sm font-semibold text-slate-800">How this report is calculated</h2><p className="mt-2 text-xs leading-5 text-slate-500">{children} Duplicate and archived records are excluded. Consultants see assigned leads; administrators see the agency report.</p></section>;
+  return <section className="rounded-2xl border border-slate-200/70 bg-slate-50 px-5 py-4"><h2 className="text-sm font-semibold text-slate-800">How this report is calculated</h2><p className="mt-2 text-xs leading-5 text-slate-500">{children} Duplicate and archived records are excluded. Consultants see assigned leads; administrators see the workspace report.</p></section>;
 }
 
 export default function LeadReportsPage() {

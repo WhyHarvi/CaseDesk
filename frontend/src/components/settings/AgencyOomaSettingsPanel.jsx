@@ -297,7 +297,7 @@ export default function AgencyOomaSettingsPanel() {
             Client communication
           </p>
           <h2 className="mt-1 text-[28px] font-semibold leading-9 tracking-[-0.03em] text-slate-950">
-            Agency Phone & SMS
+            Workspace Phone & SMS
           </h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
             Connect Ooma Enterprise so your team can text clients, start calls,
@@ -319,7 +319,7 @@ export default function AgencyOomaSettingsPanel() {
       </div>
       {!form.canManage ? (
         <div className="rounded-3xl bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          Only an agency administrator can change the Ooma connection.
+          Only a workspace administrator can change the Ooma connection.
         </div>
       ) : null}
       {!form.secureStorageReady ? (

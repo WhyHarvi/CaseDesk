@@ -75,7 +75,7 @@ export default function ClientPortalProfile() {
       <form onSubmit={save}>
         <GlassCard className="p-5">
           <h2 className="text-[15px] font-semibold text-slate-900">Contact details</h2>
-          <p className="mt-0.5 text-[13px] text-slate-500">Keep these up to date so your agency can reach you.</p>
+          <p className="mt-0.5 text-[13px] text-slate-500">Keep these up to date so your consultant can reach you.</p>
 
           <label className="mt-4 block text-sm font-medium text-slate-700">
             <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-slate-400" />Phone</span>
@@ -105,7 +105,7 @@ export default function ClientPortalProfile() {
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-100 text-sky-700"><CircleHelp className="h-[18px] w-[18px]" /></div>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-900">Help & contact</p>
-          <p className="mt-0.5 text-[13px] text-slate-500">Agency contact details and common questions</p>
+          <p className="mt-0.5 text-[13px] text-slate-500">Consultant contact details and common questions</p>
         </div>
         <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
       </Link>

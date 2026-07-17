@@ -187,7 +187,7 @@ export default function ClientPortalChat() {
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><MessagesSquare className="h-6 w-6" /></div>
             <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Chat isn't available yet</h2>
-            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your agency opens your application file, you can message your consultant here.</p>
+            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your consultant opens your application file, you can message your consultant here.</p>
           </div>
         ) : !thread.length ? (
           <div className="flex h-full flex-col items-center justify-center text-center">

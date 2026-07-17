@@ -249,7 +249,7 @@ export default function TeamMembers() {
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Team Members</h1>
-        <p className="mt-2 text-slate-500">Invite consultants, front desk, and other team members, and manage their access to your agency.</p>
+        <p className="mt-2 text-slate-500">Invite consultants, front desk, and other team members, and manage their access to your workspace.</p>
       </div>
       <button onClick={openInvite} className="flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 hover:bg-slate-800"><Plus className="h-4 w-4" /> Invite member</button>
     </div>

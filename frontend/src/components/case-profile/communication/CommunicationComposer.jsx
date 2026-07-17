@@ -545,7 +545,7 @@ export default function CommunicationComposer({
                   </div>
                 ) : (
                   <p className="rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-                    Ooma will ring the agency phone first, then connect the
+                    Ooma will ring the workspace phone first, then connect the
                     client when your provider supports click-to-call.
                   </p>
                 )}

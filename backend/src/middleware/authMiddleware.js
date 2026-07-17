@@ -43,8 +43,8 @@ export async function requireAuth(req, res, next) {
     if (appUser.status !== "active") return fail(res, 403, "This account is inactive.", "ACCOUNT_INACTIVE");
 
     const membership = appUser.memberships[0];
-    if (!membership) return fail(res, 403, "No active agency membership was found.", "MEMBERSHIP_NOT_FOUND");
-    if (membership.agency.onboardingStatus !== "active") return fail(res, 403, "Complete your agency setup to continue.", "ACCOUNT_SETUP_REQUIRED");
+    if (!membership) return fail(res, 403, "No active workspace membership was found.", "MEMBERSHIP_NOT_FOUND");
+    if (membership.agency.onboardingStatus !== "active") return fail(res, 403, "Complete your workspace setup to continue.", "ACCOUNT_SETUP_REQUIRED");
     if (membership.agency.status !== "active" || membership.agency.accessStatus === "blocked") return fail(res, 403, "This account is inactive.", "ACCOUNT_INACTIVE");
     if (!["admin", "consultant", "frontdesk", "client"].includes(membership.role)) {
       return fail(res, 403, "This account role is not supported.", "INVALID_ROLE");

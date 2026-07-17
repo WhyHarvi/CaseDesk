@@ -257,7 +257,7 @@ function FormActions({
                   className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-semibold text-violet-700 hover:bg-violet-50"
                 >
                   <FilePlus2 className="h-3.5 w-3.5" />
-                  Save as agency template
+                  Save as workspace template
                 </button>
               ) : null}
               {item.lockedAt && permissions.canUnlock ? (
@@ -386,7 +386,7 @@ function AddFormsOverlay({
             {[
               ["suggested", "Suggested"],
               ["catalog", "All Forms"],
-              ["library", "Agency Library"],
+              ["library", "Workspace Library"],
               ["custom", "Custom Form"],
             ].map(([id, label]) => (
               <button
@@ -430,7 +430,7 @@ function AddFormsOverlay({
                     }))
                   }
                   className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-normal outline-none focus:border-sky-400"
-                  placeholder="AGENCY 001"
+                  placeholder="FORM 001"
                 />
               </label>
             </div>
@@ -533,7 +533,7 @@ function AddFormsOverlay({
                   />
                   <span>
                     <span className="block text-xs font-semibold text-slate-700">
-                      Save to agency library
+                      Save to workspace library
                     </span>
                     <span className="mt-0.5 block text-[10px] text-slate-400">
                       Reusable across multiple cases
@@ -688,7 +688,7 @@ function AddFormsOverlay({
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
                     {mode === "library"
-                      ? "Save a custom form to the agency library first."
+                      ? "Save a custom form to the workspace library first."
                       : "Browse all forms or add a custom form."}
                   </p>
                 </div>
@@ -1723,7 +1723,7 @@ export default function CaseFormsWorkspace({
         setForms((current) => [assignedResponse.data.data, ...current]);
         setAddOpen(false);
         setVersionNotice(
-          `${template.title} saved to the agency library and added to this case.`,
+          `${template.title} saved to the workspace library and added to this case.`,
         );
         return;
       }
@@ -1776,7 +1776,7 @@ export default function CaseFormsWorkspace({
     } catch (requestError) {
       setError(
         requestError.response?.data?.message ||
-          "Unable to add the selected agency templates.",
+          "Unable to add the selected workspace templates.",
       );
     } finally {
       setSaving(false);
@@ -1794,12 +1794,12 @@ export default function CaseFormsWorkspace({
       const template = response.data.data;
       setTemplates((current) => [template, ...current]);
       setVersionNotice(
-        `${item.title} is now available in the agency form library.`,
+        `${item.title} is now available in the workspace form library.`,
       );
     } catch (requestError) {
       setError(
         requestError.response?.data?.message ||
-          "Unable to save this form as an agency template.",
+          "Unable to save this form as a workspace template.",
       );
     } finally {
       setBusyId("");

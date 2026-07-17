@@ -27,24 +27,24 @@ import CommunicationSettingsPanel from "../components/settings/CommunicationSett
 const adminSettingsItems = [
   {
     id: "agency-profile",
-    label: "Agency Profile",
+    label: "Workspace Profile",
     icon: Building2,
-    title: "Agency Profile",
+    title: "Workspace Profile",
     subtitle:
-      "Update your agency identity, contact details, and regional settings.",
+      "Update your workspace identity, contact details, and regional settings.",
   },
   {
     id: "agency-email",
-    label: "Agency Email",
+    label: "Workspace Email",
     icon: Mail,
-    title: "Agency Email",
+    title: "Workspace Email",
     subtitle: "Connect the mailbox used to send client communication.",
   },
   {
     id: "agency-phone",
     label: "Phone & SMS",
     icon: PhoneCall,
-    title: "Agency Phone & SMS",
+    title: "Workspace Phone & SMS",
     subtitle: "Connect Ooma Enterprise for client calls and text messages.",
   },
   {
@@ -76,7 +76,7 @@ const adminSettingsItems = [
     icon: FileText,
     title: "Document Templates",
     subtitle:
-      "Organize reusable templates for case documents and agency forms.",
+      "Organize reusable templates for case documents and workspace forms.",
   },
   {
     id: "payments-fees",
@@ -115,7 +115,7 @@ const consultantSettingsItems = [
     label: "My Profile",
     icon: UserRound,
     title: "My Profile",
-    subtitle: "Review the account and agency details attached to your login.",
+    subtitle: "Review the account and workspace details attached to your login.",
   },
   {
     id: "notifications",
@@ -460,7 +460,7 @@ function FrontdeskProfilePanel({ user, agency }) {
           );
         })}
       </section>
-      <p className="mt-4 rounded-lg border border-slate-200 px-4 py-3 text-xs leading-5 text-slate-500">Your profile details are managed by an agency administrator. Contact them to update your name, contact information, or job title.</p>
+      <p className="mt-4 rounded-lg border border-slate-200 px-4 py-3 text-xs leading-5 text-slate-500">Your profile details are managed by a workspace administrator. Contact them to update your name, contact information, or job title.</p>
     </div>
   );
 }

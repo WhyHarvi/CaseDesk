@@ -120,7 +120,7 @@ export default function CommunicationAnalyticsPanel({ caseId }) {
       {data.resolutionOverdue ? (
         <p className="rounded-2xl bg-rose-50 px-4 py-3 text-xs font-medium text-rose-700">
           {data.resolutionOverdue} open conversation
-          {data.resolutionOverdue === 1 ? " is" : "s are"} past the agency
+          {data.resolutionOverdue === 1 ? " is" : "s are"} past the workspace
           resolution target.
         </p>
       ) : null}

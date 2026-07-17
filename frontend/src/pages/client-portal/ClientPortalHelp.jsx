@@ -12,7 +12,7 @@ const FAQS = [
   },
   {
     question: "What happens after I upload?",
-    answer: "Your agency is notified and will review the file. Its status changes to \"Uploaded\", then \"Accepted\" once approved — or \"Needs Changes\" if something has to be fixed.",
+    answer: "Your consultant is notified and will review the file. Its status changes to \"Uploaded\", then \"Accepted\" once approved — or \"Needs Changes\" if something has to be fixed.",
   },
   {
     question: "How do I know if my document is accepted?",
@@ -20,7 +20,7 @@ const FAQS = [
   },
   {
     question: "Who do I contact for urgent questions?",
-    answer: "Call or email your agency using the contact details on this page. Mention your name and application type so they can help you faster.",
+    answer: "Call or email your consultant using the contact details on this page. Mention your name and application type so they can help you faster.",
   },
 ];
 

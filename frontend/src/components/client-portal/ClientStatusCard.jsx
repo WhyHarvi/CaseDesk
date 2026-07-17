@@ -23,7 +23,7 @@ export default function ClientStatusCard({ caseInfo }) {
     return (
       <GlassCard className="p-5">
         <p className="text-sm font-semibold text-slate-900">No active application yet</p>
-        <p className="mt-1.5 text-sm leading-6 text-slate-500">Your agency will open your application file soon. Everything about it will appear here.</p>
+        <p className="mt-1.5 text-sm leading-6 text-slate-500">Your consultant will open your application file soon. Everything about it will appear here.</p>
       </GlassCard>
     );
   }

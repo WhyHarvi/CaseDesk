@@ -381,7 +381,7 @@ function Automations({
         </form>
       ) : (
         <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          An agency administrator manages automation rules.
+          A workspace administrator manages automation rules.
         </p>
       )}
       <div className="space-y-2">
@@ -538,7 +538,7 @@ function Targets({ value, canManage, busy, onChange, onSave }) {
       ) : null}
       {!canManage ? (
         <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Only an agency administrator can change response targets.
+          Only a workspace administrator can change response targets.
         </p>
       ) : (
         <div className="flex justify-end">

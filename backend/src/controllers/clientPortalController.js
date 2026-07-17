@@ -202,7 +202,7 @@ function agreementDocumentHtml({ title, headerText, contentHtml, footerText }) {
     "<style>body{margin:0;background:#f1f5f9;} .casedesk-page{max-width:760px;margin:0 auto;padding:32px 24px 48px;background:#ffffff;min-height:100vh;box-sizing:border-box;font-family:Georgia,'Times New Roman',serif;color:#0f172a;font-size:15px;line-height:1.7;} .casedesk-meta{font-family:Arial,Helvetica,sans-serif;color:#64748b;font-size:12px;} img{max-width:100%;} table{max-width:100%;}</style>",
     "</head><body><div class=\"casedesk-page\">",
     headerText ? `<p class="casedesk-meta" style="margin:0 0 20px;border-bottom:1px solid #e2e8f0;padding-bottom:12px;">${escapeHtml(headerText)}</p>` : "",
-    contentHtml || "<p style=\"color:#64748b;\">This document has no content preview. Contact your agency for a copy.</p>",
+    contentHtml || "<p style=\"color:#64748b;\">This document has no content preview. Contact your consultant for a copy.</p>",
     footerText ? `<p class="casedesk-meta" style="margin:32px 0 0;border-top:1px solid #e2e8f0;padding-top:12px;">${escapeHtml(footerText)}</p>` : "",
     "</div></body></html>",
   ].join("");
@@ -249,10 +249,10 @@ function nextActionFor({ caseItem, documents, payment, assessment, agreements })
   const pendingQuestionnaires = sharedAssignments(assessment?.formData || {}).filter((item) => !item.locked && item.status !== "Submitted");
 
   if (!caseItem) {
-    return { type: "none", title: "No active application", reason: "Your agency has not opened an application file yet. Contact them if you believe this is a mistake.", dueDate: null, documentId: null, actionUrl: null };
+    return { type: "none", title: "No active application", reason: "Your consultant has not opened an application file yet. Contact them if you believe this is a mistake.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (caseItem.stage === "Closed" || caseItem.status === "Closed") {
-    return { type: "closed", title: "Case completed", reason: "This application file is closed. Contact your agency if you need anything else.", dueDate: null, documentId: null, actionUrl: null };
+    return { type: "closed", title: "Case completed", reason: "This application file is closed. Contact your consultant if you need anything else.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (awaitingSignature.length) {
     const agreement = awaitingSignature[0];
@@ -270,23 +270,23 @@ function nextActionFor({ caseItem, documents, payment, assessment, agreements })
   }
   if (changesRequested.length) {
     const doc = changesRequested[0];
-    return { type: "document", title: `Re-upload ${doc.documentName}`, reason: doc.clientInstructions || "Your agency asked for changes to this document.", dueDate: null, documentId: doc.id, actionUrl: "/client-portal/documents" };
+    return { type: "document", title: `Re-upload ${doc.documentName}`, reason: doc.clientInstructions || "Your consultant asked for changes to this document.", dueDate: null, documentId: doc.id, actionUrl: "/client-portal/documents" };
   }
   if (missing.length) {
     const doc = missing[0];
     return { type: "document", title: `Upload ${doc.documentName}`, reason: doc.clientInstructions || `Your ${doc.documentName.toLowerCase()} is required before we can continue preparing your file.`, dueDate: null, documentId: doc.id, actionUrl: "/client-portal/documents" };
   }
   if (underReview.length) {
-    return { type: "waiting", title: "Waiting for agency review", reason: "Your documents were received and are being reviewed. We will let you know if anything else is needed.", dueDate: null, documentId: null, actionUrl: null };
+    return { type: "waiting", title: "Waiting for review", reason: "Your documents were received and are being reviewed. We will let you know if anything else is needed.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (caseItem.stage === "Application Preparing" || caseItem.stage === "Reviewing Documents") {
-    return { type: "waiting", title: "Your application is being prepared", reason: "Your agency is working on your file. No action is needed from you right now.", dueDate: null, documentId: null, actionUrl: null };
+    return { type: "waiting", title: "Your application is being prepared", reason: "Your consultant is working on your file. No action is needed from you right now.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (caseItem.stage === "Submitted") {
     return { type: "submitted", title: "Application submitted — waiting for decision", reason: "Your application has been submitted. We will notify you as soon as there is an update.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (caseItem.stage === "Decision Received") {
-    return { type: "decision", title: "A decision has been received", reason: "Contact your agency to review the decision on your application.", dueDate: null, documentId: null, actionUrl: "/client-portal/help" };
+    return { type: "decision", title: "A decision has been received", reason: "Contact your consultant to review the decision on your application.", dueDate: null, documentId: null, actionUrl: "/client-portal/help" };
   }
   return { type: "none", title: "You're all caught up", reason: "There is nothing you need to do right now. We will let you know when something changes.", dueDate: null, documentId: null, actionUrl: null };
 }
@@ -295,7 +295,7 @@ function buildTimeline({ caseItem, documents, payments, assessment, agreements }
   const events = [];
   sharedAssignments(assessment?.formData || {}).forEach((assignment) => {
     if (assignment.assignedAt) events.push({ id: `questionnaire-${assignment.id}-assigned`, title: `Questionnaire assigned: ${assignment.name || assignment.applicationType}`, description: "Complete it from the Forms tab.", createdAt: assignment.assignedAt, type: "questionnaire" });
-    if (assignment.status === "Submitted" && assignment.submittedAt) events.push({ id: `questionnaire-${assignment.id}-submitted`, title: `Questionnaire submitted: ${assignment.name || assignment.applicationType}`, description: "Your agency will review your answers.", createdAt: assignment.submittedAt, type: "questionnaire" });
+    if (assignment.status === "Submitted" && assignment.submittedAt) events.push({ id: `questionnaire-${assignment.id}-submitted`, title: `Questionnaire submitted: ${assignment.name || assignment.applicationType}`, description: "Your consultant will review your answers.", createdAt: assignment.submittedAt, type: "questionnaire" });
   });
   (agreements || []).forEach((agreement) => {
     if (agreement.issuedAt) events.push({ id: `agreement-${agreement.id}-issued`, title: `Sent for signature: ${agreement.title}`, description: "Review and sign it from the Documents tab.", createdAt: agreement.issuedAt, type: "agreement" });
@@ -304,7 +304,7 @@ function buildTimeline({ caseItem, documents, payments, assessment, agreements }
   if (caseItem) {
     events.push({ id: `case-${caseItem.id}-opened`, title: "Application file opened", description: caseItem.caseType, createdAt: caseItem.createdAt, type: "case" });
     if (caseItem.submittedAt) events.push({ id: `case-${caseItem.id}-submitted`, title: "Application submitted", description: "Your application was submitted for processing.", createdAt: caseItem.submittedAt, type: "case" });
-    if (caseItem.decisionAt) events.push({ id: `case-${caseItem.id}-decision`, title: "Decision received", description: "Contact your agency to review the outcome.", createdAt: caseItem.decisionAt, type: "case" });
+    if (caseItem.decisionAt) events.push({ id: `case-${caseItem.id}-decision`, title: "Decision received", description: "Contact your consultant to review the outcome.", createdAt: caseItem.decisionAt, type: "case" });
   }
   documents.forEach((document) => {
     if (document.receivedAt) events.push({ id: `doc-${document.id}-received`, title: `Document received: ${document.documentName}`, description: "Uploaded and waiting for review.", createdAt: document.receivedAt, type: "document" });
@@ -372,7 +372,7 @@ export async function getPortalOverview(req, res) {
         address: link.client.address,
       },
       agency: {
-        name: agency?.name || "Your agency",
+        name: agency?.name || "Your consultant",
         email: agency?.email || null,
         phone: agency?.phone || null,
         address: agencyAddress(agency),
@@ -521,7 +521,7 @@ export async function submitPortalQuestionnaire(req, res) {
   const assignments = Array.isArray(formData.questionnaireAssignments) ? formData.questionnaireAssignments : [];
   const target = assignments.find((assignment) => assignment.id === req.params.assignmentId && assignment.sharing === "Shared");
   if (!target) throw createHttpError(404, "Questionnaire not found.", "NOT_FOUND");
-  if (target.locked) throw createHttpError(409, "This questionnaire is locked. Contact your agency to make changes.", "QUESTIONNAIRE_LOCKED");
+  if (target.locked) throw createHttpError(409, "This questionnaire is locked. Contact your consultant to make changes.", "QUESTIONNAIRE_LOCKED");
 
   const now = new Date().toISOString();
   const nextFormData = {
@@ -532,7 +532,7 @@ export async function submitPortalQuestionnaire(req, res) {
   };
   await prisma.caseAssessment.update({ where: { id: assessment.id }, data: { formData: nextFormData } });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: link.clientId, caseId: caseItem.id, action: "questionnaire.portal_submitted", details: `${target.name || target.applicationType} questionnaire submitted by client` });
-  res.json({ success: true, message: "Questionnaire submitted. Your agency will review your answers." });
+  res.json({ success: true, message: "Questionnaire submitted. Your consultant will review your answers." });
 }
 
 export async function getPortalAgreements(req, res) {
@@ -683,7 +683,7 @@ export async function signPortalAgreement(req, res) {
     details: `${agreement.title} signed electronically by ${signerName}`,
     metadata: { writtenDocumentId: agreement.id, signerName, signedAt: signedAt.toISOString(), consent: true, signatureMethod },
   });
-  res.json({ success: true, message: "Signed. Thank you — your agency has been notified." });
+  res.json({ success: true, message: "Signed. Thank you — your consultant has been notified." });
 }
 
 export async function updatePortalProfile(req, res) {

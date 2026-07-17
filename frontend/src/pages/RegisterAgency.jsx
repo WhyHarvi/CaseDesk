@@ -18,11 +18,11 @@ export default function RegisterAgency() {
     finally { setLoading(false); }
   }
 
-  return <AuthShell title={sent ? "Check your inbox" : "Create your workspace"} description={sent ? `We sent setup instructions to ${form.workEmail}. The secure link will let you choose your password and finish your agency profile.` : "Start with the essentials. These agency details are reused in CaseDesk templates and correspondence."} backTo="/login">
+  return <AuthShell title={sent ? "Check your inbox" : "Create your workspace"} description={sent ? `We sent setup instructions to ${form.workEmail}. The secure link will let you choose your password and finish your workspace profile.` : "Start with the essentials. These workspace details are reused in CaseDesk templates and correspondence."} backTo="/login">
     {sent ? <div className="mt-8"><FormMessage>Your invitation is on its way. If it does not arrive, check your spam folder or contact CaseDesk support.</FormMessage></div> : <form onSubmit={submit} className="mt-8 grid gap-5 sm:grid-cols-2">
-      <FormField label="Your name"><input className={fieldClass} value={form.fullName} onChange={update("fullName")} autoComplete="name" required placeholder="Alex Morgan" /></FormField>
-      <FormField label="Work email"><input className={fieldClass} value={form.workEmail} onChange={update("workEmail")} autoComplete="email" type="email" required placeholder="alex@agency.ca" /></FormField>
-      <FormField label="Agency name"><input className={fieldClass} value={form.agencyName} onChange={update("agencyName")} autoComplete="organization" required placeholder="North Star Immigration" /></FormField>
+      <FormField label="Your name"><input className={fieldClass} value={form.fullName} onChange={update("fullName")} autoComplete="name" required placeholder="Your full name" /></FormField>
+      <FormField label="Work email"><input className={fieldClass} value={form.workEmail} onChange={update("workEmail")} autoComplete="email" type="email" required placeholder="you@company.ca" /></FormField>
+      <FormField label="Workspace name"><input className={fieldClass} value={form.agencyName} onChange={update("agencyName")} autoComplete="organization" required placeholder="Your company name" /></FormField>
       <FormField label="Phone" hint="Optional at this stage"><input className={fieldClass} value={form.phone} onChange={update("phone")} autoComplete="tel" placeholder="+1 416 555 0123" /></FormField>
       <FormField label="Country"><input className={fieldClass} value={form.country} onChange={update("country")} autoComplete="country-name" required /></FormField>
       <div className="flex items-end sm:pb-3"><label className="flex cursor-pointer items-start gap-3 text-sm leading-5 text-slate-600"><input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" checked={form.acceptTerms} onChange={update("acceptTerms")} required /><span>I agree to the CaseDesk terms and privacy policy.</span></label></div>

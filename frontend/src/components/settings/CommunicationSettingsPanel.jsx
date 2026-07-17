@@ -15,11 +15,11 @@ const permissionOptions = [
   ["canView", "View communication", "See assigned client conversations"],
   [
     "canViewAll",
-    "View agency inbox",
+    "View workspace inbox",
     "See conversations owned by other team members",
   ],
   ["canSendEmail", "Send email", "Create, schedule, and retry email"],
-  ["canSendSms", "Send SMS", "Send texts through the agency number"],
+  ["canSendSms", "Send SMS", "Send texts through the workspace number"],
   ["canUseChat", "Use secure chat", "Send and receive portal chat"],
   ["canInitiateCalls", "Start calls", "Use Ooma click-to-call"],
   [

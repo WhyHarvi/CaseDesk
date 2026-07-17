@@ -78,7 +78,7 @@ export default function ClientPortalHome() {
               <p className="mt-0.5 text-[13px] text-slate-500">
                 {overview.documents.length
                   ? "All requested documents are in. We'll let you know if anything else is needed."
-                  : "Your document checklist will appear here once your agency prepares it."}
+                  : "Your document checklist will appear here once your consultant prepares it."}
               </p>
             </div>
           </div>

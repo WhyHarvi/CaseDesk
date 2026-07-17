@@ -32,7 +32,7 @@ export default function Dashboard() {
   return (
     <PageContainer
       title="Dashboard"
-      description="A quick view of agency activity, open work, and upcoming follow-ups."
+      description="A quick view of workspace activity, open work, and upcoming follow-ups."
     >
       {error ? (
         <div className="rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
