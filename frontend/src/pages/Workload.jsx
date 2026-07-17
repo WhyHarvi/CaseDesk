@@ -188,16 +188,25 @@ export default function Workload() {
   const [error, setError] = useState("");
 
   const loadWorkload = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(isAdmin ? "/admin/consultants/workload" : "/consultants/me/workload");
-      setData(response.data.data);
-      setError("");
-    } catch (requestError) {
-      setError(requestError.response?.data?.message || (isAdmin ? "Unable to load the team workload." : "Unable to load your workload."));
-    } finally {
-      setLoading(false);
+    setLoading(true);
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const response = await api.get(isAdmin ? "/admin/consultants/workload" : "/consultants/me/workload");
+        setData(response.data.data);
+        setError("");
+        setLoading(false);
+        return;
+      } catch (requestError) {
+        // Retry once, silently, on transient failures (network drop, 5xx)
+        const transient = !requestError.response || requestError.response.status >= 500;
+        if (attempt === 1 && transient) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          continue;
+        }
+        setError(requestError.response?.data?.message || (isAdmin ? "Unable to load the team workload." : "Unable to load your workload."));
+      }
     }
+    setLoading(false);
   }, [isAdmin]);
 
   useEffect(() => { loadWorkload(); }, [loadWorkload]);
@@ -205,7 +214,7 @@ export default function Workload() {
   return (
     <PageContainer
       title={isAdmin ? "Team Workload" : "My Workload"}
-      description={isAdmin ? "See who is handling each case, where capacity is tight, and what needs attention across your agency." : "Your assigned cases, deadlines, and documents requiring review."}
+      description={isAdmin ? "See who is handling each case, where capacity is tight, and what needs attention across your workspace." : "Your assigned cases, deadlines, and documents requiring review."}
       actions={<button type="button" onClick={loadWorkload} disabled={loading} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} />Refresh</button>}
     >
       {error ? <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><button type="button" onClick={loadWorkload} className="font-semibold underline">Try again</button></div> : null}
