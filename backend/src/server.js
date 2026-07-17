@@ -36,6 +36,9 @@ import leadProviderRoutes from "./modules/leads/lead.provider.routes.js";
 import { startLeadIntakeWorker, stopLeadIntakeWorker } from "./modules/leads/lead.intake.worker.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import clientPortalRoutes from "./routes/clientPortalRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
+import { startNotificationScheduler, stopNotificationScheduler } from "./services/notificationScheduler.js";
+import { startNotificationDeliveryWorker, stopNotificationDeliveryWorker } from "./services/notificationDeliveryService.js";
 import {
   startFormRevisionMonitor,
   stopFormRevisionMonitor,
@@ -87,6 +90,7 @@ app.use("/api/lead-connectors/website", leadWebsiteRoutes);
 app.use("/api/lead-connectors", leadProviderRoutes);
 app.use("/api/portal", requireAuth, portalRoutes);
 app.use("/api/client-portal", requireAuth, clientPortalRoutes);
+app.use("/api/notifications", requireAuth, notificationRoutes);
 app.use("/api/admin", requireAuth, adminRoutes);
 app.use("/api/consultants", requireAuth, consultantRoutes);
 const internalUser = requireRole("admin", "consultant");
@@ -122,6 +126,8 @@ const server = app.listen(port, () => {
   startInboundMailSync();
   startCommunicationMaintenance();
   startLeadIntakeWorker();
+  startNotificationScheduler();
+  startNotificationDeliveryWorker();
 });
 
 let shuttingDown = false;
@@ -134,6 +140,8 @@ async function shutdown(signal) {
   stopInboundMailSync();
   stopCommunicationMaintenance();
   stopLeadIntakeWorker();
+  stopNotificationScheduler();
+  stopNotificationDeliveryWorker();
   server.close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);

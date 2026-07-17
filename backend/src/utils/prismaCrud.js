@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { dispatchActivityNotification } from "../services/notificationService.js";
 import { createHttpError } from "./http.js";
 
 function normalizeEmpty(value) {
@@ -131,7 +132,7 @@ export async function recordActivity({
   metadata = {},
 }) {
   try {
-    await prisma.activityLog.create({
+    const activity = await prisma.activityLog.create({
       data: {
         agencyId,
         userId,
@@ -144,6 +145,14 @@ export async function recordActivity({
         metadata,
       },
     });
+    try {
+      await dispatchActivityNotification(activity);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "test") {
+        console.error("Failed to create activity notification", error);
+      }
+    }
+    return activity;
   } catch (error) {
     if (process.env.NODE_ENV !== "test") {
       console.error("Failed to write activity log", error);

@@ -4,6 +4,7 @@ import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNam
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
+import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
 
 const include = {
   client: {
@@ -331,6 +332,25 @@ export async function updateCase(req, res) {
     action: "case.updated",
     details: activityDetails,
   });
+
+  const clientVisibleChanges = ["stage", "status", "submittedAt", "decisionAt"]
+    .filter((field) => Object.hasOwn(payload, field) && String(payload[field] || "") !== String(existing[field] || ""));
+  if (clientVisibleChanges.length) {
+    await notifyUsers({
+      agencyId: req.user.agencyId,
+      recipientIds: await clientRecipientIds(req.user.agencyId, result.data.client.id),
+      actorUserId: req.user.id,
+      type: "case.client_status_updated",
+      category: "cases",
+      title: `${result.data.caseType} application updated`,
+      body: `Current stage: ${result.data.stage}. Status: ${result.data.status}.`,
+      severity: result.data.stage === "Decision Received" ? "warning" : "info",
+      entityType: "case",
+      entityId: result.data.id,
+      actionUrl: "/client-portal",
+      dedupeKey: `case:${result.data.id}:client-status:${result.data.updatedAt.toISOString()}`,
+    });
+  }
 
   res.json({ data: result.data });
 }

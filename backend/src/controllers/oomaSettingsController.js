@@ -274,6 +274,12 @@ export async function testOomaSms(req, res) {
         lastSmsTestMessage: message,
       },
     });
+    await recordActivity({
+      agencyId: req.user.agencyId,
+      userId: req.user.id,
+      action: "settings.ooma_sms_test_failed",
+      details: message,
+    });
     res
       .status(error.statusCode || 502)
       .json({

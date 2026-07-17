@@ -556,6 +556,10 @@ model Agency {
   leadDuplicateCandidates        LeadDuplicateCandidate[]
   leadSourceConnections          LeadSourceConnection[]
   onboardingRequests             OnboardingRequest[]
+  notifications                  Notification[]
+  notificationPreferences        NotificationPreference[]
+  notificationDeliveries         NotificationDelivery[]
+  questionnaireAssignments       QuestionnaireAssignment[]
 
   @@map("agencies")
 }
@@ -702,6 +706,10 @@ model User {
   uploadedLeadImportBatches           LeadImportBatch[]               @relation("LeadImportUploaderUser")
   ownedLeadSourceConnections          LeadSourceConnection[]          @relation("LeadSourceConnectionOwnerUser")
   onboardingRequests                  OnboardingRequest[]
+  receivedNotifications               Notification[]                  @relation("NotificationRecipient")
+  actedNotifications                  Notification[]                  @relation("NotificationActor")
+  notificationPreferences             NotificationPreference[]
+  notificationDeliveries              NotificationDelivery[]
 
   @@index([agencyId])
   @@index([authUserId])
@@ -856,6 +864,7 @@ model Client {
   accountStatements          AccountStatementGeneration[]
   convertedFromLead          Lead?                        @relation("LeadConvertedClient")
   leadConversions            LeadConversion[]
+  questionnaireAssignments   QuestionnaireAssignment[]
 
   @@unique([agencyId, clientNumber])
   @@unique([agencyId, phoneNormalized])
@@ -903,6 +912,7 @@ model Case {
   assignments                CaseAssignment[]
   convertedFromLead          Lead?                          @relation("LeadConvertedCase")
   leadConversions            LeadConversion[]
+  questionnaireAssignments   QuestionnaireAssignment[]
 
   @@index([agencyId])
   @@index([clientId])
@@ -1444,22 +1454,23 @@ model CaseWorkflowStep {
 }
 
 model CaseAssessment {
-  id               String    @id @default(uuid())
-  agencyId         String    @map("agency_id")
-  clientId         String    @map("client_id")
-  caseId           String    @unique @map("case_id")
-  userId           String?   @map("user_id")
-  formData         Json      @default("{}") @map("form_data")
-  crsScore         Int       @default(0) @map("crs_score")
-  crsBreakdown     Json      @default("{}") @map("crs_breakdown")
-  declaredComplete Boolean   @default(false) @map("declared_complete")
-  declaredAt       DateTime? @map("declared_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  agency           Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client           Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case             Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  user             User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id                       String                    @id @default(uuid())
+  agencyId                 String                    @map("agency_id")
+  clientId                 String                    @map("client_id")
+  caseId                   String                    @unique @map("case_id")
+  userId                   String?                   @map("user_id")
+  formData                 Json                      @default("{}") @map("form_data")
+  crsScore                 Int                       @default(0) @map("crs_score")
+  crsBreakdown             Json                      @default("{}") @map("crs_breakdown")
+  declaredComplete         Boolean                   @default(false) @map("declared_complete")
+  declaredAt               DateTime?                 @map("declared_at")
+  createdAt                DateTime                  @default(now()) @map("created_at")
+  updatedAt                DateTime                  @updatedAt @map("updated_at")
+  agency                   Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                   Client                    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                     Case                      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user                     User?                     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  questionnaireAssignments QuestionnaireAssignment[]
 
   @@unique([agencyId, caseId])
   @@index([agencyId])
@@ -1495,6 +1506,7 @@ model ClientDocument {
   clientInstructions            String?                @map("client_instructions")
   receivedAt                    DateTime?              @map("received_at")
   reviewedAt                    DateTime?              @map("reviewed_at")
+  dueAt                         DateTime?              @map("due_at")
   visibility                    DocumentVisibility     @default(Client)
   storageKey                    String?                @map("storage_key")
   originalFilename              String?                @map("original_filename")
@@ -1520,6 +1532,7 @@ model ClientDocument {
   @@index([caseId])
   @@index([uploadedById])
   @@index([reviewedById])
+  @@index([agencyId, status, dueAt])
   @@index([sourceSharedLibraryDocumentId])
   @@map("client_documents")
 }
@@ -1895,27 +1908,31 @@ model Note {
 }
 
 model FollowUp {
-  id             String         @id @default(uuid())
-  agencyId       String         @map("agency_id")
-  clientId       String?        @map("client_id")
-  caseId         String?        @map("case_id")
-  assignedUserId String?        @map("assigned_user_id")
-  title          String
-  description    String?
-  dueDate        DateTime?      @map("due_date")
-  status         FollowUpStatus
-  completedAt    DateTime?      @map("completed_at")
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
-  agency         Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client         Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case           Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  assignedUser   User?          @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  id                   String         @id @default(uuid())
+  agencyId             String         @map("agency_id")
+  clientId             String?        @map("client_id")
+  caseId               String?        @map("case_id")
+  assignedUserId       String?        @map("assigned_user_id")
+  title                String
+  description          String?
+  dueDate              DateTime?      @map("due_date")
+  status               FollowUpStatus
+  completedAt          DateTime?      @map("completed_at")
+  reminderAt           DateTime?      @map("reminder_at")
+  notificationChannels String[]       @default(["in_app"]) @map("notification_channels")
+  notifyClient         Boolean        @default(false) @map("notify_client")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+  agency               Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                 Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  assignedUser         User?          @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([clientId])
   @@index([caseId])
   @@index([assignedUserId])
+  @@index([agencyId, status, reminderAt])
   @@map("follow_ups")
 }
 
@@ -2483,4 +2500,113 @@ model LeadDuplicateCandidate {
   @@unique([incomingEventId, candidateLeadId])
   @@index([agencyId, status, createdAt])
   @@map("lead_duplicate_candidates")
+}
+
+model QuestionnaireAssignment {
+  id           String         @id @default(uuid())
+  sourceId     String         @map("source_id")
+  agencyId     String         @map("agency_id")
+  assessmentId String         @map("assessment_id")
+  caseId       String         @map("case_id")
+  clientId     String         @map("client_id")
+  name         String
+  sharing      String         @default("Internal")
+  status       String         @default("Assigned")
+  dueAt        DateTime?      @map("due_at")
+  locked       Boolean        @default(false)
+  assignedAt   DateTime       @default(now()) @map("assigned_at")
+  submittedAt  DateTime?      @map("submitted_at")
+  sourceData   Json           @default("{}") @map("source_data")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  agency       Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assessment   CaseAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  case         Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client       Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, sourceId])
+  @@index([agencyId, status, dueAt])
+  @@index([caseId])
+  @@index([clientId])
+  @@map("questionnaire_assignments")
+}
+
+model Notification {
+  id              String                 @id @default(uuid())
+  agencyId        String                 @map("agency_id")
+  recipientUserId String                 @map("recipient_user_id")
+  actorUserId     String?                @map("actor_user_id")
+  type            String
+  category        String
+  title           String
+  body            String?
+  severity        String                 @default("info")
+  entityType      String?                @map("entity_type")
+  entityId        String?                @map("entity_id")
+  actionUrl       String?                @map("action_url")
+  metadata        Json                   @default("{}")
+  dedupeKey       String                 @map("dedupe_key")
+  readAt          DateTime?              @map("read_at")
+  dismissedAt     DateTime?              @map("dismissed_at")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  agency          Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  recipient       User                   @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  actor           User?                  @relation("NotificationActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  deliveries      NotificationDelivery[]
+
+  @@unique([agencyId, recipientUserId, dedupeKey])
+  @@index([recipientUserId, dismissedAt, createdAt])
+  @@index([recipientUserId, readAt, createdAt])
+  @@index([agencyId, category, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id              String   @id @default(uuid())
+  agencyId        String   @map("agency_id")
+  userId          String   @map("user_id")
+  category        String   @default("all")
+  inAppEnabled    Boolean  @default(true) @map("in_app_enabled")
+  emailEnabled    Boolean  @default(false) @map("email_enabled")
+  smsEnabled      Boolean  @default(false) @map("sms_enabled")
+  dueSoonMinutes  Int      @default(1440) @map("due_soon_minutes")
+  quietHoursStart String?  @map("quiet_hours_start")
+  quietHoursEnd   String?  @map("quiet_hours_end")
+  timezone        String   @default("America/Toronto")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  agency          Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category])
+  @@index([agencyId])
+  @@map("notification_preferences")
+}
+
+model NotificationDelivery {
+  id              String       @id @default(uuid())
+  agencyId        String       @map("agency_id")
+  notificationId  String       @map("notification_id")
+  recipientUserId String       @map("recipient_user_id")
+  channel         String
+  status          String       @default("pending")
+  attempts        Int          @default(0)
+  maxAttempts     Int          @default(5) @map("max_attempts")
+  availableAt     DateTime     @default(now()) @map("available_at")
+  sentAt          DateTime?    @map("sent_at")
+  deliveredAt     DateTime?    @map("delivered_at")
+  failedAt        DateTime?    @map("failed_at")
+  providerId      String?      @map("provider_id")
+  lastError       String?      @map("last_error")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  agency          Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  notification    Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  recipient       User         @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, channel])
+  @@index([status, availableAt])
+  @@index([recipientUserId, createdAt])
+  @@map("notification_deliveries")
 }

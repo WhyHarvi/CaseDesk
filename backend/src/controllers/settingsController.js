@@ -112,6 +112,7 @@ export async function testMailSettings(req, res) {
   } catch (error) {
     const message = friendlyMailError(error);
     const data = await prisma.agencyMailSettings.update({ where: { agencyId: req.user.agencyId }, data: { lastTestedAt: testedAt, lastTestStatus: "Failed", lastTestMessage: message, lastInboundSyncStatus: existing.inboundEnabled ? "Failed" : null, lastInboundSyncMessage: existing.inboundEnabled ? message : null } });
+    await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "settings.mail_test_failed", details: message });
     res.status(400).json({ status: "error", message, data: publicSettings(data, true) });
   }
 }

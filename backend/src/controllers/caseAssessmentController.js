@@ -1,6 +1,8 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { syncQuestionnaireAssignments } from "../services/questionnaireAssignmentService.js";
+import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
 
 async function findScopedCase(req) {
   const data = await prisma.case.findFirst({
@@ -773,6 +775,37 @@ export async function saveCaseAssessment(req, res) {
       declaredAt: declaredComplete ? new Date() : null,
     },
   });
+
+  const questionnaireSync = await syncQuestionnaireAssignments({
+    assessmentId: data.id,
+    agencyId: req.user.agencyId,
+    caseId: scopedCase.id,
+    clientId: scopedCase.clientId,
+    formData,
+  });
+  const clientUsers = questionnaireSync.changes.some(({ current }) => current.sharing === "Shared")
+    ? await clientRecipientIds(req.user.agencyId, scopedCase.clientId)
+    : [];
+  for (const { previous, current } of questionnaireSync.changes) {
+    if (current.sharing !== "Shared") continue;
+    const type = !previous
+      ? "questionnaire.assigned"
+      : current.locked ? "questionnaire.locked" : previous.locked ? "questionnaire.reopened" : "questionnaire.updated";
+    await notifyUsers({
+      agencyId: req.user.agencyId,
+      recipientIds: clientUsers,
+      actorUserId: req.user.id,
+      type,
+      category: "questionnaires",
+      title: !previous ? `Questionnaire assigned: ${current.name}` : `Questionnaire updated: ${current.name}`,
+      body: current.dueAt ? `Due ${current.dueAt.toISOString()}` : null,
+      severity: current.locked ? "warning" : "info",
+      entityType: "questionnaire_assignment",
+      entityId: current.id,
+      actionUrl: "/client-portal/questionnaires",
+      dedupeKey: `questionnaire:${current.id}:${type}:${current.updatedAt.toISOString()}`,
+    });
+  }
 
   await recordActivity({
     agencyId: req.user.agencyId,

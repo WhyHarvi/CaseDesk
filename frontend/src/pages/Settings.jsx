@@ -23,6 +23,7 @@ import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPa
 import AgencyProfilePanel from "../components/settings/AgencyProfilePanel";
 import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPanel";
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
+import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
 
 const adminSettingsItems = [
   {
@@ -624,6 +625,8 @@ export default function Settings() {
                     <AgencyOomaSettingsPanel />
                   ) : activeSection === "communication-controls" ? (
                     <CommunicationSettingsPanel />
+                  ) : activeSection === "notifications" ? (
+                    <NotificationPreferencesPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}

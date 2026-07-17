@@ -51,6 +51,7 @@ const commonFields = {
   notes: fieldParsers.stringField,
   clientInstructions: fieldParsers.stringField,
   receivedAt: fieldParsers.dateField,
+  dueAt: fieldParsers.dateField,
   visibility: fieldParsers.enumField(["Client", "Internal"]),
 };
 

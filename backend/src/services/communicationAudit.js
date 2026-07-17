@@ -1,4 +1,5 @@
 import prisma from "./prisma/client.js";
+import { dispatchCommunicationAuditNotification } from "./notificationService.js";
 
 export async function recordCommunicationAudit({
   agencyId,
@@ -10,7 +11,7 @@ export async function recordCommunicationAudit({
   metadata = {},
 }) {
   try {
-    return await prisma.communicationAuditEvent.create({
+    const event = await prisma.communicationAuditEvent.create({
       data: {
         agencyId,
         userId,
@@ -21,6 +22,12 @@ export async function recordCommunicationAudit({
         metadata,
       },
     });
+    try {
+      await dispatchCommunicationAuditNotification(event);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "test") console.error("Failed to create communication notification", error);
+    }
+    return event;
   } catch (error) {
     if (process.env.NODE_ENV !== "test") {
       console.error("Failed to write communication audit event", error);
@@ -28,4 +35,3 @@ export async function recordCommunicationAudit({
     return null;
   }
 }
-

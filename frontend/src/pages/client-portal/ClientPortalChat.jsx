@@ -1,4 +1,5 @@
 import { ChevronLeft, CircleHelp, Loader2, MessagesSquare, SendHorizonal } from "lucide-react";
+import NotificationBell from "../../components/notifications/NotificationBell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getPortalChat, sendPortalChatMessage, portalErrorMessage } from "../../api/clientPortalApi";
@@ -171,6 +172,7 @@ export default function ClientPortalChat() {
             <p className="truncate text-xs text-slate-500">{activeCase?.caseType || "Secure CaseDesk chat"}</p>
           )}
         </div>
+        <NotificationBell variant="chat" />
         <Link to="/client-portal/help" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 active:scale-95" aria-label="Help and contact">
           <CircleHelp className="h-5 w-5" />
         </Link>

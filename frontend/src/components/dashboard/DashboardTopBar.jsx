@@ -1,4 +1,5 @@
-import { Bell, Plus, Search, UserPlus } from "lucide-react";
+import { Plus, Search, UserPlus } from "lucide-react";
+import NotificationBell from "../notifications/NotificationBell";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
@@ -49,16 +50,7 @@ export default function DashboardTopBar({ leading }) {
         </button>
         </> : null}
 
-        <button
-          type="button"
-          className="relative flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:text-slate-700"
-          aria-label="Notifications"
-        >
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-0.5 top-0.5 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white">
-            3
-          </span>
-        </button>
+        <NotificationBell variant="topbar" />
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { resolveAgencyImapConfig } from "./agencyMailService.js";
 import { ingestInboundCommunication } from "../controllers/communicationWebhookController.js";
 import { storeInboundCommunicationAttachments } from "../controllers/communicationAttachmentController.js";
 import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
+import { adminRecipientIds, notifyUsers } from "./notificationService.js";
 
 const SYNC_INTERVAL_MS = Math.max(
   Number(process.env.INBOUND_MAIL_SYNC_MS) || 60000,
@@ -135,13 +136,28 @@ async function syncAgencyMailbox(settings) {
       lock.release();
     }
   } catch (error) {
+    const message = String(
+      error.message || "Incoming mailbox synchronization failed",
+    ).slice(0, 500);
     await updateSyncStatus(settings.agencyId, {
       lastInboundSyncAt: new Date(),
       lastInboundSyncStatus: "Failed",
-      lastInboundSyncMessage: String(
-        error.message || "Incoming mailbox synchronization failed",
-      ).slice(0, 500),
+      lastInboundSyncMessage: message,
     });
+    await notifyUsers({
+      agencyId: settings.agencyId,
+      recipientIds: await adminRecipientIds(settings.agencyId),
+      type: "settings.inbound_mail_sync_failed",
+      category: "security",
+      title: "Incoming mailbox synchronization failed",
+      body: message,
+      severity: "warning",
+      entityType: "agency_mail_settings",
+      entityId: settings.id,
+      actionUrl: "/app/settings",
+      channels: ["in_app"],
+      dedupeKey: `inbound-mail-sync:${settings.id}:${new Date().toISOString().slice(0, 10)}`,
+    }).catch(() => {});
   } finally {
     await client.logout().catch(() => {});
   }

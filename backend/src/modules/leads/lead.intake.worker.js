@@ -4,6 +4,7 @@ import { normalizeIncomingLead } from "./lead.intake.validation.js";
 import { adaptProviderPayload } from "./lead.provider.adapters.js";
 import { enrichProviderPayload } from "./lead.provider.enrichment.js";
 import { logger } from "../../services/logger.js";
+import { adminRecipientIds, notifyUsers } from "../../services/notificationService.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_INTAKE_POLL_MS) || 2000, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.LEAD_INTAKE_BATCH_SIZE) || 10, 1), 50);
@@ -39,7 +40,7 @@ async function findDuplicates(tx, event, normalized) {
 }
 
 async function processClaimed(eventId) {
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const event = await tx.leadIncomingEvent.findUnique({ where: { id: eventId }, include: { intakeForm: true, importBatch: true, sourceConnection: true } });
     if (!event || event.status !== "PROCESSING") return;
     const settings = event.importBatch?.settings && typeof event.importBatch.settings === "object" ? event.importBatch.settings : {};
@@ -60,7 +61,7 @@ async function processClaimed(eventId) {
       await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "DUPLICATE_REVIEW", normalizedPayload: normalized.data, lockedAt: null, processedAt: new Date(), lastError: null } });
       if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "DUPLICATE", normalizedData: normalized.data } });
       await refreshBatch(tx, event.importBatchId);
-      return;
+      return { duplicate: true, agencyId: event.agencyId, eventId: event.id };
     }
 
     const ownerUserId = event.intakeForm?.ownerUserId || event.sourceConnection?.ownerUserId || settings.ownerUserId;
@@ -87,7 +88,11 @@ async function processClaimed(eventId) {
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });
     if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "PROCESSED", normalizedData: normalized.data, createdLeadId: lead.id } });
     await refreshBatch(tx, event.importBatchId);
+    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt };
   }, { maxWait: 10_000, timeout: 30_000 });
+  if (result?.ownerUserId) {
+    await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
+  }
 }
 
 async function failEvent(event, error) {
@@ -99,6 +104,9 @@ async function failEvent(event, error) {
     if (terminal && event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "FAILED", validationErrors: [message] } });
     if (terminal) await refreshBatch(tx, event.importBatchId);
   });
+  if (terminal) {
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: await adminRecipientIds(event.agencyId), type: "lead.intake_failed", category: "leads", title: "Lead intake failed", body: message, severity: "critical", entityType: "lead_incoming_event", entityId: event.id, actionUrl: "/lead-intake", channels: ["in_app"], dedupeKey: `lead-intake:${event.id}:failed:${event.attempts + 1}` });
+  }
 }
 
 async function processEvent(event) {

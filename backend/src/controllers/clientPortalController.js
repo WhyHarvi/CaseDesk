@@ -4,6 +4,7 @@ import prisma from "../services/prisma/client.js";
 import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../services/documentStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -503,6 +504,11 @@ export async function savePortalQuestionnaireAnswers(req, res) {
   };
 
   await prisma.caseAssessment.update({ where: { id: assessment.id }, data: { formData: nextFormData } });
+  for (const assignment of nextFormData.questionnaireAssignments || []) {
+    if (assignment.status === "In progress") {
+      await updateNormalizedQuestionnaireAssignment({ assessmentId: assessment.id, sourceId: assignment.id, data: { status: "In progress", sourceData: assignment } });
+    }
+  }
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: link.clientId, caseId: caseItem.id, action: "questionnaire.portal_updated", details: `Client updated questionnaire answers (${sectionId})` });
   res.json({ success: true, message: "Your answers were saved." });
 }
@@ -531,6 +537,11 @@ export async function submitPortalQuestionnaire(req, res) {
     ),
   };
   await prisma.caseAssessment.update({ where: { id: assessment.id }, data: { formData: nextFormData } });
+  await updateNormalizedQuestionnaireAssignment({
+    assessmentId: assessment.id,
+    sourceId: target.id,
+    data: { status: "Submitted", submittedAt: new Date(now), sourceData: nextFormData.questionnaireAssignments.find((item) => item.id === target.id) },
+  });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: link.clientId, caseId: caseItem.id, action: "questionnaire.portal_submitted", details: `${target.name || target.applicationType} questionnaire submitted by client` });
   res.json({ success: true, message: "Questionnaire submitted. Your consultant will review your answers." });
 }

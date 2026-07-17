@@ -5,6 +5,8 @@ import AppRoutes from "./routes/AppRoutes";
 import "./index.css";
 import faviconPng from "./assets/favicon_logo.png";
 import { AuthProvider } from "./auth/AuthContext";
+import { NotificationProvider } from "./components/notifications/NotificationProvider";
+import NotificationPanel from "./components/notifications/NotificationPanel";
 
 function AppShell() {
   useEffect(() => {
@@ -32,7 +34,12 @@ function AppShell() {
 
   return (
     <BrowserRouter>
-      <AuthProvider><AppRoutes /></AuthProvider>
+      <AuthProvider>
+        <NotificationProvider>
+          <AppRoutes />
+          <NotificationPanel />
+        </NotificationProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

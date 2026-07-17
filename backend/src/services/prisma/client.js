@@ -48,6 +48,10 @@ const shouldReusePrisma =
   cachedPrisma.communicationOutbox &&
   cachedPrisma.agencyMailSettings &&
   cachedPrisma.agencyOomaSettings &&
+  cachedPrisma.notification &&
+  cachedPrisma.notificationPreference &&
+  cachedPrisma.notificationDelivery &&
+  cachedPrisma.questionnaireAssignment &&
   hasRuntimeField(cachedPrisma, "SharedLibraryDocument", "clientDocuments") &&
   hasRuntimeField(
     cachedPrisma,
@@ -63,7 +67,8 @@ const shouldReusePrisma =
   hasRuntimeField(cachedPrisma, "CommunicationMessage", "conversation") &&
   hasRuntimeField(cachedPrisma, "CommunicationMessage", "deliveryEvents") &&
   hasRuntimeField(cachedPrisma, "Agency", "mailSettings") &&
-  hasRuntimeField(cachedPrisma, "Agency", "oomaSettings");
+  hasRuntimeField(cachedPrisma, "Agency", "oomaSettings") &&
+  hasRuntimeField(cachedPrisma, "User", "receivedNotifications");
 
 if (cachedPrisma && !shouldReusePrisma) {
   void cachedPrisma.$disconnect().catch(() => {});

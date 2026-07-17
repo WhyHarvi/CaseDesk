@@ -2,6 +2,7 @@ import { createCrudController, fieldParsers, recordActivity } from "../utils/pri
 import { caseAccessWhere, clientAccessWhere, relatedRecordAccessWhere } from "../middleware/authorization.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { notifyUsers } from "../services/notificationService.js";
 
 const include = {
   client: {
@@ -37,6 +38,11 @@ const fields = {
   dueDate: fieldParsers.dateField,
   status: fieldParsers.enumField(["Pending", "Completed", "Overdue", "Cancelled"]),
   completedAt: fieldParsers.dateField,
+  reminderAt: fieldParsers.dateField,
+  notificationChannels: (value) => Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item).toLowerCase()).filter((item) => ["in_app", "email", "sms"].includes(item)))]
+    : undefined,
+  notifyClient: fieldParsers.booleanField,
 };
 
 const controller = createCrudController({
@@ -53,6 +59,40 @@ const controller = createCrudController({
     ...(req.query.status ? { status: req.query.status } : {}),
   }),
   activityEntity: "follow_up",
+  afterCreate: async ({ req, data }) => {
+    if (!data.assignedUserId) return;
+    await notifyUsers({
+      agencyId: req.auth.agencyId,
+      recipientIds: [data.assignedUserId],
+      actorUserId: req.auth.userId,
+      type: "follow_up.assigned",
+      category: "work",
+      title: `Follow-up assigned: ${data.title}`,
+      body: data.dueDate ? `Due ${data.dueDate.toISOString()}` : data.description,
+      severity: "info",
+      entityType: "follow_up",
+      entityId: data.id,
+      actionUrl: data.caseId ? `/app/cases/${data.caseId}` : "/app/follow-ups",
+      dedupeKey: `follow-up:${data.id}:assigned:${data.assignedUserId}`,
+    });
+  },
+  afterUpdate: async ({ req, existing, data }) => {
+    if (!data.assignedUserId || data.assignedUserId === existing.assignedUserId) return;
+    await notifyUsers({
+      agencyId: req.auth.agencyId,
+      recipientIds: [data.assignedUserId],
+      actorUserId: req.auth.userId,
+      type: "follow_up.reassigned",
+      category: "work",
+      title: `Follow-up reassigned: ${data.title}`,
+      body: data.dueDate ? `Due ${data.dueDate.toISOString()}` : data.description,
+      severity: "info",
+      entityType: "follow_up",
+      entityId: data.id,
+      actionUrl: data.caseId ? `/app/cases/${data.caseId}` : "/app/follow-ups",
+      dedupeKey: `follow-up:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}`,
+    });
+  },
 });
 
 export const listFollowUps = controller.list;
@@ -115,6 +155,16 @@ async function validateRelationships(req, existing = null) {
 
 export async function createFollowUp(req, res) {
   req.body = { ...(req.body || {}) };
+  const legacyReminder = String(req.body.description || "").match(/Send reminder:\s*([^\n]+)/i)?.[1]?.trim();
+  const legacyChannels = String(req.body.description || "").match(/Notifications:\s*([^\n]+)/i)?.[1]?.trim().toLowerCase();
+  if (!Object.hasOwn(req.body, "reminderAt") && legacyReminder && legacyReminder !== "Not set") req.body.reminderAt = legacyReminder;
+  if (!Object.hasOwn(req.body, "notificationChannels") && legacyChannels) {
+    req.body.notificationChannels = [
+      ...(legacyChannels.includes("in-app") ? ["in_app"] : []),
+      ...(legacyChannels.includes("email") ? ["email"] : []),
+    ];
+    req.body.notifyClient = true;
+  }
   if (req.auth.role === "consultant" && !Object.hasOwn(req.body, "assignedUserId")) {
     req.body.assignedUserId = req.auth.userId;
   }

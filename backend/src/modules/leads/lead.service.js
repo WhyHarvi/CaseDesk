@@ -6,6 +6,7 @@ import { nextLeadNumber, requireLead } from "./lead.repository.js";
 import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
+import { notifyUsers } from "../../services/notificationService.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -40,7 +41,7 @@ export async function createLead(req, db = prisma) {
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     await lockAgencyContactIntake(tx, agencyId);
     await assertNoContactDuplicate(tx, {
       agencyId,
@@ -60,6 +61,10 @@ export async function createLead(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.created", details: `Created ${leadNumber}`, entityType: "lead", entityId: lead.id, metadata: { leadNumber, sourceId: values.originalSourceId, ownerUserId: values.ownerUserId } } });
     return lead;
   }, leadTransactionOptions);
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [result.ownerUserId], actorUserId: actorId, type: "lead.assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: result.initialMessage, severity: result.priority === "URGENT" ? "critical" : result.priority === "HIGH" ? "warning" : "info", entityType: "lead", entityId: result.id, actionUrl: "/leads", dedupeKey: `lead:${result.id}:assigned:${result.ownerUserId}` });
+  }
+  return result;
 }
 
 export async function listLeads(req) {
@@ -155,7 +160,7 @@ export async function createLeadFollowUp(req, db = prisma) {
   const values = parseLeadFollowUp(req.body);
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (["CONVERTED", "LOST", "ARCHIVED"].includes(lead.status)) throw createHttpError(409, "This lead no longer accepts follow-ups.", "LEAD_CLOSED");
     await requireLeadStaff(tx, agencyId, values.assignedUserId);
@@ -165,6 +170,10 @@ export async function createLeadFollowUp(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.follow_up_created", details: `${lead.leadNumber}: ${values.description}`, entityType: "lead", entityId: lead.id, metadata: { followUpId: followUp.id } } });
     return followUp;
   }, leadTransactionOptions);
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [values.assignedUserId], actorUserId: actorId, type: "lead.follow_up_assigned", category: "leads", title: "Lead follow-up assigned", body: `${values.description} — due ${values.dueAt.toISOString()}`, severity: "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-follow-up:${result.id}:assigned:${values.assignedUserId}` });
+  }
+  return result;
 }
 
 export async function updateLeadFollowUp(req, db = prisma) {
@@ -188,7 +197,7 @@ export async function assignLead(req, db = prisma) {
   const values = parseLeadAssignment(req.body);
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (req.auth.role === "frontdesk" && lead.ownerUserId !== actorId) throw createHttpError(403, "Only the current lead owner can reassign this lead.", "FORBIDDEN");
     await requireLeadStaff(tx, agencyId, values.ownerUserId);
@@ -199,6 +208,10 @@ export async function assignLead(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.assigned", details: `${lead.leadNumber}: ${values.reason}`, entityType: "lead", entityId: lead.id, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
     return updated;
   }, leadTransactionOptions);
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead reassigned: ${result.leadNumber}`, body: values.reason, severity: result.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.id, actionUrl: "/leads", dedupeKey: `lead:${result.id}:assigned:${values.ownerUserId}:${result.updatedAt.toISOString()}` });
+  }
+  return result;
 }
 
 export async function moveLeadToNurture(req, db = prisma) {
@@ -305,7 +318,7 @@ export async function createConsultation(req, db = prisma) {
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can book consultations.", "LEAD_NOT_OPEN");
     const consultant = await tx.user.findFirst({
@@ -325,13 +338,17 @@ export async function createConsultation(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.consultation_booked", details: `${lead.leadNumber}: ${values.startAt.toISOString()}`, entityType: "lead", entityId: lead.id, metadata: { consultationId: consultation.id } } });
     return consultation;
   }, leadTransactionOptions);
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [values.consultantUserId], actorUserId: actorId, type: "lead.consultation_booked", category: "leads", title: "Lead consultation booked", body: values.startAt.toISOString(), severity: "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-consultation:${result.id}:booked:${result.startAt.toISOString()}` });
+  }
+  return result;
 }
 
 export async function updateConsultation(req, db = prisma) {
   const values = parseUpdateConsultation(req.body);
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open lead consultations can be updated.", "LEAD_NOT_OPEN");
     const existing = await tx.leadConsultation.findFirst({ where: { id: req.params.consultationId, leadId: lead.id, agencyId } });
@@ -348,6 +365,10 @@ export async function updateConsultation(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.consultation_updated", details: `${lead.leadNumber}: ${values.status}`, entityType: "lead", entityId: lead.id, metadata: { consultationId: existing.id, status: values.status, outcome: values.outcome } } });
     return consultation;
   }, leadTransactionOptions);
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [result.consultantUserId], actorUserId: actorId, type: "lead.consultation_updated", category: "leads", title: `Lead consultation ${String(result.status).toLowerCase().replaceAll("_", " ")}`, body: result.startAt.toISOString(), severity: result.status === "NO_SHOW" ? "warning" : "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-consultation:${result.id}:${result.status}:${result.updatedAt.toISOString()}` });
+  }
+  return result;
 }
 
 function humanizeForAudit(value) {

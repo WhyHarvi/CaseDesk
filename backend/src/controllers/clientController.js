@@ -4,6 +4,7 @@ import prisma from "../services/prisma/client.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
+import { notifyUsers } from "../services/notificationService.js";
 
 const include = {
   assignedUser: {
@@ -412,6 +413,7 @@ export async function createClient(req, res) {
       return tx.client.create({ data: { ...payload, clientNumber, agencyId: req.auth.agencyId }, include: scopedInclude(req) });
     });
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.created", details: `${data.fullName} created` });
+    if (data.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.assigned", category: "cases", title: `Client assigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}` });
     res.status(201).json({ data });
   } catch (error) {
     if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
@@ -435,6 +437,7 @@ export async function updateClient(req, res) {
       return tx.client.update({ where: { id: existing.id }, data: payload, include: scopedInclude(req) });
     });
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.updated", details: `${data.fullName} updated` });
+    if (data.assignedUserId && data.assignedUserId !== existing.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.reassigned", category: "cases", title: `Client reassigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}` });
     res.json({ data });
   } catch (error) {
     if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
