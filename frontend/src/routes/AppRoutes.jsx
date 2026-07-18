@@ -2,42 +2,45 @@ import { lazy, Suspense } from "react";
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AdminRoute, HomeRedirect, InternalRoute, PortalRoute } from "../auth/AuthRoutes";
 import MainLayout from "../layouts/MainLayout";
-import CaseProfile from "../pages/CaseProfile";
-import Cases from "../pages/Cases";
-import ClientChatPortal from "../pages/ClientChatPortal";
-import ClientProfile from "../pages/ClientProfile";
-import Clients from "../pages/Clients";
-import TeamMembers from "../pages/TeamMembers";
-import Dashboard from "../pages/Dashboard";
-import Documents from "../pages/Documents";
-import FollowUps from "../pages/FollowUps";
 import Login from "../pages/Login";
-import Payments from "../pages/Payments";
-import Settings from "../pages/Settings";
 import ClientPortalLayout from "../components/client-portal/ClientPortalLayout";
-import ClientPortalHome from "../pages/client-portal/ClientPortalHome";
-import ClientPortalDocuments from "../pages/client-portal/ClientPortalDocuments";
-import ClientPortalQuestionnaires from "../pages/client-portal/ClientPortalQuestionnaires";
-import ClientPortalChat from "../pages/client-portal/ClientPortalChat";
-import ClientPortalPayments from "../pages/client-portal/ClientPortalPayments";
-import ClientPortalProfile from "../pages/client-portal/ClientPortalProfile";
-import ClientPortalHelp from "../pages/client-portal/ClientPortalHelp";
-import Workload from "../pages/Workload";
-import CalendarPage from "../pages/CalendarPage";
-import PublicBookingPage from "../pages/PublicBookingPage";
-import ManageBookingPage from "../pages/ManageBookingPage";
 import ChangePassword from "../pages/ChangePassword";
 import AcceptInvite from "../pages/AcceptInvite";
 import ResetPassword from "../pages/ResetPassword";
-import LeadsPage from "../modules/leads/pages/LeadsPage";
-import LeadDashboardPage from "../modules/leads/pages/LeadDashboardPage";
-import LeadReportsPage from "../modules/leads/pages/LeadReportsPage";
-import LeadIntakePage from "../modules/leads/pages/LeadIntakePage";
-import PublicLeadIntakePage from "../modules/leads/pages/PublicLeadIntakePage";
 
+const CaseProfile = lazy(() => import("../pages/CaseProfile"));
+const Cases = lazy(() => import("../pages/Cases"));
+const ClientChatPortal = lazy(() => import("../pages/ClientChatPortal"));
+const ClientProfile = lazy(() => import("../pages/ClientProfile"));
+const Clients = lazy(() => import("../pages/Clients"));
+const TeamMembers = lazy(() => import("../pages/TeamMembers"));
+const Dashboard = lazy(() => import("../pages/Dashboard"));
+const Documents = lazy(() => import("../pages/Documents"));
+const FollowUps = lazy(() => import("../pages/FollowUps"));
+const Payments = lazy(() => import("../pages/Payments"));
+const Settings = lazy(() => import("../pages/Settings"));
+const ClientPortalHome = lazy(() => import("../pages/client-portal/ClientPortalHome"));
+const ClientPortalDocuments = lazy(() => import("../pages/client-portal/ClientPortalDocuments"));
+const ClientPortalQuestionnaires = lazy(() => import("../pages/client-portal/ClientPortalQuestionnaires"));
+const ClientPortalChat = lazy(() => import("../pages/client-portal/ClientPortalChat"));
+const ClientPortalPayments = lazy(() => import("../pages/client-portal/ClientPortalPayments"));
+const ClientPortalProfile = lazy(() => import("../pages/client-portal/ClientPortalProfile"));
+const ClientPortalHelp = lazy(() => import("../pages/client-portal/ClientPortalHelp"));
+const Workload = lazy(() => import("../pages/Workload"));
+const CalendarPage = lazy(() => import("../pages/CalendarPage"));
+const PublicBookingPage = lazy(() => import("../pages/PublicBookingPage"));
+const ManageBookingPage = lazy(() => import("../pages/ManageBookingPage"));
+const LeadsPage = lazy(() => import("../modules/leads/pages/LeadsPage"));
+const LeadDashboardPage = lazy(() => import("../modules/leads/pages/LeadDashboardPage"));
+const LeadReportsPage = lazy(() => import("../modules/leads/pages/LeadReportsPage"));
+const LeadIntakePage = lazy(() => import("../modules/leads/pages/LeadIntakePage"));
+const PublicLeadIntakePage = lazy(() => import("../modules/leads/pages/PublicLeadIntakePage"));
 const DocumentComposer = lazy(() => import("../pages/DocumentComposer"));
+
+function RouteFallback() { return <div className="flex min-h-56 items-center justify-center"><div className="text-center"><div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /><p className="mt-3 text-sm font-medium text-slate-500">Opening workspace…</p></div></div>; }
+function Deferred({ children }) { return <Suspense fallback={<RouteFallback />}>{children}</Suspense>; }
 function WriterPage() { return <Suspense fallback={<div className="flex h-screen items-center justify-center text-sm text-slate-500">Opening CaseDesk Writer…</div>}><DocumentComposer /></Suspense>; }
-function AppLayout() { return <InternalRoute allowFrontdesk><MainLayout><Outlet /></MainLayout></InternalRoute>; }
+function AppLayout() { return <InternalRoute allowFrontdesk><MainLayout><Suspense fallback={<RouteFallback />}><Outlet /></Suspense></MainLayout></InternalRoute>; }
 function StaffOnly({ children }) { return <InternalRoute>{children}</InternalRoute>; }
 function Internal({ children, allowFrontdesk = false }) { return <InternalRoute allowFrontdesk={allowFrontdesk}>{children}</InternalRoute>; }
 function Legacy({ path }) { return <InternalRoute><Navigate to={`/app${path}`} replace /></InternalRoute>; }
@@ -51,19 +54,19 @@ export default function AppRoutes() {
     <Route path="/auth/forgot-password" element={<Navigate to="/login?forgot=1" replace />} />
     <Route path="/auth/reset-password" element={<ResetPassword />} />
     <Route path="/change-password" element={<ChangePassword />} />
-    <Route path="/client-chat/:token" element={<ClientChatPortal />} />
-    <Route path="/public/intake/:publicToken" element={<PublicLeadIntakePage />} />
-    <Route path="/book/manage/:manageToken" element={<ManageBookingPage />} />
-    <Route path="/book/:token" element={<PublicBookingPage />} />
+    <Route path="/client-chat/:token" element={<Deferred><ClientChatPortal /></Deferred>} />
+    <Route path="/public/intake/:publicToken" element={<Deferred><PublicLeadIntakePage /></Deferred>} />
+    <Route path="/book/manage/:manageToken" element={<Deferred><ManageBookingPage /></Deferred>} />
+    <Route path="/book/:token" element={<Deferred><PublicBookingPage /></Deferred>} />
     <Route path="/portal/*" element={<Navigate to="/client-portal" replace />} />
     <Route path="/client-portal" element={<PortalRoute><ClientPortalLayout /></PortalRoute>}>
-      <Route index element={<ClientPortalHome />} />
-      <Route path="documents" element={<ClientPortalDocuments />} />
-      <Route path="questionnaires" element={<ClientPortalQuestionnaires />} />
-      <Route path="chat" element={<ClientPortalChat />} />
-      <Route path="payments" element={<ClientPortalPayments />} />
-      <Route path="profile" element={<ClientPortalProfile />} />
-      <Route path="help" element={<ClientPortalHelp />} />
+      <Route index element={<Deferred><ClientPortalHome /></Deferred>} />
+      <Route path="documents" element={<Deferred><ClientPortalDocuments /></Deferred>} />
+      <Route path="questionnaires" element={<Deferred><ClientPortalQuestionnaires /></Deferred>} />
+      <Route path="chat" element={<Deferred><ClientPortalChat /></Deferred>} />
+      <Route path="payments" element={<Deferred><ClientPortalPayments /></Deferred>} />
+      <Route path="profile" element={<Deferred><ClientPortalProfile /></Deferred>} />
+      <Route path="help" element={<Deferred><ClientPortalHelp /></Deferred>} />
     </Route>
     <Route element={<AppLayout />}>
       <Route path="/app/dashboard" element={<StaffOnly><Dashboard /></StaffOnly>} />

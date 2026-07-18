@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import api from "../services/api";
 import { requireSupabase, supabase } from "../services/supabase";
 import { clearApiCache, setApiCacheScope } from "../services/queryClient";
+import { cancelAppWarmup, warmAppCache } from "../services/routePrefetch";
 
 const AuthContext = createContext(null);
 
@@ -19,6 +20,7 @@ export function AuthProvider({ children }) {
       const next = { session, authUser: session.user, appUser: data.user, membership: data.membership, agency: data.agency, loading: false, accountError: null };
       setApiCacheScope(session.user.id, data.agency?.id);
       setState(next);
+      warmAppCache(data.membership?.role);
       return next;
     } catch (error) {
       const status = error.response?.status;
@@ -50,6 +52,7 @@ export function AuthProvider({ children }) {
         setState((current) => ({ ...current, session, authUser: session?.user || null, loading: false }));
       }
       if (event === "SIGNED_OUT" && active) {
+        cancelAppWarmup();
         clearApiCache();
         setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
       }
@@ -67,6 +70,7 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(async () => {
     await api.post("/auth/logout").catch(() => {});
+    cancelAppWarmup();
     clearApiCache();
     await supabase?.auth.signOut();
   }, []);

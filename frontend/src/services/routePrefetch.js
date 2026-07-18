@@ -1,5 +1,27 @@
 import api from "./api";
 
+const warmupHandles = new Set();
+let warmupGeneration = 0;
+
+function preloadRouteModule(path) {
+  const pathname = String(path || "").split("?")[0];
+  const loaders = {
+    "/app/dashboard": () => import("../pages/Dashboard"),
+    "/app/clients": () => import("../pages/Clients"),
+    "/app/cases": () => import("../pages/Cases"),
+    "/app/follow-ups": () => import("../pages/FollowUps"),
+    "/app/documents": () => import("../pages/Documents"),
+    "/app/calendar": () => import("../pages/CalendarPage"),
+    "/app/workload": () => import("../pages/Workload"),
+    "/app/team-members": () => import("../pages/TeamMembers"),
+    "/app/settings": () => import("../pages/Settings"),
+    "/leads": () => import("../modules/leads/pages/LeadsPage"),
+    "/lead-dashboard": () => import("../modules/leads/pages/LeadDashboardPage"),
+    "/lead-intake": () => import("../modules/leads/pages/LeadIntakePage"),
+  };
+  void loaders[pathname]?.().catch(() => {});
+}
+
 function calendarRange() {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -27,7 +49,53 @@ function requestsFor(path, role) {
 }
 
 export function prefetchRoute(path, role) {
+  preloadRouteModule(path);
   for (const [url, config] of requestsFor(path, role)) {
     void api.get(url, config).catch(() => {});
   }
+}
+
+function scheduleWarmup(callback, delay) {
+  const handle = window.setTimeout(() => {
+    warmupHandles.delete(handle);
+    if ("requestIdleCallback" in window) {
+      const idleRecord = { idleHandle: null };
+      idleRecord.idleHandle = window.requestIdleCallback((deadline) => {
+        warmupHandles.delete(idleRecord);
+        callback(deadline);
+      }, { timeout: 2_000 });
+      warmupHandles.add(idleRecord);
+    } else {
+      callback();
+    }
+  }, delay);
+  warmupHandles.add(handle);
+}
+
+export function cancelAppWarmup() {
+  warmupGeneration += 1;
+  for (const handle of warmupHandles) {
+    if (typeof handle === "number") window.clearTimeout(handle);
+    else if (handle && "idleHandle" in handle && "cancelIdleCallback" in window) window.cancelIdleCallback(handle.idleHandle);
+  }
+  warmupHandles.clear();
+}
+
+export function warmAppCache(role) {
+  cancelAppWarmup();
+  const generation = warmupGeneration;
+  const home = role === "frontdesk" ? "/leads" : "/app/dashboard";
+  prefetchRoute(home, role);
+
+  const later = role === "frontdesk"
+    ? ["/app/calendar", "/lead-intake", "/app/settings"]
+    : role === "admin"
+      ? ["/app/calendar", "/app/clients", "/app/cases", "/leads", "/app/workload"]
+      : ["/app/calendar", "/app/clients", "/app/cases", "/leads", "/app/workload"];
+
+  later.forEach((path, index) => {
+    scheduleWarmup(() => {
+      if (generation === warmupGeneration) prefetchRoute(path, role);
+    }, 900 + index * 450);
+  });
 }
