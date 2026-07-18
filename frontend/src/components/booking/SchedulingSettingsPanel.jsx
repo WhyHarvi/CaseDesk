@@ -4,9 +4,11 @@ import {
   createSessionType,
   deleteSessionType,
   getBookingSettings,
+  getSchedulingAnalytics,
   regenerateBookingToken,
   updateBookingSettings,
   updateSessionType,
+  updateSchedulingStaff,
 } from "../../api/bookingApi";
 import Select from "../ui/Select";
 
@@ -51,6 +53,8 @@ function Toggle({ checked, onChange, label }) {
 export default function SchedulingSettingsPanel() {
   const [settings, setSettings] = useState(null);
   const [sessionTypes, setSessionTypes] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -68,10 +72,15 @@ export default function SchedulingSettingsPanel() {
         if (!active) return;
         setSettings(data.settings);
         setSessionTypes(data.sessionTypes);
+        setStaff(data.staff || []);
       })
       .catch(() => active && setError("Scheduling settings could not be loaded."))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    getSchedulingAnalytics().then(setAnalytics).catch(() => {});
   }, []);
 
   const hoursByDay = useMemo(() => {
@@ -103,6 +112,10 @@ export default function SchedulingSettingsPanel() {
         horizonDays: settings.horizonDays,
         reminderMinutes: settings.reminderMinutes,
         publicBookingEnabled: settings.publicBookingEnabled,
+        freeConsultationsEnabled: settings.freeConsultationsEnabled,
+        freeConsultationsPerContact: settings.freeConsultationsPerContact,
+        cancellationCutoffMinutes: settings.cancellationCutoffMinutes,
+        rescheduleCutoffMinutes: settings.rescheduleCutoffMinutes,
       });
       setSettings(updated);
       setSaved(true);
@@ -133,6 +146,28 @@ export default function SchedulingSettingsPanel() {
     if (updated) setSessionTypes((current) => current.map((item) => (item.id === type.id ? updated : item)));
   }
 
+  async function toggleTypeMode(type, mode) {
+    const current = type.allowedMeetingModes?.length ? type.allowedMeetingModes : ["InPerson", "Online"];
+    const next = current.includes(mode) ? current.filter((item) => item !== mode) : [...current, mode];
+    if (!next.length) return;
+    const updated = await updateSessionType(type.id, { allowedMeetingModes: next }).catch(() => null);
+    if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
+  }
+
+  async function setTypeStaff(type, userId) {
+    const current = (type.eligibleStaff || []).map((item) => item.userId);
+    const next = userId === null ? [] : current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId];
+    const updated = await updateSessionType(type.id, { eligibleStaffIds: next }).catch(() => null);
+    if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
+  }
+
+  async function setTypeLocation(type, locationId) {
+    const current = type.allowedLocationIds || [];
+    const next = locationId === null ? [] : current.includes(locationId) ? current.filter((id) => id !== locationId) : [...current, locationId];
+    const updated = await updateSessionType(type.id, { allowedLocationIds: next }).catch(() => null);
+    if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
+  }
+
   async function removeType(type) {
     const result = await deleteSessionType(type.id).catch(() => null);
     if (!result) return;
@@ -142,7 +177,20 @@ export default function SchedulingSettingsPanel() {
 
   async function regenerate() {
     const updated = await regenerateBookingToken().catch(() => null);
-    if (updated) setSettings((current) => ({ ...current, publicToken: updated.publicToken }));
+    if (updated) setSettings((current) => ({ ...current, publicToken: updated.publicToken, publicSlug: updated.publicSlug }));
+  }
+
+  async function changeStaff(member, patch) {
+    const preference = member.schedulingPreference || {
+      acceptsAppointments: member.role === "consultant",
+      publicBookable: member.role === "consultant",
+      maxDailyAppointments: null,
+    };
+    const updated = await updateSchedulingStaff(member.id, { ...preference, ...patch }).catch((reason) => {
+      setError(reason.response?.data?.message || "Team scheduling preference could not be saved.");
+      return null;
+    });
+    if (updated) setStaff((current) => current.map((item) => item.id === member.id ? { ...item, schedulingPreference: updated } : item));
   }
 
   if (loading) {
@@ -152,11 +200,22 @@ export default function SchedulingSettingsPanel() {
     return <div className={`${card} text-sm text-rose-700`}>{error || "Scheduling settings could not be loaded."}</div>;
   }
 
-  const bookingUrl = `${window.location.origin}/book/${settings.publicToken}`;
+  const bookingUrl = `${window.location.origin}/b/${settings.publicSlug || settings.publicToken}`;
 
   return (
     <div className="space-y-5">
       {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+
+      {analytics ? (
+        <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[['Booked', analytics.booked], ['Attended', analytics.attended], ['Cancelled', analytics.cancelled], ['No-show', analytics.noShow]].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-md">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
+              <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">Weekly hours</h3>
@@ -177,6 +236,27 @@ export default function SchedulingSettingsPanel() {
               )}
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className={card}>
+        <h3 className="text-sm font-semibold text-slate-900">Scheduling team</h3>
+        <p className="mt-0.5 text-xs text-slate-500">Consultants participate by default. Administrators choose whether their calendar joins the assignment pool.</p>
+        <div className="mt-3 divide-y divide-slate-100">
+          {staff.map((member) => {
+            const preference = member.schedulingPreference || { acceptsAppointments: member.role === "consultant", publicBookable: member.role === "consultant", maxDailyAppointments: null };
+            return (
+              <div key={member.id} className="flex flex-wrap items-center gap-3 py-3">
+                <div className="min-w-[150px] flex-1">
+                  <p className="text-sm font-medium text-slate-800">{member.fullName}</p>
+                  <p className="text-xs capitalize text-slate-400">{member.role}{member.role === "admin" && preference.acceptsAppointments ? " · Participating" : ""}</p>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.acceptsAppointments} onChange={(value) => changeStaff(member, { acceptsAppointments: value, publicBookable: value ? preference.publicBookable : false })} label={`${member.fullName} accepts appointments`} /> Accepts</label>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.publicBookable} onChange={(value) => changeStaff(member, { publicBookable: value, acceptsAppointments: value ? true : preference.acceptsAppointments })} label={`${member.fullName} public bookable`} /> Public</label>
+                <input type="number" min="1" max="50" value={preference.maxDailyAppointments ?? ""} onChange={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })} placeholder="Daily max" className={`${inputClass} w-24`} />
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -238,6 +318,17 @@ export default function SchedulingSettingsPanel() {
               {["America/Toronto", "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax", "Asia/Kolkata", "Europe/London"].map((zone) => <option key={zone} value={zone} />)}
             </datalist>
           </label>
+          <label className="block text-xs font-medium text-slate-600">Cancellation cutoff
+            <input type="number" min="0" value={settings.cancellationCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, cancellationCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">Reschedule cutoff
+            <input type="number" min="0" value={settings.rescheduleCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, rescheduleCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+          <Toggle checked={settings.freeConsultationsEnabled} onChange={(value) => setSettings((c) => ({ ...c, freeConsultationsEnabled: value }))} label="Free consultations enabled" />
+          <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Free consultations</p><p className="text-xs text-slate-400">Limit repeat bookings by email or client.</p></div>
+          <label className="text-xs font-medium text-slate-600">Per contact <input type="number" min="1" max="20" disabled={!settings.freeConsultationsEnabled} value={settings.freeConsultationsPerContact} onChange={(event) => setSettings((c) => ({ ...c, freeConsultationsPerContact: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
         </div>
       </section>
 
@@ -292,6 +383,23 @@ export default function SchedulingSettingsPanel() {
               <div className="min-w-0">
                 <p className={`truncate text-sm font-medium ${type.isActive ? "text-slate-800" : "text-slate-400 line-through"}`}>{type.name}</p>
                 <p className="text-xs text-slate-400">{type.durationMinutes} minutes</p>
+                <div className="mt-1.5 flex gap-1.5">
+                  {[['InPerson', 'In person'], ['Online', 'Online']].map(([mode, label]) => <button key={mode} type="button" onClick={() => toggleTypeMode(type, mode)} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${(type.allowedMeetingModes || ['InPerson', 'Online']).includes(mode) ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-400"}`}>{label}</button>)}
+                </div>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Eligible team · {type.eligibleStaff?.length ? type.eligibleStaff.length : "all"}</summary>
+                  <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
+                    <button type="button" onClick={() => setTypeStaff(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.eligibleStaff?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All participating</button>
+                    {staff.map((member) => <button key={member.id} type="button" onClick={() => setTypeStaff(type, member.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.eligibleStaff || []).some((item) => item.userId === member.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{member.fullName}</button>)}
+                  </div>
+                </details>
+                {(settings.locations || []).length ? <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Locations · {type.allowedLocationIds?.length ? type.allowedLocationIds.length : "all"}</summary>
+                  <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
+                    <button type="button" onClick={() => setTypeLocation(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.allowedLocationIds?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All offices</button>
+                    {settings.locations.map((location) => <button key={location.id} type="button" onClick={() => setTypeLocation(type, location.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.allowedLocationIds || []).includes(location.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{location.name}</button>)}
+                  </div>
+                </details> : null}
               </div>
               <div className="flex items-center gap-2">
                 <Toggle checked={type.isActive} onChange={() => toggleType(type)} label={`${type.name} active`} />

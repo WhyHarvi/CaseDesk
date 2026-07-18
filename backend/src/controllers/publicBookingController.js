@@ -5,6 +5,11 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { assertSlotAvailable, availabilityForRange, localDateKey } from "../services/bookingAvailabilityService.js";
 import { sendBookingMessages } from "../services/bookingNotificationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import {
+  chooseAppointmentAssignee,
+  eligibleSchedulingStaff,
+  lockSchedulingTransaction,
+} from "../services/schedulingAssignmentService.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -13,8 +18,9 @@ function meetingLink() {
 }
 
 async function resolveAgencyByToken(token) {
-  const settings = await prisma.bookingSettings.findUnique({
-    where: { publicToken: String(token || "") },
+  const value = String(token || "").trim().toLowerCase();
+  const settings = await prisma.bookingSettings.findFirst({
+    where: { OR: [{ publicToken: value }, { publicSlug: value }] },
     include: {
       agency: {
         select: {
@@ -43,11 +49,11 @@ async function resolveAgencyByToken(token) {
 export async function getPublicBookingInfo(req, res) {
   const settings = await resolveAgencyByToken(req.params.token);
   const agencyName = settings.agency.legalName || settings.agency.name;
-  const sessionTypes = await prisma.bookingSessionType.findMany({
+  const [sessionTypes, consultants] = await Promise.all([prisma.bookingSessionType.findMany({
     where: { agencyId: settings.agencyId, isActive: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, durationMinutes: true, description: true },
-  });
+    select: { id: true, name: true, durationMinutes: true, description: true, allowedMeetingModes: true, allowedLocationIds: true, eligibleStaff: { select: { userId: true } } },
+  }), eligibleSchedulingStaff({ agencyId: settings.agencyId, publicOnly: true })]);
   res.json({
     data: {
       agencyName,
@@ -55,6 +61,7 @@ export async function getPublicBookingInfo(req, res) {
       timezone: settings.timezone,
       horizonDays: settings.horizonDays,
       sessionTypes,
+      consultants: consultants.map(({ id, fullName }) => ({ id, name: fullName })),
       locations: Array.isArray(settings.locations) ? settings.locations : [],
     },
   });
@@ -71,19 +78,29 @@ export async function getPublicAvailability(req, res) {
     where: { id: String(req.query.sessionTypeId || ""), agencyId: settings.agencyId, isActive: true },
   });
   if (!sessionType) throw createHttpError(400, "Choose a session type.", "VALIDATION_ERROR");
+  const requestedConsultantId = String(req.query.consultantId || "") || null;
+  const staff = await eligibleSchedulingStaff({
+    agencyId: settings.agencyId,
+    sessionTypeId: sessionType.id,
+    publicOnly: true,
+    requestedUserId: requestedConsultantId,
+  });
+  if (requestedConsultantId && !staff.length) throw createHttpError(400, "The selected consultant is not bookable.", "INVALID_ASSIGNEE");
   const { days } = await availabilityForRange({
     agencyId: settings.agencyId,
-    assignedToId: null,
+    assignedToIds: staff.map((item) => item.id),
     durationMinutes: sessionType.durationMinutes,
     fromKey: from,
     toKey: to,
   });
-  res.json({ data: { days, timezone: settings.timezone } });
+  const publicDays = Object.fromEntries(Object.entries(days).map(([key, slots]) => [key, slots.map(({ staffIds, ...slot }) => slot)]));
+  res.json({ data: { days: publicDays, timezone: settings.timezone } });
 }
 
 export async function createPublicBooking(req, res) {
   const settings = await resolveAgencyByToken(req.params.token);
   const body = req.body || {};
+  if (String(body.website || "").trim()) throw createHttpError(400, "The booking could not be completed.", "VALIDATION_ERROR");
 
   const sessionType = await prisma.bookingSessionType.findFirst({
     where: { id: String(body.sessionTypeId || ""), agencyId: settings.agencyId, isActive: true },
@@ -99,7 +116,11 @@ export async function createPublicBooking(req, res) {
   const phone = String(body.phone || "").trim().slice(0, 40);
   const notes = String(body.notes || "").trim().slice(0, 1000);
   const online = body.meetingMode === "Online";
-  const locations = Array.isArray(settings.locations) ? settings.locations : [];
+  if (!sessionType.allowedMeetingModes.includes(online ? "Online" : "InPerson")) {
+    throw createHttpError(400, "That appointment format is not available for this session.", "VALIDATION_ERROR");
+  }
+  const allLocations = Array.isArray(settings.locations) ? settings.locations : [];
+  const locations = sessionType.allowedLocationIds.length ? allLocations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : allLocations;
   let location = null;
   if (!online && locations.length) {
     location = locations.find((item) => item.id === String(body.locationId || "")) || (locations.length === 1 ? locations[0] : null);
@@ -111,9 +132,11 @@ export async function createPublicBooking(req, res) {
   // Re-validate that the requested slot really is offered (working hours,
   // days off, notice, horizon) — never trust the widget.
   const dayKey = localDateKey(startsAt, settings.timezone);
+  const requestedConsultantId = String(body.consultantId || "") || null;
+  const staff = await eligibleSchedulingStaff({ agencyId: settings.agencyId, sessionTypeId: sessionType.id, publicOnly: true, requestedUserId: requestedConsultantId });
   const { days } = await availabilityForRange({
     agencyId: settings.agencyId,
-    assignedToId: null,
+    assignedToIds: staff.map((item) => item.id),
     durationMinutes: sessionType.durationMinutes,
     fromKey: dayKey,
     toKey: dayKey,
@@ -123,13 +146,49 @@ export async function createPublicBooking(req, res) {
 
   const existingClient = await prisma.client.findFirst({
     where: { agencyId: settings.agencyId, email: { equals: email, mode: "insensitive" } },
-    select: { id: true },
+    select: { id: true, assignedUserId: true },
   });
+  const priorFreeCount = settings.freeConsultationsEnabled ? await prisma.appointment.count({
+    where: {
+      agencyId: settings.agencyId,
+      isFreeConsultation: true,
+      status: { not: "Cancelled" },
+      OR: [
+        ...(existingClient ? [{ clientId: existingClient.id }] : []),
+        { guestEmailNormalized: email },
+      ],
+    },
+  }) : 0;
+  if (settings.freeConsultationsEnabled && priorFreeCount >= settings.freeConsultationsPerContact) {
+    throw createHttpError(409, "The free consultation limit for this email has been reached. Please contact the office.", "FREE_LIMIT_REACHED");
+  }
+
+  const idempotencyKey = String(req.get("Idempotency-Key") || body.idempotencyKey || "").trim().slice(0, 160) || null;
+  if (idempotencyKey) {
+    const prior = await prisma.appointment.findUnique({
+      where: { agencyId_idempotencyKey: { agencyId: settings.agencyId, idempotencyKey } },
+      include: { client: { select: { fullName: true, email: true, phone: true } } },
+    });
+    if (prior) return res.status(200).json({ data: { ...publicView(prior, settings), manageToken: prior.manageToken } });
+  }
 
   const appointment = await prisma.$transaction(async (tx) => {
+    await lockSchedulingTransaction(tx, settings.agencyId, startsAt);
+    const assignee = await chooseAppointmentAssignee({
+      agencyId: settings.agencyId,
+      sessionTypeId: sessionType.id,
+      startsAt,
+      endsAt,
+      requestedUserId: requestedConsultantId,
+      preferredUserId: existingClient?.assignedUserId,
+      publicOnly: true,
+      bufferMinutes: settings.bufferMinutes,
+      timezone: settings.timezone,
+      db: tx,
+    });
     const conflict = await assertSlotAvailable(tx, {
       agencyId: settings.agencyId,
-      assignedToId: null,
+      assignedToId: assignee.id,
       startsAt,
       endsAt,
       bufferMinutes: settings.bufferMinutes,
@@ -149,12 +208,18 @@ export async function createPublicBooking(req, res) {
         description: notes || null,
         guestName: name,
         guestEmail: email,
+        guestEmailNormalized: email,
         guestPhone: phone || null,
         meetingMode: online ? "Online" : "InPerson",
         meetingUrl: online ? meetingLink() : null,
+        assignedToId: assignee.id,
+        source: "Public",
+        isFreeConsultation: settings.freeConsultationsEnabled,
+        idempotencyKey,
+        reminderDueAt: new Date(startsAt.getTime() - settings.reminderMinutes * 60_000),
         status: "Scheduled",
       },
-      include: { client: { select: { fullName: true, email: true, phone: true } } },
+      include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } } },
     });
   });
 
@@ -166,7 +231,7 @@ export async function createPublicBooking(req, res) {
     action: "appointment.booked",
     details: `${sessionType.name} booked online by ${name} for ${localDateKey(startsAt, settings.timezone)}`,
   }).catch(() => {});
-  sendBookingMessages({ agencyId: settings.agencyId, appointment, kind: "booked" }).catch(() => {});
+  await sendBookingMessages({ agencyId: settings.agencyId, appointment, kind: "booked" }).catch(() => {});
   invalidateDashboardCache(settings.agencyId);
 
   res.status(201).json({
@@ -190,7 +255,7 @@ async function resolveManaged(token) {
     where: { manageToken: String(token || "") },
     include: {
       client: { select: { fullName: true, email: true, phone: true } },
-      sessionType: { select: { id: true, name: true, durationMinutes: true } },
+      sessionType: { select: { id: true, name: true, durationMinutes: true, allowedMeetingModes: true, allowedLocationIds: true } },
       agency: { select: { id: true, name: true, legalName: true } },
     },
   });
@@ -199,8 +264,12 @@ async function resolveManaged(token) {
 }
 
 function publicView(appointment, settings) {
-  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const allLocations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const locations = appointment.sessionType?.allowedLocationIds?.length
+    ? allLocations.filter((item) => appointment.sessionType.allowedLocationIds.includes(item.id))
+    : allLocations;
   const locationId = locations.find((item) => `${item.name} — ${item.address}` === appointment.location)?.id || null;
+  const timeUntilStart = new Date(appointment.startsAt).getTime() - Date.now();
   return {
     subject: appointment.subject,
     status: appointment.status,
@@ -213,9 +282,12 @@ function publicView(appointment, settings) {
     locationId,
     locations,
     sessionType: appointment.sessionType,
+    allowedMeetingModes: appointment.sessionType?.allowedMeetingModes || ["InPerson", "Online"],
     agencyName: appointment.agency.legalName || appointment.agency.name,
     timezone: settings?.timezone || "America/Toronto",
     name: appointment.guestName || appointment.client?.fullName || null,
+    canCancel: appointment.status === "Scheduled" && timeUntilStart >= (settings?.cancellationCutoffMinutes || 0) * 60_000,
+    canReschedule: appointment.status === "Scheduled" && timeUntilStart >= (settings?.rescheduleCutoffMinutes || 0) * 60_000,
   };
 }
 
@@ -240,6 +312,7 @@ export async function getManagedAvailability(req, res) {
     durationMinutes: duration,
     fromKey: from,
     toKey: to,
+    excludeAppointmentId: appointment.id,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -247,11 +320,13 @@ export async function getManagedAvailability(req, res) {
 export async function cancelManagedBooking(req, res) {
   const appointment = await resolveManaged(req.params.manageToken);
   if (appointment.status !== "Scheduled") throw createHttpError(409, "This appointment is no longer active.", "ALREADY_DONE");
-  if (new Date(appointment.startsAt) <= new Date()) throw createHttpError(409, "Past appointments cannot be cancelled.", "TOO_LATE");
+  const settings = await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } });
+  const cutoff = (settings?.cancellationCutoffMinutes || 0) * 60_000;
+  if (new Date(appointment.startsAt).getTime() - Date.now() < cutoff) throw createHttpError(409, "This appointment is inside the cancellation cutoff.", "TOO_LATE");
   const updated = await prisma.appointment.update({
     where: { id: appointment.id },
-    data: { status: "Cancelled" },
-    include: { client: { select: { fullName: true, email: true, phone: true } }, sessionType: true, agency: { select: { name: true } } },
+    data: { status: "Cancelled", cancelledAt: new Date(), cancellationReason: String(req.body?.reason || "Cancelled by guest").trim().slice(0, 500) },
+    include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: true, agency: { select: { name: true } } },
   });
   await recordActivity({
     agencyId: appointment.agencyId,
@@ -261,9 +336,8 @@ export async function cancelManagedBooking(req, res) {
     action: "appointment.cancelled",
     details: `${appointment.subject} cancelled via booking link`,
   }).catch(() => {});
-  sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "cancelled" }).catch(() => {});
+  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "cancelled" }).catch(() => {});
   invalidateDashboardCache(appointment.agencyId);
-  const settings = await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } });
   res.json({ data: publicView(updated, settings) });
 }
 
@@ -271,6 +345,9 @@ export async function rescheduleManagedBooking(req, res) {
   const appointment = await resolveManaged(req.params.manageToken);
   if (appointment.status !== "Scheduled") throw createHttpError(409, "This appointment is no longer active.", "ALREADY_DONE");
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } });
+  if (new Date(appointment.startsAt).getTime() - Date.now() < (settings?.rescheduleCutoffMinutes || 0) * 60_000) {
+    throw createHttpError(409, "This appointment is inside the rescheduling cutoff.", "TOO_LATE");
+  }
   const startsAt = new Date(String(req.body?.startsAt || ""));
   if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "Pick a new time.", "VALIDATION_ERROR");
   const duration = appointment.sessionType?.durationMinutes
@@ -281,7 +358,13 @@ export async function rescheduleManagedBooking(req, res) {
     : req.body?.meetingMode === "InPerson"
       ? "InPerson"
       : appointment.meetingMode;
-  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  if (appointment.sessionType?.allowedMeetingModes?.length && !appointment.sessionType.allowedMeetingModes.includes(meetingMode)) {
+    throw createHttpError(400, "That appointment format is unavailable for this session.", "VALIDATION_ERROR");
+  }
+  const allLocations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const locations = appointment.sessionType?.allowedLocationIds?.length
+    ? allLocations.filter((item) => appointment.sessionType.allowedLocationIds.includes(item.id))
+    : allLocations;
   let selectedLocation = null;
   if (meetingMode === "InPerson") {
     selectedLocation = locations.find((item) => item.id === String(req.body?.locationId || ""))
@@ -299,11 +382,13 @@ export async function rescheduleManagedBooking(req, res) {
     durationMinutes: duration,
     fromKey: dayKey,
     toKey: dayKey,
+    excludeAppointmentId: appointment.id,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is not available. Pick another slot.", "SLOT_TAKEN");
 
   const updated = await prisma.$transaction(async (tx) => {
+    await lockSchedulingTransaction(tx, appointment.agencyId, startsAt);
     const conflict = await assertSlotAvailable(tx, {
       agencyId: appointment.agencyId,
       assignedToId: appointment.assignedToId,
@@ -327,8 +412,10 @@ export async function rescheduleManagedBooking(req, res) {
           ? selectedLocation?.mapsUrl || (selectedLocation ? null : appointment.locationMapsUrl)
           : null,
         reminderSentAt: null,
+        reminderDueAt: new Date(startsAt.getTime() - (settings?.reminderMinutes || 1440) * 60_000),
+        reminderQueuedAt: null,
       },
-      include: { client: { select: { fullName: true, email: true, phone: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } },
+      include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } },
     });
   });
 
@@ -340,7 +427,7 @@ export async function rescheduleManagedBooking(req, res) {
     action: "appointment.rescheduled",
     details: `${appointment.subject} rescheduled via booking link`,
   }).catch(() => {});
-  sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "rescheduled" }).catch(() => {});
+  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "rescheduled" }).catch(() => {});
   invalidateDashboardCache(appointment.agencyId);
   res.json({ data: publicView(updated, settings) });
 }

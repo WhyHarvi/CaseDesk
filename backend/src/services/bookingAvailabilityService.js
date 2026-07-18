@@ -1,4 +1,6 @@
 import prisma from "./prisma/client.js";
+import { generatePublicBookingSlug } from "./bookingPublicLinkService.js";
+import { createHttpError } from "../utils/http.js";
 
 export const DEFAULT_WORKING_HOURS = [
   { day: 1, enabled: true, start: "09:00", end: "17:00" },
@@ -13,8 +15,9 @@ export const DEFAULT_WORKING_HOURS = [
 export async function getOrCreateBookingSettings(agencyId) {
   const existing = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   if (existing) return existing;
+  const publicSlug = await generatePublicBookingSlug(agencyId);
   const [settings] = await Promise.all([
-    prisma.bookingSettings.create({ data: { agencyId, workingHours: DEFAULT_WORKING_HOURS } }),
+    prisma.bookingSettings.create({ data: { agencyId, publicSlug, workingHours: DEFAULT_WORKING_HOURS } }),
     // Never leave a fresh workspace with nothing bookable
     prisma.bookingSessionType.count({ where: { agencyId } }).then((count) =>
       count === 0
@@ -48,7 +51,7 @@ function timezoneOffsetMs(date, timezone) {
 }
 
 // Convert a local wall-clock time on a given local date to a UTC Date.
-function localDateTimeToUtc(dateKey, minutes, timezone) {
+export function localDateTimeToUtc(dateKey, minutes, timezone) {
   const [year, month, day] = dateKey.split("-").map(Number);
   const guess = new Date(Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60));
   // Two-pass correction handles DST edges well enough for scheduling.
@@ -61,6 +64,18 @@ export function localDateKey(date, timezone) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
+export function validateAvailabilityRange(fromKey, toKey, maximumDays = 62) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) {
+    throw createHttpError(400, "Availability dates must use YYYY-MM-DD.", "VALIDATION_ERROR");
+  }
+  const from = new Date(`${fromKey}T00:00:00.000Z`);
+  const to = new Date(`${toKey}T00:00:00.000Z`);
+  const days = Math.round((to.getTime() - from.getTime()) / 86_400_000);
+  if (Number.isNaN(days) || days < 0 || days > maximumDays) {
+    throw createHttpError(400, `Availability range must be between 0 and ${maximumDays} days.`, "VALIDATION_ERROR");
+  }
+}
+
 function localWeekday(dateKey, timezone) {
   const noonUtc = localDateTimeToUtc(dateKey, 12 * 60, timezone);
   const name = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, weekday: "short" }).format(noonUtc);
@@ -69,6 +84,17 @@ function localWeekday(dateKey, timezone) {
 
 function overlaps(startA, endA, startB, endB) {
   return startA < endB && startB < endA;
+}
+
+export function mergeStaffAvailability(assignedToIds, staffSlots) {
+  const combined = new Map();
+  staffSlots.forEach((slots, index) => slots.forEach((slot) => {
+    const current = combined.get(slot.startsAt) || { ...slot, capacity: 0, staffIds: [] };
+    current.capacity += 1;
+    current.staffIds.push(assignedToIds[index]);
+    combined.set(slot.startsAt, current);
+  }));
+  return [...combined.values()].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
 /**
@@ -113,7 +139,9 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, durationMinutes, fromKey, toKey, now = new Date() }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null }) {
+  validateAvailabilityRange(fromKey, toKey);
+  const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
   const timezone = settings.timezone || "America/Toronto";
   const rangeStart = localDateTimeToUtc(fromKey, 0, timezone);
@@ -124,16 +152,37 @@ export async function availabilityForRange({ agencyId, assignedToId, durationMin
       status: "Scheduled",
       startsAt: { lt: rangeEnd },
       endsAt: { gt: rangeStart },
-      ...(assignedToId ? { assignedToId } : {}),
+      ...(assignedToId ? { assignedToId } : pooled ? { assignedToId: { in: assignedToIds } } : {}),
+      ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
     },
-    select: { startsAt: true, endsAt: true },
+    select: { startsAt: true, endsAt: true, assignedToId: true },
   });
+  const staffLimits = pooled && assignedToIds.length ? new Map((await prisma.schedulingStaffPreference.findMany({
+    where: { agencyId, userId: { in: assignedToIds } },
+    select: { userId: true, maxDailyAppointments: true },
+  })).map((item) => [item.userId, item.maxDailyAppointments])) : new Map();
 
   const days = {};
   for (let cursor = rangeStart.getTime(); cursor < rangeEnd.getTime(); cursor += 24 * 60 * 60_000) {
     const dateKey = localDateKey(new Date(cursor + 12 * 60 * 60_000), timezone);
     if (days[dateKey]) continue;
-    days[dateKey] = slotsForDay({ settings, dateKey, durationMinutes, busy, now });
+    if (!pooled) {
+      days[dateKey] = slotsForDay({ settings, dateKey, durationMinutes, busy, now });
+      continue;
+    }
+    const staffSlots = assignedToIds.map((staffId) => {
+      const dailyMaximum = staffLimits.get(staffId);
+      const dailyCount = busy.filter((item) => item.assignedToId === staffId && localDateKey(new Date(item.startsAt), timezone) === dateKey).length;
+      if (dailyMaximum != null && dailyCount >= dailyMaximum) return [];
+      return slotsForDay({
+      settings,
+      dateKey,
+      durationMinutes,
+      busy: busy.filter((item) => item.assignedToId === staffId),
+      now,
+      });
+    });
+    days[dateKey] = mergeStaffAvailability(assignedToIds, staffSlots);
   }
   return { settings, days };
 }

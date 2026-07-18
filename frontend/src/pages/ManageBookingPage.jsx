@@ -10,8 +10,8 @@ import {
 } from "../api/bookingApi";
 import { BookingMonthPicker, PublicShell } from "./PublicBookingPage";
 
-function formatWhen(value) {
-  return `${new Date(value).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${new Date(value).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })}`;
+function formatWhen(value, timezone) {
+  return `${new Date(value).toLocaleDateString("en-CA", { timeZone: timezone, weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${new Date(value).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}`;
 }
 
 export default function ManageBookingPage() {
@@ -25,6 +25,7 @@ export default function ManageBookingPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
 
   useEffect(() => {
     getManagedBooking(manageToken)
@@ -45,7 +46,7 @@ export default function ManageBookingPage() {
     setBusy(true);
     setError("");
     try {
-      const updated = await cancelManagedBooking(manageToken);
+      const updated = await cancelManagedBooking(manageToken, cancelReason);
       setBooking(updated);
       setMode("view");
       setNotice("Your appointment has been cancelled.");
@@ -122,8 +123,8 @@ export default function ManageBookingPage() {
               <p className="text-sm font-semibold text-slate-900">How would you like to meet?</p>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 {[
-                  { id: "InPerson", label: "In person", icon: MapPin, disabled: !locations.length && booking.meetingMode !== "InPerson" },
-                  { id: "Online", label: "Video call", icon: Video, disabled: false },
+                  { id: "InPerson", label: "In person", icon: MapPin, disabled: (!locations.length && booking.meetingMode !== "InPerson") || !booking.allowedMeetingModes?.includes("InPerson") },
+                  { id: "Online", label: "Video call", icon: Video, disabled: !booking.allowedMeetingModes?.includes("Online") },
                 ].map(({ id, label, icon: Icon, disabled }) => (
                   <motion.button
                     key={id}
@@ -165,7 +166,7 @@ export default function ManageBookingPage() {
             ) : null}
 
             <p className="mb-3 text-sm font-semibold text-slate-900">Pick a new date and time</p>
-            <BookingMonthPicker fetchAvailability={fetchAvailability} onPickSlot={setSlot} />
+            <BookingMonthPicker fetchAvailability={fetchAvailability} onPickSlot={setSlot} timezone={booking.timezone} />
             <button
               type="button"
               disabled={!slot || busy || (meetingMode === "InPerson" && locations.length > 1 && !locationId)}
@@ -180,7 +181,8 @@ export default function ManageBookingPage() {
           <motion.div key="cancel" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="py-4 text-center">
             <XCircle className="mx-auto h-12 w-12 text-rose-400" strokeWidth={1.5} />
             <h2 className="mt-3 text-lg font-semibold text-slate-950">Cancel this appointment?</h2>
-            <p className="mt-1.5 text-sm text-slate-500">{booking.subject} · {formatWhen(booking.startsAt)}</p>
+            <p className="mt-1.5 text-sm text-slate-500">{booking.subject} · {formatWhen(booking.startsAt, booking.timezone)}</p>
+            <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows={3} placeholder="Reason for cancelling (optional)" className="mt-4 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-base outline-none transition focus:border-rose-300 sm:text-sm" />
             {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
             <div className="mt-6 space-y-2">
               <button type="button" onClick={confirmCancel} disabled={busy} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-rose-600 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60">
@@ -212,7 +214,7 @@ export default function ManageBookingPage() {
             </div>
 
             <div className="mt-5 space-y-3 rounded-2xl bg-slate-50 px-4 py-4 text-sm text-slate-700">
-              <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{formatWhen(booking.startsAt)}</p>
+              <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{formatWhen(booking.startsAt, booking.timezone)}</p>
               <p className="flex items-center gap-2.5"><Clock3 className="h-4 w-4 shrink-0 text-slate-400" />{booking.sessionType?.durationMinutes || Math.round((new Date(booking.endsAt) - new Date(booking.startsAt)) / 60000)} minutes · {booking.timezone}</p>
               {booking.meetingMode === "Online" ? (
                 <p className="flex items-center gap-2.5"><Video className="h-4 w-4 shrink-0 text-slate-400" />Online video call</p>
@@ -227,16 +229,18 @@ export default function ManageBookingPage() {
               </a>
             ) : null}
 
-            {!cancelled && !past ? (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => { setMode("reschedule"); setNotice(""); setMeetingMode(booking.meetingMode || "InPerson"); setLocationId(booking.locationId || (booking.locations?.length === 1 ? booking.locations[0].id : "")); }} className="h-12 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+            {!cancelled && !past && (booking.canReschedule || booking.canCancel) ? (
+              <div className={`mt-3 grid gap-2 ${booking.canReschedule && booking.canCancel ? "grid-cols-2" : "grid-cols-1"}`}>
+                {booking.canReschedule ? <button type="button" onClick={() => { setMode("reschedule"); setNotice(""); setMeetingMode(booking.meetingMode || "InPerson"); setLocationId(booking.locationId || (booking.locations?.length === 1 ? booking.locations[0].id : "")); }} className="h-12 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
                   Reschedule
-                </button>
-                <button type="button" onClick={() => { setMode("cancel"); setNotice(""); }} className="h-12 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100">
+                </button> : null}
+                {booking.canCancel ? <button type="button" onClick={() => { setMode("cancel"); setNotice(""); }} className="h-12 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100">
                   Cancel
-                </button>
+                </button> : null}
               </div>
             ) : null}
+
+            {!cancelled && !past && !booking.canReschedule && !booking.canCancel ? <p className="mt-4 text-center text-xs text-slate-500">This appointment is inside the office change cutoff. Contact {booking.agencyName} if you need help.</p> : null}
 
             {cancelled ? (
               <p className="mt-4 text-center text-sm text-slate-500">Need a new time? Ask {booking.agencyName} for their booking link.</p>

@@ -43,7 +43,9 @@ export function dashboardScopes(req) {
     clientWhere: { ...agencyWhere, ...clientAccessWhere(req) },
     caseWhere,
     taskWhere: { ...agencyWhere, ...consultantTaskAccess(req), case: activeCaseAccess },
-    appointmentWhere: { ...agencyWhere, case: activeCaseAccess },
+    appointmentWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, OR: [{ assignedToId: req.auth.userId }, { case: activeCaseAccess }] },
     documentWhere: {
       ...agencyWhere,
       OR: [
@@ -296,7 +298,10 @@ export async function getDashboardSummary(req, res) {
         stage: item.stage,
         count: item._count.stage,
       })),
-      upcomingAppointments,
+      upcomingAppointments: upcomingAppointments.map((appointment) => ({
+        ...appointment,
+        isMine: appointment.assignedTo?.id === req.auth.userId,
+      })),
       todayTasks,
       overdueTasks,
       documentActions,

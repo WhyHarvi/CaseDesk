@@ -6,6 +6,7 @@ import { adminRecipientIds, notifyUsers } from "./notificationService.js";
 
 const REMINDER_POLL_MS = 5 * 60_000;
 let reminderTimer = null;
+let deliveryRunning = false;
 
 function frontendBase() {
   return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -16,11 +17,12 @@ function icsDate(value) {
 }
 
 export function icsForAppointment(appointment, agencyName) {
+  const cancelled = appointment.status === "Cancelled";
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//CaseDesk//Booking//EN",
-    "METHOD:PUBLISH",
+    cancelled ? "METHOD:CANCEL" : "METHOD:PUBLISH",
     "BEGIN:VEVENT",
     `UID:${appointment.id}@casedesk`,
     `DTSTAMP:${icsDate(new Date())}`,
@@ -33,7 +35,7 @@ export function icsForAppointment(appointment, agencyName) {
         ? `LOCATION:${String(appointment.location).replace(/[\n,;]/g, " ")}`
         : null,
     appointment.meetingUrl ? `DESCRIPTION:Join online: ${appointment.meetingUrl}` : null,
-    "STATUS:CONFIRMED",
+    cancelled ? "STATUS:CANCELLED" : "STATUS:CONFIRMED",
     "END:VEVENT",
     "END:VCALENDAR",
   ].filter(Boolean);
@@ -54,20 +56,137 @@ function formatWhen(appointment, timezone) {
 }
 
 const KIND_COPY = {
-  booked: { title: "Appointment confirmed", intro: "Your appointment is booked." },
-  rescheduled: { title: "Appointment rescheduled", intro: "Your appointment has been moved." },
-  cancelled: { title: "Appointment cancelled", intro: "Your appointment has been cancelled." },
-  reminder: { title: "Appointment reminder", intro: "This is a reminder about your upcoming appointment." },
+  booked: { title: "Appointment confirmed", eyebrow: "You're all set", intro: "Your appointment has been reserved. We look forward to meeting you.", accent: "#059669", tint: "#ecfdf5", symbol: "✓" },
+  rescheduled: { title: "Appointment rescheduled", eyebrow: "Schedule updated", intro: "Your appointment has been moved to the new date and time below.", accent: "#d97706", tint: "#fffbeb", symbol: "↻" },
+  cancelled: { title: "Appointment cancelled", eyebrow: "Booking cancelled", intro: "This appointment is no longer scheduled. Please contact us if you would like to book another time.", accent: "#e11d48", tint: "#fff1f2", symbol: "×" },
+  reminder: { title: "Appointment reminder", eyebrow: "Coming up soon", intro: "A friendly reminder about your upcoming appointment.", accent: "#2563eb", tint: "#eff6ff", symbol: "•" },
 };
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function safeWebUrl(value) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(String(value));
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function appointmentDateParts(appointment, timezone) {
+  const start = new Date(appointment.startsAt);
+  const end = new Date(appointment.endsAt);
+  return {
+    date: start.toLocaleDateString("en-CA", { timeZone: timezone, weekday: "long", month: "long", day: "numeric", year: "numeric" }),
+    time: `${start.toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })} – ${end.toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}`,
+    timezoneLabel: timezone.replace(/_/g, " "),
+  };
+}
+
+function detailRow(label, value) {
+  if (!value) return "";
+  return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${escapeHtml(value)}</td></tr>`;
+}
+
+export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl }) {
+  const copy = KIND_COPY[kind] || KIND_COPY.booked;
+  const agencyName = agency?.legalName || agency?.name || "CaseDesk";
+  const subject = appointment.subject || "Appointment";
+  const { date, time, timezoneLabel } = appointmentDateParts(appointment, timezone);
+  const meetingUrl = safeWebUrl(appointment.meetingUrl);
+  const mapsUrl = appointment.location
+    ? safeWebUrl(appointment.locationMapsUrl) || `https://maps.google.com/?q=${encodeURIComponent(appointment.location.split(" — ").pop())}`
+    : null;
+  const safeManageUrl = safeWebUrl(manageUrl);
+  const logoUrl = safeWebUrl(agency?.logoUrl);
+  const inPerson = !meetingUrl && appointment.location;
+  const primaryUrl = kind === "cancelled" ? null : (meetingUrl || mapsUrl || safeManageUrl);
+  const primaryLabel = meetingUrl ? "Join online appointment" : mapsUrl ? "Open directions" : "Manage appointment";
+  const showManageButton = kind !== "cancelled" && safeManageUrl && safeManageUrl !== primaryUrl;
+  const agencyContact = [agency?.phone, agency?.email].filter(Boolean).join(" · ");
+  const agencyAddress = [agency?.address, agency?.city, agency?.province, agency?.postalCode].filter(Boolean).join(", ");
+  const brandMark = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" width="46" height="46" alt="" style="display:block;width:46px;height:46px;border-radius:13px;background:#ffffff;object-fit:contain">`
+    : `<div style="width:46px;height:46px;border-radius:13px;background:#ffffff;color:#0f172a;font-size:20px;font-weight:800;line-height:46px;text-align:center">${escapeHtml(agencyName.charAt(0).toUpperCase())}</div>`;
+
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(copy.title)}</title>
+<style>@media only screen and (max-width:620px){.email-shell{padding:16px 8px!important}.email-card{border-radius:22px!important}.content-pad{padding-left:22px!important;padding-right:22px!important}.action-button{display:block!important;width:auto!important;text-align:center!important}.secondary-action{margin-left:0!important;margin-top:10px!important}.brand-name{font-size:16px!important}}</style></head>
+<body style="margin:0;padding:0;background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(copy.intro)} ${escapeHtml(date)} at ${escapeHtml(time)}.</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f1f5f9"><tr><td class="email-shell" align="center" style="padding:38px 14px">
+    <table role="presentation" class="email-card" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e2e8f0;border-radius:28px;overflow:hidden;box-shadow:0 18px 55px rgba(15,23,42,.09)">
+      <tr><td class="content-pad" style="padding:24px 34px;background:#0f172a">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="58">${brandMark}</td><td class="brand-name" style="color:#ffffff;font-size:18px;font-weight:750;letter-spacing:-.01em">${escapeHtml(agencyName)}</td><td align="right" style="color:#94a3b8;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">Appointment</td></tr></table>
+      </td></tr>
+      <tr><td class="content-pad" style="padding:36px 34px 10px">
+        <div style="display:inline-block;width:46px;height:46px;border-radius:50%;background:${copy.tint};color:${copy.accent};font-size:25px;font-weight:800;line-height:46px;text-align:center">${copy.symbol}</div>
+        <p style="margin:20px 0 8px;color:${copy.accent};font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">${escapeHtml(copy.eyebrow)}</p>
+        <h1 style="margin:0;color:#0f172a;font-size:30px;line-height:1.18;letter-spacing:-.035em;font-weight:750">${escapeHtml(copy.title)}</h1>
+        <p style="margin:14px 0 0;color:#475569;font-size:16px;line-height:1.65">Hi ${escapeHtml(contactName)},<br>${escapeHtml(copy.intro)}</p>
+      </td></tr>
+      <tr><td class="content-pad" style="padding:24px 34px 8px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border:1px solid #e2e8f0;border-radius:20px;background:#f8fafc">
+          <tr><td style="padding:23px 24px 8px"><p style="margin:0 0 20px;color:#0f172a;font-size:19px;font-weight:750;line-height:1.35">${escapeHtml(subject)}</p>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              ${detailRow("Date", date)}
+              ${detailRow("Time", `${time} (${timezoneLabel})`)}
+              ${detailRow(meetingUrl ? "Format" : "Location", meetingUrl ? "Online video appointment" : inPerson)}
+              ${appointment.assignedTo?.fullName ? detailRow("With", appointment.assignedTo.fullName) : ""}
+            </table>
+          </td></tr>
+        </table>
+      </td></tr>
+      ${primaryUrl ? `<tr><td class="content-pad" style="padding:18px 34px 0"><a class="action-button" href="${escapeHtml(primaryUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(primaryLabel)} &nbsp;→</a>${showManageButton ? `<a class="action-button secondary-action" href="${escapeHtml(safeManageUrl)}" style="display:inline-block;margin-left:10px;color:#334155;text-decoration:none;padding:13px 8px;font-size:14px;font-weight:700">Reschedule or cancel</a>` : ""}</td></tr>` : ""}
+      <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : "A calendar file is attached so you can add this appointment to your calendar."}</p></td></tr>
+      <tr><td class="content-pad" style="padding:23px 34px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;color:#334155;font-size:13px;font-weight:700">${escapeHtml(agencyName)}</p>${agencyContact ? `<p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5">${escapeHtml(agencyContact)}</p>` : ""}${agencyAddress ? `<p style="margin:3px 0 0;color:#94a3b8;font-size:12px;line-height:1.5">${escapeHtml(agencyAddress)}</p>` : ""}</td></tr>
+    </table>
+    <p style="margin:18px 0 0;color:#94a3b8;font-size:11px">Sent securely by CaseDesk</p>
+  </td></tr></table>
+</body></html>`;
+
+  const accessLine = meetingUrl
+    ? `Join online: ${meetingUrl}`
+    : appointment.location
+      ? `Location: ${appointment.location}${mapsUrl ? `\nDirections: ${mapsUrl}` : ""}`
+      : null;
+  const text = [
+    copy.title,
+    "",
+    `Hi ${contactName},`,
+    copy.intro,
+    "",
+    subject,
+    `Date: ${date}`,
+    `Time: ${time} (${timezoneLabel})`,
+    accessLine,
+    appointment.assignedTo?.fullName ? `With: ${appointment.assignedTo.fullName}` : null,
+    kind !== "cancelled" && safeManageUrl ? `Manage appointment: ${safeManageUrl}` : null,
+    "",
+    agencyName,
+    agencyContact || null,
+    agencyAddress || null,
+  ].filter((line) => line !== null).join("\n");
+
+  return { subject: `${copy.title} — ${subject} on ${date}`, html, text };
+}
 
 /**
  * Sends client-facing email + SMS and staff in-app notifications for a
  * booking event. Every channel is best-effort: a missing mailbox or Ooma
  * connection never fails the booking itself.
  */
-export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null }) {
+async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null }) {
   const [agency, settings] = await Promise.all([
-    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true } }),
+    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
   ]);
   const timezone = settings?.timezone || "America/Toronto";
@@ -77,46 +196,27 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
   const when = formatWhen(appointment, timezone);
   const manageUrl = appointment.manageToken ? `${frontendBase()}/book/manage/${appointment.manageToken}` : null;
 
-  if (contact.email) {
+  if (contact.email && (!channel || channel === "email")) {
     try {
       const config = await resolveAgencyMailConfig(agencyId);
       const transport = createMailTransport(config);
-      const mapsHref = appointment.location
-        ? appointment.locationMapsUrl || `https://maps.google.com/?q=${encodeURIComponent(appointment.location.split(" — ").pop())}`
-        : null;
-      const meetingLine = appointment.meetingUrl
-        ? `<p><strong>Join online:</strong> <a href="${appointment.meetingUrl}">${appointment.meetingUrl}</a></p>`
-        : appointment.location
-          ? `<p><strong>Location:</strong> ${appointment.location} · <a href="${mapsHref}">Open in Maps</a></p>`
-          : "";
-      const manageLine = kind !== "cancelled" && manageUrl
-        ? `<p style="margin-top:16px">Need to make a change? <a href="${manageUrl}">Reschedule or cancel</a>.</p>`
-        : "";
+      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl });
       await transport.sendMail({
         from: config.from,
         to: contact.email,
-        subject: `${copy.title} — ${appointment.subject} on ${when}`,
-        html: `
-          <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;color:#0f172a">
-            <h2 style="font-weight:600">${copy.title}</h2>
-            <p>Hi ${contact.name},</p>
-            <p>${copy.intro}</p>
-            <div style="border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin:14px 0">
-              <p style="margin:0 0 6px"><strong>${appointment.subject}</strong></p>
-              <p style="margin:0 0 6px">${when} (${timezone})</p>
-              ${meetingLine}
-            </div>
-            ${manageLine}
-            <p style="color:#64748b;font-size:13px;margin-top:20px">${agencyName}</p>
-          </div>`,
-        attachments: kind === "cancelled" ? [] : [{ filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: "text/calendar" }],
+        messageId: `<booking-${appointment.id}-${kind}-${new Date(appointment.startsAt).getTime()}@casedesk>`,
+        subject: email.subject,
+        text: email.text,
+        html: email.html,
+        attachments: [{ filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: `text/calendar; method=${kind === "cancelled" ? "CANCEL" : "PUBLISH"}` }],
       });
     } catch (error) {
       logger.warn("booking.email_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
+      if (channel === "email") throw error;
     }
   }
 
-  if (contact.phone) {
+  if (contact.phone && (!channel || channel === "sms")) {
     try {
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
@@ -124,10 +224,11 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${appointment.startsAt}` });
     } catch (error) {
       logger.warn("booking.sms_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
+      if (channel === "sms") throw error;
     }
   }
 
-  try {
+  if (!channel || channel === "staff") try {
     const recipients = new Set(await adminRecipientIds(agencyId));
     if (appointment.assignedToId) recipients.add(appointment.assignedToId);
     if (actorUserId) recipients.delete(actorUserId);
@@ -139,7 +240,7 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
         type: `appointment.${kind}`,
         category: "appointments",
         title: `${copy.title}: ${appointment.subject}`,
-        body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when}${appointment.meetingUrl ? " · Online" : ""}`,
+        body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when}${appointment.meetingUrl ? " · Online" : appointment.location ? ` · ${appointment.location}` : ""}`,
         severity: kind === "cancelled" ? "warning" : "info",
         entityType: "appointment",
         entityId: appointment.id,
@@ -151,26 +252,102 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
   }
 }
 
+export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null }) {
+  const contact = recipientContact(appointment);
+  const version = new Date(appointment.startsAt).toISOString();
+  const jobs = [
+    contact.email ? { channel: "email", recipient: contact.email } : null,
+    contact.phone ? { channel: "sms", recipient: contact.phone } : null,
+  ].filter(Boolean);
+  if (jobs.length) {
+    await prisma.bookingMessageDelivery.createMany({
+      data: jobs.map((job) => ({
+        agencyId,
+        appointmentId: appointment.id,
+        kind,
+        channel: job.channel,
+        recipient: job.recipient,
+        dedupeKey: `${appointment.id}:${kind}:${job.channel}:${version}`,
+        payload: { actorUserId },
+      })),
+      skipDuplicates: true,
+    });
+  }
+  await deliverBookingMessages({ agencyId, appointment, kind, actorUserId, channel: "staff" });
+  void processBookingDeliveryPass();
+}
+
+async function processBookingDeliveryPass() {
+  if (deliveryRunning) return;
+  deliveryRunning = true;
+  try {
+    const now = new Date();
+    const jobs = await prisma.bookingMessageDelivery.findMany({
+      where: {
+        availableAt: { lte: now },
+        OR: [
+          { status: "pending" },
+          { status: "processing", updatedAt: { lt: new Date(now.getTime() - 10 * 60_000) } },
+        ],
+      },
+      orderBy: { availableAt: "asc" },
+      take: 50,
+    });
+    for (const job of jobs) {
+      const claimed = await prisma.bookingMessageDelivery.updateMany({
+        where: { id: job.id, status: job.status, updatedAt: job.updatedAt },
+        data: { status: "processing", attempts: { increment: 1 } },
+      });
+      if (!claimed.count) continue;
+      try {
+        const appointment = await prisma.appointment.findUnique({
+          where: { id: job.appointmentId },
+          include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } } },
+        });
+        if (!appointment) throw new Error("Appointment no longer exists");
+        await deliverBookingMessages({
+          agencyId: job.agencyId,
+          appointment,
+          kind: job.kind,
+          actorUserId: job.payload?.actorUserId || null,
+          channel: job.channel,
+        });
+        await prisma.bookingMessageDelivery.update({ where: { id: job.id }, data: { status: "sent", sentAt: new Date(), lastError: null } });
+        if (job.kind === "reminder") {
+          const remaining = await prisma.bookingMessageDelivery.count({ where: { appointmentId: job.appointmentId, kind: "reminder", status: { not: "sent" } } });
+          if (!remaining) await prisma.appointment.update({ where: { id: job.appointmentId }, data: { reminderSentAt: new Date() } });
+        }
+      } catch (error) {
+        const attempts = job.attempts + 1;
+        const exhausted = attempts >= job.maxAttempts;
+        await prisma.bookingMessageDelivery.update({
+          where: { id: job.id },
+          data: {
+            status: exhausted ? "failed" : "pending",
+            failedAt: exhausted ? new Date() : null,
+            lastError: String(error.message || error).slice(0, 1000),
+            availableAt: new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000),
+          },
+        });
+      }
+    }
+  } finally {
+    deliveryRunning = false;
+  }
+}
+
 async function runReminderPass() {
   const now = new Date();
-  const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
   const due = await prisma.appointment.findMany({
-    where: { status: "Scheduled", reminderSentAt: null, startsAt: { gt: now, lt: horizon } },
+    where: { status: "Scheduled", reminderQueuedAt: null, reminderDueAt: { lte: now }, startsAt: { gt: now } },
     include: { client: { select: { fullName: true, email: true, phone: true } } },
     take: 200,
   });
   if (!due.length) return;
-  const settingsByAgency = new Map();
   for (const appointment of due) {
-    if (!settingsByAgency.has(appointment.agencyId)) {
-      settingsByAgency.set(appointment.agencyId, await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } }));
-    }
-    const settings = settingsByAgency.get(appointment.agencyId);
-    const leadMs = (settings?.reminderMinutes || 1440) * 60_000;
-    if (new Date(appointment.startsAt).getTime() - now.getTime() > leadMs) continue;
     const claimed = await prisma.appointment.updateMany({
-      where: { id: appointment.id, reminderSentAt: null },
-      data: { reminderSentAt: now },
+      where: { id: appointment.id, reminderQueuedAt: null },
+      data: { reminderQueuedAt: now },
     });
     if (!claimed.count) continue;
     await sendBookingMessages({ agencyId: appointment.agencyId, appointment, kind: "reminder" }).catch((error) => {
@@ -182,8 +359,9 @@ async function runReminderPass() {
 export function startBookingReminderWorker() {
   if (reminderTimer) return;
   reminderTimer = setInterval(() => {
-    runReminderPass().catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
+    Promise.all([runReminderPass(), processBookingDeliveryPass()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
   }, REMINDER_POLL_MS);
+  void Promise.all([runReminderPass(), processBookingDeliveryPass()]);
   if (reminderTimer.unref) reminderTimer.unref();
 }
 

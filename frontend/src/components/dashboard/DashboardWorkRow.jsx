@@ -149,7 +149,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{item.case?.client?.fullName || item.guestName || "Appointment"}</p>
-                <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.subject}</p>
+                <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.subject}{isAdmin && item.isMine ? " · Your appointment" : ""}</p>
               </div>
             </Link>
           )) : <EmptyState loading={loading}>No upcoming appointments.</EmptyState>}

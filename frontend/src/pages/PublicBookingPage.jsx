@@ -34,8 +34,8 @@ function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function formatTime(value) {
-  return new Date(value).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+function formatTime(value, timezone) {
+  return new Date(value).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" });
 }
 
 function externalUrl(value) {
@@ -45,7 +45,7 @@ function externalUrl(value) {
 const glass = "rounded-[1.6rem] border border-white/70 bg-white/70 shadow-[0_18px_50px_rgba(15,23,42,0.10)] backdrop-blur-2xl";
 
 /** Month calendar with available-day highlighting; slots render BELOW via onDaySelect. */
-export function BookingMonthPicker({ fetchAvailability, onPickSlot }) {
+export function BookingMonthPicker({ fetchAvailability, onPickSlot, timezone }) {
   const [cursor, setCursor] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -169,7 +169,7 @@ export function BookingMonthPicker({ fetchAvailability, onPickSlot }) {
                         : "border-slate-200/80 bg-white/80 text-slate-700 hover:border-sky-300 hover:bg-white"
                     }`}
                   >
-                    {formatTime(slot.startsAt)}
+                    {formatTime(slot.startsAt, timezone)}
                   </motion.button>
                 ))}
                 {!slots.length ? <p className="col-span-full text-sm text-slate-400">No times left on this day.</p> : null}
@@ -263,11 +263,13 @@ export default function PublicBookingPage() {
   const [sessionTypeId, setSessionTypeId] = useState("");
   const [meetingMode, setMeetingMode] = useState("InPerson");
   const [locationId, setLocationId] = useState("");
+  const [consultantId, setConsultantId] = useState("");
   const [slot, setSlot] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", phone: "", notes: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", notes: "", website: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(null);
+  const bookingKey = useRef(crypto.randomUUID());
 
   useEffect(() => {
     getPublicBookingInfo(token)
@@ -275,17 +277,30 @@ export default function PublicBookingPage() {
         setInfo(data);
         if (data.sessionTypes.length === 1) setSessionTypeId(data.sessionTypes[0].id);
         if (data.locations.length === 1) setLocationId(data.locations[0].id);
+        if (data.consultants?.length === 1) setConsultantId(data.consultants[0].id);
       })
       .catch((reason) => setLoadError(reason.response?.data?.message || "This booking page is not available."));
   }, [token]);
 
   const sessionType = info?.sessionTypes.find((type) => type.id === sessionTypeId) || null;
-  const location = info?.locations.find((item) => item.id === locationId) || null;
-  const needsLocationStep = meetingMode === "InPerson" && (info?.locations.length || 0) > 1;
+  const selectableLocations = sessionType?.allowedLocationIds?.length ? info.locations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : info?.locations || [];
+  const selectableConsultants = sessionType?.eligibleStaff?.length ? info.consultants.filter((item) => sessionType.eligibleStaff.some((eligible) => eligible.userId === item.id)) : info?.consultants || [];
+  const location = selectableLocations.find((item) => item.id === locationId) || null;
+  const needsLocationStep = meetingMode === "InPerson" && selectableLocations.length > 1;
+
+  useEffect(() => {
+    if (!sessionType?.allowedMeetingModes?.length || sessionType.allowedMeetingModes.includes(meetingMode)) return;
+    setMeetingMode(sessionType.allowedMeetingModes[0]);
+    setSlot(null);
+  }, [sessionType, meetingMode]);
+
+  useEffect(() => {
+    if (consultantId && !selectableConsultants.some((item) => item.id === consultantId)) setConsultantId("");
+  }, [consultantId, selectableConsultants]);
 
   const fetchAvailability = useCallback(
-    (range) => getPublicAvailability(token, { sessionTypeId, ...range }),
-    [token, sessionTypeId],
+    (range) => getPublicAvailability(token, { sessionTypeId, consultantId, ...range }),
+    [token, sessionTypeId, consultantId],
   );
 
   function afterService() {
@@ -302,11 +317,14 @@ export default function PublicBookingPage() {
         sessionTypeId,
         startsAt: slot.startsAt,
         meetingMode,
-        locationId: meetingMode === "InPerson" ? locationId || info.locations[0]?.id : undefined,
+        locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined,
+        consultantId: consultantId || undefined,
+        idempotencyKey: bookingKey.current,
         name: form.name,
         email: form.email,
         phone: form.phone,
         notes: form.notes,
+        website: form.website,
       });
       setDone(result);
       setStep("done");
@@ -372,11 +390,11 @@ export default function PublicBookingPage() {
           <p className="flex items-start gap-2.5"><Video className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />Video call details provided upon confirmation</p>
         ) : location ? (
           <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{location.name}<span className="block text-xs text-slate-400">{location.address}</span></span></p>
-        ) : info.locations.length ? (
-          <p className="flex items-center gap-2.5"><Building2 className="h-4 w-4 shrink-0 text-slate-400" />{info.locations.length} office location{info.locations.length > 1 ? "s" : ""}</p>
+        ) : selectableLocations.length ? (
+          <p className="flex items-center gap-2.5"><Building2 className="h-4 w-4 shrink-0 text-slate-400" />{selectableLocations.length} office location{selectableLocations.length > 1 ? "s" : ""}</p>
         ) : null}
         {slot ? (
-          <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{new Date(slot.startsAt).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" })} · {formatTime(slot.startsAt)}</p>
+          <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{new Date(slot.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "short", month: "short", day: "numeric" })} · {formatTime(slot.startsAt, info.timezone)}</p>
         ) : null}
       </div>
 
@@ -438,8 +456,8 @@ export default function PublicBookingPage() {
                   <p className="mt-5 text-sm font-medium text-slate-700">How would you like to meet?</p>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {[
-                      { id: "InPerson", label: "In person", icon: MapPin, disabled: !info.locations.length },
-                      { id: "Online", label: "Online video call", icon: Video, disabled: false },
+                      { id: "InPerson", label: "In person", icon: MapPin, disabled: !selectableLocations.length || (sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("InPerson")) },
+                      { id: "Online", label: "Online video call", icon: Video, disabled: sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("Online") },
                     ].map(({ id, label, icon: Icon, disabled }) => (
                       <motion.button
                         key={id}
@@ -456,11 +474,20 @@ export default function PublicBookingPage() {
                     ))}
                   </div>
 
+                  {selectableConsultants.length > 1 ? (
+                    <label className="mt-5 block text-sm font-medium text-slate-700">Consultant preference <span className="font-normal text-slate-400">(optional)</span>
+                      <select value={consultantId} onChange={(event) => { setConsultantId(event.target.value); setSlot(null); }} className={`mt-2 ${inputClass}`}>
+                        <option value="">First available consultant</option>
+                        {selectableConsultants.map((consultant) => <option key={consultant.id} value={consultant.id}>{consultant.name}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+
                   <div className="flex-1" />
                   <motion.button
                     type="button"
                     whileTap={{ scale: 0.98 }}
-                    disabled={!sessionTypeId || (meetingMode === "InPerson" && !info.locations.length)}
+                    disabled={!sessionTypeId || (meetingMode === "InPerson" && !selectableLocations.length)}
                     onClick={afterService}
                     className="mt-6 flex h-13 min-h-[52px] w-full items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
                   >
@@ -475,7 +502,7 @@ export default function PublicBookingPage() {
                   <h2 className="text-lg font-semibold text-slate-950">Select an office</h2>
                   <p className="mt-1 text-sm text-slate-500">Where would you like to meet in person?</p>
                   <div className="mt-4 space-y-2.5">
-                    {info.locations.map((item) => (
+                    {selectableLocations.map((item) => (
                       <motion.div
                         key={item.id}
                         role="button"
@@ -516,7 +543,7 @@ export default function PublicBookingPage() {
                   </div>
                   <h2 className="mb-4 text-lg font-semibold text-slate-950">Select date and time</h2>
                   {error ? <p className="mb-3 rounded-2xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
-                  <BookingMonthPicker key={sessionTypeId} fetchAvailability={fetchAvailability} onPickSlot={(picked) => { setSlot(picked); setError(""); }} />
+                  <BookingMonthPicker key={`${sessionTypeId}:${consultantId}`} fetchAvailability={fetchAvailability} timezone={info.timezone} onPickSlot={(picked) => { setSlot(picked); setError(""); }} />
                   <div className="flex-1" />
                   <motion.button
                     type="button"
@@ -525,7 +552,7 @@ export default function PublicBookingPage() {
                     onClick={() => setStep("details")}
                     className="mt-6 flex min-h-[52px] w-full items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
                   >
-                    {slot ? `Continue with ${formatTime(slot.startsAt)}` : "Pick a time to continue"}
+                    {slot ? `Continue with ${formatTime(slot.startsAt, info.timezone)}` : "Pick a time to continue"}
                   </motion.button>
                 </motion.div>
               ) : step === "details" ? (
@@ -536,13 +563,16 @@ export default function PublicBookingPage() {
                   <div className={`${glass} !rounded-2xl px-4 py-3.5 text-sm`}>
                     <p className="font-semibold text-slate-900">{sessionType?.name}</p>
                     <p className="mt-0.5 text-slate-500">
-                      {new Date(slot.startsAt).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })} · {formatTime(slot.startsAt)}
+                      {new Date(slot.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} · {formatTime(slot.startsAt, info.timezone)}
                     </p>
                     <p className="mt-0.5 text-xs text-slate-400">
                       {meetingMode === "Online" ? "Online video call" : location ? `${location.name} · ${location.address}` : "In person"}
                     </p>
                   </div>
                   <div className="mt-4 space-y-3.5">
+                    <label className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">Website
+                      <input tabIndex={-1} autoComplete="off" value={form.website} onChange={(e) => setForm((c) => ({ ...c, website: e.target.value }))} />
+                    </label>
                     <label className="block text-xs font-medium text-slate-600">Full name
                       <input required value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="name" />
                     </label>
@@ -582,7 +612,7 @@ export default function PublicBookingPage() {
                   </motion.span>
                   <h2 className="mt-5 text-xl font-semibold text-slate-950">Appointment confirmed</h2>
                   <p className="mt-1.5 text-sm text-slate-500">
-                    {done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })} at {formatTime(done?.startsAt)}
+                    {done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} at {formatTime(done?.startsAt, info.timezone)}
                   </p>
 
                   {done?.location ? (

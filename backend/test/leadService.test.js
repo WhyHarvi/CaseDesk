@@ -52,6 +52,7 @@ test("lead creation writes its operational foundation in one transaction", async
 test("qualified outcome advances an earlier lead and records history atomically", async () => {
   const calls = [];
   const tx = {
+    $executeRaw: async () => 1,
     $queryRaw: async () => [{ lock_status: "" }],
     lead: {
       findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "CONNECTED" }),
@@ -100,11 +101,17 @@ test("listing sources provisions the standard agency catalog when it is missing"
 test("booking a consultation updates the lead work queue in the same transaction", async () => {
   const calls = [];
   const tx = {
+    $executeRaw: async () => 1,
     lead: {
       findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "QUALIFIED" }),
       update: async ({ data }) => calls.push(["lead", data]),
     },
     user: { findFirst: async () => ({ id: "consultant-1" }) },
+    bookingSettings: { findUnique: async () => ({ bufferMinutes: 15, reminderMinutes: 1440 }) },
+    appointment: {
+      findFirst: async () => null,
+      create: async ({ data }) => { calls.push(["appointment", data]); return { id: "appointment-1", ...data }; },
+    },
     leadConsultation: { create: async ({ data }) => ({ id: "consultation-1", ...data }) },
     leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
     leadFollowUp: { create: async ({ data }) => calls.push(["followUp", data]) },
@@ -122,6 +129,7 @@ test("booking a consultation updates the lead work queue in the same transaction
   assert.equal(calls.find(([kind]) => kind === "lead")[1].stage, "CONSULTATION_BOOKED");
   assert.ok(calls.some(([kind]) => kind === "followUp"));
   assert.ok(calls.some(([kind]) => kind === "activity"));
+  assert.ok(calls.some(([kind]) => kind === "appointment"));
 });
 
 test("signed retainer and paid initial payment make a lead ready to convert", async () => {

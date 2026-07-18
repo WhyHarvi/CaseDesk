@@ -19,11 +19,13 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   cancelBookingAppointment,
+  convertAppointmentToClient,
   createBookingAppointment,
   getAvailability,
   getBookingSettings,
   getCalendarAppointments,
   rescheduleBookingAppointment,
+  updateBookingAppointmentStatus,
 } from "../api/bookingApi";
 import PageContainer from "../components/layout/PageContainer";
 import Select from "../components/ui/Select";
@@ -153,7 +155,7 @@ function DetailRow({ icon: Icon, children }) {
   );
 }
 
-function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, role }) {
+function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onStatus, role, settings }) {
   const start = new Date(appointment.startsAt);
   const person = appointment.client?.fullName || appointment.guestName || "No contact";
   const initials = person.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -163,6 +165,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [reschedSlot, setReschedSlot] = useState(null);
   const [reschedBusy, setReschedBusy] = useState(false);
   const [reschedError, setReschedError] = useState("");
+  const [reschedMode, setReschedMode] = useState(appointment.meetingMode || "InPerson");
+  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const currentLocationId = locations.find((item) => `${item.name} — ${item.address}` === appointment.location)?.id || "";
+  const [reschedLocationId, setReschedLocationId] = useState(currentLocationId || (locations.length === 1 ? locations[0].id : ""));
+  const [converting, setConverting] = useState(false);
   const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
 
   useEffect(() => {
@@ -186,7 +193,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     setReschedBusy(true);
     setReschedError("");
     try {
-      const updated = await rescheduleBookingAppointment(appointment.id, reschedSlot.startsAt);
+      const updated = await rescheduleBookingAppointment(appointment.id, reschedSlot.startsAt, { meetingMode: reschedMode, locationId: reschedMode === "InPerson" ? reschedLocationId : undefined });
       onRescheduled(updated);
       setResched(false);
     } catch (reason) {
@@ -194,6 +201,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     } finally {
       setReschedBusy(false);
     }
+  }
+
+  async function convertGuest() {
+    setConverting(true);
+    try { const result = await convertAppointmentToClient(appointment.id); onConverted(result.clientId); }
+    catch (reason) { setReschedError(reason.response?.data?.message || "Could not convert this visitor."); }
+    finally { setConverting(false); }
   }
 
   return (
@@ -236,6 +250,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           <p className="truncate text-sm font-semibold text-slate-900">{person}</p>
           <p className="text-xs text-slate-400">{appointment.client ? "Client" : "Walk-in guest"}{appointment.case ? ` · ${appointment.case.caseType}` : ""}</p>
         </div>
+        {!appointment.client ? <button type="button" disabled={converting} onClick={convertGuest} className="ml-auto shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-sky-300 disabled:opacity-50">{converting ? "Saving…" : "Save as client"}</button> : null}
       </div>
 
       {appointment.description ? (
@@ -265,6 +280,10 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             onChange={(event) => setReschedDate(event.target.value)}
             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-sky-400"
           />
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            {[['InPerson', 'In person'], ['Online', 'Online video']].map(([value, label]) => <button key={value} type="button" onClick={() => setReschedMode(value)} className={`rounded-xl border px-2 py-2 text-xs font-semibold ${reschedMode === value ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{label}</button>)}
+          </div>
+          {reschedMode === "InPerson" && locations.length ? <Select value={reschedLocationId} onChange={(event) => setReschedLocationId(event.target.value)} className="mt-2 w-full" ariaLabel="Office location"><option value="">Choose a location…</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select> : null}
           {reschedSlots === null ? (
             <p className="mt-2 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</p>
           ) : reschedSlots.length ? (
@@ -288,7 +307,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         </div>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button
+          {start > new Date() ? <><button
             type="button"
             onClick={() => setResched(true)}
             className="flex h-11 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
@@ -302,7 +321,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             className="flex h-11 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
           >
             {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
-          </button>
+          </button></> : null}
+          {start <= new Date() ? <>
+            <button type="button" onClick={() => onStatus("Completed")} className="h-10 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">Mark attended</button>
+            <button type="button" onClick={() => onStatus("NoShow")} className="h-10 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700 transition hover:bg-amber-100">Mark no-show</button>
+          </> : null}
         </div>
       )}
     </motion.div>
@@ -311,7 +334,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 
 function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate }) {
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({ mode: "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "" });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "" });
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -321,7 +344,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
     if (!open) return;
     setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId }));
     setError("");
-    api.get("/clients?limit=100").then((response) => setClients(response.data.data || [])).catch(() => {});
+    if (role !== "frontdesk") api.get("/clients?limit=100").then((response) => setClients(response.data.data || [])).catch(() => {});
   }, [open, role, userId, initialDate]);
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
@@ -365,6 +388,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         subject: form.subject || undefined,
         location: form.location || undefined,
         meetingMode: form.meetingMode || "InPerson",
+        source: form.mode === "guest" ? "WalkIn" : "Internal",
       });
       onCreated(created);
       onClose();
@@ -389,11 +413,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               <button type="button" onClick={onClose} aria-label="Close" className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </header>
             <form onSubmit={submit} className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-              <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
+              {role !== "frontdesk" ? <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
                 {[["client", "Existing client"], ["guest", "Walk-in / guest"]].map(([mode, label]) => (
                   <button key={mode} type="button" onClick={() => setForm((c) => ({ ...c, mode }))} className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${form.mode === mode ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
                 ))}
-              </div>
+              </div> : null}
 
               {form.mode === "client" ? (
                 <label className="block text-xs font-medium text-slate-600">Client
@@ -493,6 +517,7 @@ export default function CalendarPage() {
   const [view, setView] = useState("week");
   const [appointments, setAppointments] = useState([]);
   const [sessionTypes, setSessionTypes] = useState([]);
+  const [bookingSettings, setBookingSettings] = useState(null);
   const [staff, setStaff] = useState([]);
   const [staffFilter, setStaffFilter] = useState("");
   const [loading, setLoading] = useState(true);
@@ -505,8 +530,8 @@ export default function CalendarPage() {
   const rangeStart = useMemo(() => startOfWeek(monthCursor), [monthCursor]);
   const rangeEnd = useMemo(() => new Date(rangeStart.getTime() + 42 * DAY_MS), [rangeStart]);
 
-  const load = useCallback(async ({ fresh = false } = {}) => {
-    setLoading(true);
+  const load = useCallback(async ({ fresh = false, background = false } = {}) => {
+    if (!background) setLoading(true);
     setError("");
     try {
       const [calendar, settings] = await Promise.all([
@@ -515,14 +540,23 @@ export default function CalendarPage() {
       ]);
       setAppointments(calendar);
       setSessionTypes(settings.sessionTypes);
+      setBookingSettings(settings.settings);
     } catch (reason) {
       setError(reason.response?.data?.message || "The calendar could not be loaded.");
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [rangeStart, rangeEnd]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") load({ fresh: true, background: true }); };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const interval = window.setInterval(refreshWhenVisible, 60_000);
+    return () => { window.removeEventListener("focus", refreshWhenVisible); document.removeEventListener("visibilitychange", refreshWhenVisible); window.clearInterval(interval); };
+  }, [load]);
 
   useEffect(() => {
     if (role === "consultant") return;
@@ -735,6 +769,15 @@ export default function CalendarPage() {
                 onCancel={cancelSelected}
                 cancelling={cancelling}
                 role={role}
+                settings={bookingSettings}
+                onConverted={() => { setSelected(null); load({ fresh: true }); }}
+                onStatus={async (status) => {
+                  try {
+                    const updated = await updateBookingAppointmentStatus(selected.id, status);
+                    setAppointments((current) => current.map((item) => item.id === updated.id ? updated : item));
+                    setSelected(null);
+                  } catch (reason) { setError(reason.response?.data?.message || "Appointment status could not be updated."); }
+                }}
                 onRescheduled={(updated) => {
                   setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
                   setSelected(updated);

@@ -149,6 +149,7 @@ enum AppointmentStatus {
   Scheduled
   Completed
   Cancelled
+  NoShow
 }
 
 enum CommunicationChannel {
@@ -518,6 +519,9 @@ model Agency {
   appointments                   Appointment[]
   bookingSettings                BookingSettings?
   bookingSessionTypes            BookingSessionType[]
+  schedulingStaffPreferences     SchedulingStaffPreference[]
+  bookingSessionTypeStaff        BookingSessionTypeStaff[]
+  bookingMessageDeliveries       BookingMessageDelivery[]
   communicationConversations     CommunicationConversation[]
   communicationMessages          CommunicationMessage[]
   communicationDeliveryEvents    CommunicationDeliveryEvent[]
@@ -676,6 +680,9 @@ model User {
   issuedWrittenDocuments              WrittenDocument[]               @relation("IssuedWrittenDocumentUser")
   assignedAppointments                Appointment[]                   @relation("AssignedAppointmentUser")
   createdAppointments                 Appointment[]                   @relation("CreatedAppointmentUser")
+  cancelledAppointments               Appointment[]                   @relation("CancelledAppointmentUser")
+  schedulingPreference                SchedulingStaffPreference?
+  eligibleBookingSessionTypes         BookingSessionTypeStaff[]
   createdCommunicationConversations   CommunicationConversation[]     @relation("CreatedCommunicationConversationUser")
   assignedCommunicationConversations  CommunicationConversation[]     @relation("AssignedCommunicationConversationUser")
   deletedCommunicationConversations   CommunicationConversation[]     @relation("DeletedCommunicationConversationUser")
@@ -965,80 +972,164 @@ model ImmigrationProfileCaseAccess {
 }
 
 model Appointment {
-  id              String              @id @default(uuid())
-  agencyId        String              @map("agency_id")
-  clientId        String?             @map("client_id")
-  caseId          String?             @map("case_id")
-  sessionTypeId   String?             @map("session_type_id")
-  subject         String
-  location        String?
-  locationMapsUrl String?             @map("location_maps_url")
-  calendar        String              @default("Case Calendar")
-  startsAt        DateTime            @map("starts_at")
-  endsAt          DateTime            @map("ends_at")
-  description     String?
-  guestName       String?             @map("guest_name")
-  guestEmail      String?             @map("guest_email")
-  guestPhone      String?             @map("guest_phone")
-  meetingMode     String              @default("InPerson") @map("meeting_mode")
-  meetingUrl      String?             @map("meeting_url")
-  manageToken     String?             @unique @default(uuid()) @map("manage_token")
-  reminderSentAt  DateTime?           @map("reminder_sent_at")
-  assignedToId    String?             @map("assigned_to_id")
-  createdById     String?             @map("created_by_id")
-  status          AppointmentStatus   @default(Scheduled)
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
-  agency          Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client          Client?             @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case            Case?               @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  sessionType     BookingSessionType? @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
-  assignedTo      User?               @relation("AssignedAppointmentUser", fields: [assignedToId], references: [id], onDelete: SetNull)
-  createdBy       User?               @relation("CreatedAppointmentUser", fields: [createdById], references: [id], onDelete: SetNull)
+  id                   String                   @id @default(uuid())
+  agencyId             String                   @map("agency_id")
+  clientId             String?                  @map("client_id")
+  caseId               String?                  @map("case_id")
+  leadId               String?                  @map("lead_id")
+  sessionTypeId        String?                  @map("session_type_id")
+  subject              String
+  location             String?
+  locationMapsUrl      String?                  @map("location_maps_url")
+  calendar             String                   @default("Case Calendar")
+  startsAt             DateTime                 @map("starts_at")
+  endsAt               DateTime                 @map("ends_at")
+  description          String?
+  guestName            String?                  @map("guest_name")
+  guestEmail           String?                  @map("guest_email")
+  guestEmailNormalized String?                  @map("guest_email_normalized")
+  guestPhone           String?                  @map("guest_phone")
+  meetingMode          String                   @default("InPerson") @map("meeting_mode")
+  meetingUrl           String?                  @map("meeting_url")
+  manageToken          String?                  @unique @default(uuid()) @map("manage_token")
+  reminderSentAt       DateTime?                @map("reminder_sent_at")
+  reminderDueAt        DateTime?                @map("reminder_due_at")
+  reminderQueuedAt     DateTime?                @map("reminder_queued_at")
+  assignedToId         String?                  @map("assigned_to_id")
+  createdById          String?                  @map("created_by_id")
+  cancelledById        String?                  @map("cancelled_by_id")
+  cancelledAt          DateTime?                @map("cancelled_at")
+  cancellationReason   String?                  @map("cancellation_reason")
+  source               String                   @default("Internal")
+  isFreeConsultation   Boolean                  @default(false) @map("is_free_consultation")
+  idempotencyKey       String?                  @map("idempotency_key")
+  status               AppointmentStatus        @default(Scheduled)
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  agency               Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                 Case?                    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  lead                 Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  sessionType          BookingSessionType?      @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
+  assignedTo           User?                    @relation("AssignedAppointmentUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy            User?                    @relation("CreatedAppointmentUser", fields: [createdById], references: [id], onDelete: SetNull)
+  cancelledBy          User?                    @relation("CancelledAppointmentUser", fields: [cancelledById], references: [id], onDelete: SetNull)
+  leadConsultation     LeadConsultation?
+  messageDeliveries    BookingMessageDelivery[]
 
+  @@unique([agencyId, idempotencyKey])
   @@index([agencyId])
   @@index([caseId, startsAt])
   @@index([clientId])
   @@index([assignedToId, startsAt])
   @@index([agencyId, startsAt])
+  @@index([agencyId, status, startsAt])
+  @@index([agencyId, reminderDueAt, reminderQueuedAt])
+  @@index([leadId])
   @@map("appointments")
 }
 
 model BookingSettings {
-  id                   String   @id @default(uuid())
-  agencyId             String   @unique @map("agency_id")
-  timezone             String   @default("America/Toronto")
-  workingHours         Json     @default("[]") @map("working_hours")
-  daysOff              Json     @default("[]") @map("days_off")
-  locations            Json     @default("[]")
-  bufferMinutes        Int      @default(15) @map("buffer_minutes")
-  minNoticeMinutes     Int      @default(720) @map("min_notice_minutes")
-  horizonDays          Int      @default(30) @map("horizon_days")
-  reminderMinutes      Int      @default(1440) @map("reminder_minutes")
-  publicToken          String   @unique @default(uuid()) @map("public_token")
-  publicBookingEnabled Boolean  @default(false) @map("public_booking_enabled")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
-  agency               Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  id                          String   @id @default(uuid())
+  agencyId                    String   @unique @map("agency_id")
+  timezone                    String   @default("America/Toronto")
+  workingHours                Json     @default("[]") @map("working_hours")
+  daysOff                     Json     @default("[]") @map("days_off")
+  locations                   Json     @default("[]")
+  bufferMinutes               Int      @default(15) @map("buffer_minutes")
+  minNoticeMinutes            Int      @default(720) @map("min_notice_minutes")
+  horizonDays                 Int      @default(30) @map("horizon_days")
+  reminderMinutes             Int      @default(1440) @map("reminder_minutes")
+  publicToken                 String   @unique @default(uuid()) @map("public_token")
+  publicSlug                  String   @unique @map("public_slug")
+  publicBookingEnabled        Boolean  @default(false) @map("public_booking_enabled")
+  freeConsultationsEnabled    Boolean  @default(false) @map("free_consultations_enabled")
+  freeConsultationsPerContact Int      @default(1) @map("free_consultations_per_contact")
+  cancellationCutoffMinutes   Int      @default(60) @map("cancellation_cutoff_minutes")
+  rescheduleCutoffMinutes     Int      @default(60) @map("reschedule_cutoff_minutes")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
+  agency                      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("booking_settings")
 }
 
 model BookingSessionType {
-  id              String        @id @default(uuid())
-  agencyId        String        @map("agency_id")
-  name            String
-  durationMinutes Int           @map("duration_minutes")
-  description     String?
-  isActive        Boolean       @default(true) @map("is_active")
-  sortOrder       Int           @default(0) @map("sort_order")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-  agency          Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  appointments    Appointment[]
+  id                  String                    @id @default(uuid())
+  agencyId            String                    @map("agency_id")
+  name                String
+  durationMinutes     Int                       @map("duration_minutes")
+  description         String?
+  isActive            Boolean                   @default(true) @map("is_active")
+  sortOrder           Int                       @default(0) @map("sort_order")
+  allowedMeetingModes String[]                  @default(["InPerson", "Online"]) @map("allowed_meeting_modes")
+  allowedLocationIds  String[]                  @default([]) @map("allowed_location_ids")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+  agency              Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  appointments        Appointment[]
+  eligibleStaff       BookingSessionTypeStaff[]
 
   @@index([agencyId, isActive])
   @@map("booking_session_types")
+}
+
+model SchedulingStaffPreference {
+  id                   String   @id @default(uuid())
+  agencyId             String   @map("agency_id")
+  userId               String   @unique @map("user_id")
+  acceptsAppointments  Boolean  @default(true) @map("accepts_appointments")
+  publicBookable       Boolean  @default(true) @map("public_bookable")
+  maxDailyAppointments Int?     @map("max_daily_appointments")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  agency               Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId, acceptsAppointments, publicBookable])
+  @@map("scheduling_staff_preferences")
+}
+
+model BookingSessionTypeStaff {
+  id            String             @id @default(uuid())
+  agencyId      String             @map("agency_id")
+  sessionTypeId String             @map("session_type_id")
+  userId        String             @map("user_id")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  agency        Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  sessionType   BookingSessionType @relation(fields: [sessionTypeId], references: [id], onDelete: Cascade)
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionTypeId, userId])
+  @@index([agencyId, userId])
+  @@map("booking_session_type_staff")
+}
+
+model BookingMessageDelivery {
+  id            String      @id @default(uuid())
+  agencyId      String      @map("agency_id")
+  appointmentId String      @map("appointment_id")
+  kind          String
+  channel       String
+  recipient     String
+  status        String      @default("pending")
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(5) @map("max_attempts")
+  availableAt   DateTime    @default(now()) @map("available_at")
+  sentAt        DateTime?   @map("sent_at")
+  failedAt      DateTime?   @map("failed_at")
+  providerId    String?     @map("provider_id")
+  lastError     String?     @map("last_error")
+  dedupeKey     String      @unique @map("dedupe_key")
+  payload       Json        @default("{}")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  agency        Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([appointmentId, createdAt])
+  @@map("booking_message_deliveries")
 }
 
 model CommunicationConversation {
@@ -2178,6 +2269,7 @@ model Lead {
   conversion               LeadConversion?
   qualification            LeadQualification?
   consultations            LeadConsultation[]
+  appointments             Appointment[]
   incomingEvents           LeadIncomingEvent[]
   duplicateCandidates      LeadDuplicateCandidate[]
   importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
@@ -2363,6 +2455,7 @@ model LeadConsultation {
   leadId             String                   @map("lead_id")
   consultantUserId   String                   @map("consultant_user_id")
   createdById        String                   @map("created_by_id")
+  appointmentId      String?                  @unique @map("appointment_id")
   startAt            DateTime                 @map("start_at")
   endAt              DateTime                 @map("end_at")
   timezone           String                   @default("America/Toronto")
@@ -2382,6 +2475,7 @@ model LeadConsultation {
   lead               Lead                     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   consultant         User                     @relation("LeadConsultantUser", fields: [consultantUserId], references: [id], onDelete: Restrict)
   createdBy          User                     @relation("LeadConsultationCreatorUser", fields: [createdById], references: [id], onDelete: Restrict)
+  appointment        Appointment?             @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
   @@index([agencyId, startAt])
   @@index([agencyId, consultantUserId, startAt])

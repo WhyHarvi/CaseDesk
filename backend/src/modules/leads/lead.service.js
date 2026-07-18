@@ -7,6 +7,9 @@ import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseL
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 import { notifyUsers } from "../../services/notificationService.js";
+import { assertSlotAvailable } from "../../services/bookingAvailabilityService.js";
+import { lockSchedulingTransaction } from "../../services/schedulingAssignmentService.js";
+import { sendBookingMessages } from "../../services/bookingNotificationService.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -289,6 +292,7 @@ export async function qualifyLead(req, db = prisma) {
 const consultationInclude = {
   consultant: { select: { id: true, fullName: true, email: true } },
   createdBy: { select: { id: true, fullName: true } },
+  appointment: { include: { assignedTo: { select: { id: true, fullName: true } } } },
 };
 
 function nextConsultationAction(status, outcome, startAt = null) {
@@ -327,7 +331,32 @@ export async function createConsultation(req, db = prisma) {
     });
     if (!consultant) throw createHttpError(400, "Consultant must be active workspace staff.", "INVALID_CONSULTANT");
 
-    const consultation = await tx.leadConsultation.create({ data: { ...values, agencyId, leadId: lead.id, createdById: actorId, status: "SCHEDULED" }, include: consultationInclude });
+    await lockSchedulingTransaction(tx, agencyId, values.startAt);
+    const settings = await tx.bookingSettings.findUnique({ where: { agencyId } });
+    const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: values.consultantUserId, startsAt: values.startAt, endsAt: values.endAt, bufferMinutes: settings?.bufferMinutes || 0 });
+    if (conflict) throw createHttpError(409, "That consultant already has an appointment at this time.", "SLOT_TAKEN");
+    const appointment = await tx.appointment.create({ data: {
+      agencyId,
+      leadId: lead.id,
+      subject: "Lead consultation",
+      location: values.location,
+      calendar: "Workspace Calendar",
+      startsAt: values.startAt,
+      endsAt: values.endAt,
+      description: values.notes,
+      guestName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || null,
+      guestEmail: lead.email,
+      guestEmailNormalized: lead.emailNormalized,
+      guestPhone: lead.phone,
+      meetingMode: values.appointmentType === "VIDEO" ? "Online" : "InPerson",
+      meetingUrl: values.meetingUrl,
+      reminderDueAt: new Date(values.startAt.getTime() - (settings?.reminderMinutes || 1440) * 60_000),
+      assignedToId: values.consultantUserId,
+      createdById: actorId,
+      source: "Lead",
+      status: "Scheduled",
+    } });
+    const consultation = await tx.leadConsultation.create({ data: { ...values, agencyId, leadId: lead.id, createdById: actorId, appointmentId: appointment.id, status: "SCHEDULED" }, include: consultationInclude });
     const stageOrder = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
     const advanceStage = stageOrder.indexOf(lead.stage) < stageOrder.indexOf("CONSULTATION_BOOKED");
     const next = nextConsultationAction("SCHEDULED", null, values.startAt);
@@ -340,6 +369,7 @@ export async function createConsultation(req, db = prisma) {
   }, leadTransactionOptions);
   if (db === prisma) {
     await notifyUsers({ agencyId, recipientIds: [values.consultantUserId], actorUserId: actorId, type: "lead.consultation_booked", category: "leads", title: "Lead consultation booked", body: values.startAt.toISOString(), severity: "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-consultation:${result.id}:booked:${result.startAt.toISOString()}` });
+    if (result.appointment) await sendBookingMessages({ agencyId, appointment: result.appointment, kind: "booked", actorUserId: actorId }).catch(() => {});
   }
   return result;
 }
@@ -354,6 +384,16 @@ export async function updateConsultation(req, db = prisma) {
     const existing = await tx.leadConsultation.findFirst({ where: { id: req.params.consultationId, leadId: lead.id, agencyId } });
     if (!existing) throw createHttpError(404, "Consultation not found.", "CONSULTATION_NOT_FOUND");
     const consultation = await tx.leadConsultation.update({ where: { id: existing.id }, data: values, include: consultationInclude });
+    if (existing.appointmentId) {
+      const appointmentStatus = values.status === "COMPLETED" ? "Completed" : values.status === "CANCELLED" ? "Cancelled" : values.status === "NO_SHOW" ? "NoShow" : "Scheduled";
+      await tx.appointment.update({
+        where: { id: existing.appointmentId },
+        data: {
+          status: appointmentStatus,
+          ...(appointmentStatus === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorId, cancellationReason: values.notes || null } : {}),
+        },
+      });
+    }
     const completedStage = values.outcome === "PAYMENT_REQUIRED" ? "PAYMENT_PENDING" : ["READY_TO_PROCEED", "AGREEMENT_REQUIRED"].includes(values.outcome) ? "RETAINER_PENDING" : "CONSULTATION_COMPLETED";
     const nextStage = values.status === "COMPLETED" ? completedStage : lead.stage;
     const next = nextConsultationAction(values.status, values.outcome, existing.startAt);
@@ -367,6 +407,7 @@ export async function updateConsultation(req, db = prisma) {
   }, leadTransactionOptions);
   if (db === prisma) {
     await notifyUsers({ agencyId, recipientIds: [result.consultantUserId], actorUserId: actorId, type: "lead.consultation_updated", category: "leads", title: `Lead consultation ${String(result.status).toLowerCase().replaceAll("_", " ")}`, body: result.startAt.toISOString(), severity: result.status === "NO_SHOW" ? "warning" : "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-consultation:${result.id}:${result.status}:${result.updatedAt.toISOString()}` });
+    if (result.appointment && result.status === "CANCELLED") await sendBookingMessages({ agencyId, appointment: { ...result.appointment, status: "Cancelled" }, kind: "cancelled", actorUserId: actorId }).catch(() => {});
   }
   return result;
 }

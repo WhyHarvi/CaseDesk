@@ -30,6 +30,27 @@ export async function deleteSessionType(id) {
   return response.data;
 }
 
+export async function updateSchedulingStaff(userId, values) {
+  const response = await api.patch(`/booking/staff/${userId}`, values);
+  return response.data.data;
+}
+
+export async function getSchedulingAnalytics(params = {}) {
+  const query = new URLSearchParams(params);
+  const response = await api.get(`/booking/analytics${query.size ? `?${query.toString()}` : ""}`);
+  return response.data.data;
+}
+
+export async function convertAppointmentToClient(id) {
+  const response = await api.post(`/booking/appointments/${id}/convert-client`);
+  return response.data.data;
+}
+
+export async function updateBookingAppointmentStatus(id, status, reason) {
+  const response = await api.patch(`/booking/appointments/${id}/status`, { status, reason });
+  return response.data.data;
+}
+
 export async function getAvailability({ from, to, durationMinutes, assignedToId }) {
   const params = new URLSearchParams({ from, to, durationMinutes: String(durationMinutes) });
   if (assignedToId) params.set("assignedToId", assignedToId);
@@ -53,8 +74,8 @@ export async function cancelBookingAppointment(id) {
   return response.data.data;
 }
 
-export async function rescheduleBookingAppointment(id, startsAt) {
-  const response = await api.patch(`/booking/appointments/${id}/reschedule`, { startsAt });
+export async function rescheduleBookingAppointment(id, startsAt, options = {}) {
+  const response = await api.patch(`/booking/appointments/${id}/reschedule`, { startsAt, ...options });
   return response.data.data;
 }
 
@@ -63,8 +84,9 @@ export async function getPublicBookingInfo(token) {
   return response.data.data;
 }
 
-export async function getPublicAvailability(token, { sessionTypeId, from, to }) {
+export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to }) {
   const params = new URLSearchParams({ sessionTypeId, from, to });
+  if (consultantId) params.set("consultantId", consultantId);
   const response = await api.get(`/public/booking/${token}/availability?${params.toString()}`);
   return response.data.data;
 }
@@ -85,8 +107,8 @@ export async function getManagedAvailability(manageToken, { from, to }) {
   return response.data.data;
 }
 
-export async function cancelManagedBooking(manageToken) {
-  const response = await api.post(`/public/booking/manage/${manageToken}/cancel`);
+export async function cancelManagedBooking(manageToken, reason) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/cancel`, { reason });
   return response.data.data;
 }
 
