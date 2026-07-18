@@ -8,6 +8,7 @@ import {
   updateBookingSettings,
   updateSessionType,
 } from "../../api/bookingApi";
+import Select from "../ui/Select";
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const DAY_LABELS = { 0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday" };
@@ -210,24 +211,24 @@ export default function SchedulingSettingsPanel() {
         <h3 className="text-sm font-semibold text-slate-900">Booking rules</h3>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <label className="block text-xs font-medium text-slate-600">Buffer between appointments
-            <select value={settings.bufferMinutes} onChange={(event) => setSettings((c) => ({ ...c, bufferMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`}>
+            <Select value={settings.bufferMinutes} onChange={(event) => setSettings((c) => ({ ...c, bufferMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
               {BUFFER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes ? `${minutes} minutes` : "No buffer"}</option>)}
-            </select>
+            </Select>
           </label>
           <label className="block text-xs font-medium text-slate-600">Minimum notice
-            <select value={settings.minNoticeMinutes} onChange={(event) => setSettings((c) => ({ ...c, minNoticeMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`}>
+            <Select value={settings.minNoticeMinutes} onChange={(event) => setSettings((c) => ({ ...c, minNoticeMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
               {NOTICE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
+            </Select>
           </label>
           <label className="block text-xs font-medium text-slate-600">How far ahead people can book
-            <select value={settings.horizonDays} onChange={(event) => setSettings((c) => ({ ...c, horizonDays: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`}>
+            <Select value={settings.horizonDays} onChange={(event) => setSettings((c) => ({ ...c, horizonDays: Number(event.target.value) }))} className="mt-1.5 w-full">
               {HORIZON_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
-            </select>
+            </Select>
           </label>
           <label className="block text-xs font-medium text-slate-600">Reminder
-            <select value={settings.reminderMinutes} onChange={(event) => setSettings((c) => ({ ...c, reminderMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`}>
+            <Select value={settings.reminderMinutes} onChange={(event) => setSettings((c) => ({ ...c, reminderMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
               {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
+            </Select>
           </label>
           <label className="block text-xs font-medium text-slate-600 sm:col-span-2">Timezone
             <input value={settings.timezone} onChange={(event) => setSettings((c) => ({ ...c, timezone: event.target.value }))} className={`mt-1.5 w-full ${inputClass}`} list="booking-timezones" />
@@ -260,9 +261,9 @@ export default function SchedulingSettingsPanel() {
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input value={newType.name} onChange={(event) => setNewType((c) => ({ ...c, name: event.target.value }))} placeholder="Session name" className={`${inputClass} flex-1 min-w-[180px]`} />
-          <select value={newType.durationMinutes} onChange={(event) => setNewType((c) => ({ ...c, durationMinutes: Number(event.target.value) }))} className={inputClass}>
+          <Select value={newType.durationMinutes} onChange={(event) => setNewType((c) => ({ ...c, durationMinutes: Number(event.target.value) }))}>
             {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
-          </select>
+          </Select>
           <button type="button" disabled={addingType || !newType.name.trim()} onClick={addSessionType} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
             {addingType ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
           </button>
