@@ -52,3 +52,45 @@ export async function cancelBookingAppointment(id) {
   const response = await api.patch(`/booking/appointments/${id}/cancel`);
   return response.data.data;
 }
+
+export async function rescheduleBookingAppointment(id, startsAt) {
+  const response = await api.patch(`/booking/appointments/${id}/reschedule`, { startsAt });
+  return response.data.data;
+}
+
+export async function getPublicBookingInfo(token) {
+  const response = await api.get(`/public/booking/${token}`);
+  return response.data.data;
+}
+
+export async function getPublicAvailability(token, { sessionTypeId, from, to }) {
+  const params = new URLSearchParams({ sessionTypeId, from, to });
+  const response = await api.get(`/public/booking/${token}/availability?${params.toString()}`);
+  return response.data.data;
+}
+
+export async function createPublicBooking(token, values) {
+  const response = await api.post(`/public/booking/${token}/appointments`, values);
+  return response.data.data;
+}
+
+export async function getManagedBooking(manageToken) {
+  const response = await api.get(`/public/booking/manage/${manageToken}`);
+  return response.data.data;
+}
+
+export async function getManagedAvailability(manageToken, { from, to }) {
+  const params = new URLSearchParams({ from, to });
+  const response = await api.get(`/public/booking/manage/${manageToken}/availability?${params.toString()}`);
+  return response.data.data;
+}
+
+export async function cancelManagedBooking(manageToken) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/cancel`);
+  return response.data.data;
+}
+
+export async function rescheduleManagedBooking(manageToken, startsAt) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/reschedule`, { startsAt });
+  return response.data.data;
+}

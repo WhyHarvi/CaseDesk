@@ -24,6 +24,8 @@ import ClientPortalProfile from "../pages/client-portal/ClientPortalProfile";
 import ClientPortalHelp from "../pages/client-portal/ClientPortalHelp";
 import Workload from "../pages/Workload";
 import CalendarPage from "../pages/CalendarPage";
+import PublicBookingPage from "../pages/PublicBookingPage";
+import ManageBookingPage from "../pages/ManageBookingPage";
 import ChangePassword from "../pages/ChangePassword";
 import AcceptInvite from "../pages/AcceptInvite";
 import ResetPassword from "../pages/ResetPassword";
@@ -49,6 +51,8 @@ export default function AppRoutes() {
     <Route path="/change-password" element={<ChangePassword />} />
     <Route path="/client-chat/:token" element={<ClientChatPortal />} />
     <Route path="/public/intake/:publicToken" element={<PublicLeadIntakePage />} />
+    <Route path="/book/manage/:manageToken" element={<ManageBookingPage />} />
+    <Route path="/book/:token" element={<PublicBookingPage />} />
     <Route path="/portal/*" element={<Navigate to="/client-portal" replace />} />
     <Route path="/client-portal" element={<PortalRoute><ClientPortalLayout /></PortalRoute>}>
       <Route index element={<ClientPortalHome />} />

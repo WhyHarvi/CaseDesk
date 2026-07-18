@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Trash2,
   UserRound,
+  Video,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,6 +23,7 @@ import {
   getAvailability,
   getBookingSettings,
   getCalendarAppointments,
+  rescheduleBookingAppointment,
 } from "../api/bookingApi";
 import PageContainer from "../components/layout/PageContainer";
 import Select from "../components/ui/Select";
@@ -151,10 +153,48 @@ function DetailRow({ icon: Icon, children }) {
   );
 }
 
-function EventDetails({ appointment, tone, onClose, onCancel, cancelling }) {
+function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, role }) {
   const start = new Date(appointment.startsAt);
   const person = appointment.client?.fullName || appointment.guestName || "No contact";
   const initials = person.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const [resched, setResched] = useState(false);
+  const [reschedDate, setReschedDate] = useState(dateKey(start));
+  const [reschedSlots, setReschedSlots] = useState(null);
+  const [reschedSlot, setReschedSlot] = useState(null);
+  const [reschedBusy, setReschedBusy] = useState(false);
+  const [reschedError, setReschedError] = useState("");
+  const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
+
+  useEffect(() => {
+    if (!resched) return;
+    let active = true;
+    setReschedSlots(null);
+    setReschedSlot(null);
+    getAvailability({
+      from: reschedDate,
+      to: reschedDate,
+      durationMinutes: duration,
+      assignedToId: role === "consultant" ? undefined : appointment.assignedTo?.id || undefined,
+    })
+      .then((result) => active && setReschedSlots(result.days[reschedDate] || []))
+      .catch(() => active && setReschedSlots([]));
+    return () => { active = false; };
+  }, [resched, reschedDate, duration, appointment.assignedTo, role]);
+
+  async function confirmReschedule() {
+    if (!reschedSlot) return;
+    setReschedBusy(true);
+    setReschedError("");
+    try {
+      const updated = await rescheduleBookingAppointment(appointment.id, reschedSlot.startsAt);
+      onRescheduled(updated);
+      setResched(false);
+    } catch (reason) {
+      setReschedError(reason.response?.data?.message || "Could not move the appointment.");
+    } finally {
+      setReschedBusy(false);
+    }
+  }
 
   return (
     <motion.div
@@ -205,14 +245,66 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling }) {
         </div>
       ) : null}
 
-      <button
-        type="button"
-        onClick={onCancel}
-        disabled={cancelling}
-        className="mt-5 flex h-11 w-full items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
-      >
-        {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel appointment
-      </button>
+      {appointment.meetingUrl ? (
+        <a
+          href={appointment.meetingUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-full bg-sky-600 text-sm font-semibold text-white transition hover:bg-sky-700"
+        >
+          <Video className="h-4 w-4" /> Join video call
+        </a>
+      ) : null}
+
+      {resched ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5">
+          <p className="text-xs font-semibold text-slate-700">Move to</p>
+          <input
+            type="date"
+            value={reschedDate}
+            onChange={(event) => setReschedDate(event.target.value)}
+            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-sky-400"
+          />
+          {reschedSlots === null ? (
+            <p className="mt-2 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…</p>
+          ) : reschedSlots.length ? (
+            <div className="mt-2 grid max-h-[130px] grid-cols-3 gap-1.5 overflow-y-auto">
+              {reschedSlots.map((slotOption) => (
+                <button key={slotOption.startsAt} type="button" onClick={() => setReschedSlot(slotOption)} className={`rounded-lg px-1.5 py-1.5 text-[11px] font-semibold transition ${reschedSlot?.startsAt === slotOption.startsAt ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300"}`}>
+                  {formatTime(slotOption.startsAt)}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-400">No open times that day.</p>
+          )}
+          {reschedError ? <p className="mt-2 text-xs text-rose-600">{reschedError}</p> : null}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setResched(false)} className="h-9 rounded-full text-xs font-semibold text-slate-600 transition hover:bg-slate-100">Back</button>
+            <button type="button" disabled={!reschedSlot || reschedBusy} onClick={confirmReschedule} className="flex h-9 items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white disabled:opacity-40">
+              {reschedBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Confirm
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setResched(true)}
+            className="flex h-11 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <CalendarDays className="h-4 w-4" /> Reschedule
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={cancelling}
+            className="flex h-11 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+          >
+            {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -272,6 +364,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         guestPhone: form.mode === "guest" ? form.guestPhone : undefined,
         subject: form.subject || undefined,
         location: form.location || undefined,
+        meetingMode: form.meetingMode || "InPerson",
       });
       onCreated(created);
       onClose();
@@ -324,6 +417,14 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
                   </div>
                 </div>
               )}
+
+              <div className="grid grid-cols-2 gap-2">
+                {[["InPerson", "In person", MapPin], ["Online", "Online video", Video]].map(([modeId, label, Icon]) => (
+                  <button key={modeId} type="button" onClick={() => setForm((c) => ({ ...c, meetingMode: modeId }))} className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${(form.meetingMode || "InPerson") === modeId ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+                    <Icon className="h-3.5 w-3.5" /> {label}
+                  </button>
+                ))}
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-medium text-slate-600">Session type
@@ -633,6 +734,11 @@ export default function CalendarPage() {
                 onClose={() => setSelected(null)}
                 onCancel={cancelSelected}
                 cancelling={cancelling}
+                role={role}
+                onRescheduled={(updated) => {
+                  setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+                  setSelected(updated);
+                }}
               />
             ) : (
               <motion.div

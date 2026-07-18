@@ -24,6 +24,8 @@ import agencyFormTemplateRoutes from "./routes/agencyFormTemplateRoutes.js";
 import correspondenceRoutes from "./routes/correspondenceRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
+import publicBookingRoutes from "./routes/publicBookingRoutes.js";
+import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -87,6 +89,7 @@ app.use("/api/onboarding", onboardingRoutes);
 app.use("/api/communications/webhooks", communicationWebhookRoutes);
 app.use("/api/client-communication", clientCommunicationRoutes);
 app.use("/api/public/lead-intake", leadPublicRoutes);
+app.use("/api/public/booking", publicBookingRoutes);
 app.use("/api/lead-connectors/website", leadWebsiteRoutes);
 app.use("/api/lead-connectors", leadProviderRoutes);
 app.use("/api/portal", requireAuth, portalRoutes);
@@ -128,6 +131,7 @@ const server = app.listen(port, () => {
   startInboundMailSync();
   startCommunicationMaintenance();
   startLeadIntakeWorker();
+  startBookingReminderWorker();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
 });
@@ -142,6 +146,7 @@ async function shutdown(signal) {
   stopInboundMailSync();
   stopCommunicationMaintenance();
   stopLeadIntakeWorker();
+  stopBookingReminderWorker();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
   server.close(async () => {

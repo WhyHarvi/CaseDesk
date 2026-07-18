@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import DashboardBottomRow from "../components/dashboard/DashboardBottomRow";
 import DashboardWorkRow from "../components/dashboard/DashboardWorkRow";
 import DashboardStats from "../components/dashboard/DashboardStats";
+import DashboardAppointments from "../components/dashboard/DashboardAppointments";
 import PageContainer from "../components/layout/PageContainer";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
@@ -41,6 +42,8 @@ export default function Dashboard() {
       ) : null}
 
       <DashboardStats dashboard={dashboard} loading={loading} />
+
+      <DashboardAppointments />
 
       <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
 

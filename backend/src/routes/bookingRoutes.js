@@ -8,6 +8,7 @@ import {
   getBookingSettings,
   listCalendarAppointments,
   regeneratePublicToken,
+  rescheduleBookingAppointment,
   updateBookingSettings,
   updateSessionType,
 } from "../controllers/bookingController.js";
@@ -25,5 +26,6 @@ router.get("/availability", asyncHandler(getAvailability));
 router.get("/calendar", asyncHandler(listCalendarAppointments));
 router.post("/appointments", asyncHandler(createBookingAppointment));
 router.patch("/appointments/:id/cancel", asyncHandler(cancelBookingAppointment));
+router.patch("/appointments/:id/reschedule", asyncHandler(rescheduleBookingAppointment));
 
 export default router;

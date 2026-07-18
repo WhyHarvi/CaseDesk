@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sendBookingMessages } from "../services/bookingNotificationService.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -243,13 +244,17 @@ export async function createBookingAppointment(req, res) {
         guestName,
         guestEmail: String(body.guestEmail || "").trim().slice(0, 254) || null,
         guestPhone: String(body.guestPhone || "").trim().slice(0, 40) || null,
+        meetingMode: body.meetingMode === "Online" ? "Online" : "InPerson",
+        meetingUrl: body.meetingMode === "Online" ? `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null,
         assignedToId,
         createdById: req.auth.userId,
         status: "Scheduled",
       },
-      include: calendarInclude,
+      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     });
   });
+
+  sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "booked", actorUserId: req.auth.userId }).catch(() => {});
 
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -275,7 +280,7 @@ export async function cancelBookingAppointment(req, res) {
   const data = await prisma.appointment.update({
     where: { id: existing.id },
     data: { status: "Cancelled" },
-    include: calendarInclude,
+    include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
   });
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -285,5 +290,51 @@ export async function cancelBookingAppointment(req, res) {
     action: "appointment.cancelled",
     details: `${existing.subject} cancelled`,
   });
+  sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "cancelled", actorUserId: req.auth.userId }).catch(() => {});
+  res.json({ data });
+}
+
+export async function rescheduleBookingAppointment(req, res) {
+  const existing = await prisma.appointment.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      status: "Scheduled",
+      ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
+    },
+  });
+  if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+  const startsAt = new Date(String(req.body?.startsAt || ""));
+  if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "Pick a new time.", "VALIDATION_ERROR");
+  const duration = Math.round((new Date(existing.endsAt) - new Date(existing.startsAt)) / 60_000);
+  const endsAt = new Date(startsAt.getTime() + duration * 60_000);
+  const settings = await getOrCreateBookingSettings(req.auth.agencyId);
+
+  const data = await prisma.$transaction(async (tx) => {
+    const conflict = await assertSlotAvailable(tx, {
+      agencyId: req.auth.agencyId,
+      assignedToId: existing.assignedToId,
+      startsAt,
+      endsAt,
+      bufferMinutes: settings.bufferMinutes,
+      excludeAppointmentId: existing.id,
+    });
+    if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
+    return tx.appointment.update({
+      where: { id: existing.id },
+      data: { startsAt, endsAt, reminderSentAt: null },
+      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+    });
+  });
+
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.caseId,
+    action: "appointment.rescheduled",
+    details: `${existing.subject} rescheduled`,
+  });
+  sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.auth.userId }).catch(() => {});
   res.json({ data });
 }
