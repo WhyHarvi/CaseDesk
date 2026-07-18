@@ -4,6 +4,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { assertSlotAvailable, availabilityForRange, localDateKey } from "../services/bookingAvailabilityService.js";
 import { sendBookingMessages } from "../services/bookingNotificationService.js";
+import { invalidateDashboardCache } from "../services/dashboardCache.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -166,6 +167,7 @@ export async function createPublicBooking(req, res) {
     details: `${sessionType.name} booked online by ${name} for ${localDateKey(startsAt, settings.timezone)}`,
   }).catch(() => {});
   sendBookingMessages({ agencyId: settings.agencyId, appointment, kind: "booked" }).catch(() => {});
+  invalidateDashboardCache(settings.agencyId);
 
   res.status(201).json({
     data: {
@@ -260,6 +262,7 @@ export async function cancelManagedBooking(req, res) {
     details: `${appointment.subject} cancelled via booking link`,
   }).catch(() => {});
   sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "cancelled" }).catch(() => {});
+  invalidateDashboardCache(appointment.agencyId);
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } });
   res.json({ data: publicView(updated, settings) });
 }
@@ -338,5 +341,6 @@ export async function rescheduleManagedBooking(req, res) {
     details: `${appointment.subject} rescheduled via booking link`,
   }).catch(() => {});
   sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "rescheduled" }).catch(() => {});
+  invalidateDashboardCache(appointment.agencyId);
   res.json({ data: publicView(updated, settings) });
 }

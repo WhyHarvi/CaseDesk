@@ -5,6 +5,11 @@ import {
   relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
+import {
+  dashboardCacheKey,
+  getCachedDashboard,
+  setCachedDashboard,
+} from "../services/dashboardCache.js";
 
 const caseSummarySelect = {
   id: true,
@@ -64,6 +69,13 @@ export function dashboardScopes(req) {
 }
 
 export async function getDashboardSummary(req, res) {
+  const cacheKey = dashboardCacheKey(req.auth);
+  const cached = getCachedDashboard(cacheKey);
+  if (cached) {
+    res.set("X-CaseDesk-Cache", "hit");
+    return res.json({ data: cached });
+  }
+  res.set("X-CaseDesk-Cache", "miss");
   const {
     clientWhere,
     caseWhere,
@@ -264,8 +276,7 @@ export async function getDashboardSummary(req, res) {
     }),
   ]);
 
-  res.json({
-    data: {
+  const data = {
       timezone,
       stats: {
         totalClients,
@@ -292,8 +303,9 @@ export async function getDashboardSummary(req, res) {
       upcomingFollowUps,
       casesWaitingUpdate,
       recentActivity,
-    },
-  });
+  };
+  setCachedDashboard(cacheKey, data);
+  return res.json({ data });
 }
 
 export default { getDashboardSummary };

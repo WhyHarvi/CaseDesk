@@ -42,6 +42,7 @@ import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import { startNotificationScheduler, stopNotificationScheduler } from "./services/notificationScheduler.js";
 import { startNotificationDeliveryWorker, stopNotificationDeliveryWorker } from "./services/notificationDeliveryService.js";
+import { invalidateDashboardCache } from "./services/dashboardCache.js";
 import {
   startFormRevisionMonitor,
   stopFormRevisionMonitor,
@@ -77,6 +78,14 @@ app.use(
   }),
 );
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb", verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
+
+app.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  res.on("finish", () => {
+    if (res.statusCode < 400 && req.auth?.agencyId) invalidateDashboardCache(req.auth.agencyId);
+  });
+  return next();
+});
 
 app.get("/api/health/live", (_req, res) => res.json({ status: "ok" }));
 app.get("/api/health", async (req, res, next) => {
