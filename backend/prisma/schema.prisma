@@ -516,6 +516,8 @@ model Agency {
   correspondenceTemplates        CorrespondenceTemplate[]
   correspondenceTemplateVersions CorrespondenceTemplateVersion[]
   appointments                   Appointment[]
+  bookingSettings                BookingSettings?
+  bookingSessionTypes            BookingSessionType[]
   communicationConversations     CommunicationConversation[]
   communicationMessages          CommunicationMessage[]
   communicationDeliveryEvents    CommunicationDeliveryEvent[]
@@ -963,32 +965,74 @@ model ImmigrationProfileCaseAccess {
 }
 
 model Appointment {
-  id           String            @id @default(uuid())
-  agencyId     String            @map("agency_id")
-  clientId     String            @map("client_id")
-  caseId       String            @map("case_id")
-  subject      String
-  location     String?
-  calendar     String            @default("Case Calendar")
-  startsAt     DateTime          @map("starts_at")
-  endsAt       DateTime          @map("ends_at")
-  description  String?
-  assignedToId String?           @map("assigned_to_id")
-  createdById  String            @map("created_by_id")
-  status       AppointmentStatus @default(Scheduled)
-  createdAt    DateTime          @default(now()) @map("created_at")
-  updatedAt    DateTime          @updatedAt @map("updated_at")
-  agency       Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client       Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case         Case              @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  assignedTo   User?             @relation("AssignedAppointmentUser", fields: [assignedToId], references: [id], onDelete: SetNull)
-  createdBy    User              @relation("CreatedAppointmentUser", fields: [createdById], references: [id], onDelete: Restrict)
+  id            String              @id @default(uuid())
+  agencyId      String              @map("agency_id")
+  clientId      String?             @map("client_id")
+  caseId        String?             @map("case_id")
+  sessionTypeId String?             @map("session_type_id")
+  subject       String
+  location      String?
+  calendar      String              @default("Case Calendar")
+  startsAt      DateTime            @map("starts_at")
+  endsAt        DateTime            @map("ends_at")
+  description   String?
+  guestName     String?             @map("guest_name")
+  guestEmail    String?             @map("guest_email")
+  guestPhone    String?             @map("guest_phone")
+  assignedToId  String?             @map("assigned_to_id")
+  createdById   String?             @map("created_by_id")
+  status        AppointmentStatus   @default(Scheduled)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  agency        Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client        Client?             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case          Case?               @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  sessionType   BookingSessionType? @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
+  assignedTo    User?               @relation("AssignedAppointmentUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy     User?               @relation("CreatedAppointmentUser", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([caseId, startsAt])
   @@index([clientId])
-  @@index([assignedToId])
+  @@index([assignedToId, startsAt])
+  @@index([agencyId, startsAt])
   @@map("appointments")
+}
+
+model BookingSettings {
+  id                   String   @id @default(uuid())
+  agencyId             String   @unique @map("agency_id")
+  timezone             String   @default("America/Toronto")
+  workingHours         Json     @default("[]") @map("working_hours")
+  daysOff              Json     @default("[]") @map("days_off")
+  bufferMinutes        Int      @default(15) @map("buffer_minutes")
+  minNoticeMinutes     Int      @default(720) @map("min_notice_minutes")
+  horizonDays          Int      @default(30) @map("horizon_days")
+  reminderMinutes      Int      @default(1440) @map("reminder_minutes")
+  publicToken          String   @unique @default(uuid()) @map("public_token")
+  publicBookingEnabled Boolean  @default(false) @map("public_booking_enabled")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  agency               Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("booking_settings")
+}
+
+model BookingSessionType {
+  id              String        @id @default(uuid())
+  agencyId        String        @map("agency_id")
+  name            String
+  durationMinutes Int           @map("duration_minutes")
+  description     String?
+  isActive        Boolean       @default(true) @map("is_active")
+  sortOrder       Int           @default(0) @map("sort_order")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  agency          Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+
+  @@index([agencyId, isActive])
+  @@map("booking_session_types")
 }
 
 model CommunicationConversation {

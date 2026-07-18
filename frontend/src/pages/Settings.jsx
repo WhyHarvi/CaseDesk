@@ -2,6 +2,7 @@ import {
   Building2,
   CreditCard,
   Bell,
+  CalendarDays,
   FileText,
   History,
   Lock,
@@ -24,6 +25,7 @@ import AgencyProfilePanel from "../components/settings/AgencyProfilePanel";
 import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPanel";
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
 import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
+import SchedulingSettingsPanel from "../components/booking/SchedulingSettingsPanel";
 
 const adminSettingsItems = [
   {
@@ -85,6 +87,13 @@ const adminSettingsItems = [
     icon: CreditCard,
     title: "Payments & Fees",
     subtitle: "Set defaults for billing, invoices, and fee preferences.",
+  },
+  {
+    id: "scheduling",
+    label: "Scheduling",
+    icon: CalendarDays,
+    title: "Scheduling",
+    subtitle: "Working hours, days off, session types, and booking rules.",
   },
   {
     id: "notifications",
@@ -627,6 +636,8 @@ export default function Settings() {
                     <CommunicationSettingsPanel />
                   ) : activeSection === "notifications" ? (
                     <NotificationPreferencesPanel />
+                  ) : isAdmin && activeSection === "scheduling" ? (
+                    <SchedulingSettingsPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}

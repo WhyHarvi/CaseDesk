@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   BriefcaseBusiness,
   CalendarClock,
+  CalendarDays,
   CreditCard,
   FileCheck2,
   LayoutDashboard,
@@ -75,6 +76,13 @@ const adminNavigation = [
     disabled: false,
   },
   {
+    label: "Calendar",
+    to: "/app/calendar",
+    icon: CalendarDays,
+    description: "Appointments and booking",
+    disabled: false,
+  },
+  {
     label: "Team Workload",
     to: "/app/workload",
     icon: Gauge,
@@ -97,12 +105,14 @@ const consultantNavigation = [
   { label: "My Clients", to: "/app/clients", icon: Users },
   { label: "My Cases", to: "/app/cases", icon: BriefcaseBusiness },
   { label: "Follow-ups", to: "/app/follow-ups", icon: CalendarClock },
+  { label: "Calendar", to: "/app/calendar", icon: CalendarDays },
   { label: "My Workload", to: "/app/workload", icon: Gauge },
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];
 
 const frontdeskNavigation = [
   { label: "Leads", to: "/leads", icon: ContactRound, description: "Assigned inquiries" },
+  { label: "Calendar", to: "/app/calendar", icon: CalendarDays, description: "Book walk-ins" },
   { label: "My Profile", to: "/app/settings?section=personal-profile", icon: UserRound },
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];

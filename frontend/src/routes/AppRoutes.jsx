@@ -23,6 +23,7 @@ import ClientPortalPayments from "../pages/client-portal/ClientPortalPayments";
 import ClientPortalProfile from "../pages/client-portal/ClientPortalProfile";
 import ClientPortalHelp from "../pages/client-portal/ClientPortalHelp";
 import Workload from "../pages/Workload";
+import CalendarPage from "../pages/CalendarPage";
 import ChangePassword from "../pages/ChangePassword";
 import AcceptInvite from "../pages/AcceptInvite";
 import ResetPassword from "../pages/ResetPassword";
@@ -71,6 +72,7 @@ export default function AppRoutes() {
     <Route path="/app/cases/:id/documents/new" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
     <Route path="/app/cases/:id/documents/:writtenDocumentId/edit" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
     <Route path="/app/follow-ups" element={<Internal><FollowUps /></Internal>} />
+    <Route path="/app/calendar" element={<Internal allowFrontdesk><CalendarPage /></Internal>} />
     <Route path="/app/documents" element={<Internal><Documents /></Internal>} />
     <Route path="/app/payments" element={<AdminRoute><MainLayout><Payments /></MainLayout></AdminRoute>} />
     <Route path="/app/team-members" element={<AdminRoute><MainLayout><TeamMembers /></MainLayout></AdminRoute>} />

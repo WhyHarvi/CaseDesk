@@ -23,6 +23,7 @@ import caseFormRoutes from "./routes/caseFormRoutes.js";
 import agencyFormTemplateRoutes from "./routes/agencyFormTemplateRoutes.js";
 import correspondenceRoutes from "./routes/correspondenceRoutes.js";
 import appointmentRoutes from "./routes/appointmentRoutes.js";
+import bookingRoutes from "./routes/bookingRoutes.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -113,6 +114,7 @@ app.use("/api/case-forms", requireAuth, internalUser, caseFormRoutes);
 app.use("/api/form-templates", requireAuth, internalUser, agencyFormTemplateRoutes);
 app.use("/api/correspondence", requireAuth, internalUser, correspondenceRoutes);
 app.use("/api/appointments", requireAuth, internalUser, appointmentRoutes);
+app.use("/api/booking", requireAuth, leadUser, bookingRoutes);
 app.use("/api/communications", requireAuth, internalUser, communicationRoutes);
 app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);
 

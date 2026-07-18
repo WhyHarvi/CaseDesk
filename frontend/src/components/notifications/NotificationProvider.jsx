@@ -14,7 +14,7 @@ const NotificationContext = createContext(null);
 const POLL_MS = 45_000;
 
 // actionUrls the backend can emit that have no matching frontend route yet
-const PATH_REWRITES = { "/app/calendar": "/app/dashboard" };
+const PATH_REWRITES = {};
 
 export function NotificationProvider({ children }) {
   const { isAuthenticated, role } = useAuth();
