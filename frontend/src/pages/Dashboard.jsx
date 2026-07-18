@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import DashboardBottomRow from "../components/dashboard/DashboardBottomRow";
 import DashboardWorkRow from "../components/dashboard/DashboardWorkRow";
 import DashboardStats from "../components/dashboard/DashboardStats";
@@ -6,29 +6,28 @@ import DashboardAppointments from "../components/dashboard/DashboardAppointments
 import PageContainer from "../components/layout/PageContainer";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
+import { apiQueryKey, getApiCacheScope, staleTimeFor } from "../services/queryClient";
+
+const DASHBOARD_PATH = "/dashboard";
+const DASHBOARD_REFRESH_MS = 60_000;
 
 export default function Dashboard() {
   const { role } = useAuth();
-  const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    async function loadDashboard() {
-      try {
-        setLoading(true);
-        const response = await api.get("/dashboard");
-        setDashboard(response.data.data);
-        setError("");
-      } catch (requestError) {
-        setError(requestError.response?.data?.message || "Unable to load dashboard data.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadDashboard();
-  }, []);
+  const scope = getApiCacheScope();
+  const dashboardQuery = useQuery({
+    queryKey: apiQueryKey(scope, DASHBOARD_PATH),
+    queryFn: ({ signal }) => api.get(DASHBOARD_PATH, { cache: false, signal }),
+    select: (response) => response.data.data,
+    staleTime: staleTimeFor(DASHBOARD_PATH),
+    refetchInterval: DASHBOARD_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+  });
+  const dashboard = dashboardQuery.data;
+  const loading = dashboardQuery.isPending;
+  const error = dashboardQuery.error?.response?.data?.message
+    || (dashboardQuery.error ? "Unable to load dashboard data." : "");
 
   return (
     <PageContainer

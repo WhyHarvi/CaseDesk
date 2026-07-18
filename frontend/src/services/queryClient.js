@@ -85,7 +85,7 @@ function resourceFor(url) {
 
 export function invalidateApiCache(url, scope) {
   const related = RELATED_PATHS[resourceFor(url)];
-  return queryClient.removeQueries({
+  const filters = {
     predicate: (query) => {
       const [kind, queryScope, queryUrl] = query.queryKey;
       if (kind !== "api" || queryScope !== scope) return false;
@@ -93,7 +93,13 @@ export function invalidateApiCache(url, scope) {
       const queryPath = pathOnly(queryUrl);
       return related.some((segment) => queryPath.includes(`/${segment}`));
     },
-  });
+  };
+
+  // Active screens refetch immediately after a successful write. Inactive
+  // entries are removed so the next visit cannot render an obsolete snapshot.
+  const activeRefetch = queryClient.invalidateQueries({ ...filters, refetchType: "active" });
+  queryClient.removeQueries({ ...filters, type: "inactive" });
+  return activeRefetch;
 }
 
 export function clearApiCache() {

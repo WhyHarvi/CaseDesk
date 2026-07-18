@@ -5,6 +5,7 @@ import { adaptProviderPayload } from "./lead.provider.adapters.js";
 import { enrichProviderPayload } from "./lead.provider.enrichment.js";
 import { logger } from "../../services/logger.js";
 import { adminRecipientIds, notifyUsers } from "../../services/notificationService.js";
+import { invalidateDashboardCache } from "../../services/dashboardCache.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_INTAKE_POLL_MS) || 2000, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.LEAD_INTAKE_BATCH_SIZE) || 10, 1), 50);
@@ -90,6 +91,7 @@ async function processClaimed(eventId) {
     await refreshBatch(tx, event.importBatchId);
     return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt };
   }, { maxWait: 10_000, timeout: 30_000 });
+  if (result?.agencyId) invalidateDashboardCache(result.agencyId);
   if (result?.ownerUserId) {
     await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
   }
