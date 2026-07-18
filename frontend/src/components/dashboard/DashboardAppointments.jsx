@@ -1,24 +1,11 @@
 import { CalendarDays, ChevronRight, MapPin, Video } from "lucide-react";
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getCalendarAppointments } from "../../api/bookingApi";
 
 function formatTime(value) {
   return new Date(value).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
 }
 
-export default function DashboardAppointments() {
-  const [items, setItems] = useState(null);
-
-  useEffect(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start.getTime() + 2 * 24 * 60 * 60 * 1000);
-    getCalendarAppointments({ from: start.toISOString(), to: end.toISOString() })
-      .then((data) => setItems(data.filter((item) => item.status === "Scheduled" && new Date(item.endsAt) > new Date()).slice(0, 5)))
-      .catch(() => setItems([]));
-  }, []);
-
+export default function DashboardAppointments({ items = null, loading = false }) {
   const todayKey = new Date().toDateString();
 
   return (
@@ -30,7 +17,7 @@ export default function DashboardAppointments() {
           </span>
           <div>
             <h2 className="text-sm font-semibold text-slate-900">Appointments</h2>
-            <p className="text-xs text-slate-400">Today and tomorrow</p>
+            <p className="text-xs text-slate-400">Your next scheduled meetings</p>
           </div>
         </div>
         <Link to="/app/calendar" className="flex items-center gap-1 text-xs font-semibold text-sky-700 transition hover:text-sky-800">
@@ -38,7 +25,7 @@ export default function DashboardAppointments() {
         </Link>
       </div>
 
-      {items === null ? (
+      {loading || items === null ? (
         <div className="mt-4 space-y-2">
           {[0, 1].map((key) => <div key={key} className="h-12 animate-pulse rounded-2xl bg-slate-100" />)}
         </div>
@@ -54,7 +41,7 @@ export default function DashboardAppointments() {
                 </div>
                 <span className={`h-8 w-[3px] shrink-0 rounded-full ${isToday ? "bg-sky-500" : "bg-slate-200"}`} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-800">{item.client?.fullName || item.guestName || item.subject}</p>
+                  <p className="truncate text-sm font-medium text-slate-800">{item.case?.client?.fullName || item.client?.fullName || item.guestName || item.subject}</p>
                   <p className="truncate text-xs text-slate-400">{item.sessionType?.name || item.subject}{item.assignedTo ? ` · ${item.assignedTo.fullName}` : ""}</p>
                 </div>
                 {item.meetingMode === "Online" ? (

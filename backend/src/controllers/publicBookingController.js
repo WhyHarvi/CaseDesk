@@ -14,7 +14,24 @@ function meetingLink() {
 async function resolveAgencyByToken(token) {
   const settings = await prisma.bookingSettings.findUnique({
     where: { publicToken: String(token || "") },
-    include: { agency: { select: { id: true, name: true } } },
+    include: {
+      agency: {
+        select: {
+          id: true,
+          name: true,
+          legalName: true,
+          logoUrl: true,
+          phone: true,
+          email: true,
+          website: true,
+          address: true,
+          city: true,
+          province: true,
+          postalCode: true,
+          country: true,
+        },
+      },
+    },
   });
   if (!settings || !settings.publicBookingEnabled) {
     throw createHttpError(404, "This booking page is not available.", "NOT_FOUND");
@@ -24,6 +41,7 @@ async function resolveAgencyByToken(token) {
 
 export async function getPublicBookingInfo(req, res) {
   const settings = await resolveAgencyByToken(req.params.token);
+  const agencyName = settings.agency.legalName || settings.agency.name;
   const sessionTypes = await prisma.bookingSessionType.findMany({
     where: { agencyId: settings.agencyId, isActive: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -31,10 +49,12 @@ export async function getPublicBookingInfo(req, res) {
   });
   res.json({
     data: {
-      agencyName: settings.agency.name,
+      agencyName,
+      agency: settings.agency,
       timezone: settings.timezone,
       horizonDays: settings.horizonDays,
       sessionTypes,
+      locations: Array.isArray(settings.locations) ? settings.locations : [],
     },
   });
 }
@@ -78,6 +98,12 @@ export async function createPublicBooking(req, res) {
   const phone = String(body.phone || "").trim().slice(0, 40);
   const notes = String(body.notes || "").trim().slice(0, 1000);
   const online = body.meetingMode === "Online";
+  const locations = Array.isArray(settings.locations) ? settings.locations : [];
+  let location = null;
+  if (!online && locations.length) {
+    location = locations.find((item) => item.id === String(body.locationId || "")) || (locations.length === 1 ? locations[0] : null);
+    if (!location) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+  }
   if (!name) throw createHttpError(400, "Your name is required.", "VALIDATION_ERROR");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR");
 
@@ -114,6 +140,8 @@ export async function createPublicBooking(req, res) {
         clientId: existingClient?.id || null,
         sessionTypeId: sessionType.id,
         subject: sessionType.name,
+        location: location ? `${location.name} — ${location.address}` : null,
+        locationMapsUrl: location?.mapsUrl || null,
         calendar: "Workspace Calendar",
         startsAt,
         endsAt,
@@ -147,8 +175,10 @@ export async function createPublicBooking(req, res) {
       endsAt: appointment.endsAt,
       meetingMode: appointment.meetingMode,
       meetingUrl: appointment.meetingUrl,
+      location: appointment.location,
+      locationMapsUrl: appointment.locationMapsUrl,
       timezone: settings.timezone,
-      agencyName: settings.agency.name,
+      agencyName: settings.agency.legalName || settings.agency.name,
     },
   });
 }
@@ -159,7 +189,7 @@ async function resolveManaged(token) {
     include: {
       client: { select: { fullName: true, email: true, phone: true } },
       sessionType: { select: { id: true, name: true, durationMinutes: true } },
-      agency: { select: { id: true, name: true } },
+      agency: { select: { id: true, name: true, legalName: true } },
     },
   });
   if (!appointment) throw createHttpError(404, "This appointment link is not valid.", "NOT_FOUND");
@@ -167,6 +197,8 @@ async function resolveManaged(token) {
 }
 
 function publicView(appointment, settings) {
+  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const locationId = locations.find((item) => `${item.name} — ${item.address}` === appointment.location)?.id || null;
   return {
     subject: appointment.subject,
     status: appointment.status,
@@ -175,8 +207,11 @@ function publicView(appointment, settings) {
     meetingMode: appointment.meetingMode,
     meetingUrl: appointment.status === "Scheduled" ? appointment.meetingUrl : null,
     location: appointment.location,
+    locationMapsUrl: appointment.locationMapsUrl,
+    locationId,
+    locations,
     sessionType: appointment.sessionType,
-    agencyName: appointment.agency.name,
+    agencyName: appointment.agency.legalName || appointment.agency.name,
     timezone: settings?.timezone || "America/Toronto",
     name: appointment.guestName || appointment.client?.fullName || null,
   };
@@ -238,6 +273,21 @@ export async function rescheduleManagedBooking(req, res) {
   const duration = appointment.sessionType?.durationMinutes
     || Math.round((new Date(appointment.endsAt) - new Date(appointment.startsAt)) / 60_000);
   const endsAt = new Date(startsAt.getTime() + duration * 60_000);
+  const meetingMode = req.body?.meetingMode === "Online"
+    ? "Online"
+    : req.body?.meetingMode === "InPerson"
+      ? "InPerson"
+      : appointment.meetingMode;
+  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  let selectedLocation = null;
+  if (meetingMode === "InPerson") {
+    selectedLocation = locations.find((item) => item.id === String(req.body?.locationId || ""))
+      || (locations.length === 1 ? locations[0] : null);
+    const retainingLegacyLocation = appointment.meetingMode === "InPerson" && !locations.length && appointment.location;
+    if (!selectedLocation && !retainingLegacyLocation) {
+      throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+    }
+  }
 
   const dayKey = localDateKey(startsAt, settings?.timezone || "America/Toronto");
   const { days } = await availabilityForRange({
@@ -262,8 +312,20 @@ export async function rescheduleManagedBooking(req, res) {
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
     return tx.appointment.update({
       where: { id: appointment.id },
-      data: { startsAt, endsAt, reminderSentAt: null },
-      include: { client: { select: { fullName: true, email: true, phone: true } }, sessionType: true, agency: { select: { name: true } } },
+      data: {
+        startsAt,
+        endsAt,
+        meetingMode,
+        meetingUrl: meetingMode === "Online" ? appointment.meetingUrl || meetingLink() : null,
+        location: meetingMode === "InPerson"
+          ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : appointment.location
+          : null,
+        locationMapsUrl: meetingMode === "InPerson"
+          ? selectedLocation?.mapsUrl || (selectedLocation ? null : appointment.locationMapsUrl)
+          : null,
+        reminderSentAt: null,
+      },
+      include: { client: { select: { fullName: true, email: true, phone: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } },
     });
   });
 

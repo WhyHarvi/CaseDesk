@@ -67,10 +67,11 @@ const KIND_COPY = {
  */
 export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null }) {
   const [agency, settings] = await Promise.all([
-    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true } }),
+    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
   ]);
   const timezone = settings?.timezone || "America/Toronto";
+  const agencyName = agency?.legalName || agency?.name || "CaseDesk";
   const contact = recipientContact(appointment);
   const copy = KIND_COPY[kind] || KIND_COPY.booked;
   const when = formatWhen(appointment, timezone);
@@ -80,10 +81,13 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
     try {
       const config = await resolveAgencyMailConfig(agencyId);
       const transport = createMailTransport(config);
+      const mapsHref = appointment.location
+        ? appointment.locationMapsUrl || `https://maps.google.com/?q=${encodeURIComponent(appointment.location.split(" — ").pop())}`
+        : null;
       const meetingLine = appointment.meetingUrl
         ? `<p><strong>Join online:</strong> <a href="${appointment.meetingUrl}">${appointment.meetingUrl}</a></p>`
         : appointment.location
-          ? `<p><strong>Location:</strong> ${appointment.location}</p>`
+          ? `<p><strong>Location:</strong> ${appointment.location} · <a href="${mapsHref}">Open in Maps</a></p>`
           : "";
       const manageLine = kind !== "cancelled" && manageUrl
         ? `<p style="margin-top:16px">Need to make a change? <a href="${manageUrl}">Reschedule or cancel</a>.</p>`
@@ -103,9 +107,9 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
               ${meetingLine}
             </div>
             ${manageLine}
-            <p style="color:#64748b;font-size:13px;margin-top:20px">${agency?.name || "CaseDesk"}</p>
+            <p style="color:#64748b;font-size:13px;margin-top:20px">${agencyName}</p>
           </div>`,
-        attachments: kind === "cancelled" ? [] : [{ filename: "appointment.ics", content: icsForAppointment(appointment, agency?.name), contentType: "text/calendar" }],
+        attachments: kind === "cancelled" ? [] : [{ filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: "text/calendar" }],
       });
     } catch (error) {
       logger.warn("booking.email_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
@@ -115,8 +119,8 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
   if (contact.phone) {
     try {
       const smsBody = kind === "cancelled"
-        ? `${agency?.name || "CaseDesk"}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
-        : `${agency?.name || "CaseDesk"}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${appointment.meetingUrl ? ` Join: ${appointment.meetingUrl}` : ""}${kind !== "reminder" && manageUrl ? ` Manage: ${manageUrl}` : ""}`;
+        ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
+        : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${appointment.meetingUrl ? ` Join: ${appointment.meetingUrl}` : appointment.location ? ` Location: ${appointment.location}${appointment.locationMapsUrl ? ` Maps: ${appointment.locationMapsUrl}` : ""}` : ""}${kind !== "reminder" && manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${appointment.startsAt}` });
     } catch (error) {
       logger.warn("booking.sms_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });

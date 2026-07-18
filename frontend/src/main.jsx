@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import AppRoutes from "./routes/AppRoutes";
 import "./index.css";
@@ -7,6 +8,7 @@ import faviconPng from "./assets/favicon_logo.png";
 import { AuthProvider } from "./auth/AuthContext";
 import { NotificationProvider } from "./components/notifications/NotificationProvider";
 import NotificationPanel from "./components/notifications/NotificationPanel";
+import { queryClient } from "./services/queryClient";
 
 function AppShell() {
   useEffect(() => {
@@ -34,12 +36,14 @@ function AppShell() {
 
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <NotificationProvider>
-          <AppRoutes />
-          <NotificationPanel />
-        </NotificationProvider>
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <NotificationProvider>
+            <AppRoutes />
+            <NotificationPanel />
+          </NotificationProvider>
+        </AuthProvider>
+      </QueryClientProvider>
     </BrowserRouter>
   );
 }

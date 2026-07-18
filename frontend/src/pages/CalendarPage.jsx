@@ -505,12 +505,12 @@ export default function CalendarPage() {
   const rangeStart = useMemo(() => startOfWeek(monthCursor), [monthCursor]);
   const rangeEnd = useMemo(() => new Date(rangeStart.getTime() + 42 * DAY_MS), [rangeStart]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ fresh = false } = {}) => {
     setLoading(true);
     setError("");
     try {
       const [calendar, settings] = await Promise.all([
-        getCalendarAppointments({ from: rangeStart.toISOString(), to: rangeEnd.toISOString() }),
+        getCalendarAppointments({ from: rangeStart.toISOString(), to: rangeEnd.toISOString(), fresh }),
         getBookingSettings(),
       ]);
       setAppointments(calendar);
@@ -635,7 +635,7 @@ export default function CalendarPage() {
                 <option value="day">Day view</option>
                 <option value="week">Week view</option>
               </Select>
-              <button type="button" onClick={load} aria-label="Refresh calendar" className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50">
+              <button type="button" onClick={() => load({ fresh: true })} aria-label="Refresh calendar" className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50">
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </button>
             </div>

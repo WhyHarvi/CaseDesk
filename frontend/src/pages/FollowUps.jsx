@@ -845,12 +845,10 @@ export default function FollowUps() {
         setLoading(true);
       }
 
-      const [followUpsResponse, clientsResponse, casesResponse, usersResponse] = await Promise.all([
-        api.get("/follow-ups"),
-        api.get("/clients"),
-        api.get("/cases"),
-        api.get("/leads/staff"),
-      ]);
+      const requests = quiet
+        ? [api.getFresh("/follow-ups"), api.getFresh("/clients"), api.getFresh("/cases"), api.getFresh("/leads/staff")]
+        : [api.get("/follow-ups"), api.get("/clients"), api.get("/cases"), api.get("/leads/staff")];
+      const [followUpsResponse, clientsResponse, casesResponse, usersResponse] = await Promise.all(requests);
 
       setFollowUps(followUpsResponse.data.data || []);
       setClients(clientsResponse.data.data || []);

@@ -142,20 +142,20 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
         />
         <div className="flex-1 space-y-3">
           {appointments.length ? appointments.map((item) => (
-            <Link key={item.id} to={`/app/cases/${item.case.id}`} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-sky-200 hover:bg-sky-50/60">
+            <Link key={item.id} to="/app/calendar" className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-sky-200 hover:bg-sky-50/60">
               <div className="w-16 shrink-0 pt-0.5 text-xs font-semibold text-slate-950">
                 {formatDate(item.startsAt, timezone, { month: "short", day: "numeric" })}
                 <span className="mt-0.5 block font-normal text-slate-500">{formatDate(item.startsAt, timezone, { hour: "numeric", minute: "2-digit" })}</span>
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-slate-800">{item.case.client.fullName}</p>
+                <p className="truncate text-sm font-semibold text-slate-800">{item.case?.client?.fullName || item.guestName || "Appointment"}</p>
                 <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.subject}</p>
               </div>
             </Link>
           )) : <EmptyState loading={loading}>No upcoming appointments.</EmptyState>}
         </div>
         <div className="mt-4 border-t border-slate-100 pt-4">
-          <Link to="/app/cases" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">Open cases <ArrowRight className="h-3.5 w-3.5" /></Link>
+          <Link to="/app/calendar" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">Open calendar <ArrowRight className="h-3.5 w-3.5" /></Link>
         </div>
       </article>
 

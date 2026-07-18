@@ -18,6 +18,7 @@ import {
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/logo.png";
 import { useAuth } from "../../auth/AuthContext";
+import { prefetchRoute } from "../../services/routePrefetch";
 
 const adminNavigation = [
   {
@@ -117,7 +118,7 @@ const frontdeskNavigation = [
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];
 
-function NavItem({ item, collapsed, onNavigate }) {
+function NavItem({ item, collapsed, onNavigate, role }) {
   const Icon = item.icon;
 
   if (item.disabled) {
@@ -152,6 +153,8 @@ function NavItem({ item, collapsed, onNavigate }) {
     <NavLink
       to={item.to}
       onClick={onNavigate}
+      onMouseEnter={() => prefetchRoute(item.to, role)}
+      onFocus={() => prefetchRoute(item.to, role)}
       className={({ isActive }) =>
         [
           "group flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-all duration-200",
@@ -218,7 +221,7 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
       </div>
       <nav className="mt-5 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {navigation.map((item) => (
-          <NavItem key={item.label} item={item} collapsed={collapsed} onNavigate={mobile ? onCloseMobile : undefined} />
+          <NavItem key={item.label} item={item} collapsed={collapsed} onNavigate={mobile ? onCloseMobile : undefined} role={role} />
         ))}
       </nav>
       <div

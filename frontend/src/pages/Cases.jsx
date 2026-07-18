@@ -1252,13 +1252,22 @@ export default function Cases() {
         setLoading(true);
       }
 
-      const results = await Promise.allSettled([
-        api.get("/cases", { params: { view } }),
-        api.get("/clients"),
-        api.get("/leads/staff"),
-        api.get("/client-documents"),
-        api.get("/payments"),
-      ]);
+      const requests = quiet
+        ? [
+            api.getFresh("/cases", { params: { view } }),
+            api.getFresh("/clients"),
+            api.getFresh("/leads/staff"),
+            api.getFresh("/client-documents"),
+            api.getFresh("/payments"),
+          ]
+        : [
+            api.get("/cases", { params: { view } }),
+            api.get("/clients"),
+            api.get("/leads/staff"),
+            api.get("/client-documents"),
+            api.get("/payments"),
+          ];
+      const results = await Promise.allSettled(requests);
 
       const [
         casesResult,

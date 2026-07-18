@@ -27,10 +27,11 @@ export default function LeadIntakePage() {
   const [importSource, setImportSource] = useState(""), [importOwner, setImportOwner] = useState("");
   const fileRef = useRef(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     try {
       setLoading(true);
-      const [formResult, importResult, eventResult, sourceResult, staffResult, websiteResult, operationsResult] = await Promise.all([api.get("/leads/intake/forms"), ["admin", "consultant"].includes(role) ? api.get("/leads/imports?limit=50") : Promise.resolve({ data: { data: [] } }), role === "admin" ? api.get("/leads/intake/events?limit=100") : Promise.resolve({ data: { data: [] } }), api.get("/leads/sources"), api.get("/leads/staff"), role === "admin" ? api.get("/leads/intake/connections") : Promise.resolve({ data: { data: { connections: [] } } }), role === "admin" ? api.get("/leads/intake/operations") : Promise.resolve({ data: { data: null } })]);
+      const get = fresh ? api.getFresh : api.get;
+      const [formResult, importResult, eventResult, sourceResult, staffResult, websiteResult, operationsResult] = await Promise.all([get("/leads/intake/forms"), ["admin", "consultant"].includes(role) ? get("/leads/imports?limit=50") : Promise.resolve({ data: { data: [] } }), role === "admin" ? get("/leads/intake/events?limit=100") : Promise.resolve({ data: { data: [] } }), get("/leads/sources"), get("/leads/staff"), role === "admin" ? get("/leads/intake/connections") : Promise.resolve({ data: { data: { connections: [] } } }), role === "admin" ? get("/leads/intake/operations") : Promise.resolve({ data: { data: null } })]);
       setForms(formResult.data.data); setImports(importResult.data.data); setEvents(eventResult.data.data); setSources(sourceResult.data.data); setStaff(staffResult.data.data);
       setWebsiteConnections(websiteResult.data.data.connections || []);
       setSecureStorageReady(websiteResult.data.data.secureStorageReady ?? true);
@@ -123,7 +124,7 @@ export default function LeadIntakePage() {
 
   const activeCount = useMemo(() => forms.filter((item) => item.isActive).length, [forms]);
   return <section className="space-y-5 pb-8">
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">Universal intake</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">Lead intake</h1><p className="mt-1.5 text-sm text-slate-500">Bring every lead stream into one clean, reviewable pipeline.</p></div><button onClick={load} disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button></header>
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">Universal intake</p><h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">Lead intake</h1><p className="mt-1.5 text-sm text-slate-500">Bring every lead stream into one clean, reviewable pipeline.</p></div><button onClick={() => load(true)} disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button></header>
     {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">{error}</div> : null}
     <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-100/70 p-1.5">{tabs.filter((item) => item.roles.includes(role)).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={`inline-flex h-10 min-w-max flex-1 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition ${tab === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}><Icon className="h-4 w-4" />{label}</button>)}</div>
 

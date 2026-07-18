@@ -1,4 +1,4 @@
-import { Check, Copy, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, Copy, Loader2, MapPin, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   createSessionType,
@@ -56,6 +56,7 @@ export default function SchedulingSettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [newDayOff, setNewDayOff] = useState("");
+  const [newLocation, setNewLocation] = useState({ name: "", address: "", mapsUrl: "" });
   const [newType, setNewType] = useState({ name: "", durationMinutes: 30 });
   const [addingType, setAddingType] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -96,6 +97,7 @@ export default function SchedulingSettingsPanel() {
         timezone: settings.timezone,
         workingHours: settings.workingHours?.length ? settings.workingHours : hoursByDay,
         daysOff: settings.daysOff || [],
+        locations: settings.locations || [],
         bufferMinutes: settings.bufferMinutes,
         minNoticeMinutes: settings.minNoticeMinutes,
         horizonDays: settings.horizonDays,
@@ -240,6 +242,48 @@ export default function SchedulingSettingsPanel() {
       </section>
 
       <section className={card}>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">Office locations</h3>
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Required for public booking</span>
+        </div>
+        <p className="mt-0.5 text-xs text-slate-500">Where clients meet you in person. The address is sent with every in-person confirmation; the Google Maps link is optional.</p>
+        <div className="mt-3 space-y-2">
+          {(settings.locations || []).map((location) => (
+            <div key={location.id} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-3.5 py-3">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600"><MapPin className="h-4 w-4" /></span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">{location.name}</p>
+                  <p className="truncate text-xs text-slate-500">{location.address}</p>
+                  {location.mapsUrl ? <a href={location.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-sky-600 hover:text-sky-800">Map link ↗</a> : null}
+                </div>
+              </div>
+              <button type="button" aria-label={`Remove ${location.name}`} onClick={() => setSettings((c) => ({ ...c, locations: (c.locations || []).filter((item) => item.id !== location.id) }))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+          {!(settings.locations || []).length ? <p className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/50 px-3.5 py-3 text-xs text-amber-800">No locations yet — add your office below to activate the public booking link.</p> : null}
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.4fr]">
+          <input value={newLocation.name} onChange={(event) => setNewLocation((c) => ({ ...c, name: event.target.value }))} placeholder="Office name (e.g. Main Office)" className={inputClass} />
+          <input value={newLocation.address} onChange={(event) => setNewLocation((c) => ({ ...c, address: event.target.value }))} placeholder="Full street address" className={inputClass} />
+          <input value={newLocation.mapsUrl} onChange={(event) => setNewLocation((c) => ({ ...c, mapsUrl: event.target.value }))} placeholder="Google Maps link (optional)" className={`${inputClass} sm:col-span-2`} />
+        </div>
+        <button
+          type="button"
+          disabled={!newLocation.name.trim() || !newLocation.address.trim()}
+          onClick={() => {
+            setSettings((c) => ({ ...c, locations: [...(c.locations || []), { id: `loc-${Date.now()}`, name: newLocation.name.trim(), address: newLocation.address.trim(), mapsUrl: newLocation.mapsUrl.trim() || null }] }));
+            setNewLocation({ name: "", address: "", mapsUrl: "" });
+          }}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> Add location
+        </button>
+      </section>
+
+      <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">Session types</h3>
         <p className="mt-0.5 text-xs text-slate-500">What people book — each with its own length.</p>
         <div className="mt-3 divide-y divide-slate-100">
@@ -274,7 +318,7 @@ export default function SchedulingSettingsPanel() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Public booking link</h3>
-            <p className="mt-0.5 text-xs text-slate-500">The public booking page ships in the next phase — settings here take effect the moment it goes live.</p>
+            <p className="mt-0.5 text-xs text-slate-500">Share this link so clients can book directly with your immigration firm.</p>
           </div>
           <Toggle checked={settings.publicBookingEnabled} onChange={(value) => setSettings((c) => ({ ...c, publicBookingEnabled: value }))} label="Public booking enabled" />
         </div>

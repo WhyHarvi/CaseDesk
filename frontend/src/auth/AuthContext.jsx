@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import { requireSupabase, supabase } from "../services/supabase";
+import { clearApiCache, setApiCacheScope } from "../services/queryClient";
 
 const AuthContext = createContext(null);
 
@@ -9,12 +10,14 @@ export function AuthProvider({ children }) {
 
   const loadIdentity = useCallback(async (session) => {
     if (!session) {
+      setApiCacheScope(null, null);
       setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
       return null;
     }
     try {
       const { data } = await api.get("/auth/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
       const next = { session, authUser: session.user, appUser: data.user, membership: data.membership, agency: data.agency, loading: false, accountError: null };
+      setApiCacheScope(session.user.id, data.agency?.id);
       setState(next);
       return next;
     } catch (error) {
@@ -46,7 +49,10 @@ export function AuthProvider({ children }) {
       if (["TOKEN_REFRESHED", "SIGNED_IN", "PASSWORD_RECOVERY"].includes(event) && active) {
         setState((current) => ({ ...current, session, authUser: session?.user || null, loading: false }));
       }
-      if (event === "SIGNED_OUT" && active) setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
+      if (event === "SIGNED_OUT" && active) {
+        clearApiCache();
+        setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
+      }
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
   }, [loadIdentity]);
@@ -61,6 +67,7 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(async () => {
     await api.post("/auth/logout").catch(() => {});
+    clearApiCache();
     await supabase?.auth.signOut();
   }, []);
 

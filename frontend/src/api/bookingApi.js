@@ -37,9 +37,9 @@ export async function getAvailability({ from, to, durationMinutes, assignedToId 
   return response.data.data;
 }
 
-export async function getCalendarAppointments({ from, to }) {
+export async function getCalendarAppointments({ from, to, fresh = false }) {
   const params = new URLSearchParams({ from, to });
-  const response = await api.get(`/booking/calendar?${params.toString()}`);
+  const response = await (fresh ? api.getFresh : api.get)(`/booking/calendar?${params.toString()}`);
   return response.data.data;
 }
 
@@ -90,7 +90,7 @@ export async function cancelManagedBooking(manageToken) {
   return response.data.data;
 }
 
-export async function rescheduleManagedBooking(manageToken, startsAt) {
-  const response = await api.post(`/public/booking/manage/${manageToken}/reschedule`, { startsAt });
+export async function rescheduleManagedBooking(manageToken, values) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/reschedule`, values);
   return response.data.data;
 }

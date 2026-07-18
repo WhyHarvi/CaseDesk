@@ -37,6 +37,27 @@ function validDaysOff(value) {
   return [...new Set(days)].sort();
 }
 
+function validLocations(value) {
+  if (!Array.isArray(value) || value.length > 20) throw createHttpError(400, "Locations are invalid.", "VALIDATION_ERROR");
+  return value.map((item, index) => {
+    const name = String(item?.name || "").trim().slice(0, 120);
+    const address = String(item?.address || "").trim().slice(0, 300);
+    let mapsUrl = String(item?.mapsUrl || "").trim().slice(0, 500);
+    if (!name || !address) throw createHttpError(400, "Every location needs a name and address.", "VALIDATION_ERROR");
+    if (mapsUrl) {
+      try {
+        const parsed = new URL(mapsUrl);
+        const googleHost = parsed.hostname === "goo.gl" || parsed.hostname.endsWith(".google.com") || parsed.hostname === "google.com";
+        if (parsed.protocol !== "https:" || !googleHost) throw new Error("invalid map URL");
+        mapsUrl = parsed.href;
+      } catch {
+        throw createHttpError(400, "Use a valid HTTPS Google Maps link.", "VALIDATION_ERROR");
+      }
+    }
+    return { id: String(item?.id || `loc-${index + 1}-${Date.now()}`), name, address, mapsUrl: mapsUrl || null };
+  });
+}
+
 function boundedInt(value, field, minimum, maximum) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
@@ -69,9 +90,15 @@ export async function updateBookingSettings(req, res) {
     ...(body.minNoticeMinutes !== undefined ? { minNoticeMinutes: boundedInt(body.minNoticeMinutes, "Minimum notice", 0, 20160) } : {}),
     ...(body.horizonDays !== undefined ? { horizonDays: boundedInt(body.horizonDays, "Booking horizon", 1, 365) } : {}),
     ...(body.reminderMinutes !== undefined ? { reminderMinutes: boundedInt(body.reminderMinutes, "Reminder lead time", 5, 10080) } : {}),
+    ...(body.locations !== undefined ? { locations: validLocations(body.locations) } : {}),
     ...(typeof body.publicBookingEnabled === "boolean" ? { publicBookingEnabled: body.publicBookingEnabled } : {}),
   };
-  await getOrCreateBookingSettings(req.auth.agencyId);
+  const current = await getOrCreateBookingSettings(req.auth.agencyId);
+  const finalLocations = data.locations !== undefined ? data.locations : (Array.isArray(current.locations) ? current.locations : []);
+  const enablingPublic = data.publicBookingEnabled === true || (data.publicBookingEnabled === undefined && current.publicBookingEnabled);
+  if (enablingPublic && finalLocations.length === 0) {
+    throw createHttpError(400, "Add at least one office location before the public booking link can be active.", "LOCATION_REQUIRED");
+  }
   const settings = await prisma.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data });
   res.json({ data: settings });
 }

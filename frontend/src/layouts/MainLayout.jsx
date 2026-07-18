@@ -1,10 +1,18 @@
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import Header from "../components/layout/Header";
 import Sidebar from "../components/layout/Sidebar";
 
 export default function MainLayout({ children, hideTopBar = false, lockContentScroll = false, flushContent = false }) {
+  const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const isSettings = location.pathname === "/app/settings";
+  const isWriter = /\/documents\/(new|[^/]+\/edit)$/.test(location.pathname);
+  const useFocusedWorkspace = isSettings || isWriter;
+  const effectiveHideTopBar = hideTopBar || useFocusedWorkspace;
+  const effectiveLockContentScroll = lockContentScroll || useFocusedWorkspace;
+  const effectiveFlushContent = flushContent || useFocusedWorkspace;
 
   return (
     <div className="h-screen overflow-hidden bg-transparent text-slate-900">
@@ -16,7 +24,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {!hideTopBar ? (
+          {!effectiveHideTopBar ? (
             <>
               <div className="border-b border-white/60 bg-white/60 px-6 py-4 lg:hidden">
                 <p className="text-xl font-semibold text-slate-900">CaseDesk</p>
@@ -30,13 +38,13 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
             </>
           ) : null}
           <main
-            className={`min-h-0 min-w-0 flex-1 ${flushContent ? "" : "px-6 py-8"} ${
-              lockContentScroll ? "overflow-hidden" : "overflow-y-auto"
+            className={`min-h-0 min-w-0 flex-1 ${effectiveFlushContent ? "" : "px-6 py-8"} ${
+              effectiveLockContentScroll ? "overflow-hidden" : "overflow-y-auto"
             }`}
           >
             <div
-              className={`${flushContent ? "h-full" : "w-full"} min-w-0 ${
-                lockContentScroll ? "flex h-full min-h-0 flex-col" : ""
+              className={`${effectiveFlushContent ? "h-full" : "w-full"} min-w-0 ${
+                effectiveLockContentScroll ? "flex h-full min-h-0 flex-col" : ""
               }`}
             >
               {children}

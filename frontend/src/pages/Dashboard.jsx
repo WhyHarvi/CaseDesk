@@ -43,7 +43,7 @@ export default function Dashboard() {
 
       <DashboardStats dashboard={dashboard} loading={loading} />
 
-      <DashboardAppointments />
+      <DashboardAppointments items={dashboard?.upcomingAppointments} loading={loading} />
 
       <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
 

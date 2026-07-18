@@ -20,13 +20,19 @@ export default function ManageBookingPage() {
   const [loadError, setLoadError] = useState("");
   const [mode, setMode] = useState("view");
   const [slot, setSlot] = useState(null);
+  const [meetingMode, setMeetingMode] = useState("InPerson");
+  const [locationId, setLocationId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
     getManagedBooking(manageToken)
-      .then(setBooking)
+      .then((data) => {
+        setBooking(data);
+        setMeetingMode(data.meetingMode || "InPerson");
+        setLocationId(data.locationId || (data.locations?.length === 1 ? data.locations[0].id : ""));
+      })
       .catch((reason) => setLoadError(reason.response?.data?.message || "This appointment link is not valid."));
   }, [manageToken]);
 
@@ -55,8 +61,14 @@ export default function ManageBookingPage() {
     setBusy(true);
     setError("");
     try {
-      const updated = await rescheduleManagedBooking(manageToken, slot.startsAt);
+      const updated = await rescheduleManagedBooking(manageToken, {
+        startsAt: slot.startsAt,
+        meetingMode,
+        locationId: meetingMode === "InPerson" ? locationId || booking.locations?.[0]?.id : undefined,
+      });
       setBooking(updated);
+      setMeetingMode(updated.meetingMode || "InPerson");
+      setLocationId(updated.locationId || (updated.locations?.length === 1 ? updated.locations[0].id : ""));
       setMode("view");
       setSlot(null);
       setNotice("Your appointment has been moved. A new confirmation is on its way.");
@@ -90,6 +102,8 @@ export default function ManageBookingPage() {
 
   const cancelled = booking.status !== "Scheduled";
   const past = new Date(booking.startsAt) <= new Date();
+  const locations = booking.locations || [];
+  const needsLocation = meetingMode === "InPerson" && locations.length > 1;
 
   return (
     <PublicShell agencyName={booking.agencyName}>
@@ -100,13 +114,61 @@ export default function ManageBookingPage() {
               <button type="button" onClick={() => { setMode("view"); setSlot(null); setError(""); }} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-800">
                 <ArrowLeft className="h-4 w-4" /> Back
               </button>
-              <p className="text-sm text-slate-500">Pick a new time</p>
+              <p className="text-sm text-slate-500">Update appointment</p>
             </div>
             {error ? <p className="mb-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+
+            <div className="mb-5">
+              <p className="text-sm font-semibold text-slate-900">How would you like to meet?</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {[
+                  { id: "InPerson", label: "In person", icon: MapPin, disabled: !locations.length && booking.meetingMode !== "InPerson" },
+                  { id: "Online", label: "Video call", icon: Video, disabled: false },
+                ].map(({ id, label, icon: Icon, disabled }) => (
+                  <motion.button
+                    key={id}
+                    type="button"
+                    disabled={disabled}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => {
+                      setMeetingMode(id);
+                      if (id === "InPerson" && locations.length === 1) setLocationId(locations[0].id);
+                    }}
+                    className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-3 text-sm font-semibold transition ${meetingMode === id ? "border-sky-600 bg-sky-600 text-white shadow-[0_8px_20px_rgba(2,132,199,0.28)]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"} disabled:opacity-40`}
+                  >
+                    <Icon className="h-4 w-4" /> {label}
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+
+            {needsLocation ? (
+              <div className="mb-5">
+                <p className="text-sm font-semibold text-slate-900">Choose an office</p>
+                <div className="mt-2 space-y-2">
+                  {locations.map((location) => (
+                    <motion.button
+                      key={location.id}
+                      type="button"
+                      whileTap={{ scale: 0.985 }}
+                      onClick={() => setLocationId(location.id)}
+                      className={`flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition ${locationId === location.id ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                    >
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                      <span><span className="block text-sm font-semibold text-slate-900">{location.name}</span><span className="mt-0.5 block text-xs leading-5 text-slate-500">{location.address}</span></span>
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+            ) : meetingMode === "InPerson" && locations.length === 1 ? (
+              <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /><span><span className="font-semibold">{locations[0].name}</span><span className="block text-xs text-slate-500">{locations[0].address}</span></span></p>
+            ) : null}
+
+            <p className="mb-3 text-sm font-semibold text-slate-900">Pick a new date and time</p>
             <BookingMonthPicker fetchAvailability={fetchAvailability} onPickSlot={setSlot} />
             <button
               type="button"
-              disabled={!slot || busy}
+              disabled={!slot || busy || (meetingMode === "InPerson" && locations.length > 1 && !locationId)}
               onClick={confirmReschedule}
               className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
             >
@@ -155,7 +217,7 @@ export default function ManageBookingPage() {
               {booking.meetingMode === "Online" ? (
                 <p className="flex items-center gap-2.5"><Video className="h-4 w-4 shrink-0 text-slate-400" />Online video call</p>
               ) : (
-                <p className="flex items-center gap-2.5"><MapPin className="h-4 w-4 shrink-0 text-slate-400" />{booking.location || "In person"}</p>
+                <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{booking.location || "In person"}{booking.locationMapsUrl ? <a href={booking.locationMapsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block text-xs font-semibold text-sky-600 hover:text-sky-700">Open in Maps ↗</a> : null}</span></p>
               )}
             </div>
 
@@ -167,7 +229,7 @@ export default function ManageBookingPage() {
 
             {!cancelled && !past ? (
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => { setMode("reschedule"); setNotice(""); }} className="h-12 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+                <button type="button" onClick={() => { setMode("reschedule"); setNotice(""); setMeetingMode(booking.meetingMode || "InPerson"); setLocationId(booking.locationId || (booking.locations?.length === 1 ? booking.locations[0].id : "")); }} className="h-12 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
                   Reschedule
                 </button>
                 <button type="button" onClick={() => { setMode("cancel"); setNotice(""); }} className="h-12 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100">

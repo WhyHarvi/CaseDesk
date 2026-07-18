@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AdminRoute, HomeRedirect, InternalRoute, PortalRoute } from "../auth/AuthRoutes";
 import MainLayout from "../layouts/MainLayout";
 import CaseProfile from "../pages/CaseProfile";
@@ -37,7 +37,9 @@ import PublicLeadIntakePage from "../modules/leads/pages/PublicLeadIntakePage";
 
 const DocumentComposer = lazy(() => import("../pages/DocumentComposer"));
 function WriterPage() { return <Suspense fallback={<div className="flex h-screen items-center justify-center text-sm text-slate-500">Opening CaseDesk Writer…</div>}><DocumentComposer /></Suspense>; }
-function Internal({ children, allowFrontdesk = false, ...layout }) { return <InternalRoute allowFrontdesk={allowFrontdesk}><MainLayout {...layout}>{children}</MainLayout></InternalRoute>; }
+function AppLayout() { return <InternalRoute allowFrontdesk><MainLayout><Outlet /></MainLayout></InternalRoute>; }
+function StaffOnly({ children }) { return <InternalRoute>{children}</InternalRoute>; }
+function Internal({ children, allowFrontdesk = false }) { return <InternalRoute allowFrontdesk={allowFrontdesk}>{children}</InternalRoute>; }
 function Legacy({ path }) { return <InternalRoute><Navigate to={`/app${path}`} replace /></InternalRoute>; }
 
 export default function AppRoutes() {
@@ -63,30 +65,32 @@ export default function AppRoutes() {
       <Route path="profile" element={<ClientPortalProfile />} />
       <Route path="help" element={<ClientPortalHelp />} />
     </Route>
-    <Route path="/app/dashboard" element={<Internal><Dashboard /></Internal>} />
-    <Route path="/leads" element={<Internal allowFrontdesk><LeadsPage /></Internal>} />
-    <Route path="/lead-dashboard" element={<AdminRoute><MainLayout><LeadDashboardPage /></MainLayout></AdminRoute>} />
-    <Route path="/lead-reports" element={<AdminRoute><MainLayout><LeadReportsPage /></MainLayout></AdminRoute>} />
-    <Route path="/lead-intake" element={<Internal allowFrontdesk><LeadIntakePage /></Internal>} />
-    <Route path="/app/leads" element={<Navigate to="/leads" replace />} />
-    <Route path="/app/clients" element={<Internal><Clients /></Internal>} />
-    <Route path="/app/clients/:id" element={<Internal><ClientProfile /></Internal>} />
-    <Route path="/app/cases" element={<Internal><Cases /></Internal>} />
-    <Route path="/app/cases/:id" element={<Internal><CaseProfile /></Internal>} />
-    <Route path="/app/cases/:id/documents/new" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
-    <Route path="/app/cases/:id/documents/:writtenDocumentId/edit" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
-    <Route path="/app/follow-ups" element={<Internal><FollowUps /></Internal>} />
-    <Route path="/app/calendar" element={<Internal allowFrontdesk><CalendarPage /></Internal>} />
-    <Route path="/app/documents" element={<Internal><Documents /></Internal>} />
-    <Route path="/app/payments" element={<AdminRoute><MainLayout><Payments /></MainLayout></AdminRoute>} />
-    <Route path="/app/team-members" element={<AdminRoute><MainLayout><TeamMembers /></MainLayout></AdminRoute>} />
-    <Route path="/app/consultants" element={<Navigate to="/app/team-members" replace />} />
-    <Route path="/app/workload" element={<Internal><Workload /></Internal>} />
-    <Route path="/app/settings" element={<Internal allowFrontdesk hideTopBar lockContentScroll flushContent><Settings /></Internal>} />
-    <Route path="/clients/:id" element={<Internal><ClientProfile /></Internal>} />
-    <Route path="/cases/:id" element={<Internal><CaseProfile /></Internal>} />
-    <Route path="/cases/:id/documents/new" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
-    <Route path="/cases/:id/documents/:writtenDocumentId/edit" element={<Internal hideTopBar lockContentScroll flushContent><WriterPage /></Internal>} />
+    <Route element={<AppLayout />}>
+      <Route path="/app/dashboard" element={<StaffOnly><Dashboard /></StaffOnly>} />
+      <Route path="/leads" element={<LeadsPage />} />
+      <Route path="/lead-dashboard" element={<AdminRoute><LeadDashboardPage /></AdminRoute>} />
+      <Route path="/lead-reports" element={<AdminRoute><LeadReportsPage /></AdminRoute>} />
+      <Route path="/lead-intake" element={<LeadIntakePage />} />
+      <Route path="/app/leads" element={<Navigate to="/leads" replace />} />
+      <Route path="/app/clients" element={<StaffOnly><Clients /></StaffOnly>} />
+      <Route path="/app/clients/:id" element={<StaffOnly><ClientProfile /></StaffOnly>} />
+      <Route path="/app/cases" element={<StaffOnly><Cases /></StaffOnly>} />
+      <Route path="/app/cases/:id" element={<StaffOnly><CaseProfile /></StaffOnly>} />
+      <Route path="/app/cases/:id/documents/new" element={<StaffOnly><WriterPage /></StaffOnly>} />
+      <Route path="/app/cases/:id/documents/:writtenDocumentId/edit" element={<StaffOnly><WriterPage /></StaffOnly>} />
+      <Route path="/app/follow-ups" element={<StaffOnly><FollowUps /></StaffOnly>} />
+      <Route path="/app/calendar" element={<CalendarPage />} />
+      <Route path="/app/documents" element={<StaffOnly><Documents /></StaffOnly>} />
+      <Route path="/app/payments" element={<AdminRoute><Payments /></AdminRoute>} />
+      <Route path="/app/team-members" element={<AdminRoute><TeamMembers /></AdminRoute>} />
+      <Route path="/app/consultants" element={<Navigate to="/app/team-members" replace />} />
+      <Route path="/app/workload" element={<StaffOnly><Workload /></StaffOnly>} />
+      <Route path="/app/settings" element={<Internal allowFrontdesk><Settings /></Internal>} />
+      <Route path="/clients/:id" element={<StaffOnly><ClientProfile /></StaffOnly>} />
+      <Route path="/cases/:id" element={<StaffOnly><CaseProfile /></StaffOnly>} />
+      <Route path="/cases/:id/documents/new" element={<StaffOnly><WriterPage /></StaffOnly>} />
+      <Route path="/cases/:id/documents/:writtenDocumentId/edit" element={<StaffOnly><WriterPage /></StaffOnly>} />
+    </Route>
     {['/dashboard','/clients','/cases','/follow-ups','/documents','/payments','/settings'].map((path) => <Route key={path} path={`${path}/*`} element={<Legacy path={path} />} />)}
     <Route path="*" element={<HomeRedirect />} />
   </Routes>;

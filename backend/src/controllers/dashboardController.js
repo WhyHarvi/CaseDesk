@@ -173,8 +173,11 @@ export async function getDashboardSummary(req, res) {
         startsAt: true,
         endsAt: true,
         status: true,
+        meetingMode: true,
+        guestName: true,
         case: { select: caseSummarySelect },
         assignedTo: { select: { id: true, fullName: true } },
+        sessionType: { select: { name: true } },
       },
     }),
     prisma.caseWorkflowStep.findMany({
