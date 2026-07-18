@@ -13,9 +13,16 @@ export const DEFAULT_WORKING_HOURS = [
 export async function getOrCreateBookingSettings(agencyId) {
   const existing = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   if (existing) return existing;
-  return prisma.bookingSettings.create({
-    data: { agencyId, workingHours: DEFAULT_WORKING_HOURS },
-  });
+  const [settings] = await Promise.all([
+    prisma.bookingSettings.create({ data: { agencyId, workingHours: DEFAULT_WORKING_HOURS } }),
+    // Never leave a fresh workspace with nothing bookable
+    prisma.bookingSessionType.count({ where: { agencyId } }).then((count) =>
+      count === 0
+        ? prisma.bookingSessionType.create({ data: { agencyId, name: "Initial Consultation", durationMinutes: 30 } })
+        : null,
+    ),
+  ]);
+  return settings;
 }
 
 function minutesOf(value) {
