@@ -72,9 +72,13 @@ function buildWorkItems(dashboard) {
     tone: "warning",
     badge: "Needs update",
   }));
+  const current = [...today, ...documents, ...waiting];
+  const visibleOverdue = overdue.slice(0, 4);
+  const visibleCurrent = current.slice(0, Math.max(0, 4 - visibleOverdue.length));
   return {
-    overdue: overdue.slice(0, 4),
-    current: [...today, ...documents, ...waiting].slice(0, 5),
+    overdue: visibleOverdue,
+    current: visibleCurrent,
+    visibleCount: visibleOverdue.length + visibleCurrent.length,
   };
 }
 
@@ -128,6 +132,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
     + (dashboard?.stats?.overdueTasks || 0)
     + (dashboard?.stats?.pendingDocuments || 0)
     + (dashboard?.stats?.casesWaitingUpdate || 0);
+  const hiddenWorkCount = Math.max(0, workCount - workItems.visibleCount);
 
   return (
     <section aria-label="Dashboard work overview" className="mb-6 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
@@ -176,7 +181,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
           {!workItems.overdue.length && !workItems.current.length ? <EmptyState loading={loading}>You have no open work items.</EmptyState> : null}
         </div>
         <div className="mt-4 border-t border-slate-100 pt-4">
-          <Link to="/app/workload" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">{isAdmin ? "View team workload" : "View all my work"} <ArrowRight className="h-3.5 w-3.5" /></Link>
+          <Link to="/app/workload" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">{hiddenWorkCount > 0 ? `View ${hiddenWorkCount} more` : isAdmin ? "View team workload" : "View all my work"} <ArrowRight className="h-3.5 w-3.5" /></Link>
         </div>
       </article>
 

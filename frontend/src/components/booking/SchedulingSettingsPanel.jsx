@@ -1,11 +1,16 @@
-import { Check, Copy, Loader2, MapPin, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, Copy, Eye, Loader2, MapPin, Plus, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   createSessionType,
+  createSchedulingBlock,
   deleteSessionType,
+  deleteSchedulingBlock,
   getBookingSettings,
-  getSchedulingAnalytics,
+  getSchedulingBlocks,
   regenerateBookingToken,
+  previewBookingEmail,
+  sendBookingTestEmail,
   updateBookingSettings,
   updateSessionType,
   updateSchedulingStaff,
@@ -50,11 +55,86 @@ function Toggle({ checked, onChange, label }) {
   );
 }
 
+function SchedulingHeader() {
+  return (
+    <header className="flex items-start gap-3 pb-1">
+      <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 ring-1 ring-sky-100">
+        <CalendarClock className="h-5 w-5" />
+      </div>
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">Appointments</p>
+        <h1 className="mt-1 text-[28px] font-semibold leading-8 tracking-[-0.03em] text-slate-950">Scheduling</h1>
+        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-slate-500">
+          Manage your team’s availability, appointment types, booking rules, locations, and client communications.
+        </p>
+      </div>
+    </header>
+  );
+}
+
+function EmailPreviewModal({ preview, kind, onClose }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  if (!preview || typeof document === "undefined") return null;
+
+  const kindLabels = {
+    booked: "Booking confirmation",
+    reminder: "Appointment reminder",
+    rescheduled: "Rescheduled appointment",
+    cancelled: "Cancellation notice",
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="email-preview-title">
+      <button type="button" aria-label="Close email preview" onClick={onClose} className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
+      <div className="relative flex h-full w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-[min(860px,calc(100vh-3rem))] sm:max-w-4xl sm:rounded-[1.75rem] sm:ring-1 sm:ring-white/30">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-4 py-3.5 sm:px-6 sm:py-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-600">{kindLabels[kind] || "Email preview"}</p>
+            <h2 id="email-preview-title" className="mt-1 truncate text-base font-semibold text-slate-950 sm:text-lg">{preview.subject}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close email preview" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 bg-slate-100 p-0 sm:p-4">
+          <iframe title={`${kindLabels[kind] || "Booking"} email preview`} sandbox="" srcDoc={preview.html} className="h-full w-full bg-white sm:rounded-2xl sm:ring-1 sm:ring-slate-200" />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function PersonalHoursEditor({ member, preference, workspaceHours, onSave }) {
+  const custom = Array.isArray(preference.workingHours);
+  const [hours, setHours] = useState(() => custom ? preference.workingHours : workspaceHours);
+  const [saving, setSaving] = useState(false);
+  const rows = DAY_ORDER.map((day) => hours.find((item) => Number(item.day) === day) || { day, enabled: false, start: "09:00", end: "17:00" });
+
+  function patchDay(day, patch) {
+    setHours(rows.map((item) => item.day === day ? { ...item, ...patch } : item));
+  }
+
+  async function saveHours(next) {
+    setSaving(true);
+    await onSave(member, { workingHours: next });
+    setSaving(false);
+  }
+
+  return <div className="mt-3 border-t border-slate-200/70 pt-3"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Personal weekly hours</p><p className="text-[11px] text-slate-400">Override workspace hours for this consultant.</p></div><button type="button" onClick={() => { if (custom) saveHours(null); else { setHours(workspaceHours); saveHours(workspaceHours); } }} className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${custom ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-600"}`}>{custom ? "Custom hours" : "Use workspace hours"}</button></div>{custom ? <><div className="mt-3 space-y-2">{rows.map((rule) => <div key={rule.day} className="flex flex-wrap items-center gap-2"><Toggle checked={rule.enabled} onChange={(enabled) => patchDay(rule.day, { enabled })} label={`${member.fullName} ${DAY_LABELS[rule.day]} availability`} /><span className="w-20 text-xs font-medium text-slate-600">{DAY_LABELS[rule.day].slice(0, 3)}</span>{rule.enabled ? <><input type="time" value={rule.start} onChange={(event) => patchDay(rule.day, { start: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /><span className="text-[11px] text-slate-400">to</span><input type="time" value={rule.end} onChange={(event) => patchDay(rule.day, { end: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /></> : <span className="text-xs text-slate-400">Unavailable</span>}</div>)}</div><button type="button" disabled={saving} onClick={() => saveHours(rows)} className="mt-3 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save personal hours"}</button></> : null}</div>;
+}
+
 export default function SchedulingSettingsPanel() {
   const [settings, setSettings] = useState(null);
   const [sessionTypes, setSessionTypes] = useState([]);
   const [staff, setStaff] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -64,6 +144,12 @@ export default function SchedulingSettingsPanel() {
   const [newType, setNewType] = useState({ name: "", durationMinutes: 30 });
   const [addingType, setAddingType] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [blocks, setBlocks] = useState([]);
+  const [newBlock, setNewBlock] = useState({ userId: "", title: "Unavailable", startsAt: "", endsAt: "", recurrence: "NONE", recurrenceUntil: "" });
+  const [emailPreview, setEmailPreview] = useState(null);
+  const [emailPreviewKind, setEmailPreviewKind] = useState("booked");
+  const [emailPreviewBusy, setEmailPreviewBusy] = useState(false);
+  const [emailTestNotice, setEmailTestNotice] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -80,7 +166,7 @@ export default function SchedulingSettingsPanel() {
   }, []);
 
   useEffect(() => {
-    getSchedulingAnalytics().then(setAnalytics).catch(() => {});
+    getSchedulingBlocks().then(setBlocks).catch(() => {});
   }, []);
 
   const hoursByDay = useMemo(() => {
@@ -111,6 +197,10 @@ export default function SchedulingSettingsPanel() {
         minNoticeMinutes: settings.minNoticeMinutes,
         horizonDays: settings.horizonDays,
         reminderMinutes: settings.reminderMinutes,
+        reminderSchedule: settings.reminderSchedule?.length ? settings.reminderSchedule : [settings.reminderMinutes],
+        waitlistEnabled: settings.waitlistEnabled,
+        attendanceConfirmationEnabled: settings.attendanceConfirmationEnabled,
+        messageTemplates: settings.messageTemplates || {},
         publicBookingEnabled: settings.publicBookingEnabled,
         freeConsultationsEnabled: settings.freeConsultationsEnabled,
         freeConsultationsPerContact: settings.freeConsultationsPerContact,
@@ -168,6 +258,14 @@ export default function SchedulingSettingsPanel() {
     if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
   }
 
+  async function changeType(type, patch) {
+    const updated = await updateSessionType(type.id, patch).catch((reason) => {
+      setError(reason.response?.data?.message || "Session details could not be saved.");
+      return null;
+    });
+    if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
+  }
+
   async function removeType(type) {
     const result = await deleteSessionType(type.id).catch(() => null);
     if (!result) return;
@@ -193,29 +291,50 @@ export default function SchedulingSettingsPanel() {
     if (updated) setStaff((current) => current.map((item) => item.id === member.id ? { ...item, schedulingPreference: updated } : item));
   }
 
+  async function addBlock() {
+    if (!newBlock.userId || !newBlock.startsAt || !newBlock.endsAt) return;
+    try {
+      const created = await createSchedulingBlock({ ...newBlock, recurrenceUntil: newBlock.recurrence === "NONE" ? null : newBlock.recurrenceUntil });
+      setBlocks((current) => [...current, created].sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt)));
+      setNewBlock((current) => ({ ...current, title: "Unavailable", startsAt: "", endsAt: "", recurrence: "NONE", recurrenceUntil: "" }));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Availability block could not be added.");
+    }
+  }
+
+  async function removeBlock(id) {
+    const removed = await deleteSchedulingBlock(id).catch(() => null);
+    if (removed) setBlocks((current) => current.filter((item) => item.id !== id));
+  }
+
+  async function loadEmailPreview(kind = emailPreviewKind) {
+    setEmailPreviewBusy(true); setEmailTestNotice(""); setEmailPreviewKind(kind);
+    try { setEmailPreview(await previewBookingEmail(kind, settings.messageTemplates || {})); }
+    catch (reason) { setError(reason.response?.data?.message || "Email preview could not be generated."); }
+    finally { setEmailPreviewBusy(false); }
+  }
+
+  async function sendTestEmail() {
+    setEmailPreviewBusy(true); setEmailTestNotice("");
+    try { const result = await sendBookingTestEmail(emailPreviewKind, settings.messageTemplates || {}); setEmailTestNotice(`Test sent to ${result.recipient}`); }
+    catch (reason) { setError(reason.response?.data?.message || "Test email could not be sent."); }
+    finally { setEmailPreviewBusy(false); }
+  }
+
+
   if (loading) {
-    return <div className={`${card} flex items-center gap-2 text-sm text-slate-500`}><Loader2 className="h-4 w-4 animate-spin" /> Loading scheduling settings…</div>;
+    return <div className="space-y-5"><SchedulingHeader /><div className={`${card} flex items-center gap-2 text-sm text-slate-500`}><Loader2 className="h-4 w-4 animate-spin" /> Loading scheduling settings…</div></div>;
   }
   if (!settings) {
-    return <div className={`${card} text-sm text-rose-700`}>{error || "Scheduling settings could not be loaded."}</div>;
+    return <div className="space-y-5"><SchedulingHeader /><div className={`${card} text-sm text-rose-700`}>{error || "Scheduling settings could not be loaded."}</div></div>;
   }
 
   const bookingUrl = `${window.location.origin}/b/${settings.publicSlug || settings.publicToken}`;
 
   return (
     <div className="space-y-5">
+      <SchedulingHeader />
       {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
-
-      {analytics ? (
-        <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {[['Booked', analytics.booked], ['Attended', analytics.attended], ['Cancelled', analytics.cancelled], ['No-show', analytics.noShow]].map(([label, value]) => (
-            <div key={label} className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-md">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
-              <p className="mt-1 text-xl font-semibold text-slate-950">{value}</p>
-            </div>
-          ))}
-        </section>
-      ) : null}
 
       <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">Weekly hours</h3>
@@ -254,10 +373,34 @@ export default function SchedulingSettingsPanel() {
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.acceptsAppointments} onChange={(value) => changeStaff(member, { acceptsAppointments: value, publicBookable: value ? preference.publicBookable : false })} label={`${member.fullName} accepts appointments`} /> Accepts</label>
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.publicBookable} onChange={(value) => changeStaff(member, { publicBookable: value, acceptsAppointments: value ? true : preference.acceptsAppointments })} label={`${member.fullName} public bookable`} /> Public</label>
                 <input type="number" min="1" max="50" value={preference.maxDailyAppointments ?? ""} onChange={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })} placeholder="Daily max" className={`${inputClass} w-24`} />
+                <details className="w-full rounded-xl bg-slate-50 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">Personal availability overrides</summary>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <label className="text-[11px] font-medium text-slate-500">Timezone<input value={preference.timezone || ""} onBlur={(event) => changeStaff(member, { timezone: event.target.value || null })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, timezone: event.target.value } } : item))} placeholder={settings.timezone} className={`${inputClass} mt-1 w-full`} /></label>
+                    <label className="text-[11px] font-medium text-slate-500">Personal buffer<input type="number" min="0" max="240" value={preference.bufferMinutes ?? ""} onBlur={(event) => changeStaff(member, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, bufferMinutes: event.target.value } } : item))} placeholder={`${settings.bufferMinutes} min (workspace)`} className={`${inputClass} mt-1 w-full`} /></label>
+                    <label className="text-[11px] font-medium text-slate-500">Days off (YYYY-MM-DD)<input defaultValue={(preference.daysOff || []).join(", ")} onBlur={(event) => changeStaff(member, { daysOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="2026-08-01, 2026-08-02" className={`${inputClass} mt-1 w-full`} /></label>
+                  </div>
+                  <PersonalHoursEditor member={member} preference={preference} workspaceHours={hoursByDay} onSave={changeStaff} />
+                </details>
               </div>
             );
           })}
         </div>
+      </section>
+
+      <section className={card}>
+        <div className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-violet-600" /><h3 className="text-sm font-semibold text-slate-900">Availability blocks</h3></div>
+        <p className="mt-0.5 text-xs text-slate-500">Block meetings, lunch, leave, or recurring unavailable time. These periods are removed from public and internal slots.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <Select value={newBlock.userId} onChange={(event) => setNewBlock((current) => ({ ...current, userId: event.target.value }))}><option value="">Choose team member</option>{staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</Select>
+          <input value={newBlock.title} onChange={(event) => setNewBlock((current) => ({ ...current, title: event.target.value }))} placeholder="Unavailable" className={inputClass} />
+          <Select value={newBlock.recurrence} onChange={(event) => setNewBlock((current) => ({ ...current, recurrence: event.target.value }))}><option value="NONE">Does not repeat</option><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option></Select>
+          <label className="text-[11px] font-medium text-slate-500">Starts<input type="datetime-local" value={newBlock.startsAt} onChange={(event) => setNewBlock((current) => ({ ...current, startsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
+          <label className="text-[11px] font-medium text-slate-500">Ends<input type="datetime-local" value={newBlock.endsAt} onChange={(event) => setNewBlock((current) => ({ ...current, endsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
+          {newBlock.recurrence !== "NONE" ? <label className="text-[11px] font-medium text-slate-500">Repeat until<input type="date" value={newBlock.recurrenceUntil} onChange={(event) => setNewBlock((current) => ({ ...current, recurrenceUntil: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label> : <div />}
+        </div>
+        <button type="button" disabled={!newBlock.userId || !newBlock.startsAt || !newBlock.endsAt || (newBlock.recurrence !== "NONE" && !newBlock.recurrenceUntil)} onClick={addBlock} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add block</button>
+        {blocks.length ? <div className="mt-4 divide-y divide-slate-100 rounded-2xl border border-slate-100 px-3">{blocks.map((block) => <div key={block.id} className="flex items-center justify-between gap-3 py-2.5"><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800">{block.title} · {block.user?.fullName}</p><p className="truncate text-[11px] text-slate-400">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(block.startsAt))} → {new Intl.DateTimeFormat("en-CA", { timeStyle: "short" }).format(new Date(block.endsAt))}{block.recurrence && block.recurrence !== "NONE" ? ` · ${block.recurrence.toLowerCase()}` : ""}</p></div><button type="button" onClick={() => removeBlock(block.id)} aria-label={`Remove ${block.title}`} className="rounded-full p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div> : null}
       </section>
 
       <section className={card}>
@@ -312,6 +455,10 @@ export default function SchedulingSettingsPanel() {
               {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </Select>
           </label>
+          <div className="sm:col-span-2">
+            <p className="text-xs font-medium text-slate-600">Reminder sequence</p>
+            <div className="mt-1.5 flex flex-wrap gap-2">{REMINDER_OPTIONS.map((option) => { const selected = (settings.reminderSchedule || [settings.reminderMinutes]).includes(option.value); return <button key={option.value} type="button" onClick={() => setSettings((current) => { const values = current.reminderSchedule || [current.reminderMinutes]; const next = selected ? values.filter((item) => item !== option.value) : [...values, option.value]; return next.length ? { ...current, reminderSchedule: next } : current; })} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${selected ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-500"}`}>{option.label}</button>; })}</div>
+          </div>
           <label className="block text-xs font-medium text-slate-600 sm:col-span-2">Timezone
             <input value={settings.timezone} onChange={(event) => setSettings((c) => ({ ...c, timezone: event.target.value }))} className={`mt-1.5 w-full ${inputClass}`} list="booking-timezones" />
             <datalist id="booking-timezones">
@@ -330,7 +477,19 @@ export default function SchedulingSettingsPanel() {
           <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Free consultations</p><p className="text-xs text-slate-400">Limit repeat bookings by email or client.</p></div>
           <label className="text-xs font-medium text-slate-600">Per contact <input type="number" min="1" max="20" disabled={!settings.freeConsultationsEnabled} value={settings.freeConsultationsPerContact} onChange={(event) => setSettings((c) => ({ ...c, freeConsultationsPerContact: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
         </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.attendanceConfirmationEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, attendanceConfirmationEnabled: value }))} label="Attendance confirmation enabled" /><span><span className="block text-sm font-medium text-slate-800">Attendance confirmation</span><span className="block text-xs text-slate-400">Let clients confirm before arrival.</span></span></label>
+        </div>
+        <details className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+          <summary className="cursor-pointer text-sm font-medium text-slate-800">Email wording</summary>
+          <p className="mt-1 text-xs text-slate-400">Customize the headline and opening sentence while keeping the polished appointment details and actions.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2"><Select value={emailPreviewKind} onChange={(event) => setEmailPreviewKind(event.target.value)}><option value="booked">Booking confirmation</option><option value="reminder">Reminder</option><option value="rescheduled">Rescheduled</option><option value="cancelled">Cancellation</option></Select><button type="button" disabled={emailPreviewBusy} onClick={() => loadEmailPreview()} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Preview</button><button type="button" disabled={emailPreviewBusy} onClick={sendTestEmail} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send test</button>{emailTestNotice ? <span className="text-xs font-semibold text-emerald-600">{emailTestNotice}</span> : null}</div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">{[["booked", "Booking confirmation"], ["reminder", "Reminder"], ["rescheduled", "Rescheduled"], ["cancelled", "Cancellation"]].map(([kind, label]) => <div key={kind} className="rounded-xl bg-white p-3"><p className="text-xs font-semibold text-slate-700">{label}</p><input value={settings.messageTemplates?.[kind]?.subject || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), subject: event.target.value } } }))} placeholder="Use default headline" className={`${inputClass} mt-2 w-full`} /><textarea value={settings.messageTemplates?.[kind]?.intro || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), intro: event.target.value } } }))} rows="2" placeholder="Use default opening message" className={`${inputClass} mt-2 w-full`} /></div>)}</div>
+        </details>
       </section>
+
+      <EmailPreviewModal preview={emailPreview} kind={emailPreviewKind} onClose={() => setEmailPreview(null)} />
 
       <section className={card}>
         <div className="flex items-center gap-2">
@@ -400,6 +559,15 @@ export default function SchedulingSettingsPanel() {
                     {settings.locations.map((location) => <button key={location.id} type="button" onClick={() => setTypeLocation(type, location.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.allowedLocationIds || []).includes(location.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{location.name}</button>)}
                   </div>
                 </details> : null}
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Preparation & timing</summary>
+                  <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Session buffer<input type="number" min="0" max="240" defaultValue={type.bufferMinutes ?? ""} onBlur={(event) => changeType(type, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} placeholder="Use workspace buffer" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Checklist (one per line)<textarea defaultValue={(type.preparationChecklist || []).join("\n")} onBlur={(event) => changeType(type, { preparationChecklist: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Preparation instructions<textarea defaultValue={type.preparationInstructions || ""} onBlur={(event) => changeType(type, { preparationInstructions: event.target.value })} rows="2" placeholder="Documents to bring, arrival guidance…" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Parking / arrival notes<textarea defaultValue={type.parkingInstructions || ""} onBlur={(event) => changeType(type, { parkingInstructions: event.target.value })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                  </div>
+                </details>
               </div>
               <div className="flex items-center gap-2">
                 <Toggle checked={type.isActive} onChange={() => toggleType(type)} label={`${type.name} active`} />

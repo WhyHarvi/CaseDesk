@@ -17,8 +17,8 @@ import {
   Video,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
-import { createPublicBooking, getPublicAvailability, getPublicBookingInfo } from "../api/bookingApi";
+import { useParams, useSearchParams } from "react-router-dom";
+import { createPublicBooking, getPublicAvailability, getPublicBookingInfo, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const spring = { type: "spring", stiffness: 380, damping: 32 };
@@ -257,6 +257,8 @@ const stepMotion = {
 
 export default function PublicBookingPage() {
   const { token } = useParams();
+  const [searchParams] = useSearchParams();
+  const offerToken = searchParams.get("offer") || "";
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [step, setStep] = useState("service");
@@ -269,18 +271,48 @@ export default function PublicBookingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(null);
+  const [waitlistDates, setWaitlistDates] = useState(() => ({ from: dateKey(new Date()), to: dateKey(new Date(Date.now() + 30 * DAY_MS)) }));
+  const [verification, setVerification] = useState({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null });
   const bookingKey = useRef(crypto.randomUUID());
 
   useEffect(() => {
-    getPublicBookingInfo(token)
+    getPublicBookingInfo(token, offerToken)
       .then((data) => {
         setInfo(data);
+        if (data.offerExpired) setError("That reserved waitlist time has expired, but you can choose another available appointment.");
+        if (data.offer) {
+          setSessionTypeId(data.offer.sessionTypeId);
+          setMeetingMode(data.offer.meetingMode);
+          setLocationId(data.offer.locationId || "");
+          setConsultantId(data.offer.consultantId);
+          setForm((current) => ({ ...current, name: data.offer.name, email: data.offer.email, phone: data.offer.phone || "" }));
+          setSlot({ startsAt: data.offer.startsAt, endsAt: data.offer.endsAt });
+          setStep("details");
+          return;
+        }
         if (data.sessionTypes.length === 1) setSessionTypeId(data.sessionTypes[0].id);
         if (data.locations.length === 1) setLocationId(data.locations[0].id);
         if (data.consultants?.length === 1) setConsultantId(data.consultants[0].id);
       })
       .catch((reason) => setLoadError(reason.response?.data?.message || "This booking page is not available."));
-  }, [token]);
+  }, [token, offerToken]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`booking-draft:${token}`) || "null");
+      if (!saved || offerToken) return;
+      if (saved.sessionTypeId) setSessionTypeId(saved.sessionTypeId);
+      if (saved.meetingMode) setMeetingMode(saved.meetingMode);
+      if (saved.locationId) setLocationId(saved.locationId);
+      if (saved.consultantId) setConsultantId(saved.consultantId);
+      if (saved.form) setForm((current) => ({ ...current, ...saved.form, website: "" }));
+    } catch { /* Ignore an invalid browser draft. */ }
+  }, [token, offerToken]);
+
+  useEffect(() => {
+    if (step === "done") return;
+    sessionStorage.setItem(`booking-draft:${token}`, JSON.stringify({ sessionTypeId, meetingMode, locationId, consultantId, form: { name: form.name, email: form.email, phone: form.phone, notes: form.notes } }));
+  }, [token, step, sessionTypeId, meetingMode, locationId, consultantId, form]);
 
   const sessionType = info?.sessionTypes.find((type) => type.id === sessionTypeId) || null;
   const selectableLocations = sessionType?.allowedLocationIds?.length ? info.locations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : info?.locations || [];
@@ -299,8 +331,8 @@ export default function PublicBookingPage() {
   }, [consultantId, selectableConsultants]);
 
   const fetchAvailability = useCallback(
-    (range) => getPublicAvailability(token, { sessionTypeId, consultantId, ...range }),
-    [token, sessionTypeId, consultantId],
+    (range) => getPublicAvailability(token, { sessionTypeId, consultantId, offerToken: offerToken || undefined, ...range }),
+    [token, sessionTypeId, consultantId, offerToken],
   );
 
   function afterService() {
@@ -325,7 +357,10 @@ export default function PublicBookingPage() {
         phone: form.phone,
         notes: form.notes,
         website: form.website,
+        verificationToken: verification.token || undefined,
+        offerToken: offerToken || undefined,
       });
+      sessionStorage.removeItem(`booking-draft:${token}`);
       setDone(result);
       setStep("done");
     } catch (reason) {
@@ -335,6 +370,32 @@ export default function PublicBookingPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function requestVerification() {
+    setVerification((current) => ({ ...current, sending: true })); setError("");
+    try { const result = await requestPublicBookingVerification(token, form.email); setVerification({ id: result.verificationId, code: "", token: "", sending: false, recognized: false, consultant: null }); }
+    catch (reason) { setVerification((current) => ({ ...current, sending: false })); setError(reason.response?.data?.message || "Verification email could not be sent."); }
+  }
+
+  async function verifyEmail() {
+    setVerification((current) => ({ ...current, sending: true })); setError("");
+    try { const result = await verifyPublicBookingEmail(token, verification.id, verification.code); setVerification((current) => ({ ...current, ...result, token: result.verificationToken, sending: false })); if (result.consultant && selectableConsultants.some((item) => item.id === result.consultant.id)) setConsultantId(result.consultant.id); }
+    catch (reason) { setVerification((current) => ({ ...current, sending: false })); setError(reason.response?.data?.message || "Email could not be verified."); }
+  }
+
+  async function joinWaitlist() {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await joinPublicBookingWaitlist(token, { sessionTypeId, consultantId: consultantId || undefined, meetingMode, locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined, name: form.name, email: form.email, phone: form.phone, preferredFrom: `${waitlistDates.from}T00:00:00`, preferredTo: `${waitlistDates.to}T23:59:59` });
+      sessionStorage.removeItem(`booking-draft:${token}`);
+      setDone({ waitlist: true });
+      setStep("done");
+    } catch (reason) {
+      setError(reason.response?.data?.message || "You could not be added to the waitlist.");
+    } finally { setSaving(false); }
   }
 
   if (loadError) {
@@ -361,7 +422,7 @@ export default function PublicBookingPage() {
   const initials = info.agencyName.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const agency = info.agency || { name: info.agencyName };
   const agencyAddress = [agency.address, agency.city, agency.province, agency.postalCode, agency.country].filter(Boolean).join(", ");
-  const stepIndex = { service: 0, location: 1, time: 2, details: 3, done: 4 }[step];
+  const stepIndex = { service: 0, location: 1, time: 2, details: 3, waitlist: 3, done: 4 }[step];
 
   const summaryPanel = (
     <div className="flex flex-col">
@@ -475,12 +536,7 @@ export default function PublicBookingPage() {
                   </div>
 
                   {selectableConsultants.length > 1 ? (
-                    <label className="mt-5 block text-sm font-medium text-slate-700">Consultant preference <span className="font-normal text-slate-400">(optional)</span>
-                      <select value={consultantId} onChange={(event) => { setConsultantId(event.target.value); setSlot(null); }} className={`mt-2 ${inputClass}`}>
-                        <option value="">First available consultant</option>
-                        {selectableConsultants.map((consultant) => <option key={consultant.id} value={consultant.id}>{consultant.name}</option>)}
-                      </select>
-                    </label>
+                    <div className="mt-5"><p className="text-sm font-medium text-slate-700">Consultant preference <span className="font-normal text-slate-400">(optional)</span></p><div className="mt-2 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setConsultantId(""); setSlot(null); }} className={`rounded-2xl border px-3 py-3 text-left transition ${!consultantId ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200/80 bg-white/70"}`}><span className="block text-sm font-semibold text-slate-900">First available</span><span className="block text-xs text-slate-400">Fastest matching consultant</span></button>{selectableConsultants.map((consultant) => <button key={consultant.id} type="button" onClick={() => { setConsultantId(consultant.id); setSlot(null); }} className={`rounded-2xl border px-3 py-3 text-left transition ${consultantId === consultant.id ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200/80 bg-white/70"}`}><span className="block text-sm font-semibold text-slate-900">{consultant.name}</span><span className="block text-xs text-slate-400">{consultant.title}{consultant.specializations?.length ? ` · ${consultant.specializations.slice(0, 2).join(", ")}` : ""}</span></button>)}</div></div>
                   ) : null}
 
                   <div className="flex-1" />
@@ -554,6 +610,25 @@ export default function PublicBookingPage() {
                   >
                     {slot ? `Continue with ${formatTime(slot.startsAt, info.timezone)}` : "Pick a time to continue"}
                   </motion.button>
+                  {info.waitlistEnabled ? <button type="button" onClick={() => setStep("waitlist")} className="mt-3 text-sm font-semibold text-sky-700 transition hover:text-sky-900">Can’t find a suitable time? Join the waitlist</button> : null}
+                </motion.div>
+              ) : step === "waitlist" ? (
+                <motion.div key="waitlist" {...stepMotion} className="flex flex-1 flex-col">
+                  <button type="button" onClick={() => setStep("time")} className="mb-4 flex w-fit items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-800"><ArrowLeft className="h-4 w-4" /> Back</button>
+                  <h2 className="text-lg font-semibold text-slate-950">Join the appointment waitlist</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">Tell us who to contact and your preferred date range. The office can reach out when a matching time opens.</p>
+                  <div className="mt-5 grid grid-cols-2 gap-3">
+                    <label className="block text-xs font-medium text-slate-600">From<input type="date" value={waitlistDates.from} onChange={(event) => setWaitlistDates((current) => ({ ...current, from: event.target.value }))} className={`mt-1.5 ${inputClass}`} /></label>
+                    <label className="block text-xs font-medium text-slate-600">To<input type="date" value={waitlistDates.to} onChange={(event) => setWaitlistDates((current) => ({ ...current, to: event.target.value }))} className={`mt-1.5 ${inputClass}`} /></label>
+                  </div>
+                  <div className="mt-4 space-y-3.5">
+                    <label className="block text-xs font-medium text-slate-600">Full name<input required value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="name" /></label>
+                    <label className="block text-xs font-medium text-slate-600">Email<input required type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="email" /></label>
+                    <label className="block text-xs font-medium text-slate-600">Phone (optional)<input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="tel" /></label>
+                  </div>
+                  {error ? <p className="mt-3 rounded-2xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
+                  <div className="flex-1" />
+                  <button type="button" disabled={saving || !form.name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)} onClick={joinWaitlist} className="mt-6 flex min-h-[52px] w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white disabled:opacity-40">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Joining…" : "Join waitlist"}</button>
                 </motion.div>
               ) : step === "details" ? (
                 <motion.div key="details" {...stepMotion} className="flex flex-1 flex-col">
@@ -577,8 +652,9 @@ export default function PublicBookingPage() {
                       <input required value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="name" />
                     </label>
                     <label className="block text-xs font-medium text-slate-600">Email
-                      <input required type="email" value={form.email} onChange={(e) => setForm((c) => ({ ...c, email: e.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="email" />
+                      <input required type="email" value={form.email} onChange={(e) => { setForm((c) => ({ ...c, email: e.target.value })); setVerification({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null }); }} className={`mt-1.5 ${inputClass}`} autoComplete="email" />
                     </label>
+                    {/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email) ? <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-3">{verification.token ? <p className="flex items-center gap-2 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" /> Email verified{verification.recognized ? verification.consultant ? ` · Welcome back; ${verification.consultant.name} is preferred` : " · Welcome back" : ""}</p> : verification.id ? <div className="flex gap-2"><input inputMode="numeric" maxLength="6" value={verification.code} onChange={(event) => setVerification((current) => ({ ...current, code: event.target.value.replace(/\D/g, "").slice(0, 6) }))} placeholder="6-digit code" className={`${inputClass} !py-2`} /><button type="button" disabled={verification.sending || verification.code.length !== 6} onClick={verifyEmail} className="rounded-full bg-sky-600 px-4 text-xs font-semibold text-white disabled:opacity-40">Verify</button></div> : <button type="button" disabled={verification.sending} onClick={requestVerification} className="text-xs font-semibold text-sky-700">{verification.sending ? "Sending code…" : "Returning client? Verify email"}</button>}</div> : null}
                     <label className="block text-xs font-medium text-slate-600">Phone (optional)
                       <input value={form.phone} onChange={(e) => setForm((c) => ({ ...c, phone: e.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="tel" />
                     </label>
@@ -610,10 +686,9 @@ export default function PublicBookingPage() {
                       <CheckCircle2 className="h-11 w-11 text-emerald-600" strokeWidth={1.7} />
                     </span>
                   </motion.span>
-                  <h2 className="mt-5 text-xl font-semibold text-slate-950">Appointment confirmed</h2>
-                  <p className="mt-1.5 text-sm text-slate-500">
-                    {done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} at {formatTime(done?.startsAt, info.timezone)}
-                  </p>
+                  <h2 className="mt-5 text-xl font-semibold text-slate-950">{done?.waitlist ? "You’re on the waitlist" : "Appointment confirmed"}</h2>
+                  <p className="mt-1.5 text-sm text-slate-500">{done?.waitlist ? "The office can contact you when a matching appointment opens." : <>{done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} at {formatTime(done?.startsAt, info.timezone)}</>}</p>
+                  {!done?.waitlist && (done?.referenceCode || done?.assignedTo?.fullName) ? <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs">{done.referenceCode ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono font-semibold text-slate-600">{done.referenceCode}</span> : null}{done.assignedTo?.fullName ? <span className="rounded-full bg-sky-50 px-2.5 py-1 font-semibold text-sky-700">With {done.assignedTo.fullName}</span> : null}</div> : null}
 
                   {done?.location ? (
                     <div className={`${glass} mt-5 w-full max-w-[340px] !rounded-2xl px-4 py-3.5 text-left text-sm`}>
@@ -631,12 +706,12 @@ export default function PublicBookingPage() {
                     </a>
                   ) : null}
 
-                  <p className="mx-auto mt-5 max-w-[330px] text-sm leading-6 text-slate-500">
+                  {!done?.waitlist ? <p className="mx-auto mt-5 max-w-[330px] text-sm leading-6 text-slate-500">
                     A confirmation with all the details is on its way to your email{done?.location ? ", including the office address" : done?.meetingUrl ? ", including your join link" : ""}. Use the link in it to reschedule or cancel anytime.
-                  </p>
-                  <a href={`/book/manage/${done?.manageToken}`} className="mt-4 inline-block text-sm font-semibold text-sky-700 transition hover:text-sky-800">
+                  </p> : null}
+                  {!done?.waitlist ? <a href={`/book/manage/${done?.manageToken}`} className="mt-4 inline-block text-sm font-semibold text-sky-700 transition hover:text-sky-800">
                     Manage this booking →
-                  </a>
+                  </a> : null}
                 </motion.div>
               )}
             </AnimatePresence>

@@ -1,6 +1,6 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
-import { localDateKey, localDateTimeToUtc } from "./bookingAvailabilityService.js";
+import { assertSlotAvailable, localDateKey, localDateTimeToUtc } from "./bookingAvailabilityService.js";
 
 function preferenceAllows(user, publicOnly) {
   const preference = user.schedulingPreference;
@@ -34,8 +34,10 @@ export async function eligibleSchedulingStaff({
       id: true,
       fullName: true,
       role: true,
+      jobTitle: true,
+      consultantProfiles: { where: { agencyId }, select: { specializations: true, masteryLevel: true }, take: 1 },
       schedulingPreference: {
-        select: { acceptsAppointments: true, publicBookable: true, maxDailyAppointments: true },
+        select: { acceptsAppointments: true, publicBookable: true, maxDailyAppointments: true, bufferMinutes: true },
       },
     },
     orderBy: [{ fullName: "asc" }, { id: "asc" }],
@@ -54,6 +56,8 @@ export async function chooseAppointmentAssignee({
   publicOnly = false,
   excludeAppointmentId = null,
   bufferMinutes = 0,
+  sessionBufferMinutes = null,
+  excludeHoldToken = null,
   timezone = "America/Toronto",
   db = prisma,
 }) {
@@ -98,11 +102,19 @@ export async function chooseAppointmentAssignee({
   const blocked = new Set(conflicts.map((item) => item.assignedToId));
   const dayCount = new Map(dailyCounts.map((item) => [item.assignedToId, item._count._all]));
   const workload = new Map(futureCounts.map((item) => [item.assignedToId, item._count._all]));
-  const available = staff.filter((user) => {
+  const appointmentAvailable = staff.filter((user) => {
     if (blocked.has(user.id)) return false;
     const maximum = user.schedulingPreference?.maxDailyAppointments;
     return maximum == null || (dayCount.get(user.id) || 0) < maximum;
   });
+  const available = [];
+  for (const user of appointmentAvailable) {
+    const effectiveBuffer = sessionBufferMinutes ?? user.schedulingPreference?.bufferMinutes ?? bufferMinutes;
+    const conflict = typeof db.appointment?.findFirst === "function"
+      ? await assertSlotAvailable(db, { agencyId, assignedToId: user.id, startsAt, endsAt, bufferMinutes: effectiveBuffer, excludeAppointmentId, excludeHoldToken })
+      : null;
+    if (!conflict) available.push(user);
+  }
   if (!available.length) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
 
   const preferred = requestedUserId || preferredUserId;

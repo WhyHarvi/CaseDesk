@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   cancelManagedBooking,
+  completeManagedPreparation,
+  confirmManagedBooking,
   getManagedAvailability,
   getManagedBooking,
   rescheduleManagedBooking,
@@ -26,6 +28,7 @@ export default function ManageBookingPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [cancelReason, setCancelReason] = useState("");
+  const [seriesScope, setSeriesScope] = useState("single");
 
   useEffect(() => {
     getManagedBooking(manageToken)
@@ -46,7 +49,7 @@ export default function ManageBookingPage() {
     setBusy(true);
     setError("");
     try {
-      const updated = await cancelManagedBooking(manageToken, cancelReason);
+      const updated = await cancelManagedBooking(manageToken, cancelReason, seriesScope);
       setBooking(updated);
       setMode("view");
       setNotice("Your appointment has been cancelled.");
@@ -66,6 +69,7 @@ export default function ManageBookingPage() {
         startsAt: slot.startsAt,
         meetingMode,
         locationId: meetingMode === "InPerson" ? locationId || booking.locations?.[0]?.id : undefined,
+        scope: seriesScope,
       });
       setBooking(updated);
       setMeetingMode(updated.meetingMode || "InPerson");
@@ -78,6 +82,20 @@ export default function ManageBookingPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmAttendance() {
+    setBusy(true); setError("");
+    try { const updated = await confirmManagedBooking(manageToken); setBooking(updated); setNotice("Attendance confirmed. We’ll see you there."); }
+    catch (reason) { setError(reason.response?.data?.message || "Attendance could not be confirmed."); }
+    finally { setBusy(false); }
+  }
+
+  async function completePreparation() {
+    setBusy(true); setError("");
+    try { const updated = await completeManagedPreparation(manageToken); setBooking(updated); setNotice("Preparation marked complete."); }
+    catch (reason) { setError(reason.response?.data?.message || "Preparation could not be updated."); }
+    finally { setBusy(false); }
   }
 
   if (loadError) {
@@ -118,6 +136,7 @@ export default function ManageBookingPage() {
               <p className="text-sm text-slate-500">Update appointment</p>
             </div>
             {error ? <p className="mb-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+            {booking.isRecurring ? <div className="mb-4 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
 
             <div className="mb-5">
               <p className="text-sm font-semibold text-slate-900">How would you like to meet?</p>
@@ -183,6 +202,7 @@ export default function ManageBookingPage() {
             <h2 className="mt-3 text-lg font-semibold text-slate-950">Cancel this appointment?</h2>
             <p className="mt-1.5 text-sm text-slate-500">{booking.subject} · {formatWhen(booking.startsAt, booking.timezone)}</p>
             <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows={3} placeholder="Reason for cancelling (optional)" className="mt-4 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-base outline-none transition focus:border-rose-300 sm:text-sm" />
+            {booking.isRecurring ? <div className="mt-4 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
             {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
             <div className="mt-6 space-y-2">
               <button type="button" onClick={confirmCancel} disabled={busy} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-rose-600 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60">
@@ -212,6 +232,7 @@ export default function ManageBookingPage() {
                 </p>
               </div>
             </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">{booking.referenceCode ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono font-semibold">{booking.referenceCode}</span> : null}{booking.consultant?.name ? <span className="rounded-full bg-sky-50 px-2.5 py-1 font-semibold text-sky-700">With {booking.consultant.name}</span> : null}{booking.confirmationStatus === "Confirmed" ? <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">Attendance confirmed</span> : null}</div>
 
             <div className="mt-5 space-y-3 rounded-2xl bg-slate-50 px-4 py-4 text-sm text-slate-700">
               <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{formatWhen(booking.startsAt, booking.timezone)}</p>
@@ -222,6 +243,10 @@ export default function ManageBookingPage() {
                 <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{booking.location || "In person"}{booking.locationMapsUrl ? <a href={booking.locationMapsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block text-xs font-semibold text-sky-600 hover:text-sky-700">Open in Maps ↗</a> : null}</span></p>
               )}
             </div>
+
+            {!cancelled && !past && (booking.preparationInstructions || booking.preparationChecklist?.length || booking.parkingInstructions) ? <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/60 px-4 py-4 text-sm text-slate-700"><p className="font-semibold text-slate-900">Before your appointment</p>{booking.preparationInstructions ? <p className="mt-1.5 leading-6">{booking.preparationInstructions}</p> : null}{booking.preparationChecklist?.length ? <ul className="mt-2 space-y-1">{booking.preparationChecklist.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</li>)}</ul> : null}{booking.parkingInstructions && booking.meetingMode === "InPerson" ? <p className="mt-2 border-t border-amber-100 pt-2 text-xs text-slate-500">Arrival: {booking.parkingInstructions}</p> : null}{!booking.preparationCompletedAt ? <button type="button" disabled={busy} onClick={completePreparation} className="mt-3 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm disabled:opacity-50">I’m prepared</button> : <p className="mt-3 text-xs font-semibold text-emerald-700">Preparation complete ✓</p>}</div> : null}
+
+            {!cancelled && !past && booking.canConfirm ? <button type="button" disabled={busy} onClick={confirmAttendance} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-emerald-600 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Confirm I’ll attend</button> : null}
 
             {!cancelled && !past && booking.meetingUrl ? (
               <a href={booking.meetingUrl} target="_blank" rel="noopener noreferrer" className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-sky-600 text-sm font-semibold text-white transition hover:bg-sky-700">

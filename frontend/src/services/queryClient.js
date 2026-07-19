@@ -99,6 +99,11 @@ export function invalidateApiCache(url, scope) {
   // entries are removed so the next visit cannot render an obsolete snapshot.
   const activeRefetch = queryClient.invalidateQueries({ ...filters, refetchType: "active" });
   queryClient.removeQueries({ ...filters, type: "inactive" });
+  if (["booking", "appointments", "calendar"].includes(resourceFor(url))) {
+    const schedulingDashboard = { predicate: (query) => query.queryKey[0] === "dashboard" && ["appointment-registry", "appointment-detail", "scheduling-analytics", "booking-waitlist"].includes(query.queryKey[1]) };
+    queryClient.invalidateQueries({ ...schedulingDashboard, refetchType: "active" });
+    queryClient.removeQueries({ ...schedulingDashboard, type: "inactive" });
+  }
   return activeRefetch;
 }
 

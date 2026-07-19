@@ -8,6 +8,11 @@ import {
   getPublicAvailability,
   getPublicBookingInfo,
   rescheduleManagedBooking,
+  confirmManagedBooking,
+  completeManagedPreparation,
+  joinPublicWaitlist,
+  requestBookingVerification,
+  verifyBookingEmail,
 } from "../controllers/publicBookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -19,8 +24,13 @@ router.get("/manage/:manageToken", readLimit, asyncHandler(getManagedBooking));
 router.get("/manage/:manageToken/availability", readLimit, asyncHandler(getManagedAvailability));
 router.post("/manage/:manageToken/cancel", writeLimit, asyncHandler(cancelManagedBooking));
 router.post("/manage/:manageToken/reschedule", writeLimit, asyncHandler(rescheduleManagedBooking));
+router.post("/manage/:manageToken/confirm", writeLimit, asyncHandler(confirmManagedBooking));
+router.post("/manage/:manageToken/preparation-complete", writeLimit, asyncHandler(completeManagedPreparation));
 router.get("/:token", readLimit, asyncHandler(getPublicBookingInfo));
 router.get("/:token/availability", readLimit, asyncHandler(getPublicAvailability));
 router.post("/:token/appointments", writeLimit, asyncHandler(createPublicBooking));
+router.post("/:token/waitlist", writeLimit, asyncHandler(joinPublicWaitlist));
+router.post("/:token/verification/request", writeLimit, asyncHandler(requestBookingVerification));
+router.post("/:token/verification/verify", writeLimit, asyncHandler(verifyBookingEmail));
 
 export default router;

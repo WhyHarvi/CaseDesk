@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import DashboardBottomRow from "../components/dashboard/DashboardBottomRow";
 import DashboardWorkRow from "../components/dashboard/DashboardWorkRow";
 import DashboardStats from "../components/dashboard/DashboardStats";
+import DashboardSchedulingOverview from "../components/dashboard/DashboardSchedulingOverview";
 import PageContainer from "../components/layout/PageContainer";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
@@ -44,6 +45,8 @@ export default function Dashboard() {
       <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
 
       <DashboardBottomRow dashboard={dashboard} loading={loading} />
+
+      <DashboardSchedulingOverview role={role} />
     </PageContainer>
   );
 }

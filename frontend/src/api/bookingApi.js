@@ -41,6 +41,53 @@ export async function getSchedulingAnalytics(params = {}) {
   return response.data.data;
 }
 
+export async function getAppointmentRegistry(params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  const response = await api.get(`/booking/appointments/registry?${query.toString()}`);
+  return { data: response.data.data, meta: response.data.meta };
+}
+
+export async function getAppointmentRegistryDetail(id) {
+  const response = await api.get(`/booking/appointments/${id}/detail`);
+  return response.data.data;
+}
+
+export async function getSchedulingBlocks(params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
+  const response = await api.get(`/booking/blocks${query.size ? `?${query.toString()}` : ""}`);
+  return response.data.data;
+}
+
+export async function createSchedulingBlock(values) {
+  const response = await api.post("/booking/blocks", values);
+  return response.data.data;
+}
+
+export async function deleteSchedulingBlock(id) {
+  const response = await api.delete(`/booking/blocks/${id}`);
+  return response.data.data;
+}
+
+export async function getBookingWaitlist(status = "Waiting") {
+  const response = await api.get(`/booking/waitlist?status=${encodeURIComponent(status)}`);
+  return response.data.data;
+}
+
+export async function updateBookingWaitlistEntry(id, status) {
+  const response = await api.patch(`/booking/waitlist/${id}`, { status });
+  return response.data.data;
+}
+
+export async function previewBookingEmail(kind, messageTemplates) {
+  const response = await api.post("/booking/settings/email-preview", { kind, messageTemplates });
+  return response.data.data;
+}
+
+export async function sendBookingTestEmail(kind, messageTemplates) {
+  const response = await api.post("/booking/settings/test-email", { kind, messageTemplates });
+  return response.data.data;
+}
+
 export async function convertAppointmentToClient(id) {
   const response = await api.post(`/booking/appointments/${id}/convert-client`);
   return response.data.data;
@@ -51,9 +98,10 @@ export async function updateBookingAppointmentStatus(id, status, reason) {
   return response.data.data;
 }
 
-export async function getAvailability({ from, to, durationMinutes, assignedToId }) {
+export async function getAvailability({ from, to, durationMinutes, assignedToId, sessionTypeId }) {
   const params = new URLSearchParams({ from, to, durationMinutes: String(durationMinutes) });
   if (assignedToId) params.set("assignedToId", assignedToId);
+  if (sessionTypeId) params.set("sessionTypeId", sessionTypeId);
   const response = await api.get(`/booking/availability?${params.toString()}`);
   return response.data.data;
 }
@@ -69,8 +117,8 @@ export async function createBookingAppointment(values) {
   return response.data.data;
 }
 
-export async function cancelBookingAppointment(id) {
-  const response = await api.patch(`/booking/appointments/${id}/cancel`);
+export async function cancelBookingAppointment(id, options = {}) {
+  const response = await api.patch(`/booking/appointments/${id}/cancel`, options);
   return response.data.data;
 }
 
@@ -79,20 +127,36 @@ export async function rescheduleBookingAppointment(id, startsAt, options = {}) {
   return response.data.data;
 }
 
-export async function getPublicBookingInfo(token) {
-  const response = await api.get(`/public/booking/${token}`);
+export async function getPublicBookingInfo(token, offerToken) {
+  const response = await api.get(`/public/booking/${token}${offerToken ? `?offer=${encodeURIComponent(offerToken)}` : ""}`);
   return response.data.data;
 }
 
-export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to }) {
+export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken }) {
   const params = new URLSearchParams({ sessionTypeId, from, to });
   if (consultantId) params.set("consultantId", consultantId);
+  if (offerToken) params.set("offerToken", offerToken);
   const response = await api.get(`/public/booking/${token}/availability?${params.toString()}`);
   return response.data.data;
 }
 
 export async function createPublicBooking(token, values) {
   const response = await api.post(`/public/booking/${token}/appointments`, values);
+  return response.data.data;
+}
+
+export async function joinPublicBookingWaitlist(token, values) {
+  const response = await api.post(`/public/booking/${token}/waitlist`, values);
+  return response.data.data;
+}
+
+export async function requestPublicBookingVerification(token, email) {
+  const response = await api.post(`/public/booking/${token}/verification/request`, { email });
+  return response.data.data;
+}
+
+export async function verifyPublicBookingEmail(token, verificationId, code) {
+  const response = await api.post(`/public/booking/${token}/verification/verify`, { verificationId, code });
   return response.data.data;
 }
 
@@ -107,12 +171,22 @@ export async function getManagedAvailability(manageToken, { from, to }) {
   return response.data.data;
 }
 
-export async function cancelManagedBooking(manageToken, reason) {
-  const response = await api.post(`/public/booking/manage/${manageToken}/cancel`, { reason });
+export async function cancelManagedBooking(manageToken, reason, scope = "single") {
+  const response = await api.post(`/public/booking/manage/${manageToken}/cancel`, { reason, scope });
   return response.data.data;
 }
 
 export async function rescheduleManagedBooking(manageToken, values) {
   const response = await api.post(`/public/booking/manage/${manageToken}/reschedule`, values);
+  return response.data.data;
+}
+
+export async function confirmManagedBooking(manageToken) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/confirm`);
+  return response.data.data;
+}
+
+export async function completeManagedPreparation(manageToken) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/preparation-complete`);
   return response.data.data;
 }

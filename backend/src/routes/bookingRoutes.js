@@ -15,6 +15,15 @@ import {
   getSchedulingAnalytics,
   convertAppointmentToClient,
   updateBookingAppointmentStatus,
+  listAppointmentRegistry,
+  getAppointmentRegistryDetail,
+  listSchedulingBlocks,
+  createSchedulingBlock,
+  deleteSchedulingBlock,
+  listBookingWaitlist,
+  updateBookingWaitlistEntry,
+  previewBookingEmailTemplate,
+  testBookingEmailTemplate,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -27,6 +36,15 @@ router.post("/session-types", asyncHandler(createSessionType));
 router.patch("/session-types/:id", asyncHandler(updateSessionType));
 router.patch("/staff/:userId", asyncHandler(updateSchedulingStaff));
 router.get("/analytics", asyncHandler(getSchedulingAnalytics));
+router.get("/appointments/registry", asyncHandler(listAppointmentRegistry));
+router.get("/appointments/:id/detail", asyncHandler(getAppointmentRegistryDetail));
+router.get("/blocks", asyncHandler(listSchedulingBlocks));
+router.post("/blocks", asyncHandler(createSchedulingBlock));
+router.delete("/blocks/:id", asyncHandler(deleteSchedulingBlock));
+router.get("/waitlist", asyncHandler(listBookingWaitlist));
+router.patch("/waitlist/:id", asyncHandler(updateBookingWaitlistEntry));
+router.post("/settings/email-preview", asyncHandler(previewBookingEmailTemplate));
+router.post("/settings/test-email", asyncHandler(testBookingEmailTemplate));
 router.delete("/session-types/:id", asyncHandler(deleteSessionType));
 router.get("/availability", asyncHandler(getAvailability));
 router.get("/calendar", asyncHandler(listCalendarAppointments));

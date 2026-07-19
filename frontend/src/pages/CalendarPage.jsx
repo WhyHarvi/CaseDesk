@@ -170,6 +170,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const currentLocationId = locations.find((item) => `${item.name} — ${item.address}` === appointment.location)?.id || "";
   const [reschedLocationId, setReschedLocationId] = useState(currentLocationId || (locations.length === 1 ? locations[0].id : ""));
   const [converting, setConverting] = useState(false);
+  const [seriesScope, setSeriesScope] = useState("single");
   const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
 
   useEffect(() => {
@@ -193,7 +194,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     setReschedBusy(true);
     setReschedError("");
     try {
-      const updated = await rescheduleBookingAppointment(appointment.id, reschedSlot.startsAt, { meetingMode: reschedMode, locationId: reschedMode === "InPerson" ? reschedLocationId : undefined });
+      const updated = await rescheduleBookingAppointment(appointment.id, reschedSlot.startsAt, { meetingMode: reschedMode, locationId: reschedMode === "InPerson" ? reschedLocationId : undefined, scope: seriesScope });
       onRescheduled(updated);
       setResched(false);
     } catch (reason) {
@@ -274,6 +275,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       {resched ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5">
           <p className="text-xs font-semibold text-slate-700">Move to</p>
+          {appointment.seriesKey ? <div className="mt-2 flex rounded-xl bg-slate-100 p-1">{[["single", "This appointment"], ["series", "This & future"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
           <input
             type="date"
             value={reschedDate}
@@ -316,12 +318,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           </button>
           <button
             type="button"
-            onClick={onCancel}
+            onClick={() => onCancel(seriesScope)}
             disabled={cancelling}
             className="flex h-11 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
           >
             {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
           </button></> : null}
+          {start > new Date() && appointment.seriesKey ? <div className="col-span-2 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future appointments"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
           {start <= new Date() ? <>
             <button type="button" onClick={() => onStatus("Completed")} className="h-10 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">Mark attended</button>
             <button type="button" onClick={() => onStatus("NoShow")} className="h-10 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700 transition hover:bg-amber-100">Mark no-show</button>
@@ -334,7 +337,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 
 function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate }) {
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "" });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", recurrenceFrequency: "NONE", recurrenceCount: 2 });
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -359,6 +362,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         from: form.date,
         to: form.date,
         durationMinutes: selectedType.durationMinutes,
+        sessionTypeId: selectedType.id,
         assignedToId: role === "consultant" ? undefined : form.assignedToId || undefined,
       });
       setSlots(result.days[form.date] || []);
@@ -389,6 +393,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         location: form.location || undefined,
         meetingMode: form.meetingMode || "InPerson",
         source: form.mode === "guest" ? "WalkIn" : "Internal",
+        recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
       });
       onCreated(created);
       onClose();
@@ -443,7 +448,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               )}
 
               <div className="grid grid-cols-2 gap-2">
-                {[["InPerson", "In person", MapPin], ["Online", "Online video", Video]].map(([modeId, label, Icon]) => (
+                {[["InPerson", "In person", MapPin], ["Online", "Online video", Video]].filter(([modeId]) => (selectedType?.allowedMeetingModes || ["InPerson", "Online"]).includes(modeId)).map(([modeId, label, Icon]) => (
                   <button key={modeId} type="button" onClick={() => setForm((c) => ({ ...c, meetingMode: modeId }))} className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${(form.meetingMode || "InPerson") === modeId ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
                     <Icon className="h-3.5 w-3.5" /> {label}
                   </button>
@@ -494,6 +499,13 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               <label className="block text-xs font-medium text-slate-600">Location (optional)
                 <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office, phone, or video link" className={`mt-1.5 ${input}`} />
               </label>
+
+              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
+                <label className="block text-xs font-medium text-slate-600">Repeat
+                  <Select value={form.recurrenceFrequency} onChange={(event) => setForm((current) => ({ ...current, recurrenceFrequency: event.target.value }))} className="mt-1.5 w-full"><option value="NONE">Does not repeat</option><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option><option value="MONTHLY">Monthly</option></Select>
+                </label>
+                {form.recurrenceFrequency !== "NONE" ? <label className="block text-xs font-medium text-slate-600">Appointments<input type="number" min="2" max="52" value={form.recurrenceCount} onChange={(event) => setForm((current) => ({ ...current, recurrenceCount: event.target.value }))} className={`mt-1.5 ${input}`} /></label> : null}
+              </div>
 
               {error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
             </form>
@@ -593,12 +605,13 @@ export default function CalendarPage() {
     setSelectedDate((current) => new Date(current.getTime() + direction * (view === "day" ? 1 : 7) * DAY_MS));
   }
 
-  async function cancelSelected() {
+  async function cancelSelected(scope = "single") {
     if (!selected) return;
     setCancelling(true);
     try {
-      const updated = await cancelBookingAppointment(selected.id);
-      setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      const updated = await cancelBookingAppointment(selected.id, { scope });
+      if (updated.seriesAffected) await load({ fresh: true });
+      else setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setSelected(null);
     } catch (reason) {
       setError(reason.response?.data?.message || "The appointment could not be cancelled.");
@@ -779,7 +792,8 @@ export default function CalendarPage() {
                   } catch (reason) { setError(reason.response?.data?.message || "Appointment status could not be updated."); }
                 }}
                 onRescheduled={(updated) => {
-                  setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+                  if (updated.seriesAffected) load({ fresh: true });
+                  else setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
                   setSelected(updated);
                 }}
               />
