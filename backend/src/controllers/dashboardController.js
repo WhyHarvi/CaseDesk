@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { buildAppointmentRegistry, buildSchedulingAnalytics, buildBookingWaitlist } from "./bookingController.js";
 import {
   caseAccessWhere,
   clientAccessWhere,
@@ -309,6 +310,13 @@ export async function getDashboardSummary(req, res) {
       casesWaitingUpdate,
       recentActivity,
   };
+  const [registry, analytics, waitlist] = await Promise.all([
+    buildAppointmentRegistry(req, { attendance: "all", range: "all", page: 1, limit: 6 }).catch(() => null),
+    req.auth.role === "admin" ? buildSchedulingAnalytics(req, { range: "all" }).catch(() => null) : Promise.resolve(null),
+    req.auth.role === "admin" ? buildBookingWaitlist(req, "Waiting").catch(() => null) : Promise.resolve(null),
+  ]);
+  data.scheduling = { registry, analytics, waitlist };
+
   setCachedDashboard(cacheKey, data);
   return res.json({ data });
 }

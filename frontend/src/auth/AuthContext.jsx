@@ -6,6 +6,30 @@ import { cancelAppWarmup, warmAppCache } from "../services/routePrefetch";
 
 const AuthContext = createContext(null);
 
+const IDENTITY_CACHE_KEY = "casedesk.identity.v1";
+
+function readCachedIdentity(userId) {
+  try {
+    const raw = sessionStorage.getItem(IDENTITY_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed.userId !== userId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedIdentity(userId, data) {
+  try {
+    sessionStorage.setItem(IDENTITY_CACHE_KEY, JSON.stringify({ userId, user: data.user, membership: data.membership, agency: data.agency }));
+  } catch { /* storage full/unavailable — cache is best-effort */ }
+}
+
+function clearCachedIdentity() {
+  try { sessionStorage.removeItem(IDENTITY_CACHE_KEY); } catch { /* noop */ }
+}
+
 export function AuthProvider({ children }) {
   const [state, setState] = useState({ session: null, authUser: null, appUser: null, membership: null, agency: null, loading: true, accountError: null });
 
@@ -18,6 +42,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await api.get("/auth/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
       const next = { session, authUser: session.user, appUser: data.user, membership: data.membership, agency: data.agency, loading: false, accountError: null };
+      writeCachedIdentity(session.user.id, data);
       setApiCacheScope(session.user.id, data.agency?.id);
       setState(next);
       warmAppCache(data.membership?.role);
@@ -31,7 +56,7 @@ export function AuthProvider({ children }) {
         return next;
       }
       const accessDenied = status === 401 || status === 403;
-      if (accessDenied) await supabase?.auth.signOut();
+      if (accessDenied) { clearCachedIdentity(); await supabase?.auth.signOut(); }
       const message = error.response?.data?.message || (accessDenied
         ? "Your CaseDesk account does not have active access."
         : "The CaseDesk server is unavailable. Please try again.");
@@ -46,12 +71,25 @@ export function AuthProvider({ children }) {
       setState((current) => ({ ...current, loading: false, accountError: "CaseDesk authentication is not configured." }));
       return undefined;
     }
-    supabase.auth.getSession().then(({ data }) => active && loadIdentity(data.session).catch(() => {}));
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      const session = data.session;
+      const cached = session ? readCachedIdentity(session.user.id) : null;
+      if (cached?.membership) {
+        // Render immediately from the last known identity; /auth/me still runs
+        // in the background and corrects state (or signs out) if anything changed.
+        setApiCacheScope(session.user.id, cached.agency?.id);
+        setState({ session, authUser: session.user, appUser: cached.user, membership: cached.membership, agency: cached.agency, loading: false, accountError: null });
+        warmAppCache(cached.membership?.role);
+      }
+      loadIdentity(session).catch(() => {});
+    });
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (["TOKEN_REFRESHED", "SIGNED_IN", "PASSWORD_RECOVERY"].includes(event) && active) {
         setState((current) => ({ ...current, session, authUser: session?.user || null, loading: false }));
       }
       if (event === "SIGNED_OUT" && active) {
+        clearCachedIdentity();
         cancelAppWarmup();
         clearApiCache();
         setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));

@@ -603,10 +603,9 @@ export async function updateSchedulingStaff(req, res) {
   res.json({ data });
 }
 
-export async function getSchedulingAnalytics(req, res) {
-  requireAdmin(req);
+export async function buildSchedulingAnalytics(req, query) {
   const settings = await getOrCreateBookingSettings(req.auth.agencyId);
-  const range = req.query.range == null ? null : String(req.query.range);
+  const range = query.range == null ? null : String(query.range);
   let dateWhere;
   if (range !== null) {
     if (!["7", "30", "all"].includes(range)) throw createHttpError(400, "Choose a valid analytics range.", "VALIDATION_ERROR");
@@ -614,8 +613,8 @@ export async function getSchedulingAnalytics(req, res) {
   } else {
     const todayKey = localDateKey(new Date(), settings.timezone);
     const monthKey = `${todayKey.slice(0, 8)}01`;
-    const from = req.query.from ? new Date(String(req.query.from)) : localDateTimeToUtc(monthKey, 0, settings.timezone);
-    const to = req.query.to ? new Date(String(req.query.to)) : new Date();
+    const from = query.from ? new Date(String(query.from)) : localDateTimeToUtc(monthKey, 0, settings.timezone);
+    const to = query.to ? new Date(String(query.to)) : new Date();
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to < from || to.getTime() - from.getTime() > 366 * 86_400_000) {
       throw createHttpError(400, "Choose a valid analytics range up to 366 days.", "VALIDATION_ERROR");
     }
@@ -627,7 +626,12 @@ export async function getSchedulingAnalytics(req, res) {
     _count: { _all: true },
   });
   const counts = Object.fromEntries(grouped.map((item) => [item.status, item._count._all]));
-  res.json({ data: { booked: Object.values(counts).reduce((sum, value) => sum + value, 0), attended: counts.Completed || 0, cancelled: counts.Cancelled || 0, noShow: counts.NoShow || 0 } });
+  return { booked: Object.values(counts).reduce((sum, value) => sum + value, 0), attended: counts.Completed || 0, cancelled: counts.Cancelled || 0, noShow: counts.NoShow || 0 };
+}
+
+export async function getSchedulingAnalytics(req, res) {
+  requireAdmin(req);
+  res.json({ data: await buildSchedulingAnalytics(req, req.query) });
 }
 
 export async function convertAppointmentToClient(req, res) {
@@ -681,18 +685,18 @@ export async function updateBookingAppointmentStatus(req, res) {
   res.json({ data });
 }
 
-export async function listAppointmentRegistry(req, res) {
-  const attendance = String(req.query.attendance || "all");
-  const range = String(req.query.range || "30");
+export async function buildAppointmentRegistry(req, query) {
+  const attendance = String(query.attendance || "all");
+  const range = String(query.range || "30");
   if (!["all", "attended", "not_attended", "no_show", "cancelled", "upcoming"].includes(attendance)) {
     throw createHttpError(400, "Choose a valid attendance filter.", "VALIDATION_ERROR");
   }
   if (!["7", "30", "all"].includes(range)) throw createHttpError(400, "Choose a valid date range.", "VALIDATION_ERROR");
-  const page = boundedInt(req.query.page || 1, "Page", 1, 100000);
-  const limit = boundedInt(req.query.limit || 25, "Page size", 1, 100);
+  const page = boundedInt(query.page || 1, "Page", 1, 100000);
+  const limit = boundedInt(query.limit || 25, "Page size", 1, 100);
   const now = new Date();
   const from = range === "all" ? null : new Date(now.getTime() - Number(range) * 86_400_000);
-  const search = String(req.query.search || "").trim().slice(0, 120);
+  const search = String(query.search || "").trim().slice(0, 120);
   const statusWhere = attendance === "attended" ? { status: "Completed" }
     : attendance === "no_show" ? { status: "NoShow" }
       : attendance === "cancelled" ? { status: "Cancelled" }
@@ -702,7 +706,7 @@ export async function listAppointmentRegistry(req, res) {
   const where = {
     agencyId: req.auth.agencyId,
     ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
-    ...(req.query.assignedToId && req.auth.role !== "consultant" ? { assignedToId: String(req.query.assignedToId) } : {}),
+    ...(query.assignedToId && req.auth.role !== "consultant" ? { assignedToId: String(query.assignedToId) } : {}),
     AND: [
       statusWhere,
       ...(from && attendance !== "upcoming" ? [{ startsAt: { gte: from } }] : []),
@@ -729,7 +733,11 @@ export async function listAppointmentRegistry(req, res) {
     }),
     prisma.appointment.count({ where }),
   ]);
-  res.json({ data, meta: { total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) } });
+  return { data, meta: { total, page, limit, pages: Math.max(1, Math.ceil(total / limit)) } };
+}
+
+export async function listAppointmentRegistry(req, res) {
+  res.json(await buildAppointmentRegistry(req, req.query));
 }
 
 export async function getAppointmentRegistryDetail(req, res) {
@@ -798,16 +806,20 @@ export async function deleteSchedulingBlock(req, res) {
   res.json({ data: { id: existing.id } });
 }
 
-export async function listBookingWaitlist(req, res) {
-  requireAdmin(req);
+export async function buildBookingWaitlist(req, statusValue) {
   await releaseExpiredWaitlistHolds(req.auth.agencyId);
-  const status = String(req.query.status || "Waiting");
+  const status = String(statusValue || "Waiting");
   if (!["Waiting", "Offered", "Booked", "Closed", "all"].includes(status)) throw createHttpError(400, "Choose a valid waitlist status.", "VALIDATION_ERROR");
   const data = await prisma.bookingWaitlistEntry.findMany({ where: { agencyId: req.auth.agencyId, ...(status === "all" ? {} : { status }) }, orderBy: { createdAt: "asc" }, take: 250 });
   const typeIds = [...new Set(data.map((item) => item.sessionTypeId))];
   const types = await prisma.bookingSessionType.findMany({ where: { id: { in: typeIds }, agencyId: req.auth.agencyId }, select: { id: true, name: true } });
   const typeMap = new Map(types.map((item) => [item.id, item]));
-  res.json({ data: data.map((item) => ({ ...item, sessionType: typeMap.get(item.sessionTypeId) || null })) });
+  return data.map((item) => ({ ...item, sessionType: typeMap.get(item.sessionTypeId) || null }));
+}
+
+export async function listBookingWaitlist(req, res) {
+  requireAdmin(req);
+  res.json({ data: await buildBookingWaitlist(req, req.query.status) });
 }
 
 export async function updateBookingWaitlistEntry(req, res) {

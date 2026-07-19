@@ -75,6 +75,9 @@ app.use(secureHeaders);
 app.use(
   cors({
     origin: String(process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((item) => item.trim()),
+    // Let browsers reuse the preflight response instead of sending OPTIONS
+    // before every request (Chrome caps this at 2h, Firefox at 24h).
+    maxAge: 86400,
   }),
 );
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb", verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));

@@ -87,15 +87,11 @@ export function warmAppCache(role) {
   const home = role === "frontdesk" ? "/leads" : "/app/dashboard";
   prefetchRoute(home, role);
 
-  const later = role === "frontdesk"
-    ? ["/app/calendar", "/lead-intake", "/app/settings"]
-    : role === "admin"
-      ? ["/app/calendar", "/app/clients", "/app/cases", "/leads", "/app/workload"]
-      : ["/app/calendar", "/app/clients", "/app/cases", "/leads", "/app/workload"];
-
-  later.forEach((path, index) => {
-    scheduleWarmup(() => {
-      if (generation === warmupGeneration) prefetchRoute(path, role);
-    }, 900 + index * 450);
-  });
+  // Deliberately minimal: with real-world API latency, bulk-warming every
+  // route saturates the browser's 6-connections-per-origin budget and slows
+  // the page the user is actually on. Sidebar hover/focus prefetch covers
+  // the rest right before navigation.
+  scheduleWarmup(() => {
+    if (generation === warmupGeneration) preloadRouteModule("/app/calendar");
+  }, 1500);
 }

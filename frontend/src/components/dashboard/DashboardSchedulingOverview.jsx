@@ -6,7 +6,7 @@ import { convertAppointmentToClient, getAppointmentRegistry, getAppointmentRegis
 const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
 const inputClass = "rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400";
 
-export default function DashboardSchedulingOverview({ role }) {
+export default function DashboardSchedulingOverview({ role, initial = null }) {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({ attendance: "all", range: "all", search: "", page: 1 });
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -17,11 +17,13 @@ export default function DashboardSchedulingOverview({ role }) {
     return () => window.clearTimeout(timer);
   }, [filters.search]);
 
+  const filtersAreDefault = filters.attendance === "all" && filters.range === "all" && !debouncedSearch && filters.page === 1;
   const registryQuery = useQuery({
     queryKey: ["dashboard", "appointment-registry", { ...filters, search: debouncedSearch }],
     queryFn: () => getAppointmentRegistry({ ...filters, search: debouncedSearch, limit: 6 }),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    initialData: filtersAreDefault && initial?.registry ? initial.registry : undefined,
   });
   const analyticsQuery = useQuery({
     queryKey: ["dashboard", "scheduling-analytics", filters.range],
@@ -29,12 +31,14 @@ export default function DashboardSchedulingOverview({ role }) {
     enabled: role === "admin",
     staleTime: 60_000,
     placeholderData: (previous) => previous,
+    initialData: filters.range === "all" && initial?.analytics ? initial.analytics : undefined,
   });
   const waitlistQuery = useQuery({
     queryKey: ["dashboard", "booking-waitlist"],
     queryFn: () => getBookingWaitlist(),
     enabled: role === "admin",
     staleTime: 30_000,
+    initialData: initial?.waitlist || undefined,
   });
   const closeWaitlist = useMutation({
     mutationFn: (id) => updateBookingWaitlistEntry(id, "Closed"),

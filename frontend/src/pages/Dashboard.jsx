@@ -46,7 +46,7 @@ export default function Dashboard() {
 
       <DashboardBottomRow dashboard={dashboard} loading={loading} />
 
-      <DashboardSchedulingOverview role={role} />
+      <DashboardSchedulingOverview role={role} initial={dashboard?.scheduling || null} />
     </PageContainer>
   );
 }
