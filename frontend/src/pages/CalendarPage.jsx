@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   cancelBookingAppointment,
@@ -524,8 +525,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
 
 export default function CalendarPage() {
   const { role, appUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedAppointmentId = searchParams.get("appointment") || "";
+  const linkedDate = searchParams.get("date");
   const now = useNow();
-  const [selectedDate, setSelectedDate] = useState(() => startOfDayLocal(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => startOfDayLocal(linkedDate && /^\d{4}-\d{2}-\d{2}$/.test(linkedDate) ? new Date(`${linkedDate}T12:00:00`) : new Date()));
   const [view, setView] = useState("week");
   const [appointments, setAppointments] = useState([]);
   const [sessionTypes, setSessionTypes] = useState([]);
@@ -561,6 +565,15 @@ export default function CalendarPage() {
   }, [rangeStart, rangeEnd]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!linkedAppointmentId) return;
+    const linked = appointments.find((item) => item.id === linkedAppointmentId);
+    if (!linked) return;
+    setSelected(linked);
+    setView("day");
+    setSelectedDate((current) => dateKey(current) === dateKey(new Date(linked.startsAt)) ? current : startOfDayLocal(new Date(linked.startsAt)));
+  }, [appointments, linkedAppointmentId]);
 
   useEffect(() => {
     const refreshWhenVisible = () => { if (document.visibilityState === "visible") load({ fresh: true, background: true }); };
@@ -605,6 +618,18 @@ export default function CalendarPage() {
     setSelectedDate((current) => new Date(current.getTime() + direction * (view === "day" ? 1 : 7) * DAY_MS));
   }
 
+  function closeSelected() {
+    setSelected(null);
+    if (linkedAppointmentId) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("appointment");
+        next.delete("date");
+        return next;
+      }, { replace: true });
+    }
+  }
+
   async function cancelSelected(scope = "single") {
     if (!selected) return;
     setCancelling(true);
@@ -612,7 +637,7 @@ export default function CalendarPage() {
       const updated = await cancelBookingAppointment(selected.id, { scope });
       if (updated.seriesAffected) await load({ fresh: true });
       else setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-      setSelected(null);
+      closeSelected();
     } catch (reason) {
       setError(reason.response?.data?.message || "The appointment could not be cancelled.");
     } finally {
@@ -778,17 +803,17 @@ export default function CalendarPage() {
               <EventDetails
                 appointment={selected}
                 tone={toneFor(selected)}
-                onClose={() => setSelected(null)}
+                onClose={closeSelected}
                 onCancel={cancelSelected}
                 cancelling={cancelling}
                 role={role}
                 settings={bookingSettings}
-                onConverted={() => { setSelected(null); load({ fresh: true }); }}
+                onConverted={() => { closeSelected(); load({ fresh: true }); }}
                 onStatus={async (status) => {
                   try {
                     const updated = await updateBookingAppointmentStatus(selected.id, status);
                     setAppointments((current) => current.map((item) => item.id === updated.id ? updated : item));
-                    setSelected(null);
+                    closeSelected();
                   } catch (reason) { setError(reason.response?.data?.message || "Appointment status could not be updated."); }
                 }}
                 onRescheduled={(updated) => {

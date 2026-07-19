@@ -128,6 +128,18 @@ export async function adminRecipientIds(agencyId) {
   return users.map((item) => item.id);
 }
 
+export async function schedulingCoordinatorRecipientIds(agencyId) {
+  const users = await prisma.user.findMany({
+    where: {
+      agencyId,
+      status: "active",
+      memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "frontdesk"] } } },
+    },
+    select: { id: true },
+  });
+  return users.map((item) => item.id);
+}
+
 async function preferencesFor(agencyId, recipientIds, category) {
   const preferences = await prisma.notificationPreference.findMany({
     where: { agencyId, userId: { in: recipientIds }, category: { in: ["all", category] } },

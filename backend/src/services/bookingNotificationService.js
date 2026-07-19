@@ -2,7 +2,7 @@ import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
-import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { releaseExpiredWaitlistHolds } from "./bookingWaitlistService.js";
 
 const REMINDER_POLL_MS = 5 * 60_000;
@@ -61,6 +61,9 @@ const KIND_COPY = {
   rescheduled: { title: "Appointment rescheduled", eyebrow: "Schedule updated", intro: "Your appointment has been moved to the new date and time below.", accent: "#d97706", tint: "#fffbeb", symbol: "↻" },
   cancelled: { title: "Appointment cancelled", eyebrow: "Booking cancelled", intro: "This appointment is no longer scheduled. Please contact us if you would like to book another time.", accent: "#e11d48", tint: "#fff1f2", symbol: "×" },
   reminder: { title: "Appointment reminder", eyebrow: "Coming up soon", intro: "A friendly reminder about your upcoming appointment.", accent: "#2563eb", tint: "#eff6ff", symbol: "•" },
+  confirmed: { title: "Attendance confirmed", eyebrow: "Guest response", intro: "The guest confirmed that they will attend their appointment.", accent: "#059669", tint: "#ecfdf5", symbol: "✓" },
+  attended: { title: "Appointment attended", eyebrow: "Attendance updated", intro: "The appointment was marked as attended.", accent: "#059669", tint: "#ecfdf5", symbol: "✓" },
+  no_show: { title: "Appointment marked no-show", eyebrow: "Attendance updated", intro: "The guest did not attend the appointment.", accent: "#d97706", tint: "#fffbeb", symbol: "!" },
 };
 
 function escapeHtml(value) {
@@ -270,9 +273,11 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
   }
 
   if (!channel || channel === "staff") try {
-    const recipients = new Set(await adminRecipientIds(agencyId));
+    const coordinatorIds = await schedulingCoordinatorRecipientIds(agencyId);
+    const recipients = new Set(coordinatorIds);
     if (appointment.assignedToId) recipients.add(appointment.assignedToId);
-    if (actorUserId) recipients.delete(actorUserId);
+    const actorIsCoordinator = actorUserId ? coordinatorIds.includes(actorUserId) : false;
+    if (actorUserId && !actorIsCoordinator) recipients.delete(actorUserId);
     if (recipients.size) {
       await notifyUsers({
         agencyId,
@@ -282,10 +287,13 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
         category: "appointments",
         title: `${copy.title}: ${appointment.subject}`,
         body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when}${appointment.meetingUrl ? " · Online" : appointment.location ? ` · ${appointment.location}` : ""}`,
-        severity: kind === "cancelled" ? "warning" : "info",
+        severity: ["cancelled", "no_show"].includes(kind) ? "warning" : "info",
         entityType: "appointment",
         entityId: appointment.id,
-        actionUrl: "/app/calendar",
+        actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}`,
+        metadata: { appointmentId: appointment.id, startsAt: new Date(appointment.startsAt).toISOString(), assignedToId: appointment.assignedToId || null, kind },
+        dedupeKey: `appointment:${appointment.id}:${kind}:${new Date(appointment.startsAt).toISOString()}:${dedupeSuffix || "base"}:staff`,
+        includeActor: actorIsCoordinator,
       });
     }
   } catch (error) {
@@ -313,11 +321,15 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
       })),
       skipDuplicates: true,
     });
-    if (kind !== "reminder" || result.count) await deliverBookingMessages({ agencyId, appointment, kind, actorUserId, channel: "staff", dedupeSuffix });
+    if (kind !== "reminder") await deliverBookingMessages({ agencyId, appointment, kind, actorUserId, channel: "staff", dedupeSuffix });
   } else if (kind !== "reminder") {
     await deliverBookingMessages({ agencyId, appointment, kind, actorUserId, channel: "staff" });
   }
   void processBookingDeliveryPass();
+}
+
+export async function sendBookingStaffNotification({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "" }) {
+  await deliverBookingMessages({ agencyId, appointment, kind, actorUserId, channel: "staff", dedupeSuffix });
 }
 
 async function processBookingDeliveryPass() {
@@ -373,6 +385,22 @@ async function processBookingDeliveryPass() {
             availableAt: new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000),
           },
         });
+        if (exhausted) {
+          await notifyUsers({
+            agencyId: job.agencyId,
+            recipientIds: await schedulingCoordinatorRecipientIds(job.agencyId),
+            type: "appointment.delivery_failed",
+            category: "appointments",
+            title: "Appointment message delivery failed",
+            body: `${job.channel.toUpperCase()} delivery failed after ${attempts} attempts.`,
+            severity: "critical",
+            entityType: "appointment",
+            entityId: job.appointmentId,
+            actionUrl: "/app/calendar",
+            dedupeKey: `appointment:${job.appointmentId}:delivery:${job.id}:failed`,
+            channels: ["in_app"],
+          }).catch(() => {});
+        }
       }
     }
   } finally {

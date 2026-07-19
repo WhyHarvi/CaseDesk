@@ -3,7 +3,7 @@ import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { assertSlotAvailable, availabilityForRange, localDateKey } from "../services/bookingAvailabilityService.js";
-import { sendBookingMessages } from "../services/bookingNotificationService.js";
+import { sendBookingMessages, sendBookingStaffNotification } from "../services/bookingNotificationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import {
   chooseAppointmentAssignee,
@@ -13,6 +13,7 @@ import {
 import { appointmentReference, recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
+import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -582,6 +583,7 @@ export async function confirmManagedBooking(req, res) {
     await recordAppointmentEvent(tx, { agencyId: appointment.agencyId, appointmentId: appointment.id, type: "CONFIRMED", summary: "Guest confirmed attendance" });
     return result;
   });
+  await sendBookingStaffNotification({ agencyId: appointment.agencyId, appointment: updated, kind: "confirmed" }).catch(() => {});
   res.json({ data: publicView(updated, settings) });
 }
 
@@ -626,5 +628,20 @@ export async function joinPublicWaitlist(req, res) {
     preferredFrom,
     preferredTo,
   } });
+  if (!prior) {
+    await notifyUsers({
+      agencyId: settings.agencyId,
+      recipientIds: await schedulingCoordinatorRecipientIds(settings.agencyId),
+      type: "appointment.waitlist_joined",
+      category: "appointments",
+      title: `New appointment waitlist request: ${sessionType.name}`,
+      body: `${name} · ${meetingMode === "Online" ? "Online" : "In person"} · ${preferredFrom.toLocaleDateString("en-CA")}–${preferredTo.toLocaleDateString("en-CA")}`,
+      severity: "info",
+      entityType: "booking_waitlist",
+      entityId: data.id,
+      actionUrl: "/app/dashboard#appointment-register-heading",
+      dedupeKey: `appointment-waitlist:${data.id}:joined`,
+    }).catch(() => {});
+  }
   res.status(prior ? 200 : 201).json({ data: { id: data.id, status: data.status, createdAt: data.createdAt } });
 }

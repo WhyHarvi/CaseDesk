@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { bookingTemplatePreview, sendBookingMessages, sendBookingTemplateTest } from "../services/bookingNotificationService.js";
+import { bookingTemplatePreview, sendBookingMessages, sendBookingStaffNotification, sendBookingTemplateTest } from "../services/bookingNotificationService.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -675,6 +675,9 @@ export async function updateBookingAppointmentStatus(req, res) {
   });
   await recordAppointmentEvent(prisma, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
+  if (["Completed", "NoShow"].includes(status)) {
+    await sendBookingStaffNotification({ agencyId: req.auth.agencyId, appointment: data, kind: status === "Completed" ? "attended" : "no_show", actorUserId: req.auth.userId }).catch(() => {});
+  }
   res.json({ data });
 }
 

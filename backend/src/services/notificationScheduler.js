@@ -4,6 +4,7 @@ import {
   clientRecipientIds,
   internalCaseRecipientIds,
   notifyUsers,
+  schedulingCoordinatorRecipientIds,
 } from "./notificationService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
@@ -103,7 +104,8 @@ async function appointmentNotifications(now, horizon) {
   for (const item of appointments) {
     const minutes = Math.ceil((item.startsAt.getTime() - now.getTime()) / 60_000);
     const milestone = minutes <= 60 ? "1h" : "24h";
-    const staff = item.assignedToId ? [item.assignedToId] : await internalCaseRecipientIds(item.agencyId, item.caseId);
+    const staff = new Set(await schedulingCoordinatorRecipientIds(item.agencyId));
+    if (item.assignedToId) staff.add(item.assignedToId);
     const common = {
       agencyId: item.agencyId,
       type: "appointment.reminder",
@@ -114,7 +116,7 @@ async function appointmentNotifications(now, horizon) {
       entityType: "appointment",
       entityId: item.id,
     };
-    await notifyUsers({ ...common, recipientIds: staff, actionUrl: item.caseId ? caseUrl(item.caseId) : "/app/calendar", dedupeKey: `appointment:${item.id}:${milestone}:${isoKey(item.startsAt)}:staff` });
+    await notifyUsers({ ...common, recipientIds: [...staff], actionUrl: `/app/calendar?appointment=${encodeURIComponent(item.id)}&date=${item.startsAt.toISOString().slice(0, 10)}`, dedupeKey: `appointment:${item.id}:${milestone}:${isoKey(item.startsAt)}:staff` });
     await notifyUsers({ ...common, recipientIds: await clientRecipientIds(item.agencyId, item.clientId), actionUrl: "/client-portal", dedupeKey: `appointment:${item.id}:${milestone}:${isoKey(item.startsAt)}:client` });
   }
 }
