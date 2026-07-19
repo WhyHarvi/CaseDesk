@@ -545,6 +545,7 @@ model Agency {
   immigrationProfiles            ImmigrationProfile[]
   immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
   mailSettings                   AgencyMailSettings?
+  quickBooksSettings             AgencyQuickBooksSettings?
   oomaSettings                   AgencyOomaSettings?
   accountStatements              AccountStatementGeneration[]
   leadSequence                   AgencyLeadSequence?
@@ -573,6 +574,26 @@ model Agency {
   questionnaireAssignments       QuestionnaireAssignment[]
 
   @@map("agencies")
+}
+
+model AgencyQuickBooksSettings {
+  id                     String    @id @default(uuid())
+  agencyId               String    @unique @map("agency_id")
+  environment            String    @default("production")
+  realmId                String    @map("realm_id")
+  companyName            String?   @map("company_name")
+  accessTokenEncrypted   String    @map("access_token_encrypted")
+  refreshTokenEncrypted  String    @map("refresh_token_encrypted")
+  accessTokenExpiresAt   DateTime  @map("access_token_expires_at")
+  refreshTokenExpiresAt  DateTime  @map("refresh_token_expires_at")
+  status                 String    @default("connected")
+  lastError              String?   @map("last_error")
+  connectedById          String?   @map("connected_by_id")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+  agency                 Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("agency_quickbooks_settings")
 }
 
 model AgencyMailSettings {

@@ -26,6 +26,7 @@ import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPa
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
 import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
 import SchedulingSettingsPanel from "../components/booking/SchedulingSettingsPanel";
+import PaymentsSettingsPanel from "../components/settings/PaymentsSettingsPanel";
 
 const adminSettingsItems = [
   {
@@ -638,6 +639,8 @@ export default function Settings() {
                     <NotificationPreferencesPanel />
                   ) : isAdmin && activeSection === "scheduling" ? (
                     <SchedulingSettingsPanel />
+                  ) : isAdmin && activeSection === "payments-fees" ? (
+                    <PaymentsSettingsPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}
