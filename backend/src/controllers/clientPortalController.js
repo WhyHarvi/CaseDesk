@@ -5,7 +5,7 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
-import { listClientInvoices } from "../services/caseInvoiceService.js";
+import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
 import { getCaseSchedule } from "../services/paymentScheduleService.js";
 
 // Everything in this controller is scoped through the logged-in user's
@@ -477,6 +477,15 @@ export async function getPortalPayments(req, res) {
       })),
     },
   });
+}
+
+export async function downloadPortalInvoicePdf(req, res) {
+  const link = await linkedClient(req);
+  const { buffer, filename } = await getClientInvoicePdf(req.auth.agencyId, { clientId: link.clientId, invoiceId: req.params.invoiceId });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Length", buffer.length);
+  res.send(buffer);
 }
 
 export async function getPortalTimeline(req, res) {

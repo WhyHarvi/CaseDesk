@@ -1,6 +1,6 @@
-import { Banknote, CalendarClock, CircleAlert, CreditCard, FileText, Landmark, ReceiptText } from "lucide-react";
+import { Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
+import { downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
@@ -21,6 +21,34 @@ const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Governmen
 
 function formatPortalMoney(value) {
   return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+}
+
+function InvoiceDownloadButton({ invoice }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function download() {
+    setDownloading(true);
+    try {
+      await downloadPortalInvoicePdf(invoice.id, `Invoice-${invoice.invoiceNumber || invoice.id.slice(0, 8)}.pdf`);
+    } catch {
+      // silent — the invoice itself is still visible and payable, a failed download is non-blocking
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={download}
+      disabled={downloading}
+      aria-label="Download invoice PDF"
+      title="Download PDF"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+    >
+      {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+    </button>
+  );
 }
 
 function scheduleDueLabel(installment) {
@@ -116,9 +144,12 @@ export default function ClientPortalPayments() {
                         {invoice.dueDate ? <p className="mt-1 text-[11px] text-slate-400">Due {formatPortalDate(invoice.dueDate)}</p> : null}
                       </div>
                     </div>
-                    <span className={["shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold", INVOICE_STATUS_TONE[invoice.status] || "bg-slate-100 text-slate-500"].join(" ")}>
-                      {INVOICE_STATUS_LABEL[invoice.status] || invoice.status}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className={["rounded-full px-2.5 py-1 text-[10px] font-semibold", INVOICE_STATUS_TONE[invoice.status] || "bg-slate-100 text-slate-500"].join(" ")}>
+                        {INVOICE_STATUS_LABEL[invoice.status] || invoice.status}
+                      </span>
+                      <InvoiceDownloadButton invoice={invoice} />
+                    </div>
                   </li>
                 ))}
               </ul>

@@ -1,4 +1,4 @@
-import { createCaseInvoice, listCaseInvoices, recordCashPayment } from "../services/caseInvoiceService.js";
+import { createCaseInvoice, getCaseInvoicePdf, listCaseInvoices, recordCashPayment } from "../services/caseInvoiceService.js";
 
 export async function listInvoices(req, res) {
   const data = await listCaseInvoices(req.auth.agencyId, req.params.id);
@@ -15,6 +15,14 @@ export async function createInvoice(req, res) {
     actorUserId: req.auth.userId,
   });
   res.status(201).json({ data });
+}
+
+export async function downloadInvoicePdf(req, res) {
+  const { buffer, filename } = await getCaseInvoicePdf(req.auth.agencyId, { caseId: req.params.id, invoiceId: req.params.invoiceId });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Length", buffer.length);
+  res.send(buffer);
 }
 
 export async function createCashPayment(req, res) {

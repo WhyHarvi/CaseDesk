@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Banknote,
   Check,
+  Download,
   Landmark,
   Loader2,
   Plus,
@@ -12,7 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseInvoice, getCaseInvoices, recordCaseInvoiceCashPayment } from "../../api/caseInvoiceApi";
+import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceCashPayment } from "../../api/caseInvoiceApi";
 
 const PAYMENT_TYPE_META = {
   fees: { label: "Professional fees", icon: Banknote, tint: "bg-emerald-50 text-emerald-700" },
@@ -116,6 +117,20 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
   const meta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const Icon = meta.icon;
   const payable = canRecordPayment && Number(invoice.balance) > 0;
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  async function download() {
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      await downloadCaseInvoicePdf(invoice.caseId, invoice.id, `Invoice-${invoice.qbInvoiceNumber || invoice.id.slice(0, 8)}.pdf`);
+    } catch (reason) {
+      setDownloadError(reason.response?.data?.message || "The PDF could not be downloaded.");
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <motion.article layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-[1.4rem] border border-white/70 bg-white/85 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
@@ -133,9 +148,21 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
             </p>
           </div>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_TONE[invoice.status] || STATUS_TONE.Open}`}>
-          {invoice.status === "PartiallyPaid" ? "Partially paid" : invoice.status}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_TONE[invoice.status] || STATUS_TONE.Open}`}>
+            {invoice.status === "PartiallyPaid" ? "Partially paid" : invoice.status}
+          </span>
+          <button
+            type="button"
+            onClick={download}
+            disabled={downloading}
+            aria-label="Download invoice PDF"
+            title="Download PDF"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+          >
+            {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl bg-slate-50/80 px-3.5 py-2.5">
@@ -144,6 +171,8 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
           <span className="text-slate-500">Balance <span className={`font-semibold ${Number(invoice.balance) > 0 ? "text-slate-900" : "text-emerald-700"}`}>{formatMoney(invoice.balance)}</span></span>
         </div>
       </div>
+
+      {downloadError ? <p className="mt-2 text-xs text-rose-600">{downloadError}</p> : null}
 
       {payable ? <div className="mt-3"><CashPaymentRow invoice={invoice} onPaid={onPaid} /></div> : null}
     </motion.article>

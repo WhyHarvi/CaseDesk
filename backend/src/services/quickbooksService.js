@@ -187,6 +187,20 @@ export async function qboRequest(agencyId, { method = "GET", path, query, body }
   return payload;
 }
 
+export async function getQuickBooksInvoicePdf(agencyId, qbInvoiceId) {
+  const { realmId, accessToken, apiBase } = await getQuickBooksClient(agencyId);
+  const url = new URL(`${apiBase}/v3/company/${realmId}/invoice/${qbInvoiceId}/pdf`);
+  url.searchParams.set("minorversion", "75");
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/pdf" },
+  });
+  if (!response.ok) {
+    logger.warn("quickbooks.pdf_failed", { agencyId, qbInvoiceId, status: response.status });
+    throw createHttpError(502, "QuickBooks could not produce this invoice PDF.", "QBO_REQUEST_FAILED");
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
 const SALES_ITEM_TYPES = new Set(["Service", "NonInventory"]);
 
 export async function listQuickBooksItems(agencyId) {

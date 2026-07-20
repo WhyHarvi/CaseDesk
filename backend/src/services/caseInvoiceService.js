@@ -6,6 +6,7 @@ import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import {
   createQuickBooksInvoice,
   createQuickBooksReceivePayment,
+  getQuickBooksInvoicePdf,
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
 
@@ -184,6 +185,22 @@ export async function listCaseInvoices(agencyId, caseId) {
 export async function listClientInvoices(agencyId, clientId) {
   const rows = await prisma.caseInvoice.findMany({ where: { agencyId, clientId }, orderBy: { createdAt: "desc" } });
   return refreshInvoiceRows(agencyId, rows);
+}
+
+export async function getCaseInvoicePdf(agencyId, { caseId, invoiceId }) {
+  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId } });
+  if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  const buffer = await getQuickBooksInvoicePdf(agencyId, row.qbInvoiceId);
+  return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
+}
+
+// Client-portal reader: scoped by clientId (resolved server-side), never a
+// client-supplied id, so a client can never fetch another client's invoice.
+export async function getClientInvoicePdf(agencyId, { clientId, invoiceId }) {
+  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, clientId } });
+  if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  const buffer = await getQuickBooksInvoicePdf(agencyId, row.qbInvoiceId);
+  return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
 }
 
 export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, note, actorUserId }) {
