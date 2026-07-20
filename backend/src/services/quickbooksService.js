@@ -150,6 +150,83 @@ export async function getQuickBooksClient(agencyId) {
   return { realmId: settings.realmId, accessToken, apiBase: quickBooksApiBase() };
 }
 
+// Every QBO fault response, regardless of HTTP status, nests here.
+function faultMessage(payload) {
+  const error = payload?.Fault?.Error?.[0];
+  return error ? `${error.Message}${error.Detail ? `: ${error.Detail}` : ""}` : null;
+}
+
+/**
+ * Authenticated QuickBooks API request. Centralizes token refresh, error
+ * normalization, and JSON parsing so callers never touch fetch() directly —
+ * one place to get retries/auth right instead of N places to get it wrong.
+ */
+export async function qboRequest(agencyId, { method = "GET", path, query, body } = {}) {
+  const { realmId, accessToken, apiBase } = await getQuickBooksClient(agencyId);
+  const url = new URL(`${apiBase}/v3/company/${realmId}${path}`);
+  url.searchParams.set("minorversion", "75");
+  if (query) url.searchParams.set("query", query);
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    logger.warn("quickbooks.request_failed", { agencyId, path, status: response.status, fault: faultMessage(payload) });
+    throw createHttpError(
+      response.status === 401 ? 409 : 502,
+      faultMessage(payload) || "QuickBooks did not accept that request.",
+      response.status === 401 ? "QBO_RECONNECT_REQUIRED" : "QBO_REQUEST_FAILED",
+    );
+  }
+  return payload;
+}
+
+const SALES_ITEM_TYPES = new Set(["Service", "NonInventory"]);
+
+export async function listQuickBooksItems(agencyId) {
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: "SELECT Id, Name, Active, Type, IncomeAccountRef FROM Item WHERE Active = true MAXRESULTS 300",
+  });
+  return (payload.QueryResponse?.Item || [])
+    .filter((item) => SALES_ITEM_TYPES.has(item.Type))
+    .map((item) => ({
+      id: item.Id,
+      name: item.Name,
+      incomeAccountId: item.IncomeAccountRef?.value || null,
+      incomeAccountName: item.IncomeAccountRef?.name || null,
+    }));
+}
+
+export async function listQuickBooksAccounts(agencyId) {
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: "SELECT Id, Name, AccountType, Classification, Active FROM Account WHERE Active = true MAXRESULTS 300",
+  });
+  return (payload.QueryResponse?.Account || []).map((account) => ({
+    id: account.Id,
+    name: account.Name,
+    accountType: account.AccountType,
+    classification: account.Classification,
+  }));
+}
+
+export async function createQuickBooksItem(agencyId, { name, incomeAccountId }) {
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/item",
+    body: { Name: name, Type: "Service", IncomeAccountRef: { value: incomeAccountId } },
+  });
+  const item = payload.Item;
+  return { id: item.Id, name: item.Name, incomeAccountId: item.IncomeAccountRef?.value || null, incomeAccountName: item.IncomeAccountRef?.name || null };
+}
+
 export async function revokeConnection(agencyId) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } });
   if (!settings) return;
