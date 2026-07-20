@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Banknote, Check, ChevronDown, Landmark, Loader2, Plus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   createQuickBooksItem,
   getQuickBooksAccounts,
@@ -50,6 +51,9 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
   const [createError, setCreateError] = useState("");
   const searchRef = useRef(null);
   const containerRef = useRef(null);
+  const triggerRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [position, setPosition] = useState(null);
 
   const selectedId = mapping[slot.field];
   const selectedName = mapping[slot.nameField];
@@ -71,13 +75,40 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
       setCreating(false);
       setCreateError("");
       window.setTimeout(() => searchRef.current?.focus(), 40);
+    } else {
+      setPosition(null);
     }
+  }, [open]);
+
+  // Rendered via portal below (see return), so its screen position has to be
+  // computed from the trigger button rather than relying on CSS `absolute`
+  // positioning — the settings cards each set backdrop-blur, which creates a
+  // stacking context that would otherwise trap the dropdown under whichever
+  // sibling card comes later in the DOM.
+  useEffect(() => {
+    if (!open) return undefined;
+    function updatePosition() {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.max(rect.width, 320);
+      const left = Math.min(rect.left, window.innerWidth - width - 12);
+      setPosition({ top: rect.bottom + 8, left: Math.max(12, left), width });
+    }
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
   }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
     function onClickOutside(event) {
-      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+      const insideTrigger = containerRef.current?.contains(event.target);
+      const insideDropdown = dropdownRef.current?.contains(event.target);
+      if (!insideTrigger && !insideDropdown) setOpen(false);
     }
     function onKeyDown(event) {
       if (event.key === "Escape") setOpen(false);
@@ -141,6 +172,7 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
           <p className="text-xs text-slate-500">{slot.hint}</p>
 
           <button
+            ref={triggerRef}
             type="button"
             onClick={() => setOpen((v) => !v)}
             className={`mt-2.5 flex w-full items-center justify-between gap-2 rounded-2xl border px-3.5 py-2.5 text-left text-sm transition ${
@@ -176,15 +208,18 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
         </div>
       </div>
 
-      <AnimatePresence>
-        {open ? (
-          <motion.div
-            initial={{ opacity: 0, y: -6, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.98 }}
-            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_20px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl"
-          >
+      {typeof document !== "undefined" && createPortal(
+        <AnimatePresence>
+          {open && position ? (
+            <motion.div
+              ref={dropdownRef}
+              initial={{ opacity: 0, y: -6, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
+              className="z-[9999] overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_20px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+            >
             {creating ? (
               <form onSubmit={submitCreate} className="p-3.5">
                 <div className="flex items-center justify-between">
@@ -263,9 +298,11 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
                 </button>
               </>
             )}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   );
 }
