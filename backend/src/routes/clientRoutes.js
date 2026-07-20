@@ -6,6 +6,7 @@ import {
   getClientArchiveImpact,
   getClientById,
   listClients,
+  syncClientQuickBooks,
   updateClient,
 } from "../controllers/clientController.js";
 import { asyncHandler } from "../utils/http.js";
@@ -34,5 +35,6 @@ router.patch("/:id", asyncHandler(updateClient));
 router.get("/:id/archive-impact", asyncHandler(getClientArchiveImpact));
 router.patch("/:id/archive", asyncHandler(archiveClient));
 router.patch("/:id/close", asyncHandler(closeClient));
+router.post("/:id/quickbooks-sync", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(syncClientQuickBooks));
 
 export default router;

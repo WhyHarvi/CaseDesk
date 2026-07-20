@@ -881,6 +881,10 @@ model Client {
   identificationExpiryDate   DateTime?                    @map("identification_expiry_date")
   status                     ClientStatus
   archivedAt                 DateTime?                    @map("archived_at")
+  qbCustomerId               String?                      @map("qb_customer_id")
+  qbSyncStatus               String?                      @map("qb_sync_status")
+  qbSyncError                String?                      @map("qb_sync_error")
+  qbSyncedAt                  DateTime?                    @map("qb_synced_at")
   assignedUserId             String?                      @map("assigned_user_id")
   createdAt                  DateTime                     @default(now()) @map("created_at")
   updatedAt                  DateTime                     @updatedAt @map("updated_at")
@@ -913,6 +917,7 @@ model Client {
   @@index([agencyId])
   @@index([agencyId, archivedAt])
   @@index([assignedUserId])
+  @@index([agencyId, qbCustomerId])
   @@map("clients")
 }
 

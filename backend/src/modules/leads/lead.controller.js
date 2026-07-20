@@ -1,4 +1,5 @@
 import * as service from "./lead.service.js";
+import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
 import { getLeadDashboard as loadLeadDashboard } from "./lead.dashboard.service.js";
 import { getAgeingReport as loadAgeingReport, getConversionTrendReport as loadConversionTrendReport, getEmployeeReport as loadEmployeeReport, getFunnelReport as loadFunnelReport, getLostReport as loadLostReport, getResponseTimeReport as loadResponseTimeReport, getSourceReport as loadSourceReport, getWorkloadReport as loadWorkloadReport } from "./lead.report.service.js";
 
@@ -79,7 +80,11 @@ export async function updateCommercialStatus(req, res) {
 }
 
 export async function convertLead(req, res) {
-  res.status(201).json({ data: await service.convertLead(req) });
+  const result = await service.convertLead(req);
+  // Fired after the transaction commits — an external QuickBooks call has no
+  // place inside a DB transaction, and syncClientToQuickBooks never throws.
+  await syncClientToQuickBooks(req.auth.agencyId, result.client.id).catch(() => null);
+  res.status(201).json({ data: result });
 }
 
 export async function recordLeadActivity(req, res) {

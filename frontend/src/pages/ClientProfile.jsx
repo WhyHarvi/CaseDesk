@@ -17,7 +17,9 @@ import { Link, useParams } from "react-router-dom";
 import PageContainer from "../components/layout/PageContainer";
 import api from "../services/api";
 import PortalAccessCard from "../components/clients/PortalAccessCard";
+import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
+import { useAuth } from "../auth/AuthContext";
 
 const defaultNoteFormState = {
   content: "",
@@ -273,6 +275,7 @@ function CaseRow({ item, isPrimary = false }) {
 
 export default function ClientProfile() {
   const { id } = useParams();
+  const { role } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -633,6 +636,22 @@ export default function ClientProfile() {
             clientName={client.fullName}
             openCaseCount={openCases.length}
           />
+
+          {["admin", "consultant"].includes(role) ? (
+            <QuickBooksSyncCard
+              clientId={client.id}
+              qbCustomerId={client.qbCustomerId}
+              qbSyncStatus={client.qbSyncStatus}
+              qbSyncError={client.qbSyncError}
+              qbSyncedAt={client.qbSyncedAt}
+              onSynced={(patch) =>
+                setProfile((current) => ({
+                  ...current,
+                  client: { ...current.client, ...patch },
+                }))
+              }
+            />
+          ) : null}
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">

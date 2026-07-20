@@ -5,6 +5,7 @@ import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.
 import { assertNoContactDuplicate, lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { notifyUsers } from "../services/notificationService.js";
+import { syncClientToQuickBooks } from "../services/clientQuickBooksSyncService.js";
 
 const include = {
   assignedUser: {
@@ -58,6 +59,10 @@ const clientIdentitySelect = {
   identificationExpiryDate: true,
   status: true,
   archivedAt: true,
+  qbCustomerId: true,
+  qbSyncStatus: true,
+  qbSyncError: true,
+  qbSyncedAt: true,
   createdAt: true,
   updatedAt: true,
 };
@@ -414,6 +419,8 @@ export async function createClient(req, res) {
     });
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.created", details: `${data.fullName} created` });
     if (data.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.assigned", category: "cases", title: `Client assigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}` });
+    const qbResult = await syncClientToQuickBooks(req.auth.agencyId, data.id).catch(() => null);
+    if (qbResult) Object.assign(data, { qbCustomerId: qbResult.qbCustomerId, qbSyncStatus: qbResult.qbSyncStatus, qbSyncError: qbResult.qbSyncError, qbSyncedAt: qbResult.qbSyncedAt });
     res.status(201).json({ data });
   } catch (error) {
     if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
@@ -438,11 +445,28 @@ export async function updateClient(req, res) {
     });
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.updated", details: `${data.fullName} updated` });
     if (data.assignedUserId && data.assignedUserId !== existing.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.reassigned", category: "cases", title: `Client reassigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}` });
+    const contactChanged = ["fullName", "email", "phone", "address"].some((field) => Object.hasOwn(payload, field) && payload[field] !== existing[field]);
+    if (contactChanged) {
+      const qbResult = await syncClientToQuickBooks(req.auth.agencyId, data.id).catch(() => null);
+      if (qbResult) Object.assign(data, { qbCustomerId: qbResult.qbCustomerId, qbSyncStatus: qbResult.qbSyncStatus, qbSyncError: qbResult.qbSyncError, qbSyncedAt: qbResult.qbSyncedAt });
+    }
     res.json({ data });
   } catch (error) {
     if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
     throw error;
   }
+}
+
+export async function syncClientQuickBooks(req, res) {
+  const existing = await prisma.client.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
+    select: { id: true },
+  });
+  if (!existing) throw createHttpError(404, "Client not found.", "NOT_FOUND");
+  const result = await syncClientToQuickBooks(req.auth.agencyId, existing.id);
+  if (!result) throw createHttpError(409, "QuickBooks is not connected for this workspace.", "QBO_NOT_CONNECTED");
+  if (result.qbSyncStatus === "error") throw createHttpError(502, result.qbSyncError || "QuickBooks sync failed.", "QBO_SYNC_FAILED");
+  res.json({ data: { qbCustomerId: result.qbCustomerId, qbSyncStatus: result.qbSyncStatus, qbSyncError: result.qbSyncError, qbSyncedAt: result.qbSyncedAt } });
 }
 
 export async function closeClient(req, res) {

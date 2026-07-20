@@ -227,6 +227,63 @@ export async function createQuickBooksItem(agencyId, { name, incomeAccountId }) 
   return { id: item.Id, name: item.Name, incomeAccountId: item.IncomeAccountRef?.value || null, incomeAccountName: item.IncomeAccountRef?.name || null };
 }
 
+// QBO's query language is SQL-like; string literals are single-quoted and
+// a literal quote inside a value must be doubled to stay a literal.
+function escapeQueryLiteral(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+export async function findQuickBooksCustomerByEmail(agencyId, email) {
+  if (!email) return null;
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: `SELECT Id, SyncToken, DisplayName, PrimaryEmailAddr, Active FROM Customer WHERE PrimaryEmailAddr = '${escapeQueryLiteral(email)}' MAXRESULTS 5`,
+  });
+  const match = (payload.QueryResponse?.Customer || []).find((customer) => customer.Active !== false);
+  return match ? { id: match.Id, syncToken: match.SyncToken, displayName: match.DisplayName } : null;
+}
+
+export async function getQuickBooksCustomer(agencyId, customerId) {
+  try {
+    const payload = await qboRequest(agencyId, { path: `/customer/${customerId}` });
+    const customer = payload.Customer;
+    if (!customer || customer.Active === false) return null;
+    return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
+  } catch (error) {
+    if (error.statusCode === 502 || error.code === "QBO_REQUEST_FAILED") return null;
+    throw error;
+  }
+}
+
+function customerFieldPayload({ displayName, email, phone, addressLine1 }) {
+  return {
+    DisplayName: displayName,
+    ...(email ? { PrimaryEmailAddr: { Address: email } } : {}),
+    ...(phone ? { PrimaryPhone: { FreeFormNumber: phone } } : {}),
+    ...(addressLine1 ? { BillAddr: { Line1: addressLine1 } } : {}),
+  };
+}
+
+export async function createQuickBooksCustomer(agencyId, fields) {
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/customer",
+    body: customerFieldPayload(fields),
+  });
+  const customer = payload.Customer;
+  return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
+}
+
+export async function updateQuickBooksCustomer(agencyId, { id, syncToken, ...fields }) {
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/customer",
+    body: { Id: id, SyncToken: syncToken, sparse: true, ...customerFieldPayload(fields) },
+  });
+  const customer = payload.Customer;
+  return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
+}
+
 export async function revokeConnection(agencyId) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } });
   if (!settings) return;
