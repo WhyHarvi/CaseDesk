@@ -35,6 +35,7 @@ import {
 } from "../controllers/caseApplicantController.js";
 import { requireCaseAccess, requireRole } from "../middleware/authorization.js";
 import { createCashPayment, createInvoice, listInvoices } from "../controllers/caseInvoiceController.js";
+import { createSchedule, getSchedule, updateSchedule, voidSchedule } from "../controllers/paymentScheduleController.js";
 import rateLimit from "../middleware/rateLimit.js";
 
 const router = Router();
@@ -68,5 +69,9 @@ router.patch("/:id/restore", asyncHandler(restoreCase));
 router.get("/:id/invoices", asyncHandler(listInvoices));
 router.post("/:id/invoices", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createInvoice));
 router.post("/:id/invoices/:invoiceId/cash-payment", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createCashPayment));
+router.get("/:id/payment-schedule", asyncHandler(getSchedule));
+router.post("/:id/payment-schedule", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(createSchedule));
+router.patch("/:id/payment-schedule", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(updateSchedule));
+router.post("/:id/payment-schedule/void", requireRole("admin"), rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(voidSchedule));
 
 export default router;

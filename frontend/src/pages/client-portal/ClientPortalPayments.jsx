@@ -1,4 +1,4 @@
-import { Banknote, CircleAlert, CreditCard, FileText, Landmark, ReceiptText } from "lucide-react";
+import { Banknote, CalendarClock, CircleAlert, CreditCard, FileText, Landmark, ReceiptText } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
@@ -21,6 +21,12 @@ const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Governmen
 
 function formatPortalMoney(value) {
   return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+}
+
+function scheduleDueLabel(installment) {
+  if (installment.triggerType === "Stage") return `Due when your case reaches: ${installment.triggerStage}`;
+  if (installment.triggerDaysAfterSigning === 0) return "Due on signing";
+  return `Due ${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
 }
 
 export default function ClientPortalPayments() {
@@ -54,6 +60,35 @@ export default function ClientPortalPayments() {
       ) : (
         <>
           <ClientPaymentCard payment={data.summary} />
+
+          {data.schedule?.installments?.some((item) => item.status === "Scheduled") ? (
+            <GlassCard className="p-5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-fuchsia-100 text-fuchsia-700"><CalendarClock className="h-4 w-4" /></div>
+                <h2 className="text-[15px] font-semibold text-slate-900">Upcoming payments</h2>
+              </div>
+              <p className="mt-2 text-[12px] leading-5 text-slate-500">Your agency's full payment plan for this case. Each item becomes an invoice once it's due.</p>
+              <ul className="mt-3 divide-y divide-slate-100">
+                {data.schedule.installments
+                  .filter((item) => item.status === "Scheduled")
+                  .map((item) => (
+                    <li key={item.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                          {item.paymentType === "disbursement" ? <Landmark className="h-3.5 w-3.5" /> : <Banknote className="h-3.5 w-3.5" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
+                          <p className="mt-0.5 text-[12px] text-slate-500">{INVOICE_TYPE_LABEL[item.paymentType] || item.paymentType} · {formatPortalMoney(item.amount)}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{scheduleDueLabel(item)}</p>
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">Not yet invoiced</span>
+                    </li>
+                  ))}
+              </ul>
+            </GlassCard>
+          ) : null}
 
           {data.invoices?.length ? (
             <GlassCard className="p-5">

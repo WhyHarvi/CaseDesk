@@ -9,7 +9,7 @@ import {
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
 
-const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
+export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
 function deriveStatus(row) {
   const balance = Number(row.balance);
@@ -20,7 +20,7 @@ function deriveStatus(row) {
   return "Open";
 }
 
-async function requireMappedItem(agencyId, paymentType) {
+export async function requireMappedItem(agencyId, paymentType) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } });
   if (!settings || settings.status !== "connected") {
     throw createHttpError(409, "Connect QuickBooks in Settings before creating invoices.", "QBO_NOT_CONNECTED");
@@ -30,6 +30,52 @@ async function requireMappedItem(agencyId, paymentType) {
     throw createHttpError(409, `Map a QuickBooks item for ${PAYMENT_TYPES[paymentType]} in Settings before invoicing.`, "QBO_MAPPING_REQUIRED");
   }
   return itemId;
+}
+
+/**
+ * Resolves the mapped QuickBooks item, links the client if needed, creates
+ * the QuickBooks invoice, and persists the CaseInvoice row. No validation,
+ * activity logging, or notification — callers (manual creation, schedule
+ * triggers) each layer those on since the details differ between them.
+ */
+export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentType, description, amount, dueDate, actorUserId }) {
+  const itemId = await requireMappedItem(agencyId, paymentType);
+
+  let client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client.qbCustomerId) {
+    client = await syncClientToQuickBooks(agencyId, client.id);
+    if (!client?.qbCustomerId) {
+      throw createHttpError(409, client?.qbSyncError || "This client could not be linked to QuickBooks yet.", "QBO_CLIENT_NOT_LINKED");
+    }
+  }
+
+  const invoice = await createQuickBooksInvoice(agencyId, {
+    customerId: client.qbCustomerId,
+    itemId,
+    description,
+    amount,
+    dueDate: dueDate || undefined,
+  });
+
+  const row = await prisma.caseInvoice.create({
+    data: {
+      agencyId,
+      caseId,
+      clientId: client.id,
+      paymentType,
+      description,
+      qbInvoiceId: invoice.id,
+      qbInvoiceNumber: invoice.docNumber,
+      qbSyncToken: invoice.syncToken,
+      amount,
+      balance: invoice.balance,
+      status: deriveStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
+      dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
+      createdById: actorUserId,
+      lastSyncedAt: new Date(),
+    },
+  });
+  return row;
 }
 
 export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId }) {
@@ -44,48 +90,20 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
   const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId, deletedAt: null }, select: { id: true, clientId: true } });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
 
-  const itemId = await requireMappedItem(agencyId, paymentType);
-
-  let client = await prisma.client.findUnique({ where: { id: caseItem.clientId } });
-  if (!client.qbCustomerId) {
-    client = await syncClientToQuickBooks(agencyId, client.id);
-    if (!client?.qbCustomerId) {
-      throw createHttpError(409, client?.qbSyncError || "This client could not be linked to QuickBooks yet.", "QBO_CLIENT_NOT_LINKED");
-    }
-  }
-
-  const invoice = await createQuickBooksInvoice(agencyId, {
-    customerId: client.qbCustomerId,
-    itemId,
+  const row = await createInvoiceRecord(agencyId, {
+    caseId,
+    clientId: caseItem.clientId,
+    paymentType,
     description: trimmedDescription,
     amount: numericAmount,
-    dueDate: dueDate || undefined,
-  });
-
-  const now = new Date();
-  const row = await prisma.caseInvoice.create({
-    data: {
-      agencyId,
-      caseId,
-      clientId: client.id,
-      paymentType,
-      description: trimmedDescription,
-      qbInvoiceId: invoice.id,
-      qbInvoiceNumber: invoice.docNumber,
-      qbSyncToken: invoice.syncToken,
-      amount: numericAmount,
-      balance: invoice.balance,
-      status: deriveStatus({ balance: invoice.balance, amount: numericAmount, dueDate: invoice.dueDate }),
-      dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
-      createdById: actorUserId,
-      lastSyncedAt: now,
-    },
+    dueDate,
+    actorUserId,
   });
 
   await recordActivity({
     agencyId,
     userId: actorUserId,
-    clientId: client.id,
+    clientId: row.clientId,
     caseId,
     action: "invoice.created",
     details: `${PAYMENT_TYPES[paymentType]} invoice for $${numericAmount.toFixed(2)} created — ${trimmedDescription}`,
@@ -94,7 +112,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
   });
 
   try {
-    const recipientIds = await clientPortalRecipientIds(client.id);
+    const recipientIds = await clientPortalRecipientIds(row.clientId);
     if (recipientIds.length) {
       await notifyUsers({
         agencyId,

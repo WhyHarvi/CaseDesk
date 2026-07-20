@@ -5,6 +5,8 @@ import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
+import { evaluateStageTriggers } from "../services/paymentScheduleService.js";
+import { logger } from "../services/logger.js";
 
 const include = {
   client: {
@@ -40,7 +42,8 @@ const fields = {
   decisionAt: fieldParsers.dateField,
 };
 
-export const CASE_STAGES = ["Lead", "Consultation", "Retainer Pending", "Documents Pending", "Reviewing Documents", "Application Preparing", "Submitted", "Decision Received", "Closed"];
+import { CASE_STAGES } from "../constants/caseStages.js";
+export { CASE_STAGES };
 export const CASE_STATUSES = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 export const CASE_PRIORITIES = ["Low", "Normal", "High", "Urgent"];
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
@@ -332,6 +335,12 @@ export async function updateCase(req, res) {
     action: "case.updated",
     details: activityDetails,
   });
+
+  if (Object.hasOwn(payload, "stage") && payload.stage !== existing.stage) {
+    await evaluateStageTriggers(req.auth.agencyId, result.data.id, existing.stage, payload.stage, req.auth.userId).catch((error) => {
+      logger.warn("case.payment_trigger_failed", { caseId: result.data.id, reason: error.message });
+    });
+  }
 
   const clientVisibleChanges = ["stage", "status", "submittedAt", "decisionAt"]
     .filter((field) => Object.hasOwn(payload, field) && String(payload[field] || "") !== String(existing[field] || ""));

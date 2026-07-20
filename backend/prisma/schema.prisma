@@ -519,6 +519,10 @@ model Agency {
   appointments                   Appointment[]
   bookingSettings                BookingSettings?
   caseInvoices                    CaseInvoice[]
+  paymentScheduleTemplates        PaymentScheduleTemplate[]
+  casePaymentSchedules            CasePaymentSchedule[]
+  casePaymentInstallments         CasePaymentInstallment[]
+  paymentNotificationSettings     AgencyPaymentNotificationSettings?
   bookingSessionTypes            BookingSessionType[]
   schedulingStaffPreferences     SchedulingStaffPreference[]
   bookingSessionTypeStaff        BookingSessionTypeStaff[]
@@ -599,11 +603,114 @@ model CaseInvoice {
   case            Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
   client          Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy       User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  installments    CasePaymentInstallment[]
 
   @@unique([agencyId, qbInvoiceId])
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
   @@map("case_invoices")
+}
+
+model PaymentScheduleTemplate {
+  id           String                               @id @default(uuid())
+  agencyId     String                               @map("agency_id")
+  caseType     String                               @map("case_type")
+  name         String
+  isActive     Boolean                              @default(true) @map("is_active")
+  createdAt    DateTime                             @default(now()) @map("created_at")
+  updatedAt    DateTime                             @updatedAt @map("updated_at")
+  agency       Agency                               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  installments PaymentScheduleTemplateInstallment[]
+
+  @@index([agencyId, caseType])
+  @@map("payment_schedule_templates")
+}
+
+model PaymentScheduleTemplateInstallment {
+  id                      String                  @id @default(uuid())
+  templateId              String                  @map("template_id")
+  label                   String
+  paymentType             String                  @map("payment_type")
+  amount                  Decimal                 @db.Decimal(10, 2)
+  triggerType             String                  @map("trigger_type")
+  triggerStage            String?                 @map("trigger_stage")
+  triggerDaysAfterSigning Int?                    @map("trigger_days_after_signing")
+  sortOrder               Int                     @default(0) @map("sort_order")
+  template                PaymentScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("payment_schedule_template_installments")
+}
+
+model CasePaymentSchedule {
+  id           String                   @id @default(uuid())
+  agencyId     String                   @map("agency_id")
+  caseId       String                   @unique @map("case_id")
+  clientId     String                   @map("client_id")
+  signingDate  DateTime                 @map("signing_date")
+  createdById  String?                  @map("created_by_id")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  agency       Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case         Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client       Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy    User?                    @relation("PaymentScheduleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  installments CasePaymentInstallment[]
+
+  @@index([agencyId])
+  @@map("case_payment_schedules")
+}
+
+model CasePaymentInstallment {
+  id             String              @id @default(uuid())
+  agencyId       String              @map("agency_id")
+  scheduleId     String              @map("schedule_id")
+  caseId         String              @map("case_id")
+  clientId       String              @map("client_id")
+  label          String
+  paymentType    String              @map("payment_type")
+  amount         Decimal             @db.Decimal(10, 2)
+  triggerType    String              @map("trigger_type")
+  triggerStage   String?             @map("trigger_stage")
+  triggerDaysAfterSigning Int?       @map("trigger_days_after_signing")
+  triggerDate    DateTime?           @map("trigger_date")
+  sortOrder      Int                 @default(0) @map("sort_order")
+  status         String              @default("Scheduled")
+  caseInvoiceId  String?             @map("case_invoice_id")
+  invoicedAt     DateTime?           @map("invoiced_at")
+  voidedAt       DateTime?           @map("voided_at")
+  voidedById     String?             @map("voided_by_id")
+  voidReason     String?             @map("void_reason")
+  createdById    String?             @map("created_by_id")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  agency         Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  schedule       CasePaymentSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  case           Case                @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client         Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  caseInvoice    CaseInvoice?        @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
+  createdBy      User?               @relation("PaymentInstallmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy       User?               @relation("PaymentInstallmentVoider", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, caseId])
+  @@index([agencyId, status])
+  @@index([agencyId, triggerType, status])
+  @@map("case_payment_installments")
+}
+
+model AgencyPaymentNotificationSettings {
+  id                    String   @id @default(uuid())
+  agencyId              String   @unique @map("agency_id")
+  notifyByEmail         Boolean  @default(true) @map("notify_by_email")
+  notifyBySms           Boolean  @default(false) @map("notify_by_sms")
+  emailSubjectTemplate  String?  @map("email_subject_template")
+  emailBodyTemplate     String?  @map("email_body_template")
+  smsTemplate           String?  @map("sms_template")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("agency_payment_notification_settings")
 }
 
 model AgencyQuickBooksSettings {
@@ -769,6 +876,9 @@ model User {
   lostLeads                           LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                      LeadConversion[]                @relation("LeadConversionActorUser")
   createdCaseInvoices                 CaseInvoice[]
+  createdPaymentSchedules             CasePaymentSchedule[]      @relation("PaymentScheduleCreator")
+  createdPaymentInstallments          CasePaymentInstallment[]   @relation("PaymentInstallmentCreator")
+  voidedPaymentInstallments           CasePaymentInstallment[]   @relation("PaymentInstallmentVoider")
   completedLeadQualifications         LeadQualification[]             @relation("LeadQualificationActorUser")
   leadConsultations                   LeadConsultation[]              @relation("LeadConsultantUser")
   createdLeadConsultations            LeadConsultation[]              @relation("LeadConsultationCreatorUser")
@@ -942,6 +1052,8 @@ model Client {
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
   caseInvoices               CaseInvoice[]
+  paymentSchedules           CasePaymentSchedule[]
+  paymentInstallments        CasePaymentInstallment[]
 
   @@unique([agencyId, clientNumber])
   @@unique([agencyId, phoneNormalized])
@@ -992,6 +1104,8 @@ model Case {
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
   caseInvoices               CaseInvoice[]
+  paymentSchedule            CasePaymentSchedule?
+  paymentInstallments        CasePaymentInstallment[]
 
   @@index([agencyId])
   @@index([clientId])

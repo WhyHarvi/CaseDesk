@@ -2,6 +2,8 @@ import { AlertTriangle, Banknote, CheckCircle2, CreditCard, Landmark, Link2, Loa
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../services/api";
+import PaymentCommunicationSettingsCard from "./PaymentCommunicationSettingsCard";
+import PaymentScheduleTemplatesCard from "./PaymentScheduleTemplatesCard";
 import QuickBooksMappingCard from "./QuickBooksMappingCard";
 
 const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
@@ -147,7 +149,16 @@ export default function PaymentsSettingsPanel() {
           <p className="flex items-start gap-2.5"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cash</span> gets recorded from the case billing tab — CaseDesk posts a Receive Payment to QuickBooks so the books stay current.</span></p>
           <p className="flex items-start gap-2.5"><CreditCard className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cards</span> (optional, later) via QuickBooks Payments — a pay-now button on the invoice itself.</span></p>
         </div>
-        <p className="mt-4 text-xs text-slate-400">Coming next: the case billing tab and milestone payment schedules.</p>
+      </section>
+
+      <section>
+        <h3 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Payment schedules</h3>
+        <PaymentScheduleTemplatesCard />
+      </section>
+
+      <section>
+        <h3 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Client payment communication</h3>
+        <PaymentCommunicationSettingsCard />
       </section>
     </div>
   );

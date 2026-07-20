@@ -1,6 +1,6 @@
 import { ChevronDown } from "lucide-react";
 
-export default function Select({ value, onChange, children, className = "", ariaLabel, required = false }) {
+export default function Select({ value, onChange, children, className = "", ariaLabel, required = false, disabled = false }) {
   return (
     <span className={`relative inline-flex ${className}`}>
       <select
@@ -8,7 +8,8 @@ export default function Select({ value, onChange, children, className = "", aria
         onChange={onChange}
         aria-label={ariaLabel}
         required={required}
-        className="w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-3.5 pr-9 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+        disabled={disabled}
+        className="w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-3.5 pr-9 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-sky-400 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
       >
         {children}
       </select>

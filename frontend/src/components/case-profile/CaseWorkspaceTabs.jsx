@@ -38,6 +38,7 @@ import TasksWorkspace from "./TasksWorkspace";
 import AgreementsLettersWorkspace from "./AgreementsLettersWorkspace";
 import AppointmentsWorkspace from "./AppointmentsWorkspace";
 import CaseBillingWorkspace from "./CaseBillingWorkspace";
+import CasePaymentScheduleWorkspace from "./CasePaymentScheduleWorkspace";
 const CommunicationWorkspace = lazy(() => import("./CommunicationWorkspace"));
 
 const caseWorkspaceTabs = [
@@ -3291,7 +3292,10 @@ function CaseWorkspacePanel({
             </span>
           </div>
         </div>
-        <CaseBillingWorkspace caseItem={caseItem} />
+        <CasePaymentScheduleWorkspace caseItem={caseItem} />
+        <div className="border-t border-slate-100 pt-6">
+          <CaseBillingWorkspace caseItem={caseItem} />
+        </div>
       </div>
     );
   }
