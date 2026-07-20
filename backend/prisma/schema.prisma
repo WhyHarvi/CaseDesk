@@ -518,6 +518,7 @@ model Agency {
   correspondenceTemplateVersions CorrespondenceTemplateVersion[]
   appointments                   Appointment[]
   bookingSettings                BookingSettings?
+  caseInvoices                    CaseInvoice[]
   bookingSessionTypes            BookingSessionType[]
   schedulingStaffPreferences     SchedulingStaffPreference[]
   bookingSessionTypeStaff        BookingSessionTypeStaff[]
@@ -574,6 +575,35 @@ model Agency {
   questionnaireAssignments       QuestionnaireAssignment[]
 
   @@map("agencies")
+}
+
+model CaseInvoice {
+  id              String    @id @default(uuid())
+  agencyId        String    @map("agency_id")
+  caseId          String    @map("case_id")
+  clientId        String    @map("client_id")
+  paymentType     String    @map("payment_type")
+  description     String
+  qbInvoiceId     String    @map("qb_invoice_id")
+  qbInvoiceNumber String?   @map("qb_invoice_number")
+  qbSyncToken     String    @map("qb_sync_token")
+  amount          Decimal   @db.Decimal(10, 2)
+  balance         Decimal   @db.Decimal(10, 2)
+  status          String    @default("Open")
+  dueDate         DateTime? @map("due_date")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  lastSyncedAt    DateTime  @map("last_synced_at")
+  agency          Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case            Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client          Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy       User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, qbInvoiceId])
+  @@index([agencyId, caseId])
+  @@index([agencyId, clientId])
+  @@map("case_invoices")
 }
 
 model AgencyQuickBooksSettings {
@@ -738,6 +768,7 @@ model User {
   completedLeadFollowUps              LeadFollowUp[]                  @relation("LeadFollowUpCompleterUser")
   lostLeads                           LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                      LeadConversion[]                @relation("LeadConversionActorUser")
+  createdCaseInvoices                 CaseInvoice[]
   completedLeadQualifications         LeadQualification[]             @relation("LeadQualificationActorUser")
   leadConsultations                   LeadConsultation[]              @relation("LeadConsultantUser")
   createdLeadConsultations            LeadConsultation[]              @relation("LeadConsultationCreatorUser")
@@ -910,6 +941,7 @@ model Client {
   convertedFromLead          Lead?                        @relation("LeadConvertedClient")
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
+  caseInvoices               CaseInvoice[]
 
   @@unique([agencyId, clientNumber])
   @@unique([agencyId, phoneNormalized])
@@ -959,6 +991,7 @@ model Case {
   convertedFromLead          Lead?                          @relation("LeadConvertedCase")
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
+  caseInvoices               CaseInvoice[]
 
   @@index([agencyId])
   @@index([clientId])

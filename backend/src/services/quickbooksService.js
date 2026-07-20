@@ -284,6 +284,62 @@ export async function updateQuickBooksCustomer(agencyId, { id, syncToken, ...fie
   return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
 }
 
+function mapQuickBooksInvoice(invoice) {
+  return {
+    id: invoice.Id,
+    syncToken: invoice.SyncToken,
+    docNumber: invoice.DocNumber || null,
+    totalAmount: Number(invoice.TotalAmt ?? 0),
+    balance: Number(invoice.Balance ?? 0),
+    dueDate: invoice.DueDate || null,
+  };
+}
+
+export async function createQuickBooksInvoice(agencyId, { customerId, itemId, description, amount, dueDate }) {
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/invoice",
+    body: {
+      CustomerRef: { value: customerId },
+      ...(dueDate ? { DueDate: dueDate } : {}),
+      Line: [
+        {
+          Amount: amount,
+          DetailType: "SalesItemLineDetail",
+          Description: description,
+          SalesItemLineDetail: { ItemRef: { value: itemId }, Qty: 1, UnitPrice: amount },
+        },
+      ],
+    },
+  });
+  return mapQuickBooksInvoice(payload.Invoice);
+}
+
+// Batched refresh for the invoices already known to CaseDesk — one round
+// trip regardless of how many invoices a case has accumulated.
+export async function getQuickBooksInvoicesByIds(agencyId, ids) {
+  if (!ids.length) return [];
+  const list = ids.map((id) => `'${escapeQueryLiteral(id)}'`).join(",");
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: `SELECT Id, SyncToken, DocNumber, TotalAmt, Balance, DueDate FROM Invoice WHERE Id IN (${list}) MAXRESULTS 300`,
+  });
+  return (payload.QueryResponse?.Invoice || []).map(mapQuickBooksInvoice);
+}
+
+export async function createQuickBooksReceivePayment(agencyId, { customerId, invoiceId, amount }) {
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/payment",
+    body: {
+      CustomerRef: { value: customerId },
+      TotalAmt: amount,
+      Line: [{ Amount: amount, LinkedTxn: [{ TxnId: invoiceId, TxnType: "Invoice" }] }],
+    },
+  });
+  return { id: payload.Payment.Id, totalAmount: Number(payload.Payment.TotalAmt ?? 0) };
+}
+
 export async function revokeConnection(agencyId) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } });
   if (!settings) return;

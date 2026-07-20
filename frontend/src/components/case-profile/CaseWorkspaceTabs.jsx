@@ -37,6 +37,7 @@ import CaseFormsWorkspace from "./CaseFormsWorkspace";
 import TasksWorkspace from "./TasksWorkspace";
 import AgreementsLettersWorkspace from "./AgreementsLettersWorkspace";
 import AppointmentsWorkspace from "./AppointmentsWorkspace";
+import CaseBillingWorkspace from "./CaseBillingWorkspace";
 const CommunicationWorkspace = lazy(() => import("./CommunicationWorkspace"));
 
 const caseWorkspaceTabs = [
@@ -3265,29 +3266,32 @@ function CaseWorkspacePanel({
 
   if (activeTab === "BILLING") {
     return (
-      <div className="grid gap-3 md:grid-cols-4">
-        <CompactMetric
-          label="Total Fee"
-          value={formatCurrency(paymentSummary.totalFee)}
-        />
-        <CompactMetric
-          label="Paid"
-          value={formatCurrency(paymentSummary.paidAmount)}
-        />
-        <CompactMetric
-          label="Balance"
-          value={formatCurrency(paymentSummary.balance)}
-        />
-        <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-            Status
-          </p>
-          <span
-            className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${getPaymentStatusStyles(paymentSummary.status)}`}
-          >
-            {paymentSummary.status}
-          </span>
+      <div className="space-y-6">
+        <div className="grid gap-3 md:grid-cols-4">
+          <CompactMetric
+            label="Total Fee"
+            value={formatCurrency(paymentSummary.totalFee)}
+          />
+          <CompactMetric
+            label="Paid"
+            value={formatCurrency(paymentSummary.paidAmount)}
+          />
+          <CompactMetric
+            label="Balance"
+            value={formatCurrency(paymentSummary.balance)}
+          />
+          <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              Status
+            </p>
+            <span
+              className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${getPaymentStatusStyles(paymentSummary.status)}`}
+            >
+              {paymentSummary.status}
+            </span>
+          </div>
         </div>
+        <CaseBillingWorkspace caseItem={caseItem} />
       </div>
     );
   }

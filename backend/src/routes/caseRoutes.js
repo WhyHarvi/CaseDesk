@@ -34,6 +34,8 @@ import {
   updateCaseApplicant,
 } from "../controllers/caseApplicantController.js";
 import { requireCaseAccess, requireRole } from "../middleware/authorization.js";
+import { createCashPayment, createInvoice, listInvoices } from "../controllers/caseInvoiceController.js";
+import rateLimit from "../middleware/rateLimit.js";
 
 const router = Router();
 
@@ -63,5 +65,8 @@ router.patch("/:id/archive", asyncHandler(archiveCase));
 router.patch("/:id/unarchive", asyncHandler(unarchiveCase));
 router.delete("/:id", asyncHandler(softDeleteCase));
 router.patch("/:id/restore", asyncHandler(restoreCase));
+router.get("/:id/invoices", asyncHandler(listInvoices));
+router.post("/:id/invoices", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createInvoice));
+router.post("/:id/invoices/:invoiceId/cash-payment", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createCashPayment));
 
 export default router;
