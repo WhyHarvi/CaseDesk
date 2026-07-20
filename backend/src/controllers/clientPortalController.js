@@ -5,6 +5,7 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
+import { listClientInvoices } from "../services/caseInvoiceService.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -417,12 +418,25 @@ export async function getPortalDocuments(req, res) {
 }
 
 export async function getPortalPayments(req, res) {
+  const link = await linkedClient(req);
   const { agency, payments } = await portalData(req);
+  const invoices = await listClientInvoices(req.auth.agencyId, link.clientId).catch(() => []);
   res.json({
     success: true,
     data: {
       summary: paymentSummary(payments, agency),
       instructions: agency?.paymentInstructions || null,
+      invoices: invoices.map((invoice) => ({
+        id: invoice.id,
+        description: invoice.description,
+        paymentType: invoice.paymentType,
+        invoiceNumber: invoice.qbInvoiceNumber,
+        amount: money(invoice.amount),
+        balance: money(invoice.balance),
+        status: invoice.status,
+        dueDate: invoice.dueDate,
+        createdAt: invoice.createdAt,
+      })),
       history: payments.map((payment) => ({
         id: payment.id,
         totalFee: money(payment.totalFee),

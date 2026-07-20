@@ -1,4 +1,4 @@
-import { CircleAlert, CreditCard, Landmark, ReceiptText } from "lucide-react";
+import { Banknote, CircleAlert, CreditCard, FileText, Landmark, ReceiptText } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
@@ -9,6 +9,19 @@ import { usePortalData } from "../../components/client-portal/ClientPortalLayout
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
 
 const HISTORY_STATUS_LABEL = { Unpaid: "Not Paid", Partial: "Partially Paid", Paid: "Paid", Refunded: "Refunded" };
+
+const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Overdue: "Overdue" };
+const INVOICE_STATUS_TONE = {
+  Open: "bg-slate-100 text-slate-600",
+  PartiallyPaid: "bg-amber-50 text-amber-700",
+  Paid: "bg-emerald-50 text-emerald-700",
+  Overdue: "bg-rose-50 text-rose-700",
+};
+const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee" };
+
+function formatPortalMoney(value) {
+  return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+}
 
 export default function ClientPortalPayments() {
   const { overview } = usePortalData();
@@ -41,6 +54,41 @@ export default function ClientPortalPayments() {
       ) : (
         <>
           <ClientPaymentCard payment={data.summary} />
+
+          {data.invoices?.length ? (
+            <GlassCard className="p-5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700"><FileText className="h-4 w-4" /></div>
+                <h2 className="text-[15px] font-semibold text-slate-900">Invoices</h2>
+              </div>
+              <ul className="mt-4 divide-y divide-slate-100">
+                {data.invoices.map((invoice) => (
+                  <li key={invoice.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                        {invoice.paymentType === "disbursement" ? <Landmark className="h-3.5 w-3.5" /> : <Banknote className="h-3.5 w-3.5" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900">{invoice.description}</p>
+                        <p className="mt-0.5 text-[12px] text-slate-500">
+                          {INVOICE_TYPE_LABEL[invoice.paymentType] || invoice.paymentType}
+                          {invoice.invoiceNumber ? ` · #${invoice.invoiceNumber}` : ""}
+                        </p>
+                        <p className="mt-1 text-[12px] text-slate-500">
+                          {formatPortalMoney(invoice.amount)} total
+                          {Number(invoice.balance) > 0 ? ` · ${formatPortalMoney(invoice.balance)} due` : ""}
+                        </p>
+                        {invoice.dueDate ? <p className="mt-1 text-[11px] text-slate-400">Due {formatPortalDate(invoice.dueDate)}</p> : null}
+                      </div>
+                    </div>
+                    <span className={["shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold", INVOICE_STATUS_TONE[invoice.status] || "bg-slate-100 text-slate-500"].join(" ")}>
+                      {INVOICE_STATUS_LABEL[invoice.status] || invoice.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </GlassCard>
+          ) : null}
 
           {data.instructions ? (
             <GlassCard className="p-5">

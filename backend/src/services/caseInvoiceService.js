@@ -125,19 +125,16 @@ async function clientPortalRecipientIds(clientId) {
   return links.map((link) => link.userId);
 }
 
-export async function listCaseInvoices(agencyId, caseId) {
-  const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { id: true } });
-  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
-
-  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, orderBy: { createdAt: "desc" } });
+// Shared by every reader (staff case tab, client portal): re-verifies
+// cached rows against QuickBooks and persists anything that moved, falling
+// back to the last-known cache if QuickBooks itself is unreachable rather
+// than failing the whole read over a transient API blip.
+async function refreshInvoiceRows(agencyId, rows) {
   if (!rows.length) return [];
-
   let live = [];
   try {
     live = await getQuickBooksInvoicesByIds(agencyId, rows.map((row) => row.qbInvoiceId));
   } catch {
-    // Live refresh is best-effort — fall back to the last-known cached
-    // values rather than failing the whole billing tab over a QBO blip.
     return rows;
   }
   const liveById = new Map(live.map((invoice) => [invoice.id, invoice]));
@@ -154,6 +151,21 @@ export async function listCaseInvoices(agencyId, caseId) {
       });
     }),
   );
+}
+
+export async function listCaseInvoices(agencyId, caseId) {
+  const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { id: true } });
+  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, orderBy: { createdAt: "desc" } });
+  return refreshInvoiceRows(agencyId, rows);
+}
+
+// Client-portal reader: scoped by clientId (resolved server-side from the
+// caller's ClientUser link, never from a client-supplied id) so it covers
+// every case that client has, not just one.
+export async function listClientInvoices(agencyId, clientId) {
+  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, clientId }, orderBy: { createdAt: "desc" } });
+  return refreshInvoiceRows(agencyId, rows);
 }
 
 export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, note, actorUserId }) {
