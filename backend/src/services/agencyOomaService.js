@@ -23,6 +23,7 @@ function environmentConfig() {
 }
 
 function storedConfig(settings) {
+  if (![settings?.apiBaseUrl, settings?.apiKeyEncrypted, settings?.fromNumber].every(present)) return null;
   return {
     source: "Agency",
     apiBaseUrl: settings.apiBaseUrl,
@@ -41,7 +42,7 @@ function storedConfig(settings) {
 
 export async function resolveAgencyOomaConfig(agencyId, { channel, requireVerified = true } = {}) {
   const settings = agencyId ? await prisma.agencyOomaSettings.findUnique({ where: { agencyId } }) : null;
-  const config = settings ? storedConfig(settings) : environmentConfig();
+  const config = storedConfig(settings) || environmentConfig();
   if (!config) throw createHttpError(409, "Ooma is not connected. Add the Ooma Enterprise details in Settings.");
   if (!config.enabled) throw createHttpError(409, "Ooma communication is turned off in Settings.");
   if (channel === "Sms") {
@@ -54,7 +55,7 @@ export async function resolveAgencyOomaConfig(agencyId, { channel, requireVerifi
 
 export async function agencyOomaConnectionStatus(agencyId) {
   const settings = agencyId ? await prisma.agencyOomaSettings.findUnique({ where: { agencyId } }) : null;
-  const config = settings ? storedConfig(settings) : environmentConfig();
+  const config = storedConfig(settings) || environmentConfig();
   if (!config) return {
     Sms: { configured: false, detail: "Connect Ooma Enterprise in Settings", source: null },
     Call: { configured: false, detail: "Connect Ooma Enterprise in Settings", source: null },

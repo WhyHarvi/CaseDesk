@@ -778,9 +778,9 @@ model AgencyMailSettings {
 model AgencyOomaSettings {
   id                    String    @id @default(uuid())
   agencyId              String    @unique @map("agency_id")
-  apiBaseUrl            String    @map("api_base_url")
-  apiKeyEncrypted       String    @map("api_key_encrypted")
-  fromNumber            String    @map("from_number")
+  apiBaseUrl            String?   @map("api_base_url")
+  apiKeyEncrypted       String?   @map("api_key_encrypted")
+  fromNumber            String?   @map("from_number")
   smsSendPath           String?   @map("sms_send_path")
   callStartPath         String?   @map("call_start_path")
   authHeader            String    @default("authorization") @map("auth_header")

@@ -265,7 +265,9 @@ export default function AgencyOomaSettingsPanel() {
       const response = await api.post("/settings/ooma/webhook-token");
       setForm((current) => ({ ...current, ...response.data.data, apiKey: "" }));
       setNotice(
-        "A new webhook address was generated. Replace the old address in Ooma.",
+        form.hasWebhook
+          ? "A new webhook address was generated. Replace the old address in Zapier."
+          : "Your secure Zapier webhook address is ready.",
       );
     } catch (requestError) {
       setError(
@@ -340,6 +342,83 @@ export default function AgencyOomaSettingsPanel() {
           {error}
         </div>
       ) : null}
+
+      <section className="rounded-[1.6rem] border border-violet-100 bg-violet-50/60 p-5">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-violet-600 shadow-sm">
+            <MessageSquareText className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-500">
+              Recommended setup
+            </p>
+            <h3 className="mt-1 text-base font-semibold text-violet-950">
+              Receive Ooma activity through Zapier
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-violet-800">
+              Generate a private CaseDesk URL, then use it in Zapier's Webhooks
+              action. Direct Ooma API credentials are not required for inbound
+              texts and call updates.
+            </p>
+
+            {form.webhookUrl ? (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 rounded-2xl border border-violet-100 bg-white p-2">
+                  <input
+                    readOnly
+                    value={form.webhookUrl}
+                    className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-600 outline-none"
+                    aria-label="Zapier webhook address"
+                  />
+                  <button
+                    type="button"
+                    onClick={copyWebhook}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-semibold text-white"
+                  >
+                    <Copy className="h-4 w-4" /> Copy URL
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!form.canManage || rotatingWebhook}
+                    onClick={rotateWebhook}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 disabled:opacity-50"
+                    aria-label="Regenerate Zapier webhook address"
+                    title="Regenerate URL"
+                  >
+                    {rotatingWebhook ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  </button>
+                </div>
+                <div className="mt-4 rounded-2xl border border-violet-100 bg-white/70 p-4 text-xs leading-5 text-slate-600">
+                  <p><strong>Zapier method:</strong> POST</p>
+                  <p><strong>Payload type:</strong> JSON</p>
+                  <p className="mt-2 font-semibold text-slate-800">Map these fields:</p>
+                  <code className="mt-1 block overflow-x-auto whitespace-pre rounded-xl bg-slate-950 p-3 text-[11px] text-slate-100">{`{
+  "event": "message.received",
+  "channel": "Sms",
+  "messageId": "<Ooma message ID>",
+  "from": "<sender phone>",
+  "to": "<your Ooma number>",
+  "body": "<message text>"
+}`}</code>
+                </div>
+                <p className="mt-2 text-xs text-violet-700">
+                  Keep this URL private. Regenerating it immediately disables the old URL.
+                </p>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={rotatingWebhook || !form.canManage || !form.secureStorageReady}
+                onClick={rotateWebhook}
+                className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-50"
+              >
+                {rotatingWebhook ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {rotatingWebhook ? "Generating…" : "Generate Zapier webhook URL"}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-[1.6rem] border border-sky-100 bg-sky-50/70 p-5">
         <div className="flex items-start gap-3">
@@ -636,64 +715,6 @@ export default function AgencyOomaSettingsPanel() {
         </div>
       </form>
 
-      {form.configured && form.webhookUrl ? (
-        <section className="rounded-[1.6rem] border border-violet-100 bg-violet-50/60 p-5">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-violet-600">
-              <MessageSquareText className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-violet-950">
-                Receive texts and call updates
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-violet-800">
-                Add this callback address to Ooma's messaging and call event
-                configuration. It securely routes replies and delivery updates
-                to this agency.
-              </p>
-              <div className="mt-3 flex items-center gap-2 rounded-2xl border border-violet-100 bg-white p-2">
-                <input
-                  readOnly
-                  value={form.webhookUrl}
-                  className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-600 outline-none"
-                  aria-label="Ooma webhook address"
-                />
-                <button
-                  type="button"
-                  onClick={copyWebhook}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-700"
-                  aria-label="Copy webhook address"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  disabled={!form.canManage || rotatingWebhook}
-                  onClick={rotateWebhook}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 disabled:opacity-50"
-                  aria-label="Regenerate webhook address"
-                >
-                  {rotatingWebhook ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-              {form.lastWebhookAt ? (
-                <p className="mt-2 text-xs text-violet-700">
-                  Last event received{" "}
-                  {new Date(form.lastWebhookAt).toLocaleString()}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-violet-700">
-                  Waiting for the first event from Ooma.
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
       {form.configured && form.smsEnabled ? (
         <section className="rounded-[1.6rem] border border-emerald-100 bg-emerald-50/60 p-5">
           <div className="flex items-start gap-3">

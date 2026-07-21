@@ -47,8 +47,11 @@ function newWebhookToken() {
 }
 
 function publicSettings(settings, canManage, req) {
+  const directConfigured = Boolean(
+    settings?.apiBaseUrl && settings?.apiKeyEncrypted && settings?.fromNumber,
+  );
   return {
-    configured: Boolean(settings),
+    configured: directConfigured,
     canManage,
     secureStorageReady: secretEncryptionReady(),
     apiBaseUrl: settings?.apiBaseUrl || "",
@@ -157,7 +160,7 @@ export async function saveOomaSettings(req, res) {
   });
   const values = validate(req.body);
   const suppliedKey = clean(req.body.apiKey, 3000);
-  if (!existing && !suppliedKey)
+  if (!existing?.apiKeyEncrypted && !suppliedKey)
     throw createHttpError(400, "Enter the API key supplied by Ooma");
   const apiKeyEncrypted = suppliedKey
     ? encryptSecret(suppliedKey)
@@ -202,23 +205,22 @@ export async function rotateOomaWebhookToken(req, res) {
       503,
       "Secure integration storage is not configured on this CaseDesk server",
     );
-  const existing = await prisma.agencyOomaSettings.findUnique({
+  const data = await prisma.agencyOomaSettings.upsert({
     where: { agencyId: req.user.agencyId },
-  });
-  if (!existing)
-    throw createHttpError(
-      409,
-      "Save the Ooma connection before generating a webhook URL",
-    );
-  const data = await prisma.agencyOomaSettings.update({
-    where: { id: existing.id },
-    data: newWebhookToken(),
+    create: {
+      agencyId: req.user.agencyId,
+      ...newWebhookToken(),
+      enabled: true,
+      smsEnabled: false,
+      callsEnabled: false,
+    },
+    update: newWebhookToken(),
   });
   await recordActivity({
     agencyId: req.user.agencyId,
     userId: req.user.id,
     action: "settings.ooma_webhook_rotated",
-    details: "Ooma inbound webhook URL rotated",
+    details: "Ooma/Zapier inbound webhook URL generated",
   });
   res.json({ data: publicSettings(data, true, req) });
 }
