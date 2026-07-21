@@ -103,6 +103,9 @@ export async function testMailSettings(req, res) {
     if (existing.inboundEnabled) {
       const incoming = await resolveAgencyImapConfig(req.user.agencyId, { requireVerified: false });
       const client = new ImapFlow({ host: incoming.imapHost, port: incoming.imapPort, secure: incoming.imapSecure, auth: { user: incoming.imapUsername, pass: incoming.imapPassword }, logger: false });
+      // See inboundMailSyncService.js — ImapFlow can emit an async 'error'
+      // event with no listener, which would otherwise crash the process.
+      client.on("error", () => {});
       await client.connect();
       await client.logout();
     }

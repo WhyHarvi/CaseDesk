@@ -41,6 +41,10 @@ async function syncAgencyMailbox(settings) {
     logger: false,
     socketTimeout: 45000,
   });
+  // ImapFlow can emit an async 'error' event during internal cleanup (e.g.
+  // after a failed auth) in addition to rejecting connect() — with no
+  // listener, that event is an uncaught exception that crashes the process.
+  client.on("error", () => {});
   try {
     await client.connect();
     const lock = await client.getMailboxLock("INBOX");
