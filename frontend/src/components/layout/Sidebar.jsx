@@ -91,6 +91,13 @@ const adminNavigation = [
     disabled: false,
   },
   {
+    label: "Payments",
+    to: "/app/payments",
+    icon: CreditCard,
+    description: "Agency-wide payment history",
+    disabled: false,
+  },
+  {
     label: "Settings",
     to: "/app/settings",
     icon: Settings,
