@@ -9,7 +9,14 @@ import { appointmentReference, recordAppointmentEvent } from "./appointmentOpera
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booking.js";
 
-const EVENT_POLL_MS = 5_000;
+// Deliberately not as fast as it could be: the frontend polls the hold's
+// own status endpoint independently every few seconds regardless, so this
+// interval only affects how quickly the *server* notices a webhook, not
+// how quickly the client sees a result. With a very small DB connection
+// pool (see DATABASE_URL connection_limit), an aggressive interval here
+// competes with every other background worker and live request for the
+// same handful of connections — 30s keeps this worker's footprint modest.
+const EVENT_POLL_MS = Math.max(Number(process.env.QBO_WEBHOOK_POLL_MS) || 30_000, 10_000);
 const BATCH_SIZE = 20;
 let eventTimer = null;
 
