@@ -121,7 +121,9 @@ app.use("/api/consultants", requireAuth, consultantRoutes);
 const internalUser = requireRole("admin", "consultant");
 const leadUser = requireRole("admin", "consultant", "frontdesk");
 app.use("/api/dashboard", requireAuth, internalUser, dashboardRoutes);
-app.use("/api/payments", requireAuth, paymentsOverviewRoutes);
+// Distinct path — /api/payments belongs to the legacy Payment CRUD below,
+// which Cases.jsx/CaseProfile.jsx still consume with an array response.
+app.use("/api/payments-overview", requireAuth, paymentsOverviewRoutes);
 app.use("/api/leads", requireAuth, leadUser, leadRoutes);
 app.use("/api/clients", requireAuth, internalUser, clientRoutes);
 app.use("/api/cases", requireAuth, internalUser, caseRoutes);
