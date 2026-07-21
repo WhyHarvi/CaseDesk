@@ -295,7 +295,7 @@ const consultationInclude = {
   appointment: { include: { assignedTo: { select: { id: true, fullName: true } } } },
 };
 
-function nextConsultationAction(status, outcome, startAt = null) {
+export function nextConsultationAction(status, outcome, startAt = null) {
   const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
   if (["SCHEDULED", "RESCHEDULED"].includes(status)) {
     const reminder = new Date(startAt.getTime() - 24 * 60 * 60_000);

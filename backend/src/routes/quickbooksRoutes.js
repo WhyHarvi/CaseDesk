@@ -13,6 +13,7 @@ import {
   startQuickBooksConnect,
   updateQuickBooksMapping,
 } from "../controllers/quickbooksController.js";
+import { simulateHoldPayment } from "../controllers/quickbooksWebhookController.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -28,5 +29,9 @@ router.post("/items", requireAuth, requireRole("admin"), rateLimit({ windowMs: 1
 router.get("/accounts", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksAccounts));
 router.get("/mapping", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksMapping));
 router.put("/mapping", requireAuth, requireRole("admin"), asyncHandler(updateQuickBooksMapping));
+
+// Dev/staging only — see simulateHoldPayment. Real webhook traffic from
+// Intuit lands on the separate, unauthenticated quickbooksWebhookRoutes.js.
+router.post("/webhook/simulate/:holdId", requireAuth, requireRole("admin"), asyncHandler(simulateHoldPayment));
 
 export default router;

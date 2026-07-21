@@ -26,10 +26,12 @@ import appointmentRoutes from "./routes/appointmentRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import publicBookingRoutes from "./routes/publicBookingRoutes.js";
 import quickbooksRoutes from "./routes/quickbooksRoutes.js";
+import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
 import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
 import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
+import { startQuickBooksWebhookWorker, stopQuickBooksWebhookWorker } from "./services/quickbooksWebhookService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -107,6 +109,7 @@ app.use("/api/client-communication", clientCommunicationRoutes);
 app.use("/api/public/lead-intake", leadPublicRoutes);
 app.use("/api/public/booking", publicBookingRoutes);
 app.use("/api/quickbooks", quickbooksRoutes);
+app.use("/api/quickbooks/webhook", quickbooksWebhookRoutes);
 app.use("/api/lead-connectors/website", leadWebsiteRoutes);
 app.use("/api/lead-connectors", leadProviderRoutes);
 app.use("/api/portal", requireAuth, portalRoutes);
@@ -152,6 +155,7 @@ const server = app.listen(port, () => {
   startBookingReminderWorker();
   startPaymentScheduleWorker();
   startPaymentHoldExpiryWorker();
+  startQuickBooksWebhookWorker();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
 });
@@ -169,6 +173,7 @@ async function shutdown(signal) {
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();
   stopPaymentHoldExpiryWorker();
+  stopQuickBooksWebhookWorker();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
   server.close(async () => {
