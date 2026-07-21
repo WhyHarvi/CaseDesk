@@ -149,14 +149,66 @@ export async function getPaymentsSummary(agencyId) {
   let totalCollected = 0;
   let outstandingBalance = 0;
   let paidThisMonth = 0;
+  let paidLastMonth = 0;
   let overdueCount = 0;
+  const statusBreakdown = {};
+  const typeBreakdown = {};
+
+  // Last 8 calendar months, oldest first, keyed YYYY-MM.
+  const trendMonths = [];
+  for (let index = 7; index >= 0; index -= 1) {
+    const monthDate = new Date(monthStart.getFullYear(), monthStart.getMonth() - index, 1);
+    trendMonths.push({
+      key: `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`,
+      label: monthDate.toLocaleDateString("en-CA", { month: "short" }),
+      collected: 0,
+      invoiced: 0,
+    });
+  }
+  const trendByKey = new Map(trendMonths.map((item) => [item.key, item]));
+  const monthKeyOf = (value) => {
+    const date = new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  };
+  const lastMonthStart = new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1);
+
   for (const row of all) {
     const paidAmount = row.amount - row.balance;
     totalCollected += paidAmount;
     if (row.status !== "Voided") outstandingBalance += row.balance;
-    if (row.paidAt && new Date(row.paidAt) >= monthStart) paidThisMonth += paidAmount;
+    if (row.paidAt) {
+      const paidDate = new Date(row.paidAt);
+      if (paidDate >= monthStart) paidThisMonth += paidAmount;
+      else if (paidDate >= lastMonthStart) paidLastMonth += paidAmount;
+      const bucket = trendByKey.get(monthKeyOf(paidDate));
+      if (bucket) bucket.collected += paidAmount;
+    }
     if (row.status === "Overdue") overdueCount += 1;
+
+    const invoicedBucket = trendByKey.get(monthKeyOf(row.createdAt));
+    if (invoicedBucket && row.status !== "Voided") invoicedBucket.invoiced += row.amount;
+
+    const statusEntry = statusBreakdown[row.status] || { count: 0, amount: 0 };
+    statusEntry.count += 1;
+    statusEntry.amount += row.amount;
+    statusBreakdown[row.status] = statusEntry;
+
+    const typeEntry = typeBreakdown[row.source] || { count: 0, collected: 0, outstanding: 0 };
+    typeEntry.count += 1;
+    typeEntry.collected += paidAmount;
+    if (row.status !== "Voided") typeEntry.outstanding += row.balance;
+    typeBreakdown[row.source] = typeEntry;
   }
 
-  return { totalCollected, outstandingBalance, paidThisMonth, overdueCount, totalTransactions: all.length };
+  return {
+    totalCollected,
+    outstandingBalance,
+    paidThisMonth,
+    paidLastMonth,
+    overdueCount,
+    totalTransactions: all.length,
+    monthlyTrend: trendMonths.map(({ key, ...rest }) => rest),
+    statusBreakdown,
+    typeBreakdown,
+  };
 }
