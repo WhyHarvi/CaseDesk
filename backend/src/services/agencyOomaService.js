@@ -40,6 +40,54 @@ function storedConfig(settings) {
   };
 }
 
+function storedZapierConfig(settings) {
+  if (!present(settings?.zapierOutboundWebhookEncrypted)) return null;
+  return {
+    webhookUrl: decryptSecret(settings.zapierOutboundWebhookEncrypted),
+    fromNumber: settings.fromNumber || null,
+    enabled: settings.enabled,
+    lastTestStatus: settings.lastZapierOutboundTestStatus,
+  };
+}
+
+async function sendZapierSms({ agencyId, config, to, body, idempotencyKey }) {
+  let response;
+  try {
+    response = await fetch(config.webhookUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
+      },
+      body: JSON.stringify({
+        event: "sms.send",
+        channel: "Sms",
+        source: "CaseDesk",
+        agencyId,
+        from: config.fromNumber,
+        to,
+        body,
+        idempotencyKey: idempotencyKey || null,
+        requestedAt: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+  } catch (error) {
+    const wrapped = createHttpError(502, "CaseDesk could not reach the outbound Zapier webhook. Check the Zapier connection and try again.");
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  const responseBody = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw createHttpError(502, `Zapier rejected the outbound SMS request (${response.status}). Check that the Zap is published and the Catch Hook URL is current.`);
+  }
+  return {
+    id: responseBody.id || responseBody.request_id || responseBody.attempt || idempotencyKey || null,
+    provider: "Zapier / Ooma",
+    response: { accepted: true, acceptedBy: "Zapier" },
+  };
+}
+
 export async function resolveAgencyOomaConfig(agencyId, { channel, requireVerified = true } = {}) {
   const settings = agencyId ? await prisma.agencyOomaSettings.findUnique({ where: { agencyId } }) : null;
   const config = storedConfig(settings) || environmentConfig();
@@ -55,6 +103,23 @@ export async function resolveAgencyOomaConfig(agencyId, { channel, requireVerifi
 
 export async function agencyOomaConnectionStatus(agencyId) {
   const settings = agencyId ? await prisma.agencyOomaSettings.findUnique({ where: { agencyId } }) : null;
+  const zapier = storedZapierConfig(settings);
+  if (zapier) {
+    const smsReady = Boolean(zapier.enabled && zapier.lastTestStatus === "Connected");
+    return {
+      Sms: {
+        configured: smsReady,
+        detail: !zapier.enabled ? "Zapier messaging is turned off in Settings" : smsReady ? `Connected through Zapier${zapier.fromNumber ? ` · ${zapier.fromNumber}` : ""}` : "Saved; send a test text from Settings",
+        source: "Zapier",
+      },
+      Call: {
+        configured: false,
+        detail: "Outbound calling is not configured through Zapier",
+        source: "Zapier",
+      },
+      secureStorageReady: secretEncryptionReady(),
+    };
+  }
   const config = storedConfig(settings) || environmentConfig();
   if (!config) return {
     Sms: { configured: false, detail: "Connect Ooma Enterprise in Settings", source: null },
@@ -113,6 +178,13 @@ export async function oomaRequest(config, pathValue, payload, idempotencyKey = n
 }
 
 export async function sendAgencyOomaSms({ agencyId, to, body, idempotencyKey, requireVerified = true }) {
+  const settings = agencyId ? await prisma.agencyOomaSettings.findUnique({ where: { agencyId } }) : null;
+  const zapier = storedZapierConfig(settings);
+  if (zapier) {
+    if (!zapier.enabled) throw createHttpError(409, "Zapier messaging is turned off in Settings.");
+    if (requireVerified && zapier.lastTestStatus !== "Connected") throw createHttpError(409, "Send a successful Zapier test text from Settings before messaging clients.");
+    return sendZapierSms({ agencyId, config: zapier, to, body, idempotencyKey });
+  }
   const config = await resolveAgencyOomaConfig(agencyId, { channel: "Sms", requireVerified });
   return oomaRequest(config, config.smsSendPath, { from: config.fromNumber, to, body }, idempotencyKey);
 }

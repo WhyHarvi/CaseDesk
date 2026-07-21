@@ -1,30 +1,39 @@
 import { agencyMailConnectionStatus, createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
+import { personalMailboxStatus, sendMicrosoftMailboxEmail } from "./microsoftMailboxService.js";
 import { agencyOomaConnectionStatus, sendAgencyOomaSms, startAgencyOomaCall } from "./agencyOomaService.js";
 import { supabaseRealtimeReady } from "./supabaseRealtimeService.js";
 
 const enabled = (value) => Boolean(String(value || "").trim());
 
-export async function communicationProviderStatus(agencyId) {
-  const [mail, ooma] = await Promise.all([agencyMailConnectionStatus(agencyId), agencyOomaConnectionStatus(agencyId)]);
+export async function communicationProviderStatus(agencyId, userId = null) {
+  const [agencyMail, personalMail, ooma] = await Promise.all([
+    agencyMailConnectionStatus(agencyId),
+    userId ? personalMailboxStatus(userId) : null,
+    agencyOomaConnectionStatus(agencyId),
+  ]);
   const imapConfigured = ["IMAP_HOST", "IMAP_PORT", "IMAP_USER", "IMAP_PASSWORD"].every((key) => enabled(process.env[key]));
   return {
     Email: {
-      provider: "SMTP / IMAP",
-      sendConfigured: mail.configured,
-      receiveConfigured: imapConfigured,
-      detail: mail.detail,
-      source: mail.source,
-      secureStorageReady: mail.secureStorageReady,
+      provider: personalMail?.connected ? "Microsoft 365" : "Personal mailbox",
+      sendConfigured: personalMail?.connected || (!userId && agencyMail.configured),
+      receiveConfigured: personalMail?.connected ? personalMail.syncEnabled : (!userId && imapConfigured),
+      detail: personalMail?.connected
+        ? `Connected as ${personalMail.emailAddress}`
+        : userId
+          ? "Connect your Microsoft mailbox in Personal Settings"
+          : agencyMail.detail,
+      source: personalMail?.connected ? "User" : agencyMail.source,
+      secureStorageReady: agencyMail.secureStorageReady,
     },
     Sms: {
-      provider: "Ooma Enterprise",
+      provider: ooma.Sms.source === "Zapier" ? "Zapier / Ooma" : "Ooma Enterprise",
       sendConfigured: ooma.Sms.configured,
       receiveConfigured: false,
       detail: ooma.Sms.detail,
       source: ooma.Sms.source,
     },
     Call: {
-      provider: "Ooma Enterprise",
+      provider: ooma.Call.source === "Zapier" ? "Zapier / Ooma" : "Ooma Enterprise",
       sendConfigured: ooma.Call.configured,
       receiveConfigured: false,
       detail: ooma.Call.detail,
@@ -39,7 +48,10 @@ export async function communicationProviderStatus(agencyId) {
   };
 }
 
-export async function sendEmailMessage({ agencyId, to, cc, bcc, replyTo, subject, text, html, headers, attachments, messageId }) {
+export async function sendEmailMessage({ agencyId, userId = null, to, cc, bcc, replyTo, subject, text, html, headers, attachments, messageId }) {
+  if (userId) {
+    return sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, subject, text, html, headers, attachments });
+  }
   const config = await resolveAgencyMailConfig(agencyId);
   const result = await createMailTransport(config).sendMail({
     from: config.from,

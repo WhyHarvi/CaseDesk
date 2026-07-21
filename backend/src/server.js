@@ -33,10 +33,12 @@ import { startBookingReminderWorker, stopBookingReminderWorker } from "./service
 import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
 import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
 import { startQuickBooksWebhookWorker, stopQuickBooksWebhookWorker } from "./services/quickbooksWebhookService.js";
+import { startCaseInformationDriftDetector, stopCaseInformationDriftDetector } from "./services/caseInformationDriftDetector.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import personalMailboxRoutes from "./routes/personalMailboxRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import consultantRoutes from "./routes/consultantRoutes.js";
 import leadRoutes from "./modules/leads/lead.routes.js";
@@ -111,6 +113,7 @@ app.use("/api/public/lead-intake", leadPublicRoutes);
 app.use("/api/public/booking", publicBookingRoutes);
 app.use("/api/quickbooks", quickbooksRoutes);
 app.use("/api/quickbooks/webhook", quickbooksWebhookRoutes);
+app.use("/api/mailboxes", personalMailboxRoutes);
 app.use("/api/lead-connectors/website", leadWebsiteRoutes);
 app.use("/api/lead-connectors", leadProviderRoutes);
 app.use("/api/portal", requireAuth, portalRoutes);
@@ -162,6 +165,7 @@ const server = app.listen(port, () => {
   startQuickBooksWebhookWorker();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
+  startCaseInformationDriftDetector();
 });
 
 let shuttingDown = false;
@@ -180,6 +184,7 @@ async function shutdown(signal) {
   stopQuickBooksWebhookWorker();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
+  stopCaseInformationDriftDetector();
   server.close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);

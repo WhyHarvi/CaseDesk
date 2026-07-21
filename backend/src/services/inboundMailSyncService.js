@@ -6,6 +6,7 @@ import { ingestInboundCommunication } from "../controllers/communicationWebhookC
 import { storeInboundCommunicationAttachments } from "../controllers/communicationAttachmentController.js";
 import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
 import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import { microsoftGraphClient } from "./microsoftMailboxService.js";
 
 const SYNC_INTERVAL_MS = Math.max(
   Number(process.env.INBOUND_MAIL_SYNC_MS) || 60000,
@@ -167,18 +168,136 @@ async function syncAgencyMailbox(settings) {
   }
 }
 
+const graphAddresses = (values) =>
+  Array.isArray(values)
+    ? values.map((item) => item?.emailAddress?.address).filter(Boolean)
+    : [];
+
+const graphHeader = (message, name) =>
+  message.internetMessageHeaders?.find(
+    (item) => String(item.name).toLowerCase() === name.toLowerCase(),
+  )?.value || null;
+
+async function syncPersonalMicrosoftMailbox(connection) {
+  const startedAt = new Date();
+  try {
+    const { request } = await microsoftGraphClient(connection.userId);
+    const since = new Date(
+      Math.max(
+        (connection.lastSyncedAt || connection.connectedAt || startedAt).getTime() - 5 * 60_000,
+        startedAt.getTime() - 7 * 24 * 60 * 60_000,
+      ),
+    ).toISOString();
+    const query = new URLSearchParams({
+      "$filter": `receivedDateTime ge ${since}`,
+      "$orderby": "receivedDateTime asc",
+      "$top": "50",
+      "$select": "id,internetMessageId,conversationId,receivedDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,internetMessageHeaders,hasAttachments",
+    });
+    let next = `/me/mailFolders/inbox/messages?${query}`;
+    let pages = 0;
+    let imported = 0;
+    while (next && pages < 5) {
+      const result = await request(next);
+      for (const message of result.value || []) {
+        const senderAddress = message.from?.emailAddress?.address?.toLowerCase() || null;
+        if (!senderAddress) continue;
+        const inReplyTo = graphHeader(message, "in-reply-to");
+        const knownClient = await prisma.client.findFirst({
+          where: { agencyId: connection.agencyId, email: { equals: senderAddress, mode: "insensitive" } },
+          select: { id: true },
+        });
+        const knownThread = inReplyTo
+          ? await prisma.communicationMessage.findFirst({
+              where: { agencyId: connection.agencyId, emailMessageId: inReplyTo },
+              select: { id: true },
+            })
+          : null;
+        // Personal inbox privacy: only CRM-related mail is imported. Unrelated
+        // personal messages never enter the agency-wide unmatched queue.
+        if (!knownClient && !knownThread) continue;
+        const recipients = [
+          ...graphAddresses(message.toRecipients),
+          ...graphAddresses(message.ccRecipients),
+        ];
+        const references = String(graphHeader(message, "references") || "")
+          .split(/\s+/)
+          .filter(Boolean);
+        const ingested = await ingestInboundCommunication({
+          agencyId: connection.agencyId,
+          channel: "Email",
+          provider: "Microsoft 365",
+          providerMessageId: message.id,
+          providerThreadId: message.conversationId || null,
+          providerEventId: `microsoft:${connection.id}:${message.id}`,
+          senderAddress,
+          recipients,
+          subject: message.subject || null,
+          bodyText: message.body?.contentType === "text" ? message.body.content : message.bodyPreview || null,
+          bodyHtml: message.body?.contentType?.toLowerCase() === "html" ? message.body.content : null,
+          emailMessageId: message.internetMessageId || null,
+          emailInReplyTo: inReplyTo,
+          emailReferences: references,
+          occurredAt: message.receivedDateTime || new Date(),
+          metadata: {
+            microsoftMessageId: message.id,
+            mailboxOwnerUserId: connection.userId,
+            hasAttachments: message.hasAttachments === true,
+          },
+        });
+        if (!ingested.duplicate) imported += 1;
+      }
+      next = result["@odata.nextLink"] || null;
+      pages += 1;
+    }
+    await prisma.userMailboxConnection.update({
+      where: { id: connection.id },
+      data: {
+        lastSyncedAt: startedAt,
+        lastSyncStatus: "Connected",
+        lastSyncMessage: imported
+          ? `${imported} matching client email${imported === 1 ? "" : "s"} synchronized.`
+          : "Mailbox checked; no new matching client email.",
+        lastError: null,
+      },
+    });
+  } catch (error) {
+    const message = String(error.message || "Microsoft mailbox synchronization failed.").slice(0, 500);
+    await prisma.userMailboxConnection.update({
+      where: { id: connection.id },
+      data: { lastSyncedAt: startedAt, lastSyncStatus: "Failed", lastSyncMessage: message, lastError: message },
+    }).catch(() => {});
+    await notifyUsers({
+      agencyId: connection.agencyId,
+      recipientIds: [connection.userId],
+      type: "settings.personal_mail_sync_failed",
+      category: "security",
+      title: "Your Microsoft mailbox needs attention",
+      body: message,
+      severity: "warning",
+      entityType: "user_mailbox_connection",
+      entityId: connection.id,
+      actionUrl: "/app/settings?section=personal-email",
+      channels: ["in_app"],
+      dedupeKey: `personal-mail-sync:${connection.id}:${new Date().toISOString().slice(0, 10)}`,
+    }).catch(() => {});
+  }
+}
+
 export async function syncInboundMail() {
   if (running) return;
   running = true;
   try {
-    const settings = await prisma.agencyMailSettings.findMany({
-      where: {
-        enabled: true,
-        inboundEnabled: true,
-        lastTestStatus: "Connected",
-      },
-    });
+    const [settings, personalMailboxes] = await Promise.all([
+      prisma.agencyMailSettings.findMany({
+        where: { enabled: true, inboundEnabled: true, lastTestStatus: "Connected" },
+      }),
+      prisma.userMailboxConnection.findMany({
+        where: { status: "connected", syncEnabled: true },
+      }),
+    ]);
     for (const mailbox of settings) await syncAgencyMailbox(mailbox);
+    for (const mailbox of personalMailboxes) await syncPersonalMicrosoftMailbox(mailbox);
   } catch (error) {
     if (process.env.NODE_ENV !== "test")
       console.error("Inbound mail synchronization failed", error);

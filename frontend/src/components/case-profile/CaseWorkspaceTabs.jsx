@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
+import { getCaseInformationWorkspace } from "../../api/caseInformationApi";
 import {
   formatCurrency,
   formatDate,
@@ -71,24 +72,35 @@ const workspaceTabFromSlug = (slug) =>
   caseWorkspaceTabs.find((tab) => workspaceTabSlugs[tab] === slug) ||
   caseWorkspaceTabs[0];
 
+// sectionKey matches backend/src/modules/case-information/informationSectionCatalog.js
+// 1:1 and in the same order — lets the sidebar below filter out sections
+// that don't apply to this case's case type and show a live status dot,
+// without duplicating any of the completion logic on the frontend (that
+// comes from GET /cases/:id/information-workspace, Phase 3's API).
 const profileDetailTabs = [
-  { label: "APPLICANT DETAILS", icon: UserRound },
-  { label: "SPOUSE DETAILS", icon: HeartHandshake },
-  { label: "CHILDREN", icon: Baby },
-  { label: "SIBLING DETAILS", icon: UserPlus },
-  { label: "PARENT DETAILS", icon: Users },
-  { label: "ACTIVITY HISTORY", icon: History },
-  { label: "ADDRESS HISTORY", icon: MapPin },
-  { label: "TRAVEL HISTORY", icon: Plane },
-  { label: "IDENTITY & PERMITS", icon: IdCard },
-  { label: "CANADIAN STATUS", icon: IdCard },
-  { label: "BACKGROUND & ADMISSIBILITY", icon: FileText },
-  { label: "RELATIONSHIP & SPONSORSHIP", icon: HeartHandshake },
-  { label: "PROGRAM DETAILS", icon: FileText },
-  { label: "HUMANITARIAN & CITIZENSHIP", icon: Users },
-  { label: "REHABILITATION", icon: History },
-  { label: "REFUGEE & PROTECTION", icon: FileText },
+  { label: "APPLICANT DETAILS", icon: UserRound, sectionKey: "applicantDetails" },
+  { label: "SPOUSE DETAILS", icon: HeartHandshake, sectionKey: "spouseDetails" },
+  { label: "CHILDREN", icon: Baby, sectionKey: "children" },
+  { label: "SIBLING DETAILS", icon: UserPlus, sectionKey: "siblingDetails" },
+  { label: "PARENT DETAILS", icon: Users, sectionKey: "parentDetails" },
+  { label: "ACTIVITY HISTORY", icon: History, sectionKey: "activityHistory" },
+  { label: "ADDRESS HISTORY", icon: MapPin, sectionKey: "addressHistory" },
+  { label: "TRAVEL HISTORY", icon: Plane, sectionKey: "travelHistory" },
+  { label: "IDENTITY & PERMITS", icon: IdCard, sectionKey: "identityPermits" },
+  { label: "CANADIAN STATUS", icon: IdCard, sectionKey: "canadianStatus" },
+  { label: "BACKGROUND & ADMISSIBILITY", icon: FileText, sectionKey: "backgroundAdmissibility" },
+  { label: "RELATIONSHIP & SPONSORSHIP", icon: HeartHandshake, sectionKey: "relationshipSponsorship" },
+  { label: "PROGRAM DETAILS", icon: FileText, sectionKey: "programDetails" },
+  { label: "HUMANITARIAN & CITIZENSHIP", icon: Users, sectionKey: "humanitarianCitizenship" },
+  { label: "REHABILITATION", icon: History, sectionKey: "rehabilitation" },
+  { label: "REFUGEE & PROTECTION", icon: FileText, sectionKey: "refugeeProtection" },
 ];
+
+const SECTION_STATUS_DOT_CLASS = {
+  complete: "bg-emerald-500",
+  in_progress: "bg-sky-500",
+  not_started: "bg-slate-300",
+};
 
 const applicantDetailViews = [
   "Overview",
@@ -1606,6 +1618,48 @@ function ProfileDetailsGrid({
     useState(false);
   const [spouseLanguageOverlayOpen, setSpouseLanguageOverlayOpen] =
     useState(false);
+
+  // Case-type-aware section status (Phase 3's GET /information-workspace):
+  // drives which of the 16 tabs below are worth showing for this case's
+  // case type, and the small progress dot on each. sectionStatusLoaded
+  // starts false so every tab still renders on first paint — nothing gets
+  // hidden until we actually know it doesn't apply.
+  const [sectionStatusByKey, setSectionStatusByKey] = useState({});
+  const [sectionStatusLoaded, setSectionStatusLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setSectionStatusLoaded(false);
+    getCaseInformationWorkspace(caseItem.id)
+      .then((data) => {
+        if (!active) return;
+        const map = {};
+        for (const section of data.sections) map[section.sectionKey] = section;
+        setSectionStatusByKey(map);
+      })
+      .catch(() => {
+        // Fail open: keep every tab visible rather than hiding sections
+        // because the overview call failed.
+      })
+      .finally(() => {
+        if (active) setSectionStatusLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [caseItem.id]);
+
+  const visibleDetailTabs = profileDetailTabs.filter((tab) => {
+    if (!sectionStatusLoaded) return true;
+    const status = sectionStatusByKey[tab.sectionKey];
+    return !status || status.status !== "not_applicable";
+  });
+
+  useEffect(() => {
+    if (!sectionStatusLoaded) return;
+    if (visibleDetailTabs.some((tab) => tab.label === activeDetailTab)) return;
+    setActiveDetailTab(visibleDetailTabs[0]?.label || profileDetailTabs[0].label);
+  }, [sectionStatusLoaded, activeDetailTab]);
+
   useEffect(() => {
     if (!profileSectionRequest?.tab) return;
     setActiveDetailTab(profileSectionRequest.tab);
@@ -2847,9 +2901,11 @@ function ProfileDetailsGrid({
       <div className="grid min-h-[360px] lg:grid-cols-[320px_1fr]">
         <aside className="border-b border-slate-100 bg-slate-50/80 p-2 lg:border-b-0 lg:border-r">
           <div className="scrollbar-hidden flex gap-1 overflow-x-auto lg:block lg:space-y-1 lg:overflow-visible">
-            {profileDetailTabs.map((tab) => {
+            {visibleDetailTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeDetailTab === tab.label;
+              const sectionStatus = sectionStatusByKey[tab.sectionKey]?.status;
+              const dotClass = SECTION_STATUS_DOT_CLASS[sectionStatus];
               const isApplicantTab = tab.label === "APPLICANT DETAILS";
               const isSpouseTab = tab.label === "SPOUSE DETAILS";
               const isApplicantMenuOpen =
@@ -2898,6 +2954,9 @@ function ProfileDetailsGrid({
                     <span className="flex-1 whitespace-nowrap">
                       {tab.label}
                     </span>
+                    {dotClass ? (
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} title={sectionStatus.replace("_", " ")} />
+                    ) : null}
                     {isApplicantTab || isSpouseTab ? (
                       <ChevronDown
                         className={`h-3.5 w-3.5 shrink-0 transition ${

@@ -550,6 +550,7 @@ model Agency {
   immigrationProfiles            ImmigrationProfile[]
   immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
   mailSettings                   AgencyMailSettings?
+  userMailboxConnections        UserMailboxConnection[]
   quickBooksSettings             AgencyQuickBooksSettings?
   bookingPaymentHolds             BookingPaymentHold[]
   quickBooksWebhookEvents         QuickBooksWebhookEvent[]
@@ -579,6 +580,9 @@ model Agency {
   notificationPreferences        NotificationPreference[]
   notificationDeliveries         NotificationDelivery[]
   questionnaireAssignments       QuestionnaireAssignment[]
+  clientInformationProfiles      ClientInformationProfile[]
+  caseInformationProfiles        CaseInformationProfile[]
+  caseInformationSectionStates   CaseInformationSectionState[]
 
   @@map("agencies")
 }
@@ -775,6 +779,38 @@ model AgencyMailSettings {
   @@map("agency_mail_settings")
 }
 
+model UserMailboxConnection {
+  id                    String    @id @default(uuid())
+  agencyId              String    @map("agency_id")
+  userId                String    @unique @map("user_id")
+  provider              String    @default("Microsoft 365")
+  providerAccountId     String    @map("provider_account_id")
+  tenantId              String?   @map("tenant_id")
+  emailAddress          String    @map("email_address")
+  displayName           String?   @map("display_name")
+  accessTokenEncrypted  String    @map("access_token_encrypted")
+  refreshTokenEncrypted String    @map("refresh_token_encrypted")
+  accessTokenExpiresAt  DateTime  @map("access_token_expires_at")
+  grantedScopes         String    @map("granted_scopes")
+  status                String    @default("connected")
+  syncEnabled           Boolean   @default(true) @map("sync_enabled")
+  signatureHtml         String?   @map("signature_html")
+  lastSyncedAt          DateTime? @map("last_synced_at")
+  lastSyncStatus        String?   @map("last_sync_status")
+  lastSyncMessage       String?   @map("last_sync_message")
+  lastError             String?   @map("last_error")
+  connectedAt           DateTime  @default(now()) @map("connected_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  agency                Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, emailAddress])
+  @@index([agencyId, status])
+  @@index([syncEnabled, status])
+  @@map("user_mailbox_connections")
+}
+
 model AgencyOomaSettings {
   id                    String    @id @default(uuid())
   agencyId              String    @unique @map("agency_id")
@@ -788,6 +824,10 @@ model AgencyOomaSettings {
   webhookTokenEncrypted String?   @map("webhook_token_encrypted")
   webhookTokenHash      String?   @unique @map("webhook_token_hash")
   lastWebhookAt         DateTime? @map("last_webhook_at")
+  zapierOutboundWebhookEncrypted String?   @map("zapier_outbound_webhook_encrypted")
+  lastZapierOutboundTestedAt     DateTime? @map("last_zapier_outbound_tested_at")
+  lastZapierOutboundTestStatus   String?   @map("last_zapier_outbound_test_status")
+  lastZapierOutboundTestMessage  String?   @map("last_zapier_outbound_test_message")
   enabled               Boolean   @default(true)
   smsEnabled            Boolean   @default(true) @map("sms_enabled")
   callsEnabled          Boolean   @default(true) @map("calls_enabled")
@@ -886,6 +926,10 @@ model User {
   createdPaymentSchedules             CasePaymentSchedule[]      @relation("PaymentScheduleCreator")
   createdPaymentInstallments          CasePaymentInstallment[]   @relation("PaymentInstallmentCreator")
   voidedPaymentInstallments           CasePaymentInstallment[]   @relation("PaymentInstallmentVoider")
+  updatedClientInformationProfiles    ClientInformationProfile[]      @relation("ClientInformationProfileUpdater")
+  updatedCaseInformationProfiles      CaseInformationProfile[]        @relation("CaseInformationProfileUpdater")
+  verifiedCaseInformationSectionStates CaseInformationSectionState[]  @relation("CaseInformationSectionStateVerifier")
+  reviewedQuestionnaireAssignments    QuestionnaireAssignment[]       @relation("QuestionnaireAssignmentReviewer")
   completedLeadQualifications         LeadQualification[]             @relation("LeadQualificationActorUser")
   leadConsultations                   LeadConsultation[]              @relation("LeadConsultantUser")
   createdLeadConsultations            LeadConsultation[]              @relation("LeadConsultationCreatorUser")
@@ -899,6 +943,7 @@ model User {
   notificationDeliveries              NotificationDelivery[]
   schedulingBlocks                    SchedulingBlock[]
   appointmentEvents                   AppointmentEvent[]              @relation("AppointmentEventActor")
+  mailboxConnection                   UserMailboxConnection?
 
   @@index([agencyId])
   @@index([authUserId])
@@ -1058,6 +1103,8 @@ model Client {
   convertedFromLead          Lead?                        @relation("LeadConvertedClient")
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
+  clientInformationProfiles  ClientInformationProfile[]
+  caseInformationProfiles    CaseInformationProfile[]
   caseInvoices               CaseInvoice[]
   paymentSchedules           CasePaymentSchedule[]
   paymentInstallments        CasePaymentInstallment[]
@@ -1110,6 +1157,8 @@ model Case {
   convertedFromLead          Lead?                          @relation("LeadConvertedCase")
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
+  caseInformationProfiles    CaseInformationProfile[]
+  caseInformationSectionStates CaseInformationSectionState[]
   caseInvoices               CaseInvoice[]
   paymentSchedule            CasePaymentSchedule?
   paymentInstallments        CasePaymentInstallment[]
@@ -3049,18 +3098,95 @@ model QuestionnaireAssignment {
   assignedAt   DateTime       @default(now()) @map("assigned_at")
   submittedAt  DateTime?      @map("submitted_at")
   sourceData   Json           @default("{}") @map("source_data")
+  // Review-workflow fields (Phase 2 schema, Phase 4 behavior) — schema only
+  // for now, nothing writes these yet.
+  correctionRequestedAt DateTime? @map("correction_requested_at")
+  correctionNote        String?   @map("correction_note")
+  reviewedAt            DateTime? @map("reviewed_at")
+  reviewedById          String?   @map("reviewed_by_id")
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
   agency       Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   assessment   CaseAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
   case         Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
   client       Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  reviewedBy   User?          @relation("QuestionnaireAssignmentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@unique([assessmentId, sourceId])
   @@index([agencyId, status, dueAt])
   @@index([caseId])
   @@index([clientId])
   @@map("questionnaire_assignments")
+}
+
+// Case profile redesign, Phase 2 — canonical, section-granular replacement
+// for CaseAssessment.formData (see backend/src/modules/case-information/).
+// Dual-read/dual-write with the legacy JSON blob during migration; nothing
+// in the live app reads or writes these yet (Phase 3+). `version` backs a
+// real optimistic-concurrency check via the atomic-claim idiom already
+// used elsewhere in this codebase (updateMany + check affected-row count),
+// not the increment-only counter pattern Lead.version uses.
+model ClientInformationProfile {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  clientId    String   @map("client_id")
+  sectionKey  String   @map("section_key")
+  data        Json     @default("{}")
+  version     Int      @default(1)
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  updatedBy   User?    @relation("ClientInformationProfileUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, clientId, sectionKey])
+  @@index([agencyId, clientId])
+  @@map("client_information_profiles")
+}
+
+model CaseInformationProfile {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  caseId      String   @map("case_id")
+  clientId    String   @map("client_id")
+  sectionKey  String   @map("section_key")
+  data        Json     @default("{}")
+  version     Int      @default(1)
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  updatedBy   User?    @relation("CaseInformationProfileUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, caseId, sectionKey])
+  @@index([agencyId, caseId])
+  @@map("case_information_profiles")
+}
+
+// Explicit state only — not-applicable overrides and verification. Never
+// stores calculated completion/status; that's always derived (see
+// sectionCompletionService.js) so it can never drift out of sync with
+// the data it's describing.
+model CaseInformationSectionState {
+  id                  String    @id @default(uuid())
+  agencyId            String    @map("agency_id")
+  caseId              String    @map("case_id")
+  sectionKey          String    @map("section_key")
+  notApplicable       Boolean   @default(false) @map("not_applicable")
+  notApplicableReason String?   @map("not_applicable_reason")
+  verifiedAt          DateTime? @map("verified_at")
+  verifiedById        String?   @map("verified_by_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  agency              Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  verifiedBy          User?     @relation("CaseInformationSectionStateVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, caseId, sectionKey])
+  @@map("case_information_section_states")
 }
 
 model Notification {

@@ -1,161 +1,100 @@
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
   Copy,
-  ExternalLink,
-  Eye,
-  EyeOff,
   Loader2,
   MessageSquareText,
-  PhoneCall,
   RefreshCw,
   Send,
-  Server,
   ShieldCheck,
   Trash2,
-  X,
 } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import api from "../../services/api";
 
 const inputClass =
-  "mt-2 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100/60 disabled:bg-slate-50 disabled:text-slate-400";
+  "mt-2 h-12 w-full rounded-2xl border border-white/80 bg-white/70 px-4 text-sm font-medium text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_8px_24px_rgba(15,23,42,0.04)] outline-none backdrop-blur-xl transition-all duration-300 placeholder:text-slate-400 focus:border-sky-300 focus:bg-white/90 focus:ring-4 focus:ring-sky-100/70 disabled:bg-slate-100/60 disabled:text-slate-400";
+
+const glassCard =
+  "relative overflow-hidden rounded-[2rem] border border-white/80 bg-white/62 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-2xl sm:p-6";
+
 const blank = {
-  configured: false,
   canManage: true,
   secureStorageReady: true,
-  apiBaseUrl: "",
   fromNumber: "",
-  smsSendPath: "",
-  callStartPath: "",
-  authHeader: "authorization",
-  authPrefix: "Bearer",
-  apiKey: "",
-  hasApiKey: false,
-  enabled: true,
-  smsEnabled: true,
-  callsEnabled: true,
-  lastSmsTestedAt: null,
-  lastSmsTestStatus: null,
-  lastSmsTestMessage: null,
   webhookUrl: "",
   hasWebhook: false,
   lastWebhookAt: null,
+  hasZapierOutboundWebhook: false,
+  lastZapierOutboundTestedAt: null,
+  lastZapierOutboundTestStatus: null,
+  lastZapierOutboundTestMessage: null,
 };
 
-function Toggle({ checked, disabled, onChange, label }) {
+const errorMessage = (reason, fallback) =>
+  reason?.response?.data?.message || fallback;
+
+function StatusNotice({ type = "success", children }) {
+  const failed = type === "error";
+  const Icon = failed ? AlertCircle : CheckCircle2;
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${checked ? "bg-slate-950" : "bg-slate-300"}`}
-      aria-label={label}
+    <div
+      className={`flex items-start gap-3 rounded-3xl border px-5 py-4 text-sm leading-6 shadow-sm backdrop-blur-xl ${
+        failed
+          ? "border-rose-100/80 bg-rose-50/80 text-rose-800"
+          : "border-emerald-100/80 bg-emerald-50/80 text-emerald-800"
+      }`}
     >
-      <span
-        className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${checked ? "left-6" : "left-1"}`}
-      />
-    </button>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      {children}
+    </div>
   );
 }
 
-function DisconnectDialog({ busy, error, onClose, onConfirm }) {
-  return createPortal(
-    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-md">
-      <button
-        type="button"
-        className="absolute inset-0"
-        onClick={onClose}
-        aria-label="Cancel disconnect"
-      />
-      <motion.section
-        initial={{ opacity: 0, y: 12, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        className="relative w-full max-w-md overflow-hidden rounded-[1.8rem] border border-white/80 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.25)]"
-      >
-        <div className="px-6 pb-5 pt-6">
-          <div className="flex items-start justify-between">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 text-rose-600">
-              <Trash2 className="h-5 w-5" />
-            </span>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <h3 className="mt-4 text-xl font-semibold">Disconnect Ooma?</h3>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            CaseDesk will stop starting Ooma calls and sending text messages.
-            Existing case communication records will remain.
-          </p>
-          {error ? (
-            <p className="mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </p>
-          ) : null}
-        </div>
-        <div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold"
-          >
-            Keep connected
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onConfirm}
-            className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            {busy ? "Disconnecting…" : "Disconnect"}
-          </button>
-        </div>
-      </motion.section>
-    </div>,
-    document.body,
+function ConnectionBadge({ connected, pendingLabel = "Not connected" }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm backdrop-blur-xl ${
+        connected
+          ? "border-emerald-200/70 bg-emerald-50/80 text-emerald-700"
+          : "border-white/80 bg-white/65 text-slate-600"
+      }`}
+    >
+      {connected ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
+      {connected ? "Connected" : pendingLabel}
+    </span>
   );
 }
 
 export default function AgencyOomaSettingsPanel() {
   const [form, setForm] = useState(blank);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [rotatingWebhook, setRotatingWebhook] = useState(false);
-  const [showKey, setShowKey] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
+  const [generatingInbound, setGeneratingInbound] = useState(false);
+  const [checkingInbound, setCheckingInbound] = useState(false);
+  const [savingOutbound, setSavingOutbound] = useState(false);
+  const [testingOutbound, setTestingOutbound] = useState(false);
+  const [disconnectingOutbound, setDisconnectingOutbound] = useState(false);
+  const [editingOutbound, setEditingOutbound] = useState(false);
+  const [outboundWebhookUrl, setOutboundWebhookUrl] = useState("");
   const [testNumber, setTestNumber] = useState("");
-  const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const update = (key, value) =>
-    setForm((current) => ({ ...current, [key]: value }));
+  const [error, setError] = useState("");
+
+  const mergeSettings = (data) => {
+    setForm((current) => ({ ...current, ...data }));
+    if (!data?.hasZapierOutboundWebhook) setEditingOutbound(true);
+  };
 
   useEffect(() => {
     let active = true;
     api
       .get("/settings/ooma")
       .then((response) => {
-        if (active)
-          setForm((current) => ({
-            ...current,
-            ...response.data.data,
-            apiKey: "",
-          }));
+        if (active) mergeSettings(response.data.data);
       })
-      .catch((requestError) => {
+      .catch((reason) => {
         if (active)
-          setError(
-            requestError.response?.data?.message ||
-              "Ooma settings could not be loaded.",
-          );
+          setError(errorMessage(reason, "Zapier communication settings could not be loaded."));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -165,608 +104,280 @@ export default function AgencyOomaSettingsPanel() {
     };
   }, []);
 
-  const save = async (event) => {
-    event.preventDefault();
+  const copy = async (value, message) => {
     try {
-      setSaving(true);
+      await navigator.clipboard.writeText(value);
+      setNotice(message);
       setError("");
-      setNotice("");
-      const response = await api.put("/settings/ooma", {
-        apiBaseUrl: form.apiBaseUrl,
-        fromNumber: form.fromNumber,
-        apiKey: form.apiKey,
-        smsSendPath: form.smsSendPath,
-        callStartPath: form.callStartPath,
-        authHeader: form.authHeader,
-        authPrefix: form.authPrefix,
-        enabled: form.enabled,
-        smsEnabled: form.smsEnabled,
-        callsEnabled: form.callsEnabled,
-      });
-      setForm((current) => ({ ...current, ...response.data.data, apiKey: "" }));
-      setNotice(
-        form.smsEnabled
-          ? "Ooma details saved securely. Send a test text before messaging clients."
-          : "Ooma call settings saved securely.",
-      );
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.message ||
-          "The Ooma details could not be saved.",
-      );
-    } finally {
-      setSaving(false);
+    } catch {
+      setError("The value could not be copied. Select it and copy it manually.");
     }
   };
 
-  const testSms = async () => {
+  const generateInbound = async () => {
     try {
-      setTesting(true);
+      setGeneratingInbound(true);
+      setError("");
+      const response = await api.post("/settings/ooma/webhook-token");
+      mergeSettings(response.data.data);
+      setNotice(
+        form.hasWebhook
+          ? "A new inbound URL was generated. Replace the previous URL in your inbound Zap."
+          : "Your inbound CaseDesk webhook URL is ready.",
+      );
+    } catch (reason) {
+      setError(errorMessage(reason, "The inbound CaseDesk webhook could not be generated."));
+    } finally {
+      setGeneratingInbound(false);
+    }
+  };
+
+  const checkInbound = async () => {
+    try {
+      setCheckingInbound(true);
+      setError("");
+      const response = await api.getFresh("/settings/ooma");
+      mergeSettings(response.data.data);
+    } catch (reason) {
+      setError(errorMessage(reason, "CaseDesk could not check the latest inbound activity."));
+    } finally {
+      setCheckingInbound(false);
+    }
+  };
+
+  const saveOutbound = async (event) => {
+    event.preventDefault();
+    try {
+      setSavingOutbound(true);
+      setError("");
+      setNotice("");
+      const response = await api.put("/settings/ooma/zapier-outbound", {
+        webhookUrl: outboundWebhookUrl,
+        fromNumber: form.fromNumber,
+      });
+      mergeSettings(response.data.data);
+      setOutboundWebhookUrl("");
+      setEditingOutbound(false);
+      setNotice("Your sending connection is saved. Send a test message to finish setup.");
+    } catch (reason) {
+      setError(errorMessage(reason, "The outbound Zapier hook could not be saved."));
+    } finally {
+      setSavingOutbound(false);
+    }
+  };
+
+  const testOutbound = async () => {
+    try {
+      setTestingOutbound(true);
       setError("");
       setNotice("");
       const response = await api.post(
-        "/settings/ooma/test-sms",
+        "/settings/ooma/zapier-outbound/test-sms",
         { to: testNumber },
         { timeout: 35000 },
       );
-      setForm((current) => ({ ...current, ...response.data.data, apiKey: "" }));
+      mergeSettings(response.data.data);
       setNotice(
-        "Ooma accepted the test message. Check the destination phone for the CaseDesk text.",
+        "Zapier accepted the outbound test. Confirm the Zap continued to its Ooma Send SMS action and the phone received the text.",
       );
-    } catch (requestError) {
-      if (requestError.response?.data?.data)
-        setForm((current) => ({
-          ...current,
-          ...requestError.response.data.data,
-          apiKey: "",
-        }));
-      setError(
-        requestError.response?.data?.message || "The Ooma test text failed.",
-      );
+    } catch (reason) {
+      if (reason?.response?.data?.data) mergeSettings(reason.response.data.data);
+      setError(errorMessage(reason, "The outbound Zapier test failed."));
     } finally {
-      setTesting(false);
+      setTestingOutbound(false);
     }
   };
 
-  const disconnect = async () => {
+  const disconnectOutbound = async () => {
     try {
-      setSaving(true);
+      setDisconnectingOutbound(true);
       setError("");
-      await api.delete("/settings/ooma");
-      setForm(blank);
-      setDisconnectOpen(false);
-      setNotice("Ooma disconnected. Existing communication history was kept.");
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.message ||
-          "Ooma could not be disconnected.",
-      );
+      await api.delete("/settings/ooma/zapier-outbound");
+      setForm((current) => ({
+        ...current,
+        hasZapierOutboundWebhook: false,
+        lastZapierOutboundTestedAt: null,
+        lastZapierOutboundTestStatus: null,
+        lastZapierOutboundTestMessage: null,
+      }));
+      setEditingOutbound(true);
+      setNotice("The sending connection has been removed.");
+    } catch (reason) {
+      setError(errorMessage(reason, "Outbound Zapier messaging could not be disconnected."));
     } finally {
-      setSaving(false);
+      setDisconnectingOutbound(false);
     }
   };
 
-  const copyWebhook = async () => {
-    try {
-      await navigator.clipboard.writeText(form.webhookUrl);
-      setNotice("Ooma webhook address copied.");
-    } catch {
-      setError(
-        "The webhook address could not be copied. Select and copy it manually.",
-      );
-    }
-  };
-
-  const rotateWebhook = async () => {
-    try {
-      setRotatingWebhook(true);
-      setError("");
-      setNotice("");
-      const response = await api.post("/settings/ooma/webhook-token");
-      setForm((current) => ({ ...current, ...response.data.data, apiKey: "" }));
-      setNotice(
-        form.hasWebhook
-          ? "A new webhook address was generated. Replace the old address in Zapier."
-          : "Your secure Zapier webhook address is ready.",
-      );
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.message ||
-          "The webhook address could not be regenerated.",
-      );
-    } finally {
-      setRotatingWebhook(false);
-    }
-  };
-
-  if (loading)
+  if (loading) {
     return (
-      <div className="space-y-3">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div
-            key={index}
-            className="h-24 animate-pulse rounded-3xl bg-slate-100"
-          />
+      <div className="space-y-4 rounded-[2.25rem] bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-5">
+        {Array.from({ length: 3 }, (_, index) => (
+          <div key={index} className="h-40 animate-pulse rounded-[2rem] border border-white/80 bg-white/60 backdrop-blur-xl" />
         ))}
       </div>
     );
-  const busy = saving || testing || rotatingWebhook;
+  }
+
+  const outboundConnected =
+    form.hasZapierOutboundWebhook &&
+    form.lastZapierOutboundTestStatus === "Connected";
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-slate-200/80 pb-6 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[13px] font-medium text-slate-500">
-            Client communication
-          </p>
-          <h2 className="mt-1 text-[28px] font-semibold leading-9 tracking-[-0.03em] text-slate-950">
-            Workspace Phone & SMS
-          </h2>
-          <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
-            Connect Ooma Enterprise so your team can text clients, start calls,
-            and keep the activity in each case.
-          </p>
+    <div className="relative isolate overflow-hidden rounded-[2.4rem] border border-white/70 bg-gradient-to-br from-slate-50 via-sky-50/70 to-indigo-50/80 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-7">
+      <div className="pointer-events-none absolute -left-24 top-12 -z-10 h-72 w-72 rounded-full bg-sky-300/25 blur-3xl" aria-hidden="true" />
+      <div className="pointer-events-none absolute -right-24 top-64 -z-10 h-80 w-80 rounded-full bg-indigo-300/20 blur-3xl" aria-hidden="true" />
+
+      <div className="space-y-6">
+      <header className="px-2 pb-2 pt-3 sm:px-3">
+        <div className="flex h-12 w-12 items-center justify-center rounded-[1.15rem] border border-white/90 bg-white/70 text-sky-600 shadow-[0_12px_30px_rgba(14,165,233,0.14)] backdrop-blur-xl">
+          <MessageSquareText className="h-5 w-5" />
         </div>
-        {form.configured ? (
-          <span
-            className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-2 text-xs font-semibold ${form.lastSmsTestStatus === "Connected" ? "bg-emerald-50 text-emerald-700" : form.lastSmsTestStatus === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}
-          >
-            {form.lastSmsTestStatus === "Connected" ? (
-              <CheckCircle2 className="h-4 w-4" />
-            ) : (
-              <AlertCircle className="h-4 w-4" />
-            )}
-            {form.lastSmsTestStatus || "Setup saved"}
-          </span>
-        ) : null}
-      </div>
+        <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.17em] text-sky-600">Phone &amp; messaging</p>
+        <h2 className="mt-1.5 text-[30px] font-semibold leading-tight tracking-[-0.04em] text-slate-950 sm:text-[34px]">
+          Connect Ooma
+        </h2>
+        <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-600">
+          Bring Ooma activity into CaseDesk and send client messages from one place. Zapier connects the two securely—no Ooma API key is needed.
+        </p>
+      </header>
+
       {!form.canManage ? (
-        <div className="rounded-3xl bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          Only a workspace administrator can change the Ooma connection.
-        </div>
+        <StatusNotice type="error">Only a workspace administrator can change these connections.</StatusNotice>
       ) : null}
       {!form.secureStorageReady ? (
-        <div className="rounded-3xl bg-rose-50 px-5 py-4 text-sm text-rose-800">
-          Secure integration storage is unavailable. Ask the system
-          administrator to configure the encryption key.
-        </div>
+        <StatusNotice type="error">Secure integration storage is unavailable. Configure the server encryption key first.</StatusNotice>
       ) : null}
-      {notice ? (
-        <div className="flex items-start gap-3 rounded-3xl bg-emerald-50 px-5 py-4 text-sm leading-6 text-emerald-800">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          {notice}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="flex items-start gap-3 rounded-3xl bg-rose-50 px-5 py-4 text-sm leading-6 text-rose-800">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      ) : null}
+      {notice ? <StatusNotice>{notice}</StatusNotice> : null}
+      {error ? <StatusNotice type="error">{error}</StatusNotice> : null}
 
-      <section className="rounded-[1.6rem] border border-violet-100 bg-violet-50/60 p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-violet-600 shadow-sm">
-            <MessageSquareText className="h-4 w-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-500">
-              Recommended setup
-            </p>
-            <h3 className="mt-1 text-base font-semibold text-violet-950">
-              Receive Ooma activity through Zapier
-            </h3>
-            <p className="mt-1 text-sm leading-6 text-violet-800">
-              Generate a private CaseDesk URL, then use it in Zapier's Webhooks
-              action. Direct Ooma API credentials are not required for inbound
-              texts and call updates.
-            </p>
-
-            {form.webhookUrl ? (
-              <div className="mt-4">
-                <div className="flex items-center gap-2 rounded-2xl border border-violet-100 bg-white p-2">
-                  <input
-                    readOnly
-                    value={form.webhookUrl}
-                    className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-600 outline-none"
-                    aria-label="Zapier webhook address"
-                  />
-                  <button
-                    type="button"
-                    onClick={copyWebhook}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-semibold text-white"
-                  >
-                    <Copy className="h-4 w-4" /> Copy URL
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!form.canManage || rotatingWebhook}
-                    onClick={rotateWebhook}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 disabled:opacity-50"
-                    aria-label="Regenerate Zapier webhook address"
-                    title="Regenerate URL"
-                  >
-                    {rotatingWebhook ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  </button>
-                </div>
-                <div className="mt-4 rounded-2xl border border-violet-100 bg-white/70 p-4 text-xs leading-5 text-slate-600">
-                  <p><strong>Zapier method:</strong> POST</p>
-                  <p><strong>Payload type:</strong> JSON</p>
-                  <p className="mt-2 font-semibold text-slate-800">Map these fields:</p>
-                  <code className="mt-1 block overflow-x-auto whitespace-pre rounded-xl bg-slate-950 p-3 text-[11px] text-slate-100">{`{
-  "event": "message.received",
-  "channel": "Sms",
-  "messageId": "<Ooma message ID>",
-  "from": "<sender phone>",
-  "to": "<your Ooma number>",
-  "body": "<message text>"
-}`}</code>
-                </div>
-                <p className="mt-2 text-xs text-violet-700">
-                  Keep this URL private. Regenerating it immediately disables the old URL.
-                </p>
-              </div>
-            ) : (
-              <button
-                type="button"
-                disabled={rotatingWebhook || !form.canManage || !form.secureStorageReady}
-                onClick={rotateWebhook}
-                className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-50"
-              >
-                {rotatingWebhook ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                {rotatingWebhook ? "Generating…" : "Generate Zapier webhook URL"}
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-[1.6rem] border border-sky-100 bg-sky-50/70 p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-sky-600 shadow-sm">
-            <ShieldCheck className="h-4 w-4" />
-          </span>
-          <div>
-            <p className="text-sm font-semibold text-sky-950">
-              Get these values from Ooma Enterprise
-            </p>
-            <p className="mt-1 text-sm leading-6 text-sky-800">
-              Ask for CRM API access, your API base address and key, plus the
-              exact outbound SMS and click-to-call paths. Business texting must
-              also be activated and registered.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-4">
-              <a
-                href="https://www.ooma.com/contact/"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4"
-              >
-                Contact Ooma <ExternalLink className="h-3 w-3" />
-              </a>
-              <a
-                href="https://support.oomaenterprise.com/support/solutions/articles/48001271312-requirements-for-sms-messaging"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4"
-              >
-                SMS registration guide <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {form.configured ? (
-        <section className="rounded-[1.6rem] border border-slate-200 bg-[linear-gradient(135deg,#fff,#f8fafc)] p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
-                <PhoneCall className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold">
-                  {form.fromNumber}
-                </p>
-                <p className="mt-0.5 text-sm text-slate-500">
-                  Ooma Enterprise · {form.smsEnabled ? "SMS" : "SMS off"} ·{" "}
-                  {form.callsEnabled ? "Calls" : "Calls off"}
-                </p>
-                {form.lastSmsTestMessage ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    {form.lastSmsTestMessage}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            <button
-              type="button"
-              disabled={busy || !form.canManage}
-              onClick={() => setDisconnectOpen(true)}
-              className="flex h-10 w-10 items-center justify-center self-start rounded-full bg-rose-50 text-rose-600"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      <form onSubmit={save} className="space-y-5">
-        <section className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm font-semibold text-slate-800">
-              Ooma business phone number
-              <input
-                required
-                disabled={!form.canManage}
-                value={form.fromNumber}
-                onChange={(event) => update("fromNumber", event.target.value)}
-                className={inputClass}
-                placeholder="+1 416 555 0100"
-              />
-            </label>
-            <label className="text-sm font-semibold text-slate-800">
-              API address from Ooma
-              <input
-                required
-                type="url"
-                disabled={!form.canManage}
-                value={form.apiBaseUrl}
-                onChange={(event) => update("apiBaseUrl", event.target.value)}
-                className={inputClass}
-                placeholder="https://api-address-from-ooma.com"
-              />
-            </label>
-          </div>
-          <label className="mt-4 block text-sm font-semibold text-slate-800">
-            {form.hasApiKey
-              ? "New API key (only if changing it)"
-              : "API key from Ooma"}
-            <span className="relative block">
-              <input
-                required={!form.hasApiKey}
-                type={showKey ? "text" : "password"}
-                disabled={!form.canManage}
-                value={form.apiKey}
-                onChange={(event) =>
-                  update("apiKey", event.target.value.trim())
-                }
-                className={`${inputClass} pr-12`}
-                autoComplete="new-password"
-                placeholder={
-                  form.hasApiKey
-                    ? "An API key is already saved securely"
-                    : "Paste the API key supplied by Ooma"
-                }
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey((current) => !current)}
-                className="absolute right-2 top-[18px] flex h-8 w-8 items-center justify-center rounded-full text-slate-400"
-              >
-                {showKey ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
-            </span>
-            <span className="mt-2 block text-xs font-normal text-slate-500">
-              Encrypted on the server and never shown again.
-            </span>
-          </label>
-        </section>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-center justify-between rounded-3xl bg-slate-50 px-5 py-4">
-            <span className="flex items-center gap-3">
-              <MessageSquareText className="h-4 w-4 text-emerald-600" />
-              <span>
-                <span className="block text-sm font-semibold">
-                  Client text messages
-                </span>
-                <span className="mt-1 block text-xs text-slate-500">
-                  Send through the Ooma business number
-                </span>
-              </span>
-            </span>
-            <Toggle
-              checked={form.smsEnabled}
-              disabled={!form.canManage}
-              onChange={(value) => update("smsEnabled", value)}
-              label="Toggle Ooma SMS"
-            />
-          </label>
-          <label className="flex items-center justify-between rounded-3xl bg-slate-50 px-5 py-4">
-            <span className="flex items-center gap-3">
-              <PhoneCall className="h-4 w-4 text-amber-600" />
-              <span>
-                <span className="block text-sm font-semibold">
-                  Start client calls
-                </span>
-                <span className="mt-1 block text-xs text-slate-500">
-                  Use Ooma click-to-call when supported
-                </span>
-              </span>
-            </span>
-            <Toggle
-              checked={form.callsEnabled}
-              disabled={!form.canManage}
-              onChange={(value) => update("callsEnabled", value)}
-              label="Toggle Ooma calls"
-            />
-          </label>
-        </div>
-        <section className="overflow-hidden rounded-[1.6rem] border border-slate-200 bg-white shadow-sm">
-          <button
-            type="button"
-            onClick={() => setAdvanced((current) => !current)}
-            className="flex w-full items-center justify-between px-5 py-4 text-left"
-          >
-            <span className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
-                <Server className="h-4 w-4" />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold">
-                  Advanced settings
-                </span>
-                <span className="mt-0.5 block text-xs text-slate-500">
-                  Copy these exactly from Ooma's API documentation
-                </span>
-              </span>
-            </span>
-            <ChevronDown
-              className={`h-4 w-4 text-slate-400 transition ${advanced ? "rotate-180" : ""}`}
-            />
-          </button>
-          <AnimatePresence initial={false}>
-            {advanced ? (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="grid gap-4 border-t border-slate-100 px-5 pb-5 pt-4 sm:grid-cols-2">
-                  <label className="text-sm font-semibold text-slate-800">
-                    SMS endpoint path
-                    <input
-                      required={form.smsEnabled}
-                      disabled={!form.canManage || !form.smsEnabled}
-                      value={form.smsSendPath}
-                      onChange={(event) =>
-                        update("smsSendPath", event.target.value)
-                      }
-                      className={inputClass}
-                      placeholder="/exact/path/from/ooma"
-                    />
-                  </label>
-                  <label className="text-sm font-semibold text-slate-800">
-                    Call endpoint path
-                    <input
-                      required={form.callsEnabled}
-                      disabled={!form.canManage || !form.callsEnabled}
-                      value={form.callStartPath}
-                      onChange={(event) =>
-                        update("callStartPath", event.target.value)
-                      }
-                      className={inputClass}
-                      placeholder="/exact/path/from/ooma"
-                    />
-                  </label>
-                  <label className="text-sm font-semibold text-slate-800">
-                    Authentication header
-                    <input
-                      required
-                      disabled={!form.canManage}
-                      value={form.authHeader}
-                      onChange={(event) =>
-                        update("authHeader", event.target.value)
-                      }
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className="text-sm font-semibold text-slate-800">
-                    Key prefix
-                    <input
-                      disabled={!form.canManage}
-                      value={form.authPrefix}
-                      onChange={(event) =>
-                        update("authPrefix", event.target.value)
-                      }
-                      className={inputClass}
-                      placeholder="Bearer"
-                    />
-                  </label>
-                </div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </section>
-        <label className="flex items-center justify-between rounded-3xl bg-slate-50 px-5 py-4">
-          <span>
-            <span className="block text-sm font-semibold">
-              Use Ooma in client cases
-            </span>
-            <span className="mt-1 block text-xs text-slate-500">
-              Turn off to retain the settings without allowing calls or
-              messages.
-            </span>
-          </span>
-          <Toggle
-            checked={form.enabled}
-            disabled={!form.canManage}
-            onChange={(value) => update("enabled", value)}
-            label="Toggle Ooma integration"
-          />
-        </label>
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={busy || !form.canManage || !form.secureStorageReady}
-            className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ShieldCheck className="h-4 w-4" />
-            )}
-            {saving ? "Saving securely…" : "Save Ooma setup"}
-          </button>
-        </div>
-      </form>
-
-      {form.configured && form.smsEnabled ? (
-        <section className="rounded-[1.6rem] border border-emerald-100 bg-emerald-50/60 p-5">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-emerald-600">
-              <Send className="h-4 w-4" />
+      <section className={glassCard}>
+        <div className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-violet-200/35 blur-3xl" aria-hidden="true" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/90 bg-white/75 text-violet-600 shadow-[0_10px_25px_rgba(124,58,237,0.12)] backdrop-blur-xl">
+              <MessageSquareText className="h-5 w-5" />
             </span>
             <div>
-              <h3 className="text-sm font-semibold text-emerald-950">
-                Send a test text
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-emerald-800">
-                Use a phone you control. This sends a real SMS and confirms the
-                Ooma endpoint and API key.
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-500">Receive activity</p>
+              <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Sync Ooma with CaseDesk</h3>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                Create a Zap that sends new Ooma calls and messages to your secure CaseDesk address.
               </p>
             </div>
           </div>
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <input
-              value={testNumber}
-              onChange={(event) => setTestNumber(event.target.value)}
-              className="h-11 min-w-0 flex-1 rounded-2xl border border-emerald-200 bg-white px-3.5 text-sm outline-none"
-              placeholder="+1 416 555 0100"
-            />
-            <button
-              type="button"
-              disabled={testing || !testNumber.trim() || !form.canManage}
-              onClick={testSms}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {testing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-              {testing ? "Sending test…" : "Send test SMS"}
-            </button>
+          <ConnectionBadge connected={Boolean(form.lastWebhookAt)} pendingLabel={form.hasWebhook ? "Waiting for event" : "Not configured"} />
+        </div>
+
+        {form.webhookUrl ? (
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-white/90 bg-white/65 p-2 shadow-sm backdrop-blur-xl">
+              <input readOnly value={form.webhookUrl} aria-label="Inbound CaseDesk webhook URL" className="min-w-0 flex-1 bg-transparent px-2 text-xs text-slate-600 outline-none" />
+              <button type="button" onClick={() => copy(form.webhookUrl, "CaseDesk address copied.")} className="inline-flex h-9 items-center gap-2 rounded-xl bg-slate-950 px-3 text-xs font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 active:scale-[0.97]">
+                <Copy className="h-4 w-4" /> Copy URL
+              </button>
+              <button type="button" disabled={!form.canManage || generatingInbound} onClick={generateInbound} aria-label="Generate a new CaseDesk address" className="flex h-9 w-9 items-center justify-center rounded-xl border border-white bg-white/80 text-slate-600 transition hover:bg-white disabled:opacity-50">
+                <RefreshCw className={`h-4 w-4 ${generatingInbound ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+            <div className="flex flex-col gap-2 rounded-2xl border border-white/70 bg-white/45 px-4 py-3 backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold text-violet-950">
+                  {form.lastWebhookAt ? `Last event received ${new Date(form.lastWebhookAt).toLocaleString()}` : "Waiting for the first event from Zapier"}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">Paste this address into your Zapier webhook action. Its security token is already included.</p>
+              </div>
+              <button type="button" disabled={checkingInbound} onClick={checkInbound} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/80 bg-white/70 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white disabled:opacity-50">
+                <RefreshCw className={`h-3.5 w-3.5 ${checkingInbound ? "animate-spin" : ""}`} /> {checkingInbound ? "Checking…" : "Check connection"}
+              </button>
+            </div>
           </div>
-        </section>
-      ) : null}
-      <AnimatePresence>
-        {disconnectOpen ? (
-          <DisconnectDialog
-            busy={saving}
-            error={error}
-            onClose={() => {
-              setDisconnectOpen(false);
-              setError("");
-            }}
-            onConfirm={disconnect}
-          />
-        ) : null}
-      </AnimatePresence>
+        ) : (
+          <button type="button" disabled={generatingInbound || !form.canManage || !form.secureStorageReady} onClick={generateInbound} className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 active:translate-y-0 disabled:opacity-50">
+            {generatingInbound ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            {generatingInbound ? "Preparing…" : "Create CaseDesk connection"}
+          </button>
+        )}
+      </section>
+
+      <section className={glassCard}>
+        <div className="pointer-events-none absolute -left-12 -bottom-16 h-44 w-44 rounded-full bg-sky-200/40 blur-3xl" aria-hidden="true" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/90 bg-white/75 text-sky-600 shadow-[0_10px_25px_rgba(14,165,233,0.12)] backdrop-blur-xl">
+              <Send className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-500">Send messages</p>
+              <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Message clients through Ooma</h3>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                Connect a Zapier Catch Hook so messages written in CaseDesk are delivered from your Ooma number.
+              </p>
+            </div>
+          </div>
+          <ConnectionBadge connected={outboundConnected} pendingLabel={form.hasZapierOutboundWebhook ? form.lastZapierOutboundTestStatus || "Test required" : "Not configured"} />
+        </div>
+
+        <ol className="mt-5 grid gap-2 text-sm leading-6 text-slate-700 sm:grid-cols-3">
+          <li className="rounded-2xl border border-white/80 bg-white/48 px-4 py-3 backdrop-blur-xl"><strong className="mr-1 text-sky-600">1</strong> In Zapier, choose Webhooks by Zapier and Catch Hook.</li>
+          <li className="rounded-2xl border border-white/80 bg-white/48 px-4 py-3 backdrop-blur-xl"><strong className="mr-1 text-sky-600">2</strong> Paste the generated address below, then save it.</li>
+          <li className="rounded-2xl border border-white/80 bg-white/48 px-4 py-3 backdrop-blur-xl"><strong className="mr-1 text-sky-600">3</strong> Add Ooma Send SMS, map <code>from</code>, <code>to</code> and <code>body</code>.</li>
+        </ol>
+
+        {editingOutbound || !form.hasZapierOutboundWebhook ? (
+          <form onSubmit={saveOutbound} className="mt-5 rounded-3xl border border-white/90 bg-white/55 p-4 shadow-sm backdrop-blur-xl">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="text-sm font-semibold text-slate-800">
+                Ooma business number
+                <input required value={form.fromNumber || ""} onChange={(event) => setForm((current) => ({ ...current, fromNumber: event.target.value }))} className={inputClass} placeholder="+1 416 555 0100" />
+              </label>
+              <label className="text-sm font-semibold text-slate-800">
+                Zapier Catch Hook URL
+                <input required type="url" value={outboundWebhookUrl} onChange={(event) => setOutboundWebhookUrl(event.target.value.trim())} className={inputClass} placeholder="https://hooks.zapier.com/hooks/catch/..." autoComplete="off" />
+              </label>
+            </div>
+            <p className="mt-3 inline-flex items-center gap-1.5 text-xs leading-5 text-slate-500"><ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> Your Zapier address is encrypted and hidden after it is saved.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              {form.hasZapierOutboundWebhook ? (
+                <button type="button" onClick={() => { setEditingOutbound(false); setOutboundWebhookUrl(""); }} className="rounded-2xl border border-white/90 bg-white/60 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-white">Cancel</button>
+              ) : null}
+              <button type="submit" disabled={savingOutbound || !form.canManage || !form.secureStorageReady} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-50">
+                {savingOutbound ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {savingOutbound ? "Saving…" : "Save connection"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="mt-5 rounded-3xl border border-white/90 bg-white/55 p-4 shadow-sm backdrop-blur-xl">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">Sending connection saved</p>
+                <p className="mt-1 text-xs text-slate-500">Business number: {form.fromNumber || "Not set"}</p>
+                {form.lastZapierOutboundTestMessage ? <p className="mt-1 text-xs text-slate-500">{form.lastZapierOutboundTestMessage}</p> : null}
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setEditingOutbound(true)} className="rounded-xl border border-white/90 bg-white/70 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-white">Update connection</button>
+                <button type="button" disabled={disconnectingOutbound} onClick={disconnectOutbound} className="flex h-9 w-9 items-center justify-center rounded-xl border border-rose-100 bg-rose-50/80 text-rose-600 transition hover:bg-rose-100 disabled:opacity-50" aria-label="Remove sending connection">
+                  {disconnectingOutbound ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <input value={testNumber} onChange={(event) => setTestNumber(event.target.value)} className="h-11 min-w-0 flex-1 rounded-2xl border border-white/90 bg-white/70 px-3.5 text-sm shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="Test phone: +1 416 555 0100" />
+              <button type="button" disabled={testingOutbound || !testNumber.trim() || !form.canManage} onClick={testOutbound} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(14,165,233,0.2)] transition-all duration-200 hover:bg-sky-500 active:scale-[0.98] disabled:opacity-50">
+                {testingOutbound ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {testingOutbound ? "Sending…" : "Send outbound test"}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <p className="px-3 pb-2 text-center text-xs leading-5 text-slate-500">
+        CaseDesk stores connection details securely. You can update or remove either connection at any time.
+      </p>
+      </div>
     </div>
   );
 }

@@ -14,6 +14,8 @@
     "storage:configure": "node scripts/configure-storage.js",
     "storage:migrate-local": "node scripts/migrate-local-storage.js --apply",
     "storage:migrate-local:dry-run": "node scripts/migrate-local-storage.js",
+    "case-info:backfill": "node scripts/backfillCaseInformationProfiles.js --apply",
+    "case-info:backfill:dry-run": "node scripts/backfillCaseInformationProfiles.js",
     "test": "node --test test/**/*.test.js",
     "load:test:intake": "node scripts/load-test-lead-intake.js"
   },

@@ -24,8 +24,11 @@ test("admins can generate an inbound Zapier webhook without direct Ooma credenti
   assert.match(controller, /smsEnabled: false/);
   assert.match(controller, /callsEnabled: false/);
   assert.doesNotMatch(controller, /Save the Ooma connection before generating a webhook URL/);
-  assert.match(panel, /Generate Zapier webhook URL/);
-  assert.match(panel, /Direct Ooma API credentials are not required/);
+  assert.match(panel, /Create CaseDesk connection/);
+  assert.match(panel, /no Ooma API key is needed/i);
+  assert.match(panel, /Last event received/);
+  assert.match(panel, /Check connection/);
+  assert.match(panel, /api\.getFresh\("\/settings\/ooma"\)/);
 });
 
 test("the public token route accepts the normalized Zapier SMS payload", async () => {
@@ -42,9 +45,8 @@ test("the public token route accepts the normalized Zapier SMS payload", async (
   assert.match(controller, /payload\.to/);
   assert.match(controller, /payload\.body/);
   assert.match(controller, /payload\.messageId/);
-  assert.match(panel, /"event": "message\.received"/);
-  assert.match(panel, /"channel": "Sms"/);
-  assert.match(panel, /<strong>Payload type:<\/strong> JSON/);
+  assert.match(panel, /Inbound CaseDesk webhook URL/);
+  assert.match(panel, /Paste this address into your Zapier webhook action/);
 });
 
 test("webhook-only records are not treated as outbound Ooma connections", async () => {
@@ -57,4 +59,33 @@ test("webhook-only records are not treated as outbound Ooma connections", async 
   assert.match(service, /storedConfig\(settings\) \|\| environmentConfig\(\)/);
   assert.match(controller, /const directConfigured = Boolean/);
   assert.match(controller, /configured: directConfigured/);
+});
+
+test("outbound CaseDesk SMS is sent to a separately configured Zapier Catch Hook", async () => {
+  const [schema, migration, routes, controller, service, provider, panel] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260721170000_ooma_zapier_outbound/migration.sql"),
+    source("../src/routes/settingsRoutes.js"),
+    source("../src/controllers/oomaSettingsController.js"),
+    source("../src/services/agencyOomaService.js"),
+    source("../src/services/communicationProviderService.js"),
+    source("../../frontend/src/components/settings/AgencyOomaSettingsPanel.jsx"),
+  ]);
+
+  assert.match(schema, /zapierOutboundWebhookEncrypted\s+String\?/);
+  assert.match(migration, /zapier_outbound_webhook_encrypted/);
+  assert.match(routes, /\/ooma\/zapier-outbound/);
+  assert.match(routes, /zapier-outbound\/test-sms", rateLimit/);
+  assert.match(controller, /zapierWebhookUrl/);
+  assert.match(controller, /encryptSecret\(webhookUrl\)/);
+  assert.match(controller, /testZapierOutboundSms/);
+  assert.match(service, /event: "sms\.send"/);
+  assert.match(service, /idempotencyKey/);
+  assert.match(service, /provider: "Zapier \/ Ooma"/);
+  assert.match(provider, /ooma\.Sms\.source === "Zapier"/);
+  assert.match(panel, /Receive activity/);
+  assert.match(panel, /Send messages/);
+  assert.match(panel, /Save connection/);
+  assert.doesNotMatch(panel, /Keep existing|Create new/);
+  assert.doesNotMatch(panel, /API key from Ooma|API address from Ooma/);
 });

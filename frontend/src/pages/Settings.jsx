@@ -21,6 +21,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPanel";
+import PersonalMailboxSettingsPanel from "../components/settings/PersonalMailboxSettingsPanel";
 import AgencyProfilePanel from "../components/settings/AgencyProfilePanel";
 import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPanel";
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
@@ -38,11 +39,18 @@ const adminSettingsItems = [
       "Update your workspace identity, contact details, and regional settings.",
   },
   {
-    id: "agency-email",
-    label: "Workspace Email",
+    id: "personal-email",
+    label: "My Mailbox",
     icon: Mail,
-    title: "Workspace Email",
-    subtitle: "Connect the mailbox used to send client communication.",
+    title: "My Mailbox",
+    subtitle: "Connect your own Microsoft mailbox for client communication.",
+  },
+  {
+    id: "agency-email",
+    label: "System Email",
+    icon: Mail,
+    title: "System Email",
+    subtitle: "Manage the shared sender used for appointments, billing, and automated notices.",
   },
   {
     id: "agency-phone",
@@ -127,6 +135,13 @@ const consultantSettingsItems = [
     icon: UserRound,
     title: "My Profile",
     subtitle: "Review the account and workspace details attached to your login.",
+  },
+  {
+    id: "personal-email",
+    label: "My Mailbox",
+    icon: Mail,
+    title: "My Mailbox",
+    subtitle: "Connect your own Microsoft mailbox for client communication.",
   },
   {
     id: "notifications",
@@ -627,6 +642,8 @@ export default function Settings() {
                     role === "frontdesk" ? <FrontdeskProfilePanel user={appUser} agency={agency} /> : <PersonalProfilePanel user={appUser} agency={agency} />
                   ) : !isAdmin && activeSection === "security" ? (
                     <SecurityPanel />
+                  ) : activeSection === "personal-email" ? (
+                    <PersonalMailboxSettingsPanel />
                   ) : activeSection === "agency-profile" ? (
                     <AgencyProfilePanel />
                   ) : activeSection === "agency-email" ? (

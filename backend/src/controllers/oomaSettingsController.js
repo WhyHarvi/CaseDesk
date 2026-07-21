@@ -61,6 +61,10 @@ function publicSettings(settings, canManage, req) {
     authHeader: settings?.authHeader || "authorization",
     authPrefix: settings?.authPrefix ?? "Bearer",
     hasApiKey: Boolean(settings?.apiKeyEncrypted),
+    hasZapierOutboundWebhook: Boolean(settings?.zapierOutboundWebhookEncrypted),
+    lastZapierOutboundTestedAt: settings?.lastZapierOutboundTestedAt || null,
+    lastZapierOutboundTestStatus: settings?.lastZapierOutboundTestStatus || null,
+    lastZapierOutboundTestMessage: settings?.lastZapierOutboundTestMessage || null,
     enabled: settings?.enabled ?? true,
     smsEnabled: settings?.smsEnabled ?? true,
     callsEnabled: settings?.callsEnabled ?? true,
@@ -71,6 +75,23 @@ function publicSettings(settings, canManage, req) {
     lastWebhookAt: settings?.lastWebhookAt || null,
     ...webhookValues(settings, req, canManage),
   };
+}
+
+function zapierWebhookUrl(value) {
+  const raw = clean(value, 2000);
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw createHttpError(400, "Paste the complete Catch Hook URL supplied by Zapier");
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "hooks.zapier.com") {
+    throw createHttpError(400, "Use an HTTPS Webhooks by Zapier Catch Hook URL");
+  }
+  if (!parsed.pathname.startsWith("/hooks/catch/")) {
+    throw createHttpError(400, "This does not look like a Zapier Catch Hook URL");
+  }
+  return parsed.toString();
 }
 
 function endpointPath(value, label) {
@@ -230,6 +251,115 @@ export async function rotateOomaWebhookToken(req, res) {
     details: "Ooma/Zapier inbound webhook URL generated",
   });
   res.json({ data: publicSettings(data, true, req) });
+}
+
+export async function saveZapierOutboundWebhook(req, res) {
+  requireAdmin(req);
+  if (!secretEncryptionReady())
+    throw createHttpError(503, "Secure integration storage is not configured on this CaseDesk server");
+  const webhookUrl = zapierWebhookUrl(req.body.webhookUrl);
+  const fromNumber = normalizePhone(req.body.fromNumber);
+  if (!/^\+\d{8,15}$/.test(fromNumber))
+    throw createHttpError(400, "Enter the Ooma business number including country code, such as +14165550100");
+  const encrypted = encryptSecret(webhookUrl);
+  const data = await prisma.agencyOomaSettings.upsert({
+    where: { agencyId: req.user.agencyId },
+    create: {
+      agencyId: req.user.agencyId,
+      apiBaseUrl: "",
+      apiKeyEncrypted: "",
+      fromNumber,
+      zapierOutboundWebhookEncrypted: encrypted,
+      enabled: true,
+      smsEnabled: true,
+      callsEnabled: false,
+      lastZapierOutboundTestStatus: "Not tested",
+      lastZapierOutboundTestMessage: "Send a test text before messaging clients.",
+    },
+    update: {
+      fromNumber,
+      zapierOutboundWebhookEncrypted: encrypted,
+      enabled: true,
+      smsEnabled: true,
+      lastZapierOutboundTestedAt: null,
+      lastZapierOutboundTestStatus: "Not tested",
+      lastZapierOutboundTestMessage: "Zapier settings changed. Send another test text.",
+    },
+  });
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "settings.ooma_zapier_outbound_saved",
+    details: `Outbound Ooma SMS through Zapier saved for ${fromNumber}`,
+  });
+  res.json({ data: publicSettings(data, true, req) });
+}
+
+export async function testZapierOutboundSms(req, res) {
+  requireAdmin(req);
+  const to = normalizePhone(req.body.to);
+  if (!/^\+\d{8,15}$/.test(to))
+    throw createHttpError(400, "Enter a valid test phone number including country code");
+  const settings = await prisma.agencyOomaSettings.findUnique({ where: { agencyId: req.user.agencyId } });
+  if (!settings?.zapierOutboundWebhookEncrypted)
+    throw createHttpError(409, "Save the outbound Zapier Catch Hook before sending a test text");
+  try {
+    await sendAgencyOomaSms({
+      agencyId: req.user.agencyId,
+      to,
+      body: "CaseDesk Zapier connection test. Your outbound Ooma SMS workflow is working.",
+      idempotencyKey: `zapier-ooma-test:${req.user.agencyId}:${Date.now()}`,
+      requireVerified: false,
+    });
+    const data = await prisma.agencyOomaSettings.update({
+      where: { id: settings.id },
+      data: {
+        lastZapierOutboundTestedAt: new Date(),
+        lastZapierOutboundTestStatus: "Connected",
+        lastZapierOutboundTestMessage: "Zapier accepted the test. Confirm the text arrived through Ooma.",
+      },
+    });
+    await recordActivity({
+      agencyId: req.user.agencyId,
+      userId: req.user.id,
+      action: "settings.ooma_zapier_outbound_tested",
+      details: `Outbound Zapier SMS test accepted for ${to}`,
+    });
+    res.json({ data: publicSettings(data, true, req) });
+  } catch (error) {
+    await prisma.agencyOomaSettings.update({
+      where: { id: settings.id },
+      data: {
+        lastZapierOutboundTestedAt: new Date(),
+        lastZapierOutboundTestStatus: "Failed",
+        lastZapierOutboundTestMessage: clean(error?.message, 500) || "Zapier rejected the test.",
+      },
+    });
+    throw error;
+  }
+}
+
+export async function deleteZapierOutboundWebhook(req, res) {
+  requireAdmin(req);
+  const existing = await prisma.agencyOomaSettings.findUnique({ where: { agencyId: req.user.agencyId } });
+  if (existing) {
+    await prisma.agencyOomaSettings.update({
+      where: { id: existing.id },
+      data: {
+        zapierOutboundWebhookEncrypted: null,
+        lastZapierOutboundTestedAt: null,
+        lastZapierOutboundTestStatus: null,
+        lastZapierOutboundTestMessage: null,
+      },
+    });
+  }
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "settings.ooma_zapier_outbound_disconnected",
+    details: "Outbound Ooma SMS through Zapier disconnected",
+  });
+  res.status(204).send();
 }
 
 export async function testOomaSms(req, res) {

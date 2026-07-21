@@ -21,6 +21,15 @@
 // spouseDetails) list `knownFields: null` and fall back to a generic
 // non-empty-top-level-key heuristic — deliberately not guessing an
 // exhaustive field list that doesn't exist anywhere in the app yet.
+//
+// `scope` (Phase 2) — FIRST-DRAFT CLASSIFICATION, needs the same domain
+// review as caseTypeRequirements.js, not authoritative:
+//   - "client": biographical/historical facts about the person, reusable
+//     across every case that client has (address history, family members,
+//     identity documents, etc.) — stored in ClientInformationProfile.
+//   - "case": program-specific declarations that legitimately differ per
+//     application (a client's second case may answer these differently
+//     than their first) — stored in CaseInformationProfile.
 
 const CANADIAN_STATUS_FIELDS = ["currentlyInCanada", "currentStatus", "statusExpiry", "uci", "priorCanadaApplication", "refusedCanadaApplication", "refusalDetails"];
 const BACKGROUND_FIELDS = ["medicalCondition", "medicalDetails", "criminalHistory", "criminalDetails", "immigrationViolation", "violationDetails", "visaRefusal", "visaRefusalDetails", "militaryService", "militaryDetails", "governmentPosition", "governmentDetails", "securityConcern", "securityDetails"];
@@ -44,6 +53,7 @@ export const INFORMATION_SECTIONS = [
     label: "Applicant Details",
     group: "Applicant",
     kind: "flat",
+    scope: "case",
     // Merges two structurally different legacy sources: identity-form
     // fields (profileQuestionnaires.applicantIdentity — familyName, gender,
     // etc.) and CRS-input fields (profile/language/work/additional/jobOffer
@@ -62,6 +72,7 @@ export const INFORMATION_SECTIONS = [
     label: "Spouse Details",
     group: "Family",
     kind: "flat",
+    scope: "client",
     legacyPaths: ["spouse"],
     knownFields: null,
   },
@@ -70,6 +81,7 @@ export const INFORMATION_SECTIONS = [
     label: "Children",
     group: "Family",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["dependantsAndChildren"],
     entryListKey: "dependants",
     completeKey: "complete",
@@ -81,6 +93,7 @@ export const INFORMATION_SECTIONS = [
     label: "Sibling Details",
     group: "Family",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["siblings"],
     entryListKey: "siblings",
     completeKey: "complete",
@@ -92,6 +105,7 @@ export const INFORMATION_SECTIONS = [
     label: "Parent Details",
     group: "Family",
     kind: "pairedEntities",
+    scope: "client",
     legacyPaths: ["parents"],
     pairKeys: ["father", "mother"],
     completeKey: "complete",
@@ -102,6 +116,7 @@ export const INFORMATION_SECTIONS = [
     label: "Activity History",
     group: "History",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["activityHistory"],
     entryListKey: "entries",
     completeKey: "complete",
@@ -112,6 +127,7 @@ export const INFORMATION_SECTIONS = [
     label: "Address History",
     group: "History",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["addressHistory"],
     entryListKey: "entries",
     completeKey: "complete",
@@ -122,6 +138,7 @@ export const INFORMATION_SECTIONS = [
     label: "Travel History",
     group: "History",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["travelHistory"],
     entryListKey: "entries",
     completeKey: "complete",
@@ -133,6 +150,7 @@ export const INFORMATION_SECTIONS = [
     label: "Identity & Permits",
     group: "History",
     kind: "collection",
+    scope: "client",
     legacyPaths: ["identityPermits"],
     entryListKey: "documents",
     completeKey: "complete",
@@ -144,6 +162,7 @@ export const INFORMATION_SECTIONS = [
     label: "Canadian Status",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.canadianStatus"],
     knownFields: CANADIAN_STATUS_FIELDS,
   },
@@ -152,6 +171,7 @@ export const INFORMATION_SECTIONS = [
     label: "Background & Admissibility",
     group: "Program-specific",
     kind: "flat",
+    scope: "client",
     legacyPaths: ["profileQuestionnaires.background"],
     knownFields: BACKGROUND_FIELDS,
   },
@@ -160,6 +180,7 @@ export const INFORMATION_SECTIONS = [
     label: "Relationship & Sponsorship",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.sponsorship"],
     knownFields: SPONSORSHIP_FIELDS,
   },
@@ -168,6 +189,7 @@ export const INFORMATION_SECTIONS = [
     label: "Program Details",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.programDetails"],
     knownFields: PROGRAM_DETAILS_FIELDS,
   },
@@ -176,6 +198,7 @@ export const INFORMATION_SECTIONS = [
     label: "Humanitarian & Citizenship",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.humanitarianCitizenship"],
     knownFields: HUMANITARIAN_CITIZENSHIP_FIELDS,
   },
@@ -184,6 +207,7 @@ export const INFORMATION_SECTIONS = [
     label: "Rehabilitation",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.rehabilitation"],
     knownFields: REHABILITATION_FIELDS,
   },
@@ -192,6 +216,7 @@ export const INFORMATION_SECTIONS = [
     label: "Refugee & Protection",
     group: "Program-specific",
     kind: "flat",
+    scope: "case",
     legacyPaths: ["profileQuestionnaires.refugeeProtection"],
     knownFields: REFUGEE_PROTECTION_FIELDS,
   },
@@ -205,4 +230,8 @@ export function getSection(sectionKey) {
 
 export function listSectionKeys() {
   return INFORMATION_SECTIONS.map((section) => section.key);
+}
+
+export function listSectionKeysByScope(scope) {
+  return INFORMATION_SECTIONS.filter((section) => section.scope === scope).map((section) => section.key);
 }

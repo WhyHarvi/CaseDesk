@@ -398,14 +398,14 @@ export default function AgencyMailSettingsPanel() {
       <div className="flex flex-col gap-4 border-b border-slate-200/80 pb-6 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[13px] font-medium text-slate-500">
-            Client communication
+            Automated communication
           </p>
           <h2 className="mt-1 text-[28px] font-semibold leading-9 tracking-[-0.03em] text-slate-950">
-            Workspace Email
+            System Email
           </h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
-            Connect the mailbox your team will use to send emails directly from
-            client cases.
+            Connect the shared mailbox used for appointment confirmations,
+            billing messages, portal invitations, and other automated notices.
           </p>
         </div>
         {form.configured ? (

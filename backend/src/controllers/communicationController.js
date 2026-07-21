@@ -300,7 +300,7 @@ async function requireCommunicationDeletePolicy(req) {
 export async function getCommunicationProviders(req, res) {
   await requireCommunicationPermission(req, "canView");
   const [providers, permissions] = await Promise.all([
-    communicationProviderStatus(req.user.agencyId),
+    communicationProviderStatus(req.user.agencyId, req.user.id),
     getCommunicationPermissions(req),
   ]);
   res.json({ data: providers, meta: { permissions } });

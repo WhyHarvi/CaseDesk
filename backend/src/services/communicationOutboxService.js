@@ -24,6 +24,7 @@ async function deliver(job) {
   if (job.message.channel === "Email") {
     return sendEmailMessage({
       agencyId: job.agencyId,
+      userId: job.message.senderUserId,
       to: Array.isArray(payload.recipients) ? payload.recipients : [],
       cc: Array.isArray(payload.cc) ? payload.cc : [],
       bcc: Array.isArray(payload.bcc) ? payload.bcc : [],
