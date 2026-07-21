@@ -8,7 +8,7 @@ function workflowStep(title, description, priority = "Normal") {
   };
 }
 
-const DEFAULT_WORKFLOW_TEMPLATES = [
+export const DEFAULT_WORKFLOW_TEMPLATES = [
   {
     caseType: "Canadian Citizenship",
     name: "Canadian Citizenship Workflow",
@@ -171,7 +171,7 @@ const DEFAULT_WORKFLOW_TEMPLATES = [
   },
 ];
 
-function normalizeCaseType(value) {
+export function normalizeCaseType(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
@@ -180,7 +180,7 @@ function normalizeNullableString(value) {
   return normalized || null;
 }
 
-function getTemplateCaseTypeKeys(template) {
+export function getTemplateCaseTypeKeys(template) {
   return [template.caseType, ...(template.aliases || [])].map(normalizeCaseType);
 }
 

@@ -1,0 +1,236 @@
+{
+  "studyPermitSparse": {
+    "caseType": "Study Permit",
+    "formData": {
+      "work": {
+        "moreWorkHistory": "No",
+        "hasWorkExperience": "Yes",
+        "workHistoryEntries": [
+          {
+            "city": "Brampton",
+            "address": "123 Oracle",
+            "country": "Canada",
+            "endDate": "",
+            "nocTeer": "TEER 0",
+            "jobTitle": "Software Developer",
+            "startDate": "2026-07-11",
+            "employerName": "Oracle",
+            "paidPosition": "Yes",
+            "provinceState": "Brampton",
+            "employmentType": "Full-time",
+            "workPermitType": "PGWP",
+            "fullTimeStudent": "No",
+            "validWorkPermit": "Yes",
+            "averageWeeklyHours": "35",
+            "monthlyGrossSalary": "3500"
+          }
+        ],
+        "workHistoryComplete": "Yes"
+      },
+      "education": {
+        "yearSummary": {},
+        "hasEducation": "No",
+        "moreEducation": "No",
+        "educationHistoryEntries": [],
+        "educationHistoryComplete": ""
+      },
+      "questionnaireAssignments": [
+        {
+          "id": "humanitarian-compassionate-1783817656238",
+          "locked": true,
+          "status": "In progress",
+          "modules": [
+            "Applicant details",
+            "Family information",
+            "Canadian establishment",
+            "Hardship narrative",
+            "Best interests of children",
+            "Personal history",
+            "Background declarations"
+          ],
+          "sharing": "Shared",
+          "autofill": true,
+          "updatedAt": "2026-07-12T00:55:54.523Z",
+          "assignedAt": "2026-07-12T00:54:16.238Z",
+          "categoryId": "humanitarian-compassionate",
+          "categoryTitle": "Humanitarian & Compassionate",
+          "applicationType": "In Canada - Humanitarian & Compassionate Considerations"
+        }
+      ]
+    }
+  },
+  "expressEntryRich": {
+    "caseType": "Express Entry",
+    "formData": {
+      "parents": {
+        "father": {
+          "deceased": "",
+          "familyName": "",
+          "givenNames": "",
+          "cityOfBirth": "",
+          "dateOfBirth": "",
+          "dateOfDeath": "",
+          "citizenships": "",
+          "maritalStatus": "",
+          "countryOfBirth": "",
+          "dateOfMarriage": "",
+          "presentAddress": "",
+          "placeOfMarriage": "",
+          "presentOccupation": "",
+          "accompanyingCanada": "",
+          "communicationEmail": "",
+          "countryOfResidence": "",
+          "relationshipCategory": ""
+        },
+        "mother": {
+          "deceased": "",
+          "familyName": "",
+          "givenNames": "",
+          "cityOfBirth": "",
+          "dateOfBirth": "",
+          "dateOfDeath": "",
+          "citizenships": "",
+          "maritalStatus": "",
+          "countryOfBirth": "",
+          "dateOfMarriage": "",
+          "presentAddress": "",
+          "placeOfMarriage": "",
+          "presentOccupation": "",
+          "accompanyingCanada": "",
+          "communicationEmail": "",
+          "countryOfResidence": "",
+          "relationshipCategory": ""
+        },
+        "complete": "Yes"
+      },
+      "siblings": {
+        "complete": "Yes",
+        "siblings": [],
+        "hasMoreSiblings": "No"
+      },
+      "travelHistory": {
+        "entries": [],
+        "hasTravelled": "No"
+      },
+      "addressHistory": {
+        "entries": [],
+        "complete": "Yes"
+      },
+      "activityHistory": {
+        "entries": [],
+        "complete": "Yes"
+      },
+      "identityPermits": {
+        "complete": "Yes",
+        "documents": [],
+        "provideDetails": "Yes"
+      },
+      "dependantsAndChildren": {
+        "complete": "Yes",
+        "dependants": [],
+        "hasMoreDependants": "No"
+      },
+      "profileQuestionnaires": {
+        "background": {
+          "visaRefusal": "No",
+          "criminalHistory": "No",
+          "militaryService": "No",
+          "securityConcern": "No",
+          "medicalCondition": "No",
+          "governmentPosition": "No",
+          "immigrationViolation": "No"
+        },
+        "applicantIdentity": {
+          "gender": "Male",
+          "familyName": "Okafor",
+          "givenNames": "Amara",
+          "cityOfBirth": "London",
+          "citizenships": "UK",
+          "countryOfBirth": "UK",
+          "nativeLanguage": "English",
+          "preferredLanguage": "English"
+        }
+      },
+      "questionnaireAssignments": [
+        {
+          "id": "permanent-resident-1784171450577",
+          "status": "Submitted",
+          "dueDate": "",
+          "modules": [
+            "Applicant details",
+            "Identity & travel documents",
+            "Family information",
+            "Work history",
+            "Education history",
+            "Language tests",
+            "Address history",
+            "Personal history",
+            "Travel history",
+            "Background declarations"
+          ],
+          "sharing": "Shared",
+          "autofill": true,
+          "updatedAt": "2026-07-16T03:15:11.214Z",
+          "assignedAt": "2026-07-16T03:10:50.577Z",
+          "assignedTo": "Amara Okafor",
+          "categoryId": "permanent-resident",
+          "submittedAt": "2026-07-16T03:15:11.214Z",
+          "categoryTitle": "Permanent Resident",
+          "applicationType": "Provincial Nominee Programs"
+        }
+      ]
+    }
+  },
+  "pgwp": {
+    "caseType": "PGWP",
+    "formData": {
+      "work": {
+        "validJobOffer": "No",
+        "certificateOfQualification": "No",
+        "foreignSkilledExperienceYears": "None or less than a year",
+        "canadianSkilledExperienceYears": "1 year"
+      },
+      "spouse": {},
+      "profile": {
+        "age": "24",
+        "maritalStatus": "Never Married / Single",
+        "highestEducation": "Bachelor's degree OR a three or more year program",
+        "educationInCanada": "Yes",
+        "canadianEducationCredentialLevel": "One- or two-year diploma or certificate"
+      },
+      "language": {
+        "firstLanguageTest": "IELTS",
+        "secondLanguageTest": "Not applicable",
+        "approvedLanguageTest": "Yes",
+        "firstLanguageReadingClb": "7",
+        "firstLanguageWritingClb": "7",
+        "firstLanguageSpeakingClb": "7",
+        "firstLanguageListeningClb": "8"
+      },
+      "additional": {
+        "siblingInCanada": "No",
+        "nominationCertificate": "No"
+      },
+      "questionnaireAssignments": [
+        {
+          "id": "temporary-in-canada-1783820446718",
+          "status": "In progress",
+          "modules": [
+            "Applicant details",
+            "Current Canadian status",
+            "Identity & travel documents",
+            "Address history",
+            "Background declarations"
+          ],
+          "sharing": "Private",
+          "autofill": true,
+          "updatedAt": "2026-07-12T01:40:46.718Z",
+          "assignedAt": "2026-07-12T01:40:46.718Z",
+          "categoryId": "temporary-in-canada",
+          "categoryTitle": "Temporary Resident - Stay in Canada longer",
+          "applicationType": "Visitor Visa Extension"
+        }
+      ]
+    }
+  }
+}
