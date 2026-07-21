@@ -1,4 +1,4 @@
-import { Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText } from "lucide-react";
+import { Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
@@ -142,6 +142,16 @@ export default function ClientPortalPayments() {
                           {Number(invoice.balance) > 0 ? ` · ${formatPortalMoney(invoice.balance)} due` : ""}
                         </p>
                         {invoice.dueDate ? <p className="mt-1 text-[11px] text-slate-400">Due {formatPortalDate(invoice.dueDate)}</p> : null}
+                        {invoice.payNowUrl ? (
+                          <a
+                            href={invoice.payNowUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800"
+                          >
+                            <Wallet className="h-3 w-3" /> Pay now
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">

@@ -1,7 +1,8 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { notifyUsers } from "./notificationService.js";
+import { logger } from "./logger.js";
+import { notifyInvoiceCreated } from "./paymentNotificationService.js";
 import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import {
   createQuickBooksInvoice,
@@ -67,6 +68,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
       description,
       qbInvoiceId: invoice.id,
       qbInvoiceNumber: invoice.docNumber,
+      qbInvoiceLink: invoice.invoiceLink,
       qbSyncToken: invoice.syncToken,
       amount,
       balance: invoice.balance,
@@ -112,36 +114,13 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     entityId: row.id,
   });
 
-  try {
-    const recipientIds = await clientPortalRecipientIds(row.clientId);
-    if (recipientIds.length) {
-      await notifyUsers({
-        agencyId,
-        recipientIds,
-        actorUserId,
-        type: "invoice.created",
-        category: "cases",
-        title: "New invoice",
-        body: `${trimmedDescription} — $${numericAmount.toFixed(2)}`,
-        severity: "info",
-        entityType: "caseInvoice",
-        entityId: row.id,
-        actionUrl: "/client-portal/payments",
-        dedupeKey: `invoice-created:${row.id}`,
-      });
-    }
-  } catch {
-    // Notifying the client is best-effort — the invoice itself already
-    // exists in QuickBooks and CaseDesk, so a notification hiccup here
-    // must never surface as a failure to the staff member who just billed.
-  }
+  // Best-effort on every channel — a notification hiccup here must never
+  // surface as a failure to the staff member who just billed.
+  await notifyInvoiceCreated({ agencyId, invoice: row, actorUserId }).catch((error) => {
+    logger.warn("invoice.notify_failed", { agencyId, invoiceId: row.id, reason: error.message });
+  });
 
   return row;
-}
-
-async function clientPortalRecipientIds(clientId) {
-  const links = await prisma.clientUser.findMany({ where: { clientId }, select: { userId: true } });
-  return links.map((link) => link.userId);
 }
 
 // Shared by every reader (staff case tab, client portal): re-verifies

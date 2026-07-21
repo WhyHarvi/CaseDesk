@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Banknote,
   Check,
+  Copy,
   Download,
   Landmark,
   Loader2,
@@ -119,6 +120,7 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
   const payable = canRecordPayment && Number(invoice.balance) > 0;
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
 
   async function download() {
     setDownloading(true);
@@ -129,6 +131,16 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
       setDownloadError(reason.response?.data?.message || "The PDF could not be downloaded.");
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function copyPayLink() {
+    try {
+      await navigator.clipboard.writeText(invoice.qbInvoiceLink);
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      setDownloadError("Could not copy the pay link.");
     }
   }
 
@@ -152,6 +164,17 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_TONE[invoice.status] || STATUS_TONE.Open}`}>
             {invoice.status === "PartiallyPaid" ? "Partially paid" : invoice.status}
           </span>
+          {invoice.qbInvoiceLink && Number(invoice.balance) > 0 ? (
+            <button
+              type="button"
+              onClick={copyPayLink}
+              aria-label="Copy pay-now link"
+              title={linkCopied ? "Copied" : "Copy pay-now link"}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            >
+              {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={download}

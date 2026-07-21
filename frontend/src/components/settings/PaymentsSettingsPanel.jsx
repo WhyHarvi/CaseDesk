@@ -147,7 +147,7 @@ export default function PaymentsSettingsPanel() {
         <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
           <p className="flex items-start gap-2.5"><Banknote className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Interac e-transfers</span> land in your bank feed inside QuickBooks — match them to invoices there. No CaseDesk step needed.</span></p>
           <p className="flex items-start gap-2.5"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cash</span> gets recorded from the case billing tab — CaseDesk posts a Receive Payment to QuickBooks so the books stay current.</span></p>
-          <p className="flex items-start gap-2.5"><CreditCard className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cards</span> (optional, later) via QuickBooks Payments — a pay-now button on the invoice itself.</span></p>
+          <p className="flex items-start gap-2.5"><CreditCard className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cards</span> — if your QuickBooks company has QuickBooks Payments turned on, every invoice automatically gets a "Pay now" link shown to the client. Nothing to configure here.</span></p>
         </div>
       </section>
 

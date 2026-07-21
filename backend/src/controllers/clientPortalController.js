@@ -464,6 +464,7 @@ export async function getPortalPayments(req, res) {
         status: invoice.status,
         dueDate: invoice.dueDate,
         createdAt: invoice.createdAt,
+        payNowUrl: Number(invoice.balance) > 0 ? invoice.qbInvoiceLink || null : null,
       })),
       history: payments.map((payment) => ({
         id: payment.id,

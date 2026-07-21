@@ -306,6 +306,9 @@ function mapQuickBooksInvoice(invoice) {
     totalAmount: Number(invoice.TotalAmt ?? 0),
     balance: Number(invoice.Balance ?? 0),
     dueDate: invoice.DueDate || null,
+    // Only present when the company has QuickBooks Payments enabled — a
+    // hosted "Pay now" checkout page for this invoice. Absent otherwise.
+    invoiceLink: invoice.InvoiceLink || null,
   };
 }
 
@@ -316,6 +319,10 @@ export async function createQuickBooksInvoice(agencyId, { customerId, itemId, de
     body: {
       CustomerRef: { value: customerId },
       ...(dueDate ? { DueDate: dueDate } : {}),
+      // Requests the QuickBooks Payments "Pay now" hosted link. Ignored by
+      // QBO (no InvoiceLink returned) if the company has Payments disabled.
+      AllowOnlineCreditCardPayment: true,
+      AllowOnlineACHPayment: true,
       Line: [
         {
           Amount: amount,
@@ -330,7 +337,10 @@ export async function createQuickBooksInvoice(agencyId, { customerId, itemId, de
 }
 
 // Batched refresh for the invoices already known to CaseDesk — one round
-// trip regardless of how many invoices a case has accumulated.
+// trip regardless of how many invoices a case has accumulated. Note:
+// InvoiceLink is not a queryable column in QBO's SQL-like Query API (only
+// in the direct entity GET/POST response) — selecting it here throws, so
+// it's deliberately omitted and only ever captured at creation time.
 export async function getQuickBooksInvoicesByIds(agencyId, ids) {
   if (!ids.length) return [];
   const list = ids.map((id) => `'${escapeQueryLiteral(id)}'`).join(",");

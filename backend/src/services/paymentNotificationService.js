@@ -37,17 +37,17 @@ function fillTemplate(template, values) {
   return String(template || "").replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => (Object.hasOwn(values, key) ? values[key] : match));
 }
 
-function buildValues({ client, agency, caseItem, installment, paymentInstructions }) {
-  const amount = Number(installment.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
-  const dueDate = installment.dueDate ? new Date(installment.dueDate).toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" }) : "";
+function buildValues({ client, agency, caseItem, label, amount, dueDate, paymentInstructions }) {
+  const formattedAmount = Number(amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+  const formattedDueDate = dueDate ? new Date(dueDate).toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" }) : "";
   return {
     clientName: client.fullName || "there",
     agencyName: agency?.name || "CaseDesk",
     caseType: caseItem?.caseType || "your file",
-    installmentLabel: installment.label,
-    amount,
-    dueDate,
-    dueDateLine: dueDate ? `Due date: ${dueDate}` : "",
+    installmentLabel: label,
+    amount: formattedAmount,
+    dueDate: formattedDueDate,
+    dueDateLine: formattedDueDate ? `Due date: ${formattedDueDate}` : "",
     paymentInstructions: paymentInstructions || "",
     paymentInstructionsLine: paymentInstructions ? `\nHow to pay: ${paymentInstructions}` : "",
     paymentInstructionsShort: paymentInstructions ? `${paymentInstructions.slice(0, 100)} ` : "",
@@ -56,23 +56,24 @@ function buildValues({ client, agency, caseItem, installment, paymentInstruction
 }
 
 /**
- * Notifies the client that a scheduled installment has become a real
- * invoice, using the agency's customized (or default) email/SMS wording and
- * their configured payment instructions. Best-effort on every channel — an
- * unconfigured mailbox or Ooma line must never block the invoice itself.
+ * Notifies a client that a real invoice now exists on their file, using the
+ * agency's customized (or default) email/SMS wording and their configured
+ * payment instructions. Best-effort on every channel — an unconfigured
+ * mailbox or Ooma line must never block the invoice itself. Shared by both
+ * schedule-triggered installments and manually-created invoices.
  */
-export async function notifyInstallmentInvoiced({ agencyId, installment, actorUserId = null }) {
+async function notifyClientPaymentDue({ agencyId, clientId, caseId, caseInvoiceId, label, amount, dueDate, actorUserId, notificationType, dedupeKey }) {
   const [client, agency, caseItem, settings] = await Promise.all([
-    prisma.client.findUnique({ where: { id: installment.clientId }, select: { fullName: true, email: true, phone: true } }),
+    prisma.client.findUnique({ where: { id: clientId }, select: { fullName: true, email: true, phone: true } }),
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, paymentInstructions: true } }),
-    prisma.case.findUnique({ where: { id: installment.caseId }, select: { caseType: true } }),
+    prisma.case.findUnique({ where: { id: caseId }, select: { caseType: true } }),
     prisma.agencyPaymentNotificationSettings.findUnique({ where: { agencyId } }),
   ]);
   if (!client) return;
 
   const notifyByEmail = settings?.notifyByEmail ?? true;
   const notifyBySms = settings?.notifyBySms ?? false;
-  const values = buildValues({ client, agency, caseItem, installment, paymentInstructions: agency?.paymentInstructions });
+  const values = buildValues({ client, agency, caseItem, label, amount, dueDate, paymentInstructions: agency?.paymentInstructions });
 
   if (notifyByEmail && client.email) {
     try {
@@ -88,41 +89,76 @@ export async function notifyInstallmentInvoiced({ agencyId, installment, actorUs
         html: `<div style="font-family:system-ui,-apple-system,sans-serif;white-space:pre-wrap;max-width:520px;margin:0 auto;color:#0f172a">${body.replace(/\n/g, "<br/>")}</div>`,
       });
     } catch (error) {
-      logger.warn("payment_notification.email_skipped", { agencyId, installmentId: installment.id, reason: error.message });
+      logger.warn("payment_notification.email_skipped", { agencyId, caseInvoiceId, reason: error.message });
     }
   }
 
   if (notifyBySms && client.phone) {
     try {
       const body = fillTemplate(settings?.smsTemplate || DEFAULT_SMS, values).slice(0, 320);
-      await sendAgencyOomaSms({ agencyId, to: client.phone, body, idempotencyKey: `installment:${installment.id}:invoiced` });
+      await sendAgencyOomaSms({ agencyId, to: client.phone, body, idempotencyKey: `${dedupeKey}:sms` });
     } catch (error) {
-      logger.warn("payment_notification.sms_skipped", { agencyId, installmentId: installment.id, reason: error.message });
+      logger.warn("payment_notification.sms_skipped", { agencyId, caseInvoiceId, reason: error.message });
     }
   }
 
   try {
-    const links = await prisma.clientUser.findMany({ where: { clientId: installment.clientId }, select: { userId: true } });
+    const links = await prisma.clientUser.findMany({ where: { clientId }, select: { userId: true } });
     const recipientIds = links.map((link) => link.userId);
     if (recipientIds.length) {
       await notifyUsers({
         agencyId,
         recipientIds,
         actorUserId,
-        type: "installment.invoiced",
+        type: notificationType,
         category: "cases",
         title: "New payment due",
-        body: `${installment.label} — ${values.amount}`,
+        body: `${label} — ${values.amount}`,
         severity: "info",
         entityType: "caseInvoice",
-        entityId: installment.caseInvoiceId,
+        entityId: caseInvoiceId,
         actionUrl: "/client-portal/payments",
-        dedupeKey: `installment-invoiced:${installment.id}`,
+        dedupeKey,
       });
     }
   } catch (error) {
-    logger.warn("payment_notification.portal_notify_skipped", { agencyId, installmentId: installment.id, reason: error.message });
+    logger.warn("payment_notification.portal_notify_skipped", { agencyId, caseInvoiceId, reason: error.message });
   }
+}
+
+export async function notifyInstallmentInvoiced({ agencyId, installment, actorUserId = null }) {
+  await notifyClientPaymentDue({
+    agencyId,
+    clientId: installment.clientId,
+    caseId: installment.caseId,
+    caseInvoiceId: installment.caseInvoiceId,
+    label: installment.label,
+    amount: installment.amount,
+    dueDate: installment.dueDate,
+    actorUserId,
+    notificationType: "installment.invoiced",
+    dedupeKey: `installment-invoiced:${installment.id}`,
+  });
+}
+
+/**
+ * Notifies a client about an invoice created directly from the case billing
+ * tab (not from a payment schedule) — keeps ad-hoc invoices on parity with
+ * scheduled ones instead of only firing the in-app notification.
+ */
+export async function notifyInvoiceCreated({ agencyId, invoice, actorUserId = null }) {
+  await notifyClientPaymentDue({
+    agencyId,
+    clientId: invoice.clientId,
+    caseId: invoice.caseId,
+    caseInvoiceId: invoice.id,
+    label: invoice.description,
+    amount: invoice.amount,
+    dueDate: invoice.dueDate,
+    actorUserId,
+    notificationType: "invoice.created",
+    dedupeKey: `invoice-created:${invoice.id}`,
+  });
 }
 
 export async function notifyStaffInstallmentVoided({ agencyId, installment, actorUserId }) {
