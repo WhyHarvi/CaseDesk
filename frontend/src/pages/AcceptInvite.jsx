@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell, fieldClass, FormField, FormMessage } from "../components/auth/AuthShell";
 import api from "../services/api";
@@ -63,6 +63,9 @@ export default function AcceptInvite() {
       <FormField label="Create password" hint="Use at least 10 characters"><input className={fieldClass} type="password" value={form.password} onChange={update("password")} autoComplete="new-password" minLength={10} required /></FormField>
       <FormField label="Confirm password"><input className={fieldClass} type="password" value={form.confirmPassword} onChange={update("confirmPassword")} autoComplete="new-password" minLength={10} required /></FormField>
       {error && <div className="sm:col-span-2"><FormMessage error>{error}</FormMessage></div>}
+      <p className="text-center text-xs leading-5 text-slate-500 sm:col-span-2">
+        By opening CaseDesk, you agree to the <Link to="/legal/terms" className="font-medium text-sky-700 hover:underline">Terms of Service</Link> and acknowledge the <Link to="/legal/privacy" className="font-medium text-sky-700 hover:underline">Privacy Policy</Link>.
+      </p>
       <button disabled={saving} className="rounded-2xl bg-slate-950 px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-slate-300 transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60 sm:col-span-2">{saving ? "Preparing your workspace…" : "Open CaseDesk"}</button>
     </form>
   </AuthShell>;

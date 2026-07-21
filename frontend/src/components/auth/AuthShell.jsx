@@ -16,6 +16,11 @@ export function AuthShell({ title, description, children, backTo, compact = fals
         </div>
         <div className="mt-9"><h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1><p className="mt-3 max-w-xl text-sm leading-6 text-slate-500">{description}</p></div>
         {children}
+        <nav aria-label="Legal" className="mt-8 flex flex-wrap items-center justify-center gap-3 border-t border-slate-200/80 pt-5 text-xs text-slate-500">
+          <Link to="/legal/privacy" className="transition hover:text-slate-900">Privacy Policy</Link>
+          <span aria-hidden="true" className="text-slate-300">•</span>
+          <Link to="/legal/terms" className="transition hover:text-slate-900">Terms of Service</Link>
+        </nav>
       </section>
     </main>
   );

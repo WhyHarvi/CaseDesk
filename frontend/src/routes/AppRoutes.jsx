@@ -36,6 +36,8 @@ const LeadReportsPage = lazy(() => import("../modules/leads/pages/LeadReportsPag
 const LeadIntakePage = lazy(() => import("../modules/leads/pages/LeadIntakePage"));
 const PublicLeadIntakePage = lazy(() => import("../modules/leads/pages/PublicLeadIntakePage"));
 const DocumentComposer = lazy(() => import("../pages/DocumentComposer"));
+const PrivacyPolicy = lazy(() => import("../pages/legal/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("../pages/legal/TermsOfService"));
 
 function RouteFallback() { return <div className="flex min-h-56 items-center justify-center"><div className="text-center"><div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /><p className="mt-3 text-sm font-medium text-slate-500">Opening workspace…</p></div></div>; }
 function Deferred({ children }) { return <Suspense fallback={<RouteFallback />}>{children}</Suspense>; }
@@ -54,6 +56,8 @@ export default function AppRoutes() {
     <Route path="/auth/forgot-password" element={<Navigate to="/login?forgot=1" replace />} />
     <Route path="/auth/reset-password" element={<ResetPassword />} />
     <Route path="/change-password" element={<ChangePassword />} />
+    <Route path="/legal/privacy" element={<Deferred><PrivacyPolicy /></Deferred>} />
+    <Route path="/legal/terms" element={<Deferred><TermsOfService /></Deferred>} />
     <Route path="/client-chat/:token" element={<Deferred><ClientChatPortal /></Deferred>} />
     <Route path="/public/intake/:publicToken" element={<Deferred><PublicLeadIntakePage /></Deferred>} />
     <Route path="/book/manage/:manageToken" element={<Deferred><ManageBookingPage /></Deferred>} />

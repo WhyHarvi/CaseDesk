@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useAnimation, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Loader2, Lock, Mail, MailCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { homePathForRole } from "../auth/AuthRoutes";
 import { requireSupabase } from "../services/supabase";
@@ -379,6 +379,22 @@ export default function Login() {
             </AnimatePresence>
           </motion.div>
         </motion.div>
+
+        <motion.nav
+          aria-label="Legal"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.7, delay: 0.45 }}
+          className="mt-6 flex items-center justify-center gap-3 text-xs text-white/55"
+        >
+          <Link to="/legal/privacy" className="transition hover:text-white/90">
+            Privacy Policy
+          </Link>
+          <span aria-hidden="true" className="text-white/25">•</span>
+          <Link to="/legal/terms" className="transition hover:text-white/90">
+            Terms of Service
+          </Link>
+        </motion.nav>
       </div>
     </div>
   );
