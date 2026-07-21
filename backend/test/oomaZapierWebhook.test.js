@@ -18,6 +18,9 @@ test("admins can generate an inbound Zapier webhook without direct Ooma credenti
   assert.match(schema, /fromNumber\s+String\?/);
   assert.match(migration, /ALTER COLUMN "api_base_url" DROP NOT NULL/);
   assert.match(controller, /agencyOomaSettings\.upsert/);
+  assert.match(controller, /apiBaseUrl: ""/);
+  assert.match(controller, /apiKeyEncrypted: ""/);
+  assert.match(controller, /fromNumber: ""/);
   assert.match(controller, /smsEnabled: false/);
   assert.match(controller, /callsEnabled: false/);
   assert.doesNotMatch(controller, /Save the Ooma connection before generating a webhook URL/);

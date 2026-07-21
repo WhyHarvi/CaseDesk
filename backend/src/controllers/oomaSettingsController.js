@@ -210,6 +210,13 @@ export async function rotateOomaWebhookToken(req, res) {
     create: {
       agencyId: req.user.agencyId,
       ...newWebhookToken(),
+      // Empty compatibility values let webhook-only setup work while an
+      // already-running deployment still has the pre-migration Prisma Client,
+      // where these three columns were required. They are deliberately not
+      // considered a configured outbound Ooma connection.
+      apiBaseUrl: "",
+      apiKeyEncrypted: "",
+      fromNumber: "",
       enabled: true,
       smsEnabled: false,
       callsEnabled: false,
