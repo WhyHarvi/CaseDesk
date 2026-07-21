@@ -15,10 +15,11 @@ import {
   MapPin,
   Phone,
   Video,
+  Wallet,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { createPublicBooking, getPublicAvailability, getPublicBookingInfo, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
+import { createPublicBooking, createPublicBookingPaymentHold, getPublicAvailability, getPublicBookingInfo, getPublicBookingPaymentHoldStatus, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const spring = { type: "spring", stiffness: 380, damping: 32 };
@@ -272,6 +273,7 @@ export default function PublicBookingPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(null);
   const [waitlistDates, setWaitlistDates] = useState(() => ({ from: dateKey(new Date()), to: dateKey(new Date(Date.now() + 30 * DAY_MS)) }));
+  const [paymentHold, setPaymentHold] = useState(null);
   const [verification, setVerification] = useState({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null });
   const bookingKey = useRef(crypto.randomUUID());
 
@@ -340,26 +342,35 @@ export default function PublicBookingPage() {
     setStep(needsLocationStep ? "location" : "time");
   }
 
+  const requiresPayment = Boolean(info?.consultFeeEnabled && Number(info?.consultFeeAmount) > 0);
+
   async function submit() {
     if (saving) return;
     setSaving(true);
     setError("");
+    const payload = {
+      sessionTypeId,
+      startsAt: slot.startsAt,
+      meetingMode,
+      locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined,
+      consultantId: consultantId || undefined,
+      idempotencyKey: bookingKey.current,
+      name: form.name,
+      email: form.email,
+      phone: form.phone,
+      notes: form.notes,
+      website: form.website,
+      verificationToken: verification.token || undefined,
+      offerToken: offerToken || undefined,
+    };
     try {
-      const result = await createPublicBooking(token, {
-        sessionTypeId,
-        startsAt: slot.startsAt,
-        meetingMode,
-        locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined,
-        consultantId: consultantId || undefined,
-        idempotencyKey: bookingKey.current,
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-        notes: form.notes,
-        website: form.website,
-        verificationToken: verification.token || undefined,
-        offerToken: offerToken || undefined,
-      });
+      if (requiresPayment) {
+        const hold = await createPublicBookingPaymentHold(token, payload);
+        setPaymentHold(hold);
+        setStep("payment");
+        return;
+      }
+      const result = await createPublicBooking(token, payload);
       sessionStorage.removeItem(`booking-draft:${token}`);
       setDone(result);
       setStep("done");
@@ -371,6 +382,29 @@ export default function PublicBookingPage() {
       setSaving(false);
     }
   }
+
+  // Poll the hold's status while waiting for the client to pay on
+  // QuickBooks' hosted checkout page — the webhook confirms it
+  // server-side, this just picks up the change.
+  useEffect(() => {
+    if (step !== "payment" || !paymentHold?.claimToken) return undefined;
+    let active = true;
+    const poll = async () => {
+      try {
+        const latest = await getPublicBookingPaymentHoldStatus(token, paymentHold.claimToken);
+        if (!active) return;
+        setPaymentHold(latest);
+        if (latest.status === "Paid") {
+          sessionStorage.removeItem(`booking-draft:${token}`);
+          setDone({ subject: sessionType?.name, startsAt: latest.startsAt, location: location ? `${location.name} — ${location.address}` : null, locationMapsUrl: location?.mapsUrl });
+          setStep("done");
+        }
+      } catch { /* transient poll failure — try again next tick */ }
+    };
+    poll();
+    const interval = setInterval(poll, 4000);
+    return () => { active = false; clearInterval(interval); };
+  }, [step, paymentHold?.claimToken, token, sessionType, location]);
 
   async function requestVerification() {
     setVerification((current) => ({ ...current, sending: true })); setError("");
@@ -422,7 +456,7 @@ export default function PublicBookingPage() {
   const initials = info.agencyName.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const agency = info.agency || { name: info.agencyName };
   const agencyAddress = [agency.address, agency.city, agency.province, agency.postalCode, agency.country].filter(Boolean).join(", ");
-  const stepIndex = { service: 0, location: 1, time: 2, details: 3, waitlist: 3, done: 4 }[step];
+  const stepIndex = { service: 0, location: 1, time: 2, details: 3, waitlist: 3, payment: 3, done: 4 }[step];
 
   const summaryPanel = (
     <div className="flex flex-col">
@@ -643,6 +677,11 @@ export default function PublicBookingPage() {
                     <p className="mt-0.5 text-xs text-slate-400">
                       {meetingMode === "Online" ? "Online video call" : location ? `${location.name} · ${location.address}` : "In person"}
                     </p>
+                    {requiresPayment ? (
+                      <p className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2.5 text-xs font-semibold text-slate-600">
+                        <Wallet className="h-3.5 w-3.5 text-sky-600" /> {Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} due to confirm — paid securely by card on the next step
+                      </p>
+                    ) : null}
                   </div>
                   <div className="mt-4 space-y-3.5">
                     <label className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">Website
@@ -667,9 +706,9 @@ export default function PublicBookingPage() {
                   <div className="mt-5">
                     {form.name.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email) ? (
                       <>
-                        <div className="lg:hidden"><SlideToConfirm onConfirm={submit} busy={saving} label="Slide to confirm booking" /></div>
+                        <div className="lg:hidden"><SlideToConfirm onConfirm={submit} busy={saving} label={requiresPayment ? "Slide to continue to payment" : "Slide to confirm booking"} /></div>
                         <motion.button type="button" whileTap={{ scale: 0.98 }} disabled={saving} onClick={submit} className="hidden min-h-[52px] w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60 lg:flex">
-                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Booking…" : "Confirm appointment"}
+                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Preparing…" : requiresPayment ? `Continue to payment · ${Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}` : "Confirm appointment"}
                         </motion.button>
                       </>
                     ) : (
@@ -678,6 +717,42 @@ export default function PublicBookingPage() {
                       </div>
                     )}
                   </div>
+                </motion.div>
+              ) : step === "payment" ? (
+                <motion.div key="payment" {...stepMotion} className="flex flex-1 flex-col items-center justify-center py-6 text-center">
+                  {paymentHold?.status === "Expired" ? (
+                    <>
+                      <span className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-100">
+                        <Clock3 className="h-8 w-8 text-amber-600" />
+                      </span>
+                      <h2 className="mt-5 text-lg font-semibold text-slate-950">This time was released</h2>
+                      <p className="mx-auto mt-1.5 max-w-[300px] text-sm leading-6 text-slate-500">Payment wasn't completed in time, so the slot was held for someone else. Pick another time to try again.</p>
+                      <button type="button" onClick={() => { setPaymentHold(null); setStep("time"); setSlot(null); }} className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">
+                        Pick another time
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 260, damping: 18 }} className="flex h-16 w-16 items-center justify-center rounded-full bg-sky-100">
+                        <Wallet className="h-8 w-8 text-sky-600" />
+                      </motion.span>
+                      <h2 className="mt-5 text-lg font-semibold text-slate-950">
+                        {Number(paymentHold?.amount ?? info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} to confirm your appointment
+                      </h2>
+                      <p className="mx-auto mt-1.5 max-w-[300px] text-sm leading-6 text-slate-500">
+                        Pay securely on QuickBooks — your time is held for the next {paymentHold?.expiresAt ? Math.max(1, Math.round((new Date(paymentHold.expiresAt).getTime() - Date.now()) / 60000)) : "a few"} minutes.
+                      </p>
+                      {paymentHold?.payNowUrl ? (
+                        <a href={paymentHold.payNowUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center gap-2 rounded-full bg-sky-600 px-6 py-3.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(2,132,199,0.35)] transition hover:bg-sky-700">
+                          <Wallet className="h-4 w-4" /> Pay now on QuickBooks
+                        </a>
+                      ) : (
+                        <p className="mt-5 rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">Online payment isn't available right now. Please contact the office to complete this booking.</p>
+                      )}
+                      <p className="mt-5 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Waiting for payment confirmation…</p>
+                    </>
+                  )}
+                  {error ? <p className="mt-4 rounded-2xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
                 </motion.div>
               ) : (
                 <motion.div key="done" initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-1 flex-col items-center justify-center py-6 text-center">

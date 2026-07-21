@@ -145,6 +145,16 @@ export async function createPublicBooking(token, values) {
   return response.data.data;
 }
 
+export async function createPublicBookingPaymentHold(token, values) {
+  const response = await api.post(`/public/booking/${token}/payment-hold`, values);
+  return response.data.data;
+}
+
+export async function getPublicBookingPaymentHoldStatus(token, claimToken) {
+  const response = await api.get(`/public/booking/${token}/payment-hold/${claimToken}`, { cache: false });
+  return response.data.data;
+}
+
 export async function joinPublicBookingWaitlist(token, values) {
   const response = await api.post(`/public/booking/${token}/waitlist`, values);
   return response.data.data;
