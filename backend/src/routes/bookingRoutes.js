@@ -24,6 +24,7 @@ import {
   updateBookingWaitlistEntry,
   previewBookingEmailTemplate,
   testBookingEmailTemplate,
+  createWalkInPayNowLink,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -53,5 +54,6 @@ router.patch("/appointments/:id/cancel", asyncHandler(cancelBookingAppointment))
 router.patch("/appointments/:id/reschedule", asyncHandler(rescheduleBookingAppointment));
 router.patch("/appointments/:id/status", asyncHandler(updateBookingAppointmentStatus));
 router.post("/appointments/:id/convert-client", asyncHandler(convertAppointmentToClient));
+router.post("/appointments/:id/pay-now-link", asyncHandler(createWalkInPayNowLink));
 
 export default router;

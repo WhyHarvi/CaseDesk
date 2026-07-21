@@ -117,6 +117,11 @@ export async function createBookingAppointment(values) {
   return response.data.data;
 }
 
+export async function createWalkInPayNowLink(id) {
+  const response = await api.post(`/booking/appointments/${id}/pay-now-link`);
+  return response.data.data;
+}
+
 export async function cancelBookingAppointment(id, options = {}) {
   const response = await api.patch(`/booking/appointments/${id}/cancel`, options);
   return response.data.data;

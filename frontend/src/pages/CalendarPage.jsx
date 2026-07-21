@@ -2,9 +2,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
   CalendarDays,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Copy,
   Loader2,
   MapPin,
   Plus,
@@ -12,6 +14,7 @@ import {
   Trash2,
   UserRound,
   Video,
+  Wallet,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,6 +25,7 @@ import {
   cancelBookingAppointment,
   convertAppointmentToClient,
   createBookingAppointment,
+  createWalkInPayNowLink,
   getAvailability,
   getBookingSettings,
   getCalendarAppointments,
@@ -173,6 +177,32 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [converting, setConverting] = useState(false);
   const [seriesScope, setSeriesScope] = useState("single");
   const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
+  const [payNow, setPayNow] = useState(null);
+  const [payNowBusy, setPayNowBusy] = useState(false);
+  const [payNowError, setPayNowError] = useState("");
+  const [payNowCopied, setPayNowCopied] = useState(false);
+
+  async function generatePayNowLink() {
+    setPayNowBusy(true);
+    setPayNowError("");
+    try {
+      const result = await createWalkInPayNowLink(appointment.id);
+      setPayNow(result);
+    } catch (reason) {
+      setPayNowError(reason.response?.data?.message || "Could not generate a pay-now link.");
+    } finally {
+      setPayNowBusy(false);
+    }
+  }
+
+  async function copyPayNowLink() {
+    if (!payNow?.payNowUrl) return;
+    try {
+      await navigator.clipboard.writeText(payNow.payNowUrl);
+      setPayNowCopied(true);
+      window.setTimeout(() => setPayNowCopied(false), 2000);
+    } catch { /* clipboard access denied — link is still shown on screen */ }
+  }
 
   useEffect(() => {
     if (!resched) return;
@@ -271,6 +301,31 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         >
           <Video className="h-4 w-4" /> Join video call
         </a>
+      ) : null}
+
+      {appointment.status === "Scheduled" ? (
+        <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5">
+          {payNow ? (
+            payNow.status === "Paid" ? (
+              <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Consultation fee paid</p>
+            ) : payNow.payNowUrl ? (
+              <>
+                <p className="text-xs font-semibold text-slate-700">Consultation fee — {Number(payNow.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
+                <p className="mt-1 text-xs text-slate-400">Share this link so the client can pay by card on the spot.</p>
+                <button type="button" onClick={copyPayNowLink} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800">
+                  {payNowCopied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />} {payNowCopied ? "Link copied" : "Copy pay-now link"}
+                </button>
+              </>
+            ) : (
+              <p className="text-xs leading-5 text-amber-700">Invoice created in QuickBooks, but online card payment isn't available on this company yet. Collect payment via cash or e-transfer instead.</p>
+            )
+          ) : (
+            <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
+              {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
+            </button>
+          )}
+          {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
+        </div>
       ) : null}
 
       {resched ? (

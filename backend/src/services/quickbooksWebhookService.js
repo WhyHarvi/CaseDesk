@@ -141,6 +141,26 @@ export async function confirmPaymentHold(agencyId, holdId) {
 
   const hold = await prisma.bookingPaymentHold.findUnique({ where: { id: holdId } });
   try {
+    // Walk-in (front-desk) holds already have their Appointment — it was
+    // created immediately through the normal staff booking flow, with no
+    // hold/expiry involved. Confirming one only needs to flip its status;
+    // creating a second appointment or lead would be wrong here.
+    if (hold.appointmentId) {
+      const appointment = await prisma.$transaction(async (tx) => {
+        await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date() } });
+        return tx.appointment.findUnique({ where: { id: hold.appointmentId }, include: { assignedTo: { select: { id: true, fullName: true } }, client: { select: { fullName: true, email: true, phone: true } } } });
+      });
+      await recordActivity({
+        agencyId,
+        userId: null,
+        clientId: appointment.clientId,
+        caseId: null,
+        action: "invoice.paid",
+        details: `Consultation fee paid on the spot for ${hold.guestName}`,
+      }).catch(() => {});
+      return appointment;
+    }
+
     const [sessionType, settings] = await Promise.all([
       hold.sessionTypeId ? prisma.bookingSessionType.findUnique({ where: { id: hold.sessionTypeId } }) : null,
       prisma.bookingSettings.findUnique({ where: { agencyId } }),

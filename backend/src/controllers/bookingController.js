@@ -20,6 +20,7 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
+import { createPaymentHoldForWalkIn } from "../services/bookingPaymentHoldService.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -432,6 +433,23 @@ export async function createBookingAppointment(req, res) {
   });
 
   res.status(201).json({ data: { ...data, series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null } });
+}
+
+// Front-desk "on the spot" flow: appointment already exists (booked
+// through the normal staff flow above, no hold/expiry involved) — this
+// generates a QuickBooks pay-now link so a walk-in client can pay by card
+// immediately. Idempotent: calling it again on the same appointment just
+// returns the existing hold rather than creating a second invoice.
+export async function createWalkInPayNowLink(req, res) {
+  const hold = await createPaymentHoldForWalkIn(req.auth.agencyId, { appointmentId: req.params.id, actorUserId: req.auth.userId });
+  res.status(201).json({
+    data: {
+      id: hold.id,
+      status: hold.status,
+      amount: hold.amount,
+      payNowUrl: hold.status === "AwaitingPayment" ? hold.qbInvoiceLink || null : null,
+    },
+  });
 }
 
 export async function cancelBookingAppointment(req, res) {

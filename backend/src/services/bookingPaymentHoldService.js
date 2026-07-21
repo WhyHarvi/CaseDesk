@@ -138,6 +138,75 @@ export async function getPaymentHoldStatus(agencyId, claimToken) {
   return hold;
 }
 
+/**
+ * Front-desk "on the spot" flow: the appointment already exists (created
+ * through the normal staff booking flow, no hold/expiry involved) — this
+ * just generates a QuickBooks invoice + pay-now link for a walk-in client
+ * to pay by card, with expiresAt: null since there's no slot to protect.
+ * Unlike the public flow, a missing invoiceLink is not fatal here — the
+ * appointment stays valid regardless, staff can still collect payment via
+ * the existing cash/e-transfer tools; the hold just won't have a link to
+ * share.
+ */
+export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, actorUserId }) {
+  const appointment = await prisma.appointment.findFirst({
+    where: { id: appointmentId, agencyId },
+    include: { client: { select: { id: true, fullName: true, email: true, phone: true } } },
+  });
+  if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+  if (appointment.status !== "Scheduled") throw createHttpError(409, "Only a scheduled appointment can be charged.", "INVALID_STATE");
+  if (!appointment.assignedToId) throw createHttpError(409, "This appointment has no consultant assigned yet.", "VALIDATION_ERROR");
+
+  // appointmentId is unique on BookingPaymentHold — at most one hold can
+  // ever exist per appointment, so an existing one (any status) is always
+  // returned rather than attempting a second invoice for the same booking.
+  const existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
+  if (existingHold) return existingHold;
+
+  const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
+  if (!settings?.consultFeeAmount) throw createHttpError(409, "Set a consultation fee in Settings before generating a pay-now link.", "VALIDATION_ERROR");
+
+  const name = appointment.client?.fullName || appointment.guestName;
+  const email = appointment.client?.email || appointment.guestEmail;
+  const phone = appointment.client?.phone || appointment.guestPhone;
+  if (!email) throw createHttpError(409, "This appointment has no email on file to bill.", "VALIDATION_ERROR");
+
+  const itemId = await requireConsultFeeItem(agencyId);
+  const qbCustomerId = await resolveOrCreateQuickBooksCustomer(agencyId, { name, email, phone });
+  const amount = Number(settings.consultFeeAmount);
+  const invoice = await createQuickBooksInvoice(agencyId, {
+    customerId: qbCustomerId,
+    itemId,
+    description: `${appointment.subject} — consultation booking`,
+    amount,
+  });
+
+  return prisma.bookingPaymentHold.create({
+    data: {
+      agencyId,
+      assignedToId: appointment.assignedToId,
+      sessionTypeId: appointment.sessionTypeId,
+      startsAt: appointment.startsAt,
+      endsAt: appointment.endsAt,
+      guestName: name,
+      guestEmail: email,
+      guestEmailNormalized: email.toLowerCase(),
+      guestPhone: phone || null,
+      meetingMode: appointment.meetingMode,
+      amount,
+      qbCustomerId,
+      qbInvoiceId: invoice.id,
+      qbInvoiceLink: invoice.invoiceLink,
+      qbSyncToken: invoice.syncToken,
+      status: "AwaitingPayment",
+      source: "WalkIn",
+      expiresAt: null,
+      appointmentId: appointment.id,
+      createdById: actorUserId,
+    },
+  });
+}
+
 // ---------- Expiry + void cleanup ----------
 //
 // Slot release never depends on this: assertSlotAvailable/availabilityForRange
