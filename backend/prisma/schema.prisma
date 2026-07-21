@@ -551,6 +551,8 @@ model Agency {
   immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
   mailSettings                   AgencyMailSettings?
   quickBooksSettings             AgencyQuickBooksSettings?
+  bookingPaymentHolds             BookingPaymentHold[]
+  quickBooksWebhookEvents         QuickBooksWebhookEvent[]
   oomaSettings                   AgencyOomaSettings?
   accountStatements              AccountStatementGeneration[]
   leadSequence                   AgencyLeadSequence?
@@ -718,7 +720,7 @@ model AgencyQuickBooksSettings {
   id                     String    @id @default(uuid())
   agencyId               String    @unique @map("agency_id")
   environment            String    @default("production")
-  realmId                String    @map("realm_id")
+  realmId                String    @unique @map("realm_id")
   companyName            String?   @map("company_name")
   accessTokenEncrypted   String    @map("access_token_encrypted")
   refreshTokenEncrypted  String    @map("refresh_token_encrypted")
@@ -731,6 +733,8 @@ model AgencyQuickBooksSettings {
   feeItemName            String?   @map("fee_item_name")
   disbursementItemId     String?   @map("disbursement_item_id")
   disbursementItemName   String?   @map("disbursement_item_name")
+  consultFeeItemId       String?   @map("consult_fee_item_id")
+  consultFeeItemName     String?   @map("consult_fee_item_name")
   createdAt              DateTime  @default(now()) @map("created_at")
   updatedAt              DateTime  @updatedAt @map("updated_at")
   agency                 Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -849,6 +853,8 @@ model User {
   assignedAppointments                Appointment[]                   @relation("AssignedAppointmentUser")
   createdAppointments                 Appointment[]                   @relation("CreatedAppointmentUser")
   cancelledAppointments               Appointment[]                   @relation("CancelledAppointmentUser")
+  assignedBookingPaymentHolds         BookingPaymentHold[]             @relation("AssignedBookingPaymentHoldUser")
+  createdBookingPaymentHolds          BookingPaymentHold[]             @relation("CreatedBookingPaymentHoldUser")
   schedulingPreference                SchedulingStaffPreference?
   eligibleBookingSessionTypes         BookingSessionTypeStaff[]
   createdCommunicationConversations   CommunicationConversation[]     @relation("CreatedCommunicationConversationUser")
@@ -1209,6 +1215,7 @@ model Appointment {
   leadConsultation       LeadConsultation?
   messageDeliveries      BookingMessageDelivery[]
   events                 AppointmentEvent[]
+  paymentHold            BookingPaymentHold?
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId])
@@ -1246,6 +1253,9 @@ model BookingSettings {
   messageTemplates              Json     @default("{}") @map("message_templates")
   waitlistEnabled               Boolean  @default(true) @map("waitlist_enabled")
   attendanceConfirmationEnabled Boolean  @default(true) @map("attendance_confirmation_enabled")
+  consultFeeEnabled             Boolean  @default(false) @map("consult_fee_enabled")
+  consultFeeAmount              Decimal? @db.Decimal(10, 2) @map("consult_fee_amount")
+  consultFeeHoldMinutes         Int      @default(20) @map("consult_fee_hold_minutes")
   createdAt                     DateTime @default(now()) @map("created_at")
   updatedAt                     DateTime @updatedAt @map("updated_at")
   agency                        Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1272,6 +1282,7 @@ model BookingSessionType {
   agency                  Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   appointments            Appointment[]
   eligibleStaff           BookingSessionTypeStaff[]
+  paymentHolds            BookingPaymentHold[]
 
   @@index([agencyId, isActive])
   @@map("booking_session_types")
@@ -1401,6 +1412,78 @@ model BookingSlotHold {
 
   @@index([agencyId, assignedToId, startsAt, endsAt, expiresAt])
   @@map("booking_slot_holds")
+}
+
+model BookingPaymentHold {
+  id                   String               @id @default(uuid())
+  agencyId             String               @map("agency_id")
+  assignedToId         String               @map("assigned_to_id")
+  sessionTypeId        String?              @map("session_type_id")
+  startsAt             DateTime             @map("starts_at")
+  endsAt               DateTime             @map("ends_at")
+  claimToken           String               @unique @default(uuid()) @map("claim_token")
+  idempotencyKey       String?              @map("idempotency_key")
+  guestName            String               @map("guest_name")
+  guestEmail           String               @map("guest_email")
+  guestEmailNormalized String               @map("guest_email_normalized")
+  guestPhone           String?              @map("guest_phone")
+  meetingMode          String               @map("meeting_mode")
+  locationId           String?              @map("location_id")
+  notes                String?
+  amount               Decimal              @db.Decimal(10, 2)
+  // Nullable: unset for the brief window between the slot lock committing
+  // and the QuickBooks customer/invoice calls completing. Deliberately not
+  // NOT NULL — Postgres allows multiple NULLs under a unique index, so two
+  // concurrent holds mid-creation never collide on qbInvoiceId.
+  qbCustomerId         String?              @map("qb_customer_id")
+  qbInvoiceId          String?              @map("qb_invoice_id")
+  qbInvoiceLink        String?              @map("qb_invoice_link")
+  qbSyncToken          String?              @map("qb_sync_token")
+  status               String               @default("AwaitingPayment")
+  source               String               @default("Public")
+  expiresAt            DateTime?            @map("expires_at")
+  paidAt               DateTime?            @map("paid_at")
+  voidedAt             DateTime?            @map("voided_at")
+  voidAttempts         Int                  @default(0) @map("void_attempts")
+  nextVoidAttemptAt    DateTime?            @map("next_void_attempt_at")
+  appointmentId        String?              @unique @map("appointment_id")
+  createdById          String?              @map("created_by_id")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  agency               Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignedTo           User                 @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
+  sessionType          BookingSessionType?  @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
+  appointment          Appointment?         @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  createdBy            User?                @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, idempotencyKey])
+  @@unique([agencyId, qbInvoiceId])
+  @@index([agencyId, assignedToId, startsAt, endsAt, status, expiresAt])
+  @@index([agencyId, status, expiresAt])
+  @@map("booking_payment_holds")
+}
+
+model QuickBooksWebhookEvent {
+  id          String    @id @default(uuid())
+  agencyId    String?   @map("agency_id")
+  realmId     String    @map("realm_id")
+  entityName  String    @map("entity_name")
+  entityId    String    @map("entity_id")
+  operation   String
+  rawPayload  Json      @map("raw_payload")
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(8) @map("max_attempts")
+  availableAt DateTime  @default(now()) @map("available_at")
+  lockedAt    DateTime? @map("locked_at")
+  processedAt DateTime? @map("processed_at")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  agency      Agency?   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([realmId, entityId, entityName])
+  @@map("quickbooks_webhook_events")
 }
 
 model BookingVerificationCode {

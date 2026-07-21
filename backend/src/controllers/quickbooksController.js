@@ -109,26 +109,28 @@ export async function createQuickBooksMappingItem(req, res) {
 export async function getQuickBooksMapping(req, res) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
     where: { agencyId: req.auth.agencyId },
-    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true },
+    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true },
   });
-  res.json({ data: settings || { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null } });
+  res.json({ data: settings || { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null } });
 }
 
 export async function updateQuickBooksMapping(req, res) {
   if (req.auth.role !== "admin") throw createHttpError(403, "Only workspace administrators can change the payment mapping.", "FORBIDDEN");
   const feeItemId = req.body?.feeItemId !== undefined ? String(req.body.feeItemId || "").trim() || null : undefined;
   const disbursementItemId = req.body?.disbursementItemId !== undefined ? String(req.body.disbursementItemId || "").trim() || null : undefined;
-  if (feeItemId === undefined && disbursementItemId === undefined) {
+  const consultFeeItemId = req.body?.consultFeeItemId !== undefined ? String(req.body.consultFeeItemId || "").trim() || null : undefined;
+  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined) {
     throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
   }
 
-  // Re-verify both ids against the live QuickBooks company on every save —
+  // Re-verify all ids against the live QuickBooks company on every save —
   // items get deleted/deactivated in QBO outside our control, and a stale
   // mapping must never silently keep invoicing against a dead item.
-  const items = feeItemId || disbursementItemId ? await listQuickBooksItems(req.auth.agencyId) : [];
+  const items = feeItemId || disbursementItemId || consultFeeItemId ? await listQuickBooksItems(req.auth.agencyId) : [];
   const byId = new Map(items.map((item) => [item.id, item]));
   if (feeItemId && !byId.has(feeItemId)) throw createHttpError(400, "That fee item was not found in QuickBooks.", "VALIDATION_ERROR");
   if (disbursementItemId && !byId.has(disbursementItemId)) throw createHttpError(400, "That disbursement item was not found in QuickBooks.", "VALIDATION_ERROR");
+  if (consultFeeItemId && !byId.has(consultFeeItemId)) throw createHttpError(400, "That consultation fee item was not found in QuickBooks.", "VALIDATION_ERROR");
 
   const existing = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId: req.auth.agencyId } });
   if (!existing) throw createHttpError(409, "QuickBooks is not connected for this workspace.", "QBO_NOT_CONNECTED");
@@ -136,6 +138,7 @@ export async function updateQuickBooksMapping(req, res) {
   const data = {
     ...(feeItemId !== undefined ? { feeItemId, feeItemName: feeItemId ? byId.get(feeItemId).name : null } : {}),
     ...(disbursementItemId !== undefined ? { disbursementItemId, disbursementItemName: disbursementItemId ? byId.get(disbursementItemId).name : null } : {}),
+    ...(consultFeeItemId !== undefined ? { consultFeeItemId, consultFeeItemName: consultFeeItemId ? byId.get(consultFeeItemId).name : null } : {}),
   };
   const settings = await prisma.agencyQuickBooksSettings.update({ where: { agencyId: req.auth.agencyId }, data });
   await recordActivity({
@@ -144,7 +147,7 @@ export async function updateQuickBooksMapping(req, res) {
     action: "quickbooks.mapping_updated",
     details: "Payment account mapping updated",
   }).catch(() => {});
-  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName } });
+  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName } });
 }
 
 export async function disconnectQuickBooks(req, res) {

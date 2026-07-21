@@ -14,6 +14,7 @@ import { appointmentReference, recordAppointmentEvent } from "../services/appoin
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
+import { createPaymentHoldForPublicBooking, getPaymentHoldStatus } from "../services/bookingPaymentHoldService.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -75,6 +76,8 @@ export async function getPublicBookingInfo(req, res) {
       locations: Array.isArray(settings.locations) ? settings.locations : [],
       waitlistEnabled: settings.waitlistEnabled,
       attendanceConfirmationEnabled: settings.attendanceConfirmationEnabled,
+      consultFeeEnabled: settings.consultFeeEnabled,
+      consultFeeAmount: settings.consultFeeAmount,
       offer: hold ? { token: hold.claimToken, startsAt: hold.startsAt, endsAt: hold.endsAt, expiresAt: hold.expiresAt, sessionTypeId: hold.sessionTypeId, consultantId: hold.assignedToId, name: hold.waitlistEntry.name, email: hold.waitlistEntry.email, phone: hold.waitlistEntry.phone, meetingMode: hold.waitlistEntry.meetingMode, locationId: hold.waitlistEntry.locationId } : null,
       offerExpired: Boolean(offerToken && !hold),
     },
@@ -294,6 +297,106 @@ export async function createPublicBooking(req, res) {
       parkingInstructions: sessionType.parkingInstructions,
     },
   });
+}
+
+function publicHoldView(hold) {
+  return {
+    claimToken: hold.claimToken,
+    startsAt: hold.startsAt,
+    endsAt: hold.endsAt,
+    amount: hold.amount,
+    status: hold.status,
+    expiresAt: hold.expiresAt,
+    payNowUrl: hold.status === "AwaitingPayment" ? hold.qbInvoiceLink || null : null,
+  };
+}
+
+// Paid-booking counterpart to createPublicBooking above: instead of
+// creating the Appointment immediately, this locks the slot behind a
+// BookingPaymentHold and returns a QuickBooks "Pay now" link. The
+// appointment itself is only created once the QuickBooks webhook confirms
+// payment (see quickbooksWebhookService.js).
+export async function createPublicBookingPaymentHold(req, res) {
+  const settings = await resolveAgencyByToken(req.params.token);
+  if (!settings.consultFeeEnabled || !settings.consultFeeAmount) {
+    throw createHttpError(409, "Paid consultation booking is not enabled for this workspace.", "CONSULT_FEE_DISABLED");
+  }
+  const body = req.body || {};
+  if (String(body.website || "").trim()) throw createHttpError(400, "The booking could not be completed.", "VALIDATION_ERROR");
+
+  const sessionType = await prisma.bookingSessionType.findFirst({
+    where: { id: String(body.sessionTypeId || ""), agencyId: settings.agencyId, isActive: true },
+  });
+  if (!sessionType) throw createHttpError(400, "Choose a session type.", "VALIDATION_ERROR");
+
+  const startsAt = new Date(String(body.startsAt || ""));
+  if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "Pick a time.", "VALIDATION_ERROR");
+  const endsAt = new Date(startsAt.getTime() + sessionType.durationMinutes * 60_000);
+
+  const name = String(body.name || "").trim().slice(0, 160);
+  const email = String(body.email || "").trim().toLowerCase().slice(0, 254);
+  const phone = String(body.phone || "").trim().slice(0, 40);
+  const notes = String(body.notes || "").trim().slice(0, 1000);
+  const online = body.meetingMode === "Online";
+  if (!sessionType.allowedMeetingModes.includes(online ? "Online" : "InPerson")) {
+    throw createHttpError(400, "That appointment format is not available for this session.", "VALIDATION_ERROR");
+  }
+  const allLocations = Array.isArray(settings.locations) ? settings.locations : [];
+  const locations = sessionType.allowedLocationIds.length ? allLocations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : allLocations;
+  let location = null;
+  if (!online && locations.length) {
+    location = locations.find((item) => item.id === String(body.locationId || "")) || (locations.length === 1 ? locations[0] : null);
+    if (!location) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+  }
+  if (!name) throw createHttpError(400, "Your name is required.", "VALIDATION_ERROR");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR");
+
+  // Re-validate that the requested slot really is offered — never trust the widget.
+  const dayKey = localDateKey(startsAt, settings.timezone);
+  const requestedConsultantId = String(body.consultantId || "") || null;
+  const staff = await eligibleSchedulingStaff({ agencyId: settings.agencyId, sessionTypeId: sessionType.id, publicOnly: true, requestedUserId: requestedConsultantId });
+  const { days } = await availabilityForRange({
+    agencyId: settings.agencyId,
+    assignedToIds: staff.map((item) => item.id),
+    durationMinutes: sessionType.durationMinutes,
+    sessionBufferMinutes: sessionType.bufferMinutes,
+    fromKey: dayKey,
+    toKey: dayKey,
+  });
+  const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
+  if (!offered) throw createHttpError(409, "That time is no longer available. Pick another slot.", "SLOT_TAKEN");
+
+  const idempotencyKey = String(req.get("Idempotency-Key") || body.idempotencyKey || "").trim().slice(0, 160) || null;
+  if (idempotencyKey) {
+    const prior = await prisma.bookingPaymentHold.findUnique({ where: { agencyId_idempotencyKey: { agencyId: settings.agencyId, idempotencyKey } } });
+    if (prior) return res.status(200).json({ data: publicHoldView(prior) });
+  }
+
+  const hold = await createPaymentHoldForPublicBooking(settings.agencyId, {
+    sessionTypeId: sessionType.id,
+    sessionTypeName: sessionType.name,
+    startsAt,
+    endsAt,
+    requestedConsultantId,
+    meetingMode: online ? "Online" : "InPerson",
+    location,
+    name,
+    email,
+    phone,
+    notes,
+    amount: Number(settings.consultFeeAmount),
+    holdMinutes: settings.consultFeeHoldMinutes,
+    idempotencyKey,
+    bufferMinutes: settings.bufferMinutes,
+  });
+
+  res.status(201).json({ data: publicHoldView(hold) });
+}
+
+export async function getPublicBookingPaymentHoldStatus(req, res) {
+  const settings = await resolveAgencyByToken(req.params.token);
+  const hold = await getPaymentHoldStatus(settings.agencyId, String(req.params.claimToken || ""));
+  res.json({ data: publicHoldView(hold) });
 }
 
 export async function requestBookingVerification(req, res) {

@@ -206,6 +206,9 @@ export default function SchedulingSettingsPanel() {
         freeConsultationsPerContact: settings.freeConsultationsPerContact,
         cancellationCutoffMinutes: settings.cancellationCutoffMinutes,
         rescheduleCutoffMinutes: settings.rescheduleCutoffMinutes,
+        consultFeeEnabled: settings.consultFeeEnabled,
+        consultFeeAmount: settings.consultFeeAmount,
+        consultFeeHoldMinutes: settings.consultFeeHoldMinutes,
       });
       setSettings(updated);
       setSaved(true);
@@ -476,6 +479,12 @@ export default function SchedulingSettingsPanel() {
           <Toggle checked={settings.freeConsultationsEnabled} onChange={(value) => setSettings((c) => ({ ...c, freeConsultationsEnabled: value }))} label="Free consultations enabled" />
           <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Free consultations</p><p className="text-xs text-slate-400">Limit repeat bookings by email or client.</p></div>
           <label className="text-xs font-medium text-slate-600">Per contact <input type="number" min="1" max="20" disabled={!settings.freeConsultationsEnabled} value={settings.freeConsultationsPerContact} onChange={(event) => setSettings((c) => ({ ...c, freeConsultationsPerContact: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+          <Toggle checked={settings.consultFeeEnabled} onChange={(value) => setSettings((c) => ({ ...c, consultFeeEnabled: value }))} label="Paid consultation bookings enabled" />
+          <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Paid bookings</p><p className="text-xs text-slate-400">Client pays by card on QuickBooks before the slot is confirmed.</p></div>
+          <label className="text-xs font-medium text-slate-600">Fee (CAD) <input type="number" min="0.01" step="0.01" max="10000" disabled={!settings.consultFeeEnabled} value={settings.consultFeeAmount ?? ""} onChange={(event) => setSettings((c) => ({ ...c, consultFeeAmount: event.target.value === "" ? null : Number(event.target.value) }))} className={`${inputClass} ml-2 w-24`} /></label>
+          <label className="text-xs font-medium text-slate-600">Hold window (min) <input type="number" min="5" max="120" disabled={!settings.consultFeeEnabled} value={settings.consultFeeHoldMinutes} onChange={(event) => setSettings((c) => ({ ...c, consultFeeHoldMinutes: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>

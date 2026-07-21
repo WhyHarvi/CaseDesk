@@ -3,10 +3,12 @@ import rateLimit from "../middleware/rateLimit.js";
 import {
   cancelManagedBooking,
   createPublicBooking,
+  createPublicBookingPaymentHold,
   getManagedAvailability,
   getManagedBooking,
   getPublicAvailability,
   getPublicBookingInfo,
+  getPublicBookingPaymentHoldStatus,
   rescheduleManagedBooking,
   confirmManagedBooking,
   completeManagedPreparation,
@@ -29,6 +31,8 @@ router.post("/manage/:manageToken/preparation-complete", writeLimit, asyncHandle
 router.get("/:token", readLimit, asyncHandler(getPublicBookingInfo));
 router.get("/:token/availability", readLimit, asyncHandler(getPublicAvailability));
 router.post("/:token/appointments", writeLimit, asyncHandler(createPublicBooking));
+router.post("/:token/payment-hold", writeLimit, asyncHandler(createPublicBookingPaymentHold));
+router.get("/:token/payment-hold/:claimToken", readLimit, asyncHandler(getPublicBookingPaymentHoldStatus));
 router.post("/:token/waitlist", writeLimit, asyncHandler(joinPublicWaitlist));
 router.post("/:token/verification/request", writeLimit, asyncHandler(requestBookingVerification));
 router.post("/:token/verification/verify", writeLimit, asyncHandler(verifyBookingEmail));

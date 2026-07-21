@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Banknote, Check, ChevronDown, Landmark, Loader2, Plus, Search, X } from "lucide-react";
+import { Banknote, CalendarClock, Check, ChevronDown, Landmark, Loader2, Plus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -33,6 +33,16 @@ const SLOTS = {
     tint: "bg-indigo-50 text-indigo-600",
     accountClassification: "Liability",
     accountHint: "liability",
+  },
+  consult: {
+    field: "consultFeeItemId",
+    nameField: "consultFeeItemName",
+    label: "Consultation booking fees",
+    hint: "The paid-booking flow invoices against this item. Posts to income.",
+    icon: CalendarClock,
+    tint: "bg-fuchsia-50 text-fuchsia-600",
+    accountClassification: "Revenue",
+    accountHint: "income",
   },
 };
 
@@ -352,6 +362,7 @@ export default function QuickBooksMappingCard() {
         <div className="mt-5 space-y-6">
           <ItemPicker slotKey="fee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="disbursement" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <ItemPicker slotKey="consult" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
         </div>
       )}
     </section>

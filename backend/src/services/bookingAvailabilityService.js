@@ -170,7 +170,7 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null }) {
   validateAvailabilityRange(fromKey, toKey);
   const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
@@ -178,7 +178,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
   const rangeStart = localDateTimeToUtc(fromKey, 0, timezone);
   const rangeEnd = localDateTimeToUtc(toKey, 24 * 60, timezone);
   const staffIds = assignedToId ? [assignedToId] : pooled ? assignedToIds : [];
-  const [busyAppointments, preferences, rawBlocks, activeHolds] = await Promise.all([prisma.appointment.findMany({
+  const [busyAppointments, preferences, rawBlocks, activeHolds, activePaymentHolds] = await Promise.all([prisma.appointment.findMany({
     where: {
       agencyId,
       status: "Scheduled",
@@ -197,8 +197,11 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
   }) : [], staffIds.length && prisma.bookingSlotHold ? prisma.bookingSlotHold.findMany({
     where: { agencyId, assignedToId: { in: staffIds }, claimedAt: null, expiresAt: { gt: now }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}) },
     select: { assignedToId: true, startsAt: true, endsAt: true },
+  }) : [], staffIds.length && prisma.bookingPaymentHold ? prisma.bookingPaymentHold.findMany({
+    where: { agencyId, assignedToId: { in: staffIds }, status: "AwaitingPayment", expiresAt: { gt: now }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) },
+    select: { assignedToId: true, startsAt: true, endsAt: true },
   }) : []]);
-  const busy = [...busyAppointments, ...activeHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
+  const busy = [...busyAppointments, ...activeHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
   const preferenceByStaff = new Map(preferences.map((item) => [item.userId, item]));
   const staffLimits = new Map(preferences.map((item) => [item.userId, item.maxDailyAppointments]));
 
@@ -231,7 +234,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
 /**
  * Validate that a concrete start/end is still open (used at create time inside a transaction).
  */
-export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt, endsAt, bufferMinutes = 0, excludeAppointmentId = null, excludeAppointmentIds = null, excludeHoldToken = null }) {
+export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt, endsAt, bufferMinutes = 0, excludeAppointmentId = null, excludeAppointmentIds = null, excludeHoldToken = null, excludePaymentHoldId = null }) {
   const buffer = bufferMinutes * 60_000;
   const conflict = await tx.appointment.findFirst({
     where: {
@@ -248,6 +251,10 @@ export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt
   if (tx.bookingSlotHold) {
     const hold = await tx.bookingSlotHold.findFirst({ where: { agencyId, assignedToId, claimedAt: null, expiresAt: { gt: new Date() }, startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}) }, select: { id: true, startsAt: true } });
     if (hold) return hold;
+  }
+  if (tx.bookingPaymentHold) {
+    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, status: "AwaitingPayment", expiresAt: { gt: new Date() }, startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) }, select: { id: true, startsAt: true } });
+    if (paymentHold) return paymentHold;
   }
   if (!tx.schedulingBlock) return null;
   const blockRows = await tx.schedulingBlock.findMany({

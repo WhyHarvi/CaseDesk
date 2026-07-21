@@ -77,6 +77,14 @@ function boundedInt(value, field, minimum, maximum) {
   return parsed;
 }
 
+function validFeeAmount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+    throw createHttpError(400, "Consultation fee must be between $0.01 and $10,000.", "VALIDATION_ERROR");
+  }
+  return parsed;
+}
+
 function validMeetingModes(value, fallback = ["InPerson", "Online"]) {
   if (value === undefined) return fallback;
   const modes = [...new Set((Array.isArray(value) ? value : []).filter((item) => ["InPerson", "Online"].includes(item)))];
@@ -136,12 +144,20 @@ export async function updateBookingSettings(req, res) {
     ...(body.rescheduleCutoffMinutes !== undefined ? { rescheduleCutoffMinutes: boundedInt(body.rescheduleCutoffMinutes, "Reschedule cutoff", 0, 10080) } : {}),
     ...(body.locations !== undefined ? { locations: validLocations(body.locations) } : {}),
     ...(typeof body.publicBookingEnabled === "boolean" ? { publicBookingEnabled: body.publicBookingEnabled } : {}),
+    ...(typeof body.consultFeeEnabled === "boolean" ? { consultFeeEnabled: body.consultFeeEnabled } : {}),
+    ...(body.consultFeeAmount !== undefined ? { consultFeeAmount: body.consultFeeAmount === null ? null : validFeeAmount(body.consultFeeAmount) } : {}),
+    ...(body.consultFeeHoldMinutes !== undefined ? { consultFeeHoldMinutes: boundedInt(body.consultFeeHoldMinutes, "Payment hold window", 5, 120) } : {}),
   };
   const current = await getOrCreateBookingSettings(req.auth.agencyId);
   const finalLocations = data.locations !== undefined ? data.locations : (Array.isArray(current.locations) ? current.locations : []);
   const enablingPublic = data.publicBookingEnabled === true || (data.publicBookingEnabled === undefined && current.publicBookingEnabled);
   if (enablingPublic && finalLocations.length === 0) {
     throw createHttpError(400, "Add at least one office location before the public booking link can be active.", "LOCATION_REQUIRED");
+  }
+  const enablingConsultFee = data.consultFeeEnabled === true || (data.consultFeeEnabled === undefined && current.consultFeeEnabled);
+  const finalFeeAmount = data.consultFeeAmount !== undefined ? data.consultFeeAmount : current.consultFeeAmount;
+  if (enablingConsultFee && !finalFeeAmount) {
+    throw createHttpError(400, "Set a consultation fee amount before enabling paid bookings.", "VALIDATION_ERROR");
   }
   const settings = data.reminderMinutes === undefined
     ? await prisma.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data })

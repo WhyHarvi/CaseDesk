@@ -29,6 +29,7 @@ import quickbooksRoutes from "./routes/quickbooksRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
 import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
+import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -150,6 +151,7 @@ const server = app.listen(port, () => {
   startLeadIntakeWorker();
   startBookingReminderWorker();
   startPaymentScheduleWorker();
+  startPaymentHoldExpiryWorker();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
 });
@@ -166,6 +168,7 @@ async function shutdown(signal) {
   stopLeadIntakeWorker();
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();
+  stopPaymentHoldExpiryWorker();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
   server.close(async () => {

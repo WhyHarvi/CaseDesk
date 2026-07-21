@@ -50,6 +50,20 @@ export function parseOAuthState(state) {
   }
 }
 
+// Verifies Intuit's `intuit-signature` header: base64 HMAC-SHA256 of the
+// raw request body, keyed with the app's Webhook Verifier Token (a
+// separate secret from the OAuth client secret, set in Intuit's developer
+// dashboard alongside the webhook endpoint URL).
+export function verifyIntuitWebhookSignature(rawBody, signatureHeader) {
+  const token = process.env.QBO_WEBHOOK_VERIFIER_TOKEN;
+  if (!token || !signatureHeader) return false;
+  const expected = createHmac("sha256", token).update(rawBody).digest("base64");
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(String(signatureHeader));
+  if (expectedBuffer.length !== suppliedBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
 export function buildAuthorizeUrl(state) {
   const params = new URLSearchParams({
     client_id: process.env.QBO_CLIENT_ID,
@@ -110,6 +124,11 @@ export async function saveConnection({ agencyId, userId, realmId, tokens }) {
     const payload = await response.json().catch(() => ({}));
     companyName = payload?.CompanyInfo?.CompanyName || null;
   } catch { /* company name is cosmetic */ }
+
+  const existingForRealm = await prisma.agencyQuickBooksSettings.findUnique({ where: { realmId }, select: { agencyId: true } });
+  if (existingForRealm && existingForRealm.agencyId !== agencyId) {
+    throw createHttpError(409, "This QuickBooks company is already connected to another CaseDesk workspace.", "QBO_REALM_TAKEN");
+  }
 
   const data = tokenRow(agencyId, tokens, { realmId, companyName, connectedById: userId });
   return prisma.agencyQuickBooksSettings.upsert({
@@ -349,6 +368,42 @@ export async function getQuickBooksInvoicesByIds(agencyId, ids) {
     query: `SELECT Id, SyncToken, DocNumber, TotalAmt, Balance, DueDate FROM Invoice WHERE Id IN (${list}) MAXRESULTS 300`,
   });
   return (payload.QueryResponse?.Invoice || []).map(mapQuickBooksInvoice);
+}
+
+// Direct entity GET (not the batched Query API) — the only way to read a
+// fresh Balance/SyncToken/InvoiceLink for one invoice, used by the webhook
+// worker to re-verify payment live rather than trusting the notification.
+export async function getQuickBooksInvoice(agencyId, id) {
+  try {
+    const payload = await qboRequest(agencyId, { path: `/invoice/${id}` });
+    return mapQuickBooksInvoice(payload.Invoice);
+  } catch (error) {
+    if (error.statusCode === 502 || error.code === "QBO_REQUEST_FAILED") return null;
+    throw error;
+  }
+}
+
+// Direct entity GET for a Payment, resolving which invoice(s) it was
+// applied to via its LinkedTxn lines.
+export async function getQuickBooksPayment(agencyId, id) {
+  const payload = await qboRequest(agencyId, { path: `/payment/${id}` });
+  const payment = payload.Payment;
+  const invoiceIds = (payment.Line || [])
+    .flatMap((line) => line.LinkedTxn || [])
+    .filter((txn) => txn.TxnType === "Invoice")
+    .map((txn) => txn.TxnId);
+  return { id: payment.Id, totalAmount: Number(payment.TotalAmt ?? 0), invoiceIds: [...new Set(invoiceIds)] };
+}
+
+// Voids an abandoned/expired invoice so it doesn't sit Open in QuickBooks
+// forever once a payment hold expires unpaid. QBO's delete operation is
+// passed as a URL param (?operation=delete), not the SQL-query param.
+export async function voidQuickBooksInvoice(agencyId, { id, syncToken }) {
+  await qboRequest(agencyId, {
+    method: "POST",
+    path: "/invoice?operation=delete",
+    body: { Id: id, SyncToken: syncToken },
+  });
 }
 
 export async function createQuickBooksReceivePayment(agencyId, { customerId, invoiceId, amount }) {
