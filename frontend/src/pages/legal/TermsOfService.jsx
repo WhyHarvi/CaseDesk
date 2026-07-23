@@ -11,18 +11,18 @@ const SECTIONS = [
         icon: "document",
         h3: "Acceptance, by using it.",
         h4: "Who these Terms bind",
-        body: "By creating an account or otherwise using the Service, you agree to these Terms on behalf of yourself and, where applicable, the immigration consulting agency (\"Agency\") you represent.",
+        body: "By creating an account or otherwise using the Service, you agree to these Terms on behalf of yourself and, where applicable, the immigration consulting workplace (\"Workplace\") you represent.",
       },
       {
         icon: "handshake",
         h3: "What CaseDesk does.",
         h4: "The Service, defined",
-        body: "CaseDesk is a case-management platform that helps immigration consulting Agencies manage clients, cases, documents, communications, billing, and related workflows. Certain features rely on optional third-party integrations that an Agency may choose to connect.",
+        body: "CaseDesk is a case-management platform that helps immigration consulting Workplaces manage clients, cases, documents, communications, billing, and related workflows. Certain features rely on optional third-party integrations that a Workplace may choose to connect.",
       },
     ],
     quickFacts: [
-      { title: "QuickBooks", text: "Accounting, invoicing, and payment processing, where an Agency connects a QuickBooks account." },
-      { title: "Ooma, via Zapier", text: "SMS and call communications, where an Agency enables this integration." },
+      { title: "QuickBooks", text: "Accounting, invoicing, and payment processing, where a Workplace connects a QuickBooks account." },
+      { title: "Ooma, via Zapier", text: "SMS and call communications, where a Workplace enables this integration." },
       { title: "Microsoft 365", text: "Personal mailbox connections, where an individual user connects one." },
     ],
   },
@@ -34,9 +34,9 @@ const SECTIONS = [
     features: [
       {
         icon: "fingerprint",
-        h3: "Authorized, by an Agency.",
+        h3: "Authorized, by a Workplace.",
         h4: "Who can use the Service",
-        body: "You must be authorized by an Agency to use the Service on its behalf.",
+        body: "You must be authorized by a Workplace to use the Service on its behalf.",
       },
       {
         icon: "lock",
@@ -50,22 +50,22 @@ const SECTIONS = [
     ],
   },
   {
-    id: "agency-responsibility",
-    navLabel: "Agency Responsibility",
+    id: "workplace-responsibility",
+    navLabel: "Workplace Responsibility",
     title: "Client data, your obligation.",
-    tagline: "Agencies own the responsibility for the client data they put into CaseDesk — we process it, we don't police it.",
+    tagline: "Workplaces own the responsibility for the client data they put into CaseDesk — we process it, we don't police it.",
     features: [
       {
         icon: "gavel",
         h3: "Lawful basis, required.",
         h4: "Before data goes in",
-        body: "An Agency is solely responsible for having a lawful basis to collect, enter, and process its clients' personal information within CaseDesk, and for the accuracy of the information it enters.",
+        body: "A Workplace is solely responsible for having a lawful basis to collect, enter, and process its clients' personal information within CaseDesk, and for the accuracy of the information it enters.",
       },
       {
         icon: "scale",
-        h3: "Compliance, on the Agency.",
+        h3: "Compliance, on the Workplace.",
         h4: "Including immigration-practice regulation",
-        body: "An Agency is responsible for complying with all applicable laws, including privacy and immigration-practice regulations, in its use of the Service. CaseDesk acts as a data processor for this information and does not independently verify its accuracy or legality.",
+        body: "A Workplace is responsible for complying with all applicable laws, including privacy and immigration-practice regulations, in its use of the Service. CaseDesk acts as a data processor for this information and does not independently verify its accuracy or legality.",
       },
     ],
     quickFacts: [],
@@ -74,19 +74,19 @@ const SECTIONS = [
     id: "payments-billing",
     navLabel: "Payments & Billing",
     title: "Billing, kept separate.",
-    tagline: "CaseDesk's own commercial terms with an Agency are distinct from the client billing an Agency manages inside the platform.",
+    tagline: "CaseDesk's own commercial terms with a Workplace are distinct from the client billing a Workplace manages inside the platform.",
     features: [
       {
         icon: "document",
         h3: "Our billing, separately agreed.",
         h4: "Not set by these Terms",
-        body: "Billing arrangements between CHK Immigration Services Inc. and an Agency for use of CaseDesk itself are set out in the Agency's separate service agreement with us — these Terms don't create new billing obligations.",
+        body: "Billing arrangements between CHK Immigration Services Inc. and a Workplace for use of CaseDesk itself are set out in the Workplace's separate service agreement with us — these Terms don't create new billing obligations.",
       },
       {
         icon: "check",
         h3: "Your clients' billing, in-platform.",
         h4: "Via the QuickBooks integration",
-        body: "Where an Agency connects QuickBooks, CaseDesk lets it manage invoicing and payment processing for its own clients. That integration is subject to Intuit/QuickBooks' own terms as well.",
+        body: "Where a Workplace connects QuickBooks, CaseDesk lets it manage invoicing and payment processing for its own clients. That integration is subject to Intuit/QuickBooks' own terms as well.",
       },
     ],
     quickFacts: [],
@@ -95,7 +95,7 @@ const SECTIONS = [
     id: "intellectual-property",
     navLabel: "Intellectual Property",
     title: "Ownership, defined.",
-    tagline: "The platform is ours. What an Agency puts into it stays theirs.",
+    tagline: "The platform is ours. What a Workplace puts into it stays theirs.",
     features: [
       {
         icon: "gavel",
@@ -106,8 +106,8 @@ const SECTIONS = [
       {
         icon: "check",
         h3: "Your data, your data.",
-        h4: "Agency-entered content stays the Agency's",
-        body: "Data an Agency enters into CaseDesk remains the property of that Agency.",
+        h4: "Workplace-entered content stays the Workplace's",
+        body: "Data a Workplace enters into CaseDesk remains the property of that Workplace.",
       },
     ],
     quickFacts: [],
@@ -134,7 +134,7 @@ const SECTIONS = [
     id: "termination",
     navLabel: "Termination",
     title: "Access, revoked.",
-    tagline: "Access to CaseDesk can end — by us, for cause, or by an Agency, whenever it chooses.",
+    tagline: "Access to CaseDesk can end — by us, for cause, or by a Workplace, whenever it chooses.",
     features: [
       {
         icon: "gavel",
@@ -144,9 +144,9 @@ const SECTIONS = [
       },
       {
         icon: "document",
-        h3: "Ended, by an Agency.",
+        h3: "Ended, by a Workplace.",
         h4: "Any time, with data handled per our Privacy Policy",
-        body: "An Agency may stop using the Service at any time; certain data may be retained after termination as described in our Privacy Policy or as required by law.",
+        body: "A Workplace may stop using the Service at any time; certain data may be retained after termination as described in our Privacy Policy or as required by law.",
       },
     ],
     quickFacts: [],
@@ -209,7 +209,7 @@ export default function TermsOfService() {
     <LegalPageShell
       headline="The Rules, Made Clear."
       lastUpdated="July 23, 2026"
-      summary="What using CaseDesk means for you and your Agency — plain terms, no surprises."
+      summary="What using CaseDesk means for you and your Workplace — plain terms, no surprises."
       sections={SECTIONS}
       otherPage={{ to: "/legal/privacy", label: "Privacy Policy" }}
       contact={{

@@ -11,13 +11,13 @@ const SECTIONS = [
         icon: "shield",
         h3: "Your data, in context.",
         h4: "Who this policy is for",
-        body: "This Privacy Policy explains what personal information CaseDesk collects, how it's used, and the choices available to you as a member of an Agency's staff or as that Agency's client.",
+        body: "This Privacy Policy explains what personal information CaseDesk collects, how it's used, and the choices available to you as a member of a Workplace's staff or as that Workplace's client.",
       },
       {
         icon: "handshake",
-        h3: "Agencies, responsible.",
+        h3: "Workplaces, responsible.",
         h4: "How CaseDesk fits in",
-        body: "CaseDesk is used by immigration consulting agencies (\"Agencies\") to manage their own clients' immigration cases. When an Agency uses CaseDesk, we act as a data processor on the Agency's behalf. The Agency remains responsible for the accuracy of the information it enters and for having a lawful basis to collect and share it with us.",
+        body: "CaseDesk is used by immigration consulting workplaces (\"Workplaces\") to manage their own clients' immigration cases. When a Workplace uses CaseDesk, we act as a data processor on the Workplace's behalf. The Workplace remains responsible for the accuracy of the information it enters and for having a lawful basis to collect and share it with us.",
       },
     ],
     quickFacts: [],
@@ -31,26 +31,26 @@ const SECTIONS = [
       {
         icon: "fingerprint",
         h3: "Account information.",
-        h4: "Agency staff & admins",
-        body: "Name, email address, role, and login credentials for Agency staff and administrators.",
+        h4: "Workplace staff & admins",
+        body: "Name, email address, role, and login credentials for Workplace staff and administrators.",
       },
       {
         icon: "document",
         h3: "Client & case information.",
-        h4: "What an Agency enters",
-        body: "Names, contact details, immigration status, identity document details, family information, employment and education history, and other information relevant to an immigration case, entered by the Agency about its own clients.",
+        h4: "What a Workplace enters",
+        body: "Names, contact details, immigration status, identity document details, family information, employment and education history, and other information relevant to an immigration case, entered by the Workplace about its own clients.",
       },
       {
         icon: "eye",
         h3: "Communications.",
         h4: "Messages, notes, documents",
-        body: "Exchanged within CaseDesk between Agency staff and clients, including through connected phone/SMS or email integrations an Agency chooses to enable.",
+        body: "Exchanged within CaseDesk between Workplace staff and clients, including through connected phone/SMS or email integrations a Workplace chooses to enable.",
       },
       {
         icon: "check",
         h3: "Payment & billing records.",
         h4: "Via our QuickBooks integration",
-        body: "Invoice, payment status, and billing information processed through our QuickBooks integration, where an Agency connects one.",
+        body: "Invoice, payment status, and billing information processed through our QuickBooks integration, where a Workplace connects one.",
       },
     ],
     quickFacts: [
@@ -61,7 +61,7 @@ const SECTIONS = [
     id: "how-we-use-it",
     navLabel: "How We Use It",
     title: "Your data, purposeful.",
-    tagline: "Every use of your information ties back to running CaseDesk for the Agency you work with or belong to.",
+    tagline: "Every use of your information ties back to running CaseDesk for the Workplace you work with or belong to.",
     features: [
       {
         icon: "shield",
@@ -71,9 +71,9 @@ const SECTIONS = [
       },
       {
         icon: "handshake",
-        h3: "Power agency casework.",
+        h3: "Power workplace casework.",
         h4: "Cases, documents, billing",
-        body: "To let Agencies manage their clients' immigration cases, documents, communications, and billing, and to send account, security, and service-related notifications.",
+        body: "To let Workplaces manage their clients' immigration cases, documents, communications, and billing, and to send account, security, and service-related notifications.",
       },
     ],
     quickFacts: [
@@ -113,12 +113,12 @@ const SECTIONS = [
       {
         icon: "check",
         h3: "Optional integrations.",
-        h4: "Connected only if an Agency enables them",
-        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Ooma (via Zapier) for SMS and calls; Microsoft 365 for personal mailbox connections — each only where an Agency or individual user chooses to connect it.",
+        h4: "Connected only if a Workplace enables them",
+        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Ooma (via Zapier) for SMS and calls; Microsoft 365 for personal mailbox connections — each only where a Workplace or individual user chooses to connect it.",
       },
     ],
     quickFacts: [
-      { title: "Agency email servers", text: "An Agency's own email server (SMTP/IMAP), where the Agency configures one for outbound and inbound mail." },
+      { title: "Workplace email servers", text: "A Workplace's own email server (SMTP/IMAP), where the Workplace configures one for outbound and inbound mail." },
       { title: "Cross-border processing", text: "Some of these providers may store or process data outside of Canada. We take reasonable steps to ensure comparable protection wherever it's processed." },
     ],
   },
@@ -142,7 +142,7 @@ const SECTIONS = [
       },
     ],
     quickFacts: [
-      { title: "Agencies first", text: "Because CaseDesk is used by Agencies to manage their own clients, requests from an Agency's clients should generally be directed to that Agency first." },
+      { title: "Workplaces first", text: "Because CaseDesk is used by Workplaces to manage their own clients, requests from a Workplace's clients should generally be directed to that Workplace first." },
       { title: "File a complaint", text: "You may contact us directly using the details below, and you may file a complaint with the Office of the Privacy Commissioner of Canada." },
     ],
   },
@@ -162,12 +162,12 @@ const SECTIONS = [
         icon: "document",
         h3: "Retention, tied to use.",
         h4: "As long as the account is active",
-        body: "We retain personal information for as long as an Agency's account remains active, or as needed to provide the service, comply with legal obligations, resolve disputes, and enforce our agreements.",
+        body: "We retain personal information for as long as a Workplace's account remains active, or as needed to provide the service, comply with legal obligations, resolve disputes, and enforce our agreements.",
       },
     ],
     quickFacts: [
       { title: "No absolute guarantee", text: "No method of transmission or storage is completely secure, and we cannot guarantee absolute security." },
-      { title: "Requesting deletion", text: "An Agency may request deletion of its data by contacting us, subject to any retention required by law." },
+      { title: "Requesting deletion", text: "A Workplace may request deletion of its data by contacting us, subject to any retention required by law." },
     ],
   },
   {
@@ -195,7 +195,7 @@ const SECTIONS = [
         icon: "fingerprint",
         h3: "Not directed at children.",
         h4: "But dependants may appear in case data",
-        body: "CaseDesk is intended for use by immigration consulting professionals and their clients. It is not directed at children, though case data entered by an Agency may include information about minors — for example, dependants on a family's immigration application — as part of that Agency's casework.",
+        body: "CaseDesk is intended for use by immigration consulting professionals and their clients. It is not directed at children, though case data entered by a Workplace may include information about minors — for example, dependants on a family's immigration application — as part of that Workplace's casework.",
       },
     ],
     quickFacts: [],
@@ -222,7 +222,7 @@ export default function PrivacyPolicy() {
     <LegalPageShell
       headline="Your Data, Your Terms."
       lastUpdated="July 23, 2026"
-      summary="How CaseDesk collects, uses, and protects personal information — for Agency staff and the clients they serve."
+      summary="How CaseDesk collects, uses, and protects personal information — for Workplace staff and the clients they serve."
       sections={SECTIONS}
       otherPage={{ to: "/legal/terms", label: "Terms of Service" }}
       contact={{
