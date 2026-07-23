@@ -7,6 +7,7 @@ import {
   getCaseById,
   getCasePermissions,
   listCases,
+  listCaseTypes,
   restoreCase,
   softDeleteCase,
   unarchiveCase,
@@ -44,6 +45,7 @@ import rateLimit from "../middleware/rateLimit.js";
 const router = Router();
 
 router.get("/", asyncHandler(listCases));
+router.get("/case-types", asyncHandler(listCaseTypes));
 router.post("/", asyncHandler(createCase));
 router.use("/:id", requireCaseAccess());
 router.get("/:id/permissions", requireRole("admin"), asyncHandler(getCasePermissions));

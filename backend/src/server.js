@@ -8,6 +8,7 @@ import caseRoutes from "./routes/caseRoutes.js";
 import clientDocumentRoutes from "./routes/clientDocumentRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import globalSearchRoutes from "./routes/globalSearchRoutes.js";
 import paymentsOverviewRoutes from "./routes/paymentsOverviewRoutes.js";
 import documentTemplateRoutes from "./routes/documentTemplateRoutes.js";
 import followUpRoutes from "./routes/followUpRoutes.js";
@@ -29,6 +30,7 @@ import publicBookingRoutes from "./routes/publicBookingRoutes.js";
 import quickbooksRoutes from "./routes/quickbooksRoutes.js";
 import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
+import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
 import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
 import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
 import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
@@ -38,6 +40,7 @@ import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import accountSettingsRoutes from "./routes/accountSettingsRoutes.js";
 import personalMailboxRoutes from "./routes/personalMailboxRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import consultantRoutes from "./routes/consultantRoutes.js";
@@ -51,6 +54,7 @@ import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import { startNotificationScheduler, stopNotificationScheduler } from "./services/notificationScheduler.js";
 import { startNotificationDeliveryWorker, stopNotificationDeliveryWorker } from "./services/notificationDeliveryService.js";
+import { startAutomatedReminderWorker, stopAutomatedReminderWorker } from "./services/automatedReminderService.js";
 import { invalidateDashboardCache } from "./services/dashboardCache.js";
 import {
   startFormRevisionMonitor,
@@ -106,6 +110,7 @@ app.get("/api/health", async (req, res, next) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/account", requireAuth, accountSettingsRoutes);
 app.use("/api/onboarding", onboardingRoutes);
 app.use("/api/communications/webhooks", communicationWebhookRoutes);
 app.use("/api/client-communication", clientCommunicationRoutes);
@@ -123,6 +128,7 @@ app.use("/api/admin", requireAuth, adminRoutes);
 app.use("/api/consultants", requireAuth, consultantRoutes);
 const internalUser = requireRole("admin", "consultant");
 const leadUser = requireRole("admin", "consultant", "frontdesk");
+app.use("/api/search", requireAuth, leadUser, globalSearchRoutes);
 app.use("/api/dashboard", requireAuth, internalUser, dashboardRoutes);
 // Distinct path — /api/payments belongs to the legacy Payment CRUD below,
 // which Cases.jsx/CaseProfile.jsx still consume with an array response.
@@ -131,6 +137,7 @@ app.use("/api/leads", requireAuth, leadUser, leadRoutes);
 app.use("/api/clients", requireAuth, internalUser, clientRoutes);
 app.use("/api/cases", requireAuth, internalUser, caseRoutes);
 app.use("/api/payment-schedules", requireAuth, internalUser, paymentScheduleRoutes);
+app.use("/api/case-easy-import", requireAuth, leadUser, caseEasyImportRoutes);
 app.use("/api/follow-ups", requireAuth, internalUser, followUpRoutes);
 app.use("/api/users", requireAuth, requireRole("admin"), userRoutes);
 app.use("/api/notes", requireAuth, internalUser, noteRoutes);
@@ -165,6 +172,7 @@ const server = app.listen(port, () => {
   startQuickBooksWebhookWorker();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
+  startAutomatedReminderWorker();
   startCaseInformationDriftDetector();
 });
 
@@ -184,6 +192,7 @@ async function shutdown(signal) {
   stopQuickBooksWebhookWorker();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
+  stopAutomatedReminderWorker();
   stopCaseInformationDriftDetector();
   server.close(async () => {
     await prisma.$disconnect().catch(() => {});

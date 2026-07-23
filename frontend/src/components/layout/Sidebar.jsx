@@ -14,6 +14,7 @@ import {
   UserRound,
   BarChart3,
   Waypoints,
+  DatabaseZap,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/logo.png";
@@ -98,6 +99,13 @@ const adminNavigation = [
     disabled: false,
   },
   {
+    label: "Case Easy Import",
+    to: "/app/case-easy-import",
+    icon: DatabaseZap,
+    description: "Import and review Case Easy data",
+    disabled: false,
+  },
+  {
     label: "Settings",
     to: "/app/settings",
     icon: Settings,
@@ -115,6 +123,7 @@ const consultantNavigation = [
   { label: "Follow-ups", to: "/app/follow-ups", icon: CalendarClock },
   { label: "Calendar", to: "/app/calendar", icon: CalendarDays },
   { label: "My Workload", to: "/app/workload", icon: Gauge },
+  { label: "Case Easy Import", to: "/app/case-easy-import", icon: DatabaseZap },
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];
 
@@ -122,6 +131,7 @@ const frontdeskNavigation = [
   { label: "Leads", to: "/leads", icon: ContactRound, description: "Assigned inquiries" },
   { label: "Calendar", to: "/app/calendar", icon: CalendarDays, description: "Book walk-ins" },
   { label: "My Profile", to: "/app/settings?section=personal-profile", icon: UserRound },
+  { label: "Case Easy Import", to: "/app/case-easy-import", icon: DatabaseZap },
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];
 

@@ -2,6 +2,7 @@ import {
   Building2,
   CreditCard,
   Bell,
+  BellRing,
   CalendarDays,
   FileText,
   History,
@@ -17,7 +18,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPanel";
@@ -28,6 +29,12 @@ import CommunicationSettingsPanel from "../components/settings/CommunicationSett
 import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
 import SchedulingSettingsPanel from "../components/booking/SchedulingSettingsPanel";
 import PaymentsSettingsPanel from "../components/settings/PaymentsSettingsPanel";
+import TeamMembers from "./TeamMembers";
+import CaseWorkflowSettingsPanel from "../components/settings/CaseWorkflowSettingsPanel";
+import DocumentTemplatesSettingsPanel from "../components/settings/DocumentTemplatesSettingsPanel";
+import AutomatedRemindersSettingsPanel from "../components/settings/AutomatedRemindersSettingsPanel";
+import SecuritySettingsPanel from "../components/settings/SecuritySettingsPanel";
+import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettingsPanel";
 
 const adminSettingsItems = [
   {
@@ -112,6 +119,13 @@ const adminSettingsItems = [
     subtitle: "Control reminders, alerts, and communication preferences.",
   },
   {
+    id: "automated-reminders",
+    label: "Automated Reminders",
+    icon: BellRing,
+    title: "Automated Reminders",
+    subtitle: "Automatically follow up with clients about outstanding items.",
+  },
+  {
     id: "security",
     label: "Security",
     icon: Lock,
@@ -156,6 +170,13 @@ const consultantSettingsItems = [
     icon: Lock,
     title: "Security",
     subtitle: "Manage your password and protect your CaseDesk account.",
+  },
+  {
+    id: "activity-logs",
+    label: "Activity Logs",
+    icon: History,
+    title: "Activity Logs",
+    subtitle: "Review your account activity and changes.",
   },
 ];
 
@@ -491,33 +512,6 @@ function FrontdeskProfilePanel({ user, agency }) {
   );
 }
 
-function SecurityPanel() {
-  const navigate = useNavigate();
-
-  return (
-    <div className="space-y-7">
-      <div className="flex items-start gap-4 border-b border-slate-200/80 pb-7">
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-          <Lock className="h-6 w-6" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Security</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500">Update your password and keep your account secure.</p>
-        </div>
-      </div>
-      <section className="flex flex-col gap-5 rounded-3xl border border-slate-200 bg-slate-50/70 p-6 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="font-semibold text-slate-950">Password</h3>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Use at least 10 characters and a password unique to CaseDesk.</p>
-        </div>
-        <button type="button" onClick={() => navigate("/change-password")} className="h-11 shrink-0 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800">
-          Change password
-        </button>
-      </section>
-    </div>
-  );
-}
-
 export default function Settings() {
   const { role, appUser, agency } = useAuth();
   const isAdmin = role === "admin";
@@ -640,8 +634,10 @@ export default function Settings() {
                 >
                   {!isAdmin && activeSection === "personal-profile" ? (
                     role === "frontdesk" ? <FrontdeskProfilePanel user={appUser} agency={agency} /> : <PersonalProfilePanel user={appUser} agency={agency} />
-                  ) : !isAdmin && activeSection === "security" ? (
-                    <SecurityPanel />
+                  ) : activeSection === "security" ? (
+                    <SecuritySettingsPanel />
+                  ) : activeSection === "activity-logs" ? (
+                    <ActivityLogsSettingsPanel />
                   ) : activeSection === "personal-email" ? (
                     <PersonalMailboxSettingsPanel />
                   ) : activeSection === "agency-profile" ? (
@@ -654,10 +650,18 @@ export default function Settings() {
                     <CommunicationSettingsPanel />
                   ) : activeSection === "notifications" ? (
                     <NotificationPreferencesPanel />
+                  ) : isAdmin && activeSection === "automated-reminders" ? (
+                    <AutomatedRemindersSettingsPanel />
                   ) : isAdmin && activeSection === "scheduling" ? (
                     <SchedulingSettingsPanel />
                   ) : isAdmin && activeSection === "payments-fees" ? (
                     <PaymentsSettingsPanel />
+                  ) : isAdmin && activeSection === "users-roles" ? (
+                    <TeamMembers />
+                  ) : isAdmin && activeSection === "case-workflow" ? (
+                    <CaseWorkflowSettingsPanel />
+                  ) : isAdmin && activeSection === "document-templates" ? (
+                    <DocumentTemplatesSettingsPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}

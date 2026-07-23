@@ -14,6 +14,7 @@ const ClientChatPortal = lazy(() => import("../pages/ClientChatPortal"));
 const ClientProfile = lazy(() => import("../pages/ClientProfile"));
 const Clients = lazy(() => import("../pages/Clients"));
 const TeamMembers = lazy(() => import("../pages/TeamMembers"));
+const CaseEasyImport = lazy(() => import("../pages/CaseEasyImport"));
 const Dashboard = lazy(() => import("../pages/Dashboard"));
 const Documents = lazy(() => import("../pages/Documents"));
 const FollowUps = lazy(() => import("../pages/FollowUps"));
@@ -26,6 +27,7 @@ const ClientPortalChat = lazy(() => import("../pages/client-portal/ClientPortalC
 const ClientPortalPayments = lazy(() => import("../pages/client-portal/ClientPortalPayments"));
 const ClientPortalProfile = lazy(() => import("../pages/client-portal/ClientPortalProfile"));
 const ClientPortalHelp = lazy(() => import("../pages/client-portal/ClientPortalHelp"));
+const ClientPortalAccountSettings = lazy(() => import("../pages/client-portal/ClientPortalAccountSettings"));
 const Workload = lazy(() => import("../pages/Workload"));
 const CalendarPage = lazy(() => import("../pages/CalendarPage"));
 const PublicBookingPage = lazy(() => import("../pages/PublicBookingPage"));
@@ -72,6 +74,7 @@ export default function AppRoutes() {
       <Route path="payments" element={<Deferred><ClientPortalPayments /></Deferred>} />
       <Route path="profile" element={<Deferred><ClientPortalProfile /></Deferred>} />
       <Route path="help" element={<Deferred><ClientPortalHelp /></Deferred>} />
+      <Route path="settings" element={<Deferred><ClientPortalAccountSettings /></Deferred>} />
     </Route>
     <Route element={<AppLayout />}>
       <Route path="/app/dashboard" element={<StaffOnly><Dashboard /></StaffOnly>} />
@@ -91,6 +94,7 @@ export default function AppRoutes() {
       <Route path="/app/documents" element={<StaffOnly><Documents /></StaffOnly>} />
       <Route path="/app/payments" element={<AdminRoute><Payments /></AdminRoute>} />
       <Route path="/app/team-members" element={<AdminRoute><TeamMembers /></AdminRoute>} />
+      <Route path="/app/case-easy-import" element={<Internal allowFrontdesk><CaseEasyImport /></Internal>} />
       <Route path="/app/consultants" element={<Navigate to="/app/team-members" replace />} />
       <Route path="/app/workload" element={<StaffOnly><Workload /></StaffOnly>} />
       <Route path="/app/settings" element={<Internal allowFrontdesk><Settings /></Internal>} />
