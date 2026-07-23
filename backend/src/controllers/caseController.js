@@ -686,6 +686,30 @@ export async function updateCaseDocumentAssignment(req, res) {
   res.json({ data: result.data, meta: { updatedCount: result.documentCount, status } });
 }
 
+// Case type is free text (Case.caseType has no enum), and several other
+// systems match against it by exact string equality — document checklists
+// (syncCaseDocumentsFromTemplates above), workflow templates
+// (workflowService.js's findWorkflowTemplateForCaseType). A case created
+// with "study permit" silently won't pick up a "Study Permit" checklist.
+// This endpoint surfaces every case type string already known to the
+// agency — in use on a real case, or configured as a document/workflow
+// template — so the case form can suggest exact matches instead of
+// letting free text drift.
+export async function listCaseTypes(req, res) {
+  const agencyId = req.user.agencyId;
+  const [cases, documentTemplates, workflowTemplates] = await Promise.all([
+    prisma.case.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
+    prisma.documentTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
+    prisma.workflowTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
+  ]);
+
+  const caseTypes = [...new Set([...cases, ...documentTemplates, ...workflowTemplates].map((row) => row.caseType).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  res.json({ data: caseTypes });
+}
+
 export const listCases = controller.list;
 
 // Unlike other case reads, the profile view must also load trashed cases so
