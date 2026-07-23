@@ -89,9 +89,30 @@ if (process.env.NODE_ENV !== "production") {
 // mentions deletedAt itself (pass `deletedAt: undefined` to opt out entirely).
 // Nested reads (e.g. client include { cases }) are NOT intercepted here and
 // must filter deletedAt explicitly.
+//
+// The check has to walk into AND/OR/NOT, not just the top level: a caller
+// can legitimately specify `deletedAt` nested inside `where.AND[0]` (e.g.
+// caseController.js's trash-view query) rather than as a direct sibling key.
+// A shallow check misses that, injects `deletedAt: null` anyway, and
+// produces a self-contradictory query (`deletedAt IS NOT NULL` AND
+// `deletedAt IS NULL`) that always returns zero rows — this is exactly what
+// made the Trash view always appear empty regardless of how many cases were
+// actually soft-deleted.
+function whereSpecifiesDeletedAt(where) {
+  if (!where || typeof where !== "object") return false;
+  if (Object.hasOwn(where, "deletedAt") || Object.hasOwn(where, "deleted_at")) return true;
+  for (const key of ["AND", "OR", "NOT"]) {
+    const value = where[key];
+    if (!value) continue;
+    const clauses = Array.isArray(value) ? value : [value];
+    if (clauses.some(whereSpecifiesDeletedAt)) return true;
+  }
+  return false;
+}
+
 const hideDeleted = ({ args, query }) => {
   const where = args.where || {};
-  if (!Object.hasOwn(where, "deletedAt") && !Object.hasOwn(where, "deleted_at")) {
+  if (!whereSpecifiesDeletedAt(where)) {
     args = { ...args, where: { ...where, deletedAt: null } };
   }
   return query(args);

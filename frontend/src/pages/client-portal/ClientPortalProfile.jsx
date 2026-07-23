@@ -1,4 +1,4 @@
-import { ChevronRight, CircleHelp, Loader2, LogOut, Mail, MapPin, Phone, UserRound } from "lucide-react";
+import { ChevronRight, CircleHelp, Loader2, LogOut, Mail, MapPin, Phone, Settings2, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { updatePortalProfile, portalErrorMessage } from "../../api/clientPortalApi";
@@ -97,6 +97,15 @@ export default function ClientPortalProfile() {
           </button>
         </GlassCard>
       </form>
+
+      <Link
+        to="/client-portal/settings"
+        className="flex items-center gap-3.5 rounded-3xl border border-white/70 bg-white/75 px-5 py-4 shadow-[0_10px_30px_rgba(28,45,74,0.06)] backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.99]"
+      >
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700"><Settings2 className="h-[18px] w-[18px]" /></div>
+        <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-900">Security &amp; activity</p><p className="mt-0.5 text-[13px] text-slate-500">Password, session, and account history</p></div>
+        <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+      </Link>
 
       <Link
         to="/client-portal/help"

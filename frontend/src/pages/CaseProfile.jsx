@@ -143,6 +143,27 @@ export default function CaseProfile() {
   );
 
   useEffect(() => {
+    const clientName =
+      caseItem?.id === id ? String(caseItem.client?.fullName || "").trim() : "";
+    document.title = clientName || "CaseDesk";
+
+    return () => {
+      document.title = "CaseDesk";
+    };
+  }, [id, caseItem?.id, caseItem?.client?.fullName]);
+
+  const highlightedNoteId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("overlay") === "notes" ? params.get("note") || "" : "";
+  }, [location.search]);
+
+  useEffect(() => {
+    if (caseItem?.id !== id) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("overlay") === "notes") setNotesOverlayOpen(true);
+  }, [caseItem?.id, id, location.search]);
+
+  useEffect(() => {
     async function loadCaseProfile() {
       try {
         setLoading(true);
@@ -300,6 +321,18 @@ export default function CaseProfile() {
     } catch (requestError) {
       setCommunicationSetup({ channel, reason: "provider", detail: requestError.response?.data?.message || "Communication readiness could not be checked." });
     }
+  }
+
+  function closeNotesOverlay() {
+    setNotesOverlayOpen(false);
+    const params = new URLSearchParams(location.search);
+    if (params.get("overlay") !== "notes") return;
+    params.delete("overlay");
+    params.delete("note");
+    navigate(
+      `${location.pathname}${params.size ? `?${params.toString()}` : ""}`,
+      { replace: true },
+    );
   }
 
   const sortedWorkflowTemplates = useMemo(() => {
@@ -1544,8 +1577,9 @@ export default function CaseProfile() {
         <NotesOverlay
           caseItem={caseItem}
           initialNotes={notes}
+          highlightNoteId={highlightedNoteId}
           onNotesChange={setNotes}
-          onClose={() => setNotesOverlayOpen(false)}
+          onClose={closeNotesOverlay}
         />
       ) : null}
 

@@ -13,11 +13,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import PageContainer from "../components/layout/PageContainer";
 import api from "../services/api";
 import PortalAccessCard from "../components/clients/PortalAccessCard";
 import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
+import CaseEasyReportsCard from "../components/clients/CaseEasyReportsCard";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import { useAuth } from "../auth/AuthContext";
 
@@ -275,6 +276,7 @@ function CaseRow({ item, isPrimary = false }) {
 
 export default function ClientProfile() {
   const { id } = useParams();
+  const location = useLocation();
   const { role } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -306,6 +308,10 @@ export default function ClientProfile() {
       ),
     [profileNotes],
   );
+  const highlightedNoteId = useMemo(
+    () => new URLSearchParams(location.search).get("note") || "",
+    [location.search],
+  );
   const openCases = useMemo(
     () =>
       cases.filter(
@@ -333,6 +339,16 @@ export default function ClientProfile() {
   useEffect(() => {
     loadClient();
   }, [id]);
+
+  useEffect(() => {
+    if (!highlightedNoteId || loading) return;
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById(`client-note-${highlightedNoteId}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlightedNoteId, loading, sortedProfileNotes]);
 
   function resetNoteForm() {
     setNoteFormState(defaultNoteFormState);
@@ -757,6 +773,8 @@ export default function ClientProfile() {
               </div>
             </article>
 
+            {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
+
             <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -790,13 +808,18 @@ export default function ClientProfile() {
               <div className="mt-5 space-y-3">
                 {sortedProfileNotes.length ? (
                   sortedProfileNotes.map((note) => (
-                    <NoteCard
+                    <div
+                      id={`client-note-${note.id}`}
                       key={note.id}
-                      note={note}
-                      onEdit={openEditNoteForm}
-                      onDelete={handleDeleteNote}
-                      deletingId={deletingNoteId}
-                    />
+                      className={note.id === highlightedNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}
+                    >
+                      <NoteCard
+                        note={note}
+                        onEdit={openEditNoteForm}
+                        onDelete={handleDeleteNote}
+                        deletingId={deletingNoteId}
+                      />
+                    </div>
                   ))
                 ) : (
                   <EmptyState message="No profile notes yet." />

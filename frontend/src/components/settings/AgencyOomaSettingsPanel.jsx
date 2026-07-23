@@ -291,6 +291,12 @@ export default function AgencyOomaSettingsPanel() {
                 <RefreshCw className={`h-3.5 w-3.5 ${checkingInbound ? "animate-spin" : ""}`} /> {checkingInbound ? "Checking…" : "Check connection"}
               </button>
             </div>
+            <div className="rounded-2xl border border-violet-100/80 bg-violet-50/55 px-4 py-3 text-xs leading-5 text-slate-600 backdrop-blur-xl">
+              <p className="font-semibold text-violet-950">Required mapping for incoming SMS</p>
+              <p className="mt-1">
+                In the Zapier POST payload, map the Ooma client or remote number to <code className="font-semibold text-slate-900">from</code>, your Ooma number to <code className="font-semibold text-slate-900">to</code>, the message to <code className="font-semibold text-slate-900">body</code>, and the Ooma message ID to <code className="font-semibold text-slate-900">providerMessageId</code>. Set <code className="font-semibold text-slate-900">event</code> to <code className="font-semibold text-slate-900">sms_received</code>.
+              </p>
+            </div>
           </div>
         ) : (
           <button type="button" disabled={generatingInbound || !form.canManage || !form.secureStorageReady} onClick={generateInbound} className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 active:translate-y-0 disabled:opacity-50">

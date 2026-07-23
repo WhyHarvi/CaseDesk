@@ -28,13 +28,16 @@ test("admins can generate an inbound Zapier webhook without direct Ooma credenti
   assert.match(panel, /no Ooma API key is needed/i);
   assert.match(panel, /Last event received/);
   assert.match(panel, /Check connection/);
+  assert.match(panel, /Required mapping for incoming SMS/);
+  assert.match(panel, /remote number/);
   assert.match(panel, /api\.getFresh\("\/settings\/ooma"\)/);
 });
 
 test("the public token route accepts the normalized Zapier SMS payload", async () => {
-  const [routes, controller, server, panel] = await Promise.all([
+  const [routes, controller, addresses, server, panel] = await Promise.all([
     source("../src/routes/communicationWebhookRoutes.js"),
     source("../src/controllers/communicationWebhookController.js"),
+    source("../src/services/communicationAddressService.js"),
     source("../src/server.js"),
     source("../../frontend/src/components/settings/AgencyOomaSettingsPanel.jsx"),
   ]);
@@ -45,6 +48,8 @@ test("the public token route accepts the normalized Zapier SMS payload", async (
   assert.match(controller, /payload\.to/);
   assert.match(controller, /payload\.body/);
   assert.match(controller, /payload\.messageId/);
+  assert.match(controller, /resolveOomaSender/);
+  assert.match(addresses, /payload\.remote_number/);
   assert.match(panel, /Inbound CaseDesk webhook URL/);
   assert.match(panel, /Paste this address into your Zapier webhook action/);
 });

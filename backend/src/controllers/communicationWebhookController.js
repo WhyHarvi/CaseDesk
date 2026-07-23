@@ -8,6 +8,10 @@ import {
 } from "../services/communicationSlaService.js";
 import { createHttpError } from "../utils/http.js";
 import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
+import {
+  normalizeCommunicationPhone,
+  oomaSenderCandidates,
+} from "../services/communicationAddressService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const stopWords = new Set(["stop", "unsubscribe", "cancel", "end", "quit"]);
@@ -24,7 +28,9 @@ const date = (value) => {
   const parsed = value ? new Date(value) : new Date();
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 };
-const normalizePhone = (value) => clean(value, 80).replace(/[^+\d]/g, "");
+const normalizePhone = (value) =>
+  normalizeCommunicationPhone(value) ||
+  clean(value, 80).replace(/[^+\d]/g, "");
 const httpsUrl = (value) => {
   try {
     const parsed = new URL(clean(value, 2000));
@@ -70,23 +76,55 @@ async function agencyContext(agencyId) {
 async function findClient(agencyId, channel, senderAddress) {
   if (!senderAddress) return null;
   if (channel === "Email") {
+    const normalizedEmail = clean(senderAddress, 320).toLowerCase();
     return prisma.client.findFirst({
       where: {
         agencyId,
-        email: { equals: senderAddress, mode: "insensitive" },
+        OR: [
+          { emailNormalized: normalizedEmail },
+          { email: { equals: senderAddress, mode: "insensitive" } },
+        ],
       },
     });
   }
-  const normalized = normalizePhone(senderAddress);
+  const normalized = normalizeCommunicationPhone(senderAddress);
   if (!normalized) return null;
-  const candidates = await prisma.client.findMany({
-    where: { agencyId, phone: { not: null } },
-    take: 500,
+  const direct = await prisma.client.findFirst({
+    where: {
+      agencyId,
+      OR: [
+        { phoneNormalized: normalized },
+        { phone: { equals: senderAddress, mode: "insensitive" } },
+      ],
+    },
   });
-  return (
-    candidates.find((client) => normalizePhone(client.phone) === normalized) ||
-    null
-  );
+  if (direct) return direct;
+
+  // Support older client rows created before canonical phone storage was added.
+  const legacyCandidates = await prisma.client.findMany({
+    where: { agencyId, phoneNormalized: null, phone: { not: null } },
+  });
+  return legacyCandidates.find(
+    (client) => normalizeCommunicationPhone(client.phone) === normalized,
+  ) || null;
+}
+
+async function resolveOomaSender(payload, agencyId, channel, eventName) {
+  const normalizedEvent = eventName.replaceAll(/[^a-z]/g, "");
+  const allowToFallback = [
+    "smsreceived",
+    "messagereceived",
+    "inboundsms",
+    "inboundmessage",
+  ].includes(normalizedEvent);
+  const candidates = oomaSenderCandidates(payload, { allowToFallback });
+  for (const candidate of candidates) {
+    if (await findClient(agencyId, channel, candidate)) return candidate;
+  }
+  // Preserve a supplied sender for the Unassigned queue even when it does not
+  // match a client. Never treat `to` as the sender unless it matched a client.
+  const explicitCandidates = oomaSenderCandidates(payload);
+  return explicitCandidates[0] || null;
 }
 
 async function storeUnmatched({
@@ -604,23 +642,43 @@ export async function receiveOomaCommunicationWebhook(req, res) {
     });
   } else {
     const channel =
-      payload.channel === "Sms" || payload.channel === "Call"
-        ? payload.channel
-        : payload.body || payload.text || payload.message
+      clean(payload.channel, 20).toLowerCase() === "sms"
+        ? "Sms"
+        : clean(payload.channel, 20).toLowerCase() === "call"
+          ? "Call"
+        : payload.body ||
+            payload.text ||
+            payload.message ||
+            payload.messageBody ||
+            payload.message_body ||
+            payload.data?.body ||
+            payload.data?.message
           ? "Sms"
           : "Call";
+    const senderAddress = await resolveOomaSender(
+      payload,
+      settings.agencyId,
+      channel,
+      eventName,
+    );
     result = await ingestInboundCommunication({
       ...payload,
       agencyId: settings.agencyId,
       provider: "Ooma",
       channel,
-      senderAddress:
-        payload.senderAddress || payload.from || payload.callerNumber,
+      senderAddress,
       recipients:
         payload.recipients ||
         (payload.to ? [payload.to] : [settings.fromNumber]),
       bodyText:
-        payload.bodyText || payload.body || payload.text || payload.message,
+        payload.bodyText ||
+        payload.body ||
+        payload.text ||
+        payload.message ||
+        payload.messageBody ||
+        payload.message_body ||
+        payload.data?.body ||
+        payload.data?.message,
       disposition: payload.disposition || eventName || null,
     });
   }
@@ -629,7 +687,8 @@ export async function receiveOomaCommunicationWebhook(req, res) {
     data: { lastWebhookAt: new Date() },
   });
   if (result.unmatched) {
-    await enqueueTrustedProviderLead({ agencyId: settings.agencyId, provider: "OOMA", eventId: payload.callId || payload.messageId || payload.providerMessageId, payload: { ...payload, phone: payload.senderAddress || payload.from || payload.callerNumber } });
+    const senderAddress = result.data?.senderAddress || null;
+    await enqueueTrustedProviderLead({ agencyId: settings.agencyId, provider: "OOMA", eventId: payload.callId || payload.messageId || payload.providerMessageId, payload: { ...payload, phone: senderAddress } });
   }
   res.status(result.duplicate ? 200 : 201).json(result);
 }

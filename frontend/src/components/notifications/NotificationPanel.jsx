@@ -186,7 +186,7 @@ export default function NotificationPanel() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
-          className={`fixed inset-0 z-[300] bg-slate-950/20 backdrop-blur-[2px] ${sheet ? "flex items-end justify-center" : ""}`}
+          className={`fixed inset-0 z-[300] flex bg-slate-950/20 backdrop-blur-[2px] ${sheet ? "items-end justify-center" : "items-stretch justify-end p-3"}`}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closePanel();
           }}
@@ -204,7 +204,13 @@ export default function NotificationPanel() {
             className={
               sheet
                 ? "flex max-h-[88dvh] min-h-[55dvh] w-full max-w-[520px] flex-col overflow-hidden rounded-t-[1.9rem] border border-white/70 bg-gradient-to-b from-white/95 to-slate-50/95 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-[0_-20px_70px_rgba(15,23,42,0.28)] backdrop-blur-2xl outline-none"
-                : "fixed bottom-3 right-3 top-3 flex w-[min(430px,calc(100vw-24px))] flex-col overflow-hidden rounded-[1.9rem] border border-white/70 bg-gradient-to-b from-white/92 to-slate-50/92 shadow-[0_30px_90px_rgba(15,23,42,0.28)] backdrop-blur-2xl outline-none"
+                // Sized against the flex parent's real (already viewport-clipped)
+                // box, not `100vw` — 100vw always includes scrollbar width by
+                // spec, which is invisible on macOS's overlay scrollbars but
+                // overshoots the visible area by ~15-17px on Windows, where
+                // scrollbars reserve real layout space. w-[min(430px,100%)]
+                // resolves against the padded flex container instead.
+                : "flex w-[min(430px,100%)] flex-col overflow-hidden rounded-[1.9rem] border border-white/70 bg-gradient-to-b from-white/92 to-slate-50/92 shadow-[0_30px_90px_rgba(15,23,42,0.28)] backdrop-blur-2xl outline-none"
             }
           >
             {sheet ? <div className="mx-auto mt-2.5 h-1.5 w-11 shrink-0 rounded-full bg-slate-300/80" /> : null}

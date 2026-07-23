@@ -147,7 +147,7 @@ export default function ClientPortalChat() {
   }, [thread]);
 
   return (
-    <div className="fixed inset-0 z-40 mx-auto flex h-[100dvh] w-full max-w-[520px] flex-col overflow-hidden bg-[#eef3fa]">
+    <div className="fixed inset-0 z-40 mx-auto flex h-[100dvh] w-full max-w-[520px] flex-col overflow-hidden bg-[#eef3fa] lg:static lg:z-auto lg:h-[calc(100dvh-4rem)] lg:max-w-none lg:rounded-[1.75rem] lg:border lg:border-white/70 lg:shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
       <header className="flex shrink-0 items-center gap-2.5 border-b border-white/70 bg-white/85 px-3 py-3 pt-[max(env(safe-area-inset-top),0.75rem)] backdrop-blur-xl">
         <button type="button" onClick={() => navigate("/client-portal")} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 active:scale-95" aria-label="Back to home">
           <ChevronLeft className="h-5 w-5" />

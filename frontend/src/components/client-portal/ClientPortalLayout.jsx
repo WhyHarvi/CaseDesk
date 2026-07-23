@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { Outlet, useLocation } from "react-router-dom";
 import { getPortalOverview, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalBottomNav from "./ClientPortalBottomNav";
+import ClientPortalSidebar from "./ClientPortalSidebar";
 import { ClientPortalToastProvider } from "./ClientPortalToast";
 
 const PortalDataContext = createContext(null);
@@ -47,18 +48,26 @@ export default function ClientPortalLayout() {
             <div className="absolute -bottom-40 left-1/3 h-80 w-80 rounded-full bg-cyan-100/40 blur-3xl" />
           </div>
 
-          {isChat ? (
-            <main className="relative mx-auto w-full max-w-[520px]">
-              <Outlet />
-            </main>
-          ) : (
-            <>
-              <main className="relative mx-auto w-full max-w-[520px] px-4 pb-32 pt-[max(env(safe-area-inset-top),1rem)]">
-                <Outlet />
-              </main>
-              <ClientPortalBottomNav />
-            </>
-          )}
+          <div className="relative flex min-h-screen w-full">
+            <ClientPortalSidebar />
+
+            <div className="flex min-w-0 flex-1 flex-col">
+              {isChat ? (
+                <main className="relative mx-auto w-full max-w-[520px] flex-1 lg:mx-0 lg:max-w-none lg:px-10 lg:py-8">
+                  <Outlet />
+                </main>
+              ) : (
+                <>
+                  <main className="relative mx-auto w-full max-w-[520px] flex-1 px-4 pb-32 pt-[max(env(safe-area-inset-top),1rem)] lg:mx-0 lg:max-w-none lg:px-10 lg:py-8 lg:pb-10">
+                    <Outlet />
+                  </main>
+                  <div className="lg:hidden">
+                    <ClientPortalBottomNav />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </PortalDataContext.Provider>
     </ClientPortalToastProvider>

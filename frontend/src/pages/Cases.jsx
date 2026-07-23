@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
 import api from "../services/api";
+import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
 
 const STAGE_OPTIONS = [
   "Lead",
@@ -849,6 +850,7 @@ function CaseFormDrawer({
   formError,
   clients,
   users,
+  caseTypeOptions,
   isEditing,
   closing,
 }) {
@@ -916,13 +918,12 @@ function CaseFormDrawer({
                 <span className="mb-2 block text-sm font-medium text-slate-700">
                   Case type
                 </span>
-                <input
+                <CaseTypeCombobox
                   required
                   name="caseType"
                   value={formState.caseType}
                   onChange={onChange}
-                  placeholder="Study Permit"
-                  className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                  options={caseTypeOptions}
                 />
               </label>
 
@@ -1171,6 +1172,7 @@ export default function Cases() {
   const [users, setUsers] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [caseTypeOptions, setCaseTypeOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -1203,6 +1205,10 @@ export default function Cases() {
   useEffect(() => {
     loadWorkspaceData({ view: registerView });
   }, [registerView]);
+
+  useEffect(() => {
+    api.get("/cases/case-types").then((response) => setCaseTypeOptions(response.data.data || [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -1981,6 +1987,7 @@ export default function Cases() {
           formError={formError}
           clients={clients}
           users={users}
+          caseTypeOptions={caseTypeOptions}
           isEditing={isEditing}
           closing={drawerClosing}
         />
