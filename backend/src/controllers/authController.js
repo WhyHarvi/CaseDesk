@@ -29,7 +29,18 @@ function publicIdentity(req) {
 }
 
 export async function getMe(req, res) {
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "USER_LOGIN", details: "Authenticated session restored", metadata: { authUserId: req.auth.authUserId } });
+  const recentLogin = await prisma.activityLog.findFirst({
+    where: {
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      action: "USER_LOGIN",
+      createdAt: { gte: new Date(Date.now() - 30 * 60_000) },
+    },
+    select: { id: true },
+  });
+  if (!recentLogin) {
+    await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "USER_LOGIN", details: "Authenticated session restored", metadata: { authUserId: req.auth.authUserId } });
+  }
   res.json({ success: true, ...publicIdentity(req) });
 }
 
@@ -53,6 +64,12 @@ export async function changePassword(req, res) {
     prisma.user.update({ where: { id: req.auth.userId }, data: { mustChangePassword: false } }),
     prisma.agencyMember.update({ where: { id: req.auth.membershipId }, data: { mustChangePassword: false } }),
   ]);
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    action: "PASSWORD_CHANGED",
+    details: "Account password changed",
+  });
   res.json({ success: true, message: "Password changed successfully." });
 }
 

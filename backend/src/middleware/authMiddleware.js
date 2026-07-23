@@ -51,6 +51,7 @@ export async function requireAuth(req, res, next) {
     }
 
     req.accessToken = match[1];
+    req.authProviderUser = authUser;
     req.auth = {
       authUserId: authUser.id,
       userId: appUser.id,

@@ -1,7 +1,9 @@
 import { Check, Copy, KeyRound, Plus, ShieldOff, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import api from "../services/api";
 import { fieldClass, FormField, FormMessage } from "../components/auth/AuthShell";
+import Select from "../components/ui/Select";
 
 const ROLE_OPTIONS = [
   { value: "consultant", label: "Consultant" },
@@ -90,11 +92,11 @@ function MemberFormFields({ form, update, creating }) {
     <>
       <div className="sm:col-span-2">
         <FormField label="Role" hint={creating ? undefined : "Roles cannot be changed after creation."}>
-          <select className={fieldClass} value={form.role} onChange={update("role")} disabled={!creating}>
+          <Select className="w-full" value={form.role} onChange={update("role")} disabled={!creating}>
             {ROLE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
+          </Select>
         </FormField>
       </div>
       <div className="sm:col-span-2">
@@ -308,7 +310,7 @@ export default function TeamMembers() {
       </div>
     ) : null}
 
-    {inviteOpen ? (
+    {inviteOpen ? createPortal(
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 px-5 py-10 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setInviteOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="invite-title" className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white bg-white p-6 shadow-2xl sm:p-8">
           <div className="flex items-start justify-between">
@@ -333,10 +335,11 @@ export default function TeamMembers() {
             </form>
           )}
         </section>
-      </div>
+      </div>,
+      document.body
     ) : null}
 
-    {editing ? (
+    {editing ? createPortal(
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 px-5 py-10 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditing(null); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="edit-member-title" className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white bg-white p-6 shadow-2xl sm:p-8">
           <div className="flex items-start justify-between">
@@ -359,7 +362,8 @@ export default function TeamMembers() {
             ) : null}
           </div>
         </section>
-      </div>
+      </div>,
+      document.body
     ) : null}
   </section>;
 }
