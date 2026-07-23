@@ -1,8 +1,28 @@
 import { ArrowUpRight, CheckCircle2, Circle } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { getWorkflowPriorityStyles, getWorkflowProgress } from "./caseProfileUtils";
 
 export default function WorkflowTimeline({ steps, loadError, onToggleStep, savingStepId, onOpen }) {
   const { activeSteps, completedCount, totalCount, percent } = getWorkflowProgress(steps);
+  const scrollerRef = useRef(null);
+
+  // A trackpad can already pan this sideways, but a plain mouse wheel only
+  // ever fires vertical deltaY — without this, mouse users have no way to
+  // move the strip at all. Needs a native (non-passive) listener because
+  // React 18 registers onWheel as passive, which silently no-ops
+  // preventDefault.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return undefined;
+    function handleWheel(event) {
+      if (event.deltaY === 0 || event.deltaX !== 0) return;
+      if (el.scrollWidth <= el.clientWidth) return;
+      event.preventDefault();
+      el.scrollLeft += event.deltaY;
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
 
   return (
     <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -33,7 +53,7 @@ export default function WorkflowTimeline({ steps, loadError, onToggleStep, savin
           {loadError}
         </div>
       ) : activeSteps.length ? (
-        <div className="scrollbar-hidden mt-5 overflow-x-auto pb-1">
+        <div ref={scrollerRef} className="scrollbar-hidden mt-5 overflow-x-auto pb-1">
           <div className="flex min-w-max items-start">
             {activeSteps.map((step, index) => {
               const isComplete = step.status === "Completed";
