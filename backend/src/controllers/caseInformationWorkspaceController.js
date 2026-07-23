@@ -31,11 +31,12 @@ export async function getCaseInformationWorkspace(req, res) {
     }),
     prisma.caseInformationSectionState.findMany({
       where: { agencyId: req.user.agencyId, caseId: scopedCase.id },
-      select: { sectionKey: true, notApplicable: true, notApplicableReason: true, verifiedAt: true, verifiedById: true },
+      select: { sectionKey: true, enabled: true, notApplicable: true, notApplicableReason: true, verifiedAt: true, verifiedById: true },
     }),
   ]);
 
-  const summary = buildCaseInformationSummary({ caseType: scopedCase.caseType, formData: assessment?.formData || {} });
+  const enabledSectionKeys = new Set(sectionStates.filter((state) => state.enabled).map((state) => state.sectionKey));
+  const summary = buildCaseInformationSummary({ caseType: scopedCase.caseType, formData: assessment?.formData || {}, enabledSectionKeys });
   const stateBySectionKey = new Map(sectionStates.map((state) => [state.sectionKey, state]));
 
   const sections = summary.sections.map((section) => {

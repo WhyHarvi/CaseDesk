@@ -75,6 +75,7 @@ export async function putCaseInformationSectionState(req, res) {
       notApplicable: req.body.notApplicable,
       notApplicableReason: req.body.notApplicableReason,
       verified: req.body.verified,
+      enabled: req.body.enabled,
       userId: req.user.id,
     });
     await recordActivity({
@@ -83,7 +84,7 @@ export async function putCaseInformationSectionState(req, res) {
       clientId: scopedCase.clientId,
       caseId: scopedCase.id,
       action: "case_information.section_state_updated",
-      details: `${sectionKey}: ${req.body.verified ? "verified" : req.body.notApplicable ? "marked not applicable" : "state updated"}`,
+      details: `${sectionKey}: ${req.body.verified ? "verified" : req.body.notApplicable ? "marked not applicable" : req.body.enabled !== undefined ? (req.body.enabled ? "added" : "removed") : "state updated"}`,
       entityType: "case_information_section",
       entityId: sectionKey,
     });

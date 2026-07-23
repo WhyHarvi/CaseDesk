@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Baby,
   ChevronDown,
   CheckCircle2,
@@ -9,6 +10,7 @@ import {
   MapPin,
   Plane,
   Plus,
+  RefreshCw,
   Save,
   Trash2,
   UserPlus,
@@ -20,7 +22,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
-import { getCaseInformationWorkspace } from "../../api/caseInformationApi";
+import { getCaseInformationWorkspace, setCaseInformationSectionEnabled } from "../../api/caseInformationApi";
 import {
   formatCurrency,
   formatDate,
@@ -1619,46 +1621,75 @@ function ProfileDetailsGrid({
   const [spouseLanguageOverlayOpen, setSpouseLanguageOverlayOpen] =
     useState(false);
 
-  // Case-type-aware section status (Phase 3's GET /information-workspace):
-  // drives which of the 16 tabs below are worth showing for this case's
-  // case type, and the small progress dot on each. sectionStatusLoaded
-  // starts false so every tab still renders on first paint — nothing gets
-  // hidden until we actually know it doesn't apply.
+  // Case-type-aware section status (Phase 3's GET /information-workspace,
+  // extended in Phase 6 with isVisible): drives which of the 16 tabs below
+  // are worth showing for this case's case type, the small progress dot
+  // on each, and which hidden sections the "+ Add section" menu offers.
+  // sectionStatusLoaded starts false so every tab still renders on first
+  // paint — nothing gets hidden until we actually know it doesn't apply.
   const [sectionStatusByKey, setSectionStatusByKey] = useState({});
   const [sectionStatusLoaded, setSectionStatusLoaded] = useState(false);
-  useEffect(() => {
-    let active = true;
+  const [sectionStatusError, setSectionStatusError] = useState(false);
+  const [addSectionMenuOpen, setAddSectionMenuOpen] = useState(false);
+  const [addingSectionKey, setAddingSectionKey] = useState(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
+
+  const reloadSectionStatus = () => {
     setSectionStatusLoaded(false);
-    getCaseInformationWorkspace(caseItem.id)
+    setSectionStatusError(false);
+    return getCaseInformationWorkspace(caseItem.id)
       .then((data) => {
-        if (!active) return;
+        if (!mountedRef.current) return;
         const map = {};
         for (const section of data.sections) map[section.sectionKey] = section;
         setSectionStatusByKey(map);
       })
       .catch(() => {
         // Fail open: keep every tab visible rather than hiding sections
-        // because the overview call failed.
+        // because the overview call failed — but still surface it, so a
+        // backend hiccup shows up instead of silently looking like the
+        // "+ Add section" feature is just missing.
+        if (mountedRef.current) setSectionStatusError(true);
       })
       .finally(() => {
-        if (active) setSectionStatusLoaded(true);
+        if (mountedRef.current) setSectionStatusLoaded(true);
       });
-    return () => {
-      active = false;
-    };
+  };
+
+  useEffect(() => {
+    reloadSectionStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseItem.id]);
 
   const visibleDetailTabs = profileDetailTabs.filter((tab) => {
     if (!sectionStatusLoaded) return true;
     const status = sectionStatusByKey[tab.sectionKey];
-    return !status || status.status !== "not_applicable";
+    return !status || status.isVisible !== false;
   });
+  const hiddenDetailTabs = profileDetailTabs.filter((tab) => !visibleDetailTabs.includes(tab));
 
   useEffect(() => {
     if (!sectionStatusLoaded) return;
     if (visibleDetailTabs.some((tab) => tab.label === activeDetailTab)) return;
     setActiveDetailTab(visibleDetailTabs[0]?.label || profileDetailTabs[0].label);
   }, [sectionStatusLoaded, activeDetailTab]);
+
+  async function addSection(tab) {
+    setAddingSectionKey(tab.sectionKey);
+    try {
+      await setCaseInformationSectionEnabled(caseItem.id, tab.sectionKey, true);
+      await reloadSectionStatus();
+      setActiveDetailTab(tab.label);
+      setAddSectionMenuOpen(false);
+    } catch {
+      // Leave the menu open with the section still listed so the consultant can retry.
+    } finally {
+      setAddingSectionKey(null);
+    }
+  }
 
   useEffect(() => {
     if (!profileSectionRequest?.tab) return;
@@ -2900,6 +2931,15 @@ function ProfileDetailsGrid({
 
       <div className="grid min-h-[360px] lg:grid-cols-[320px_1fr]">
         <aside className="border-b border-slate-100 bg-slate-50/80 p-2 lg:border-b-0 lg:border-r">
+          {sectionStatusError ? (
+            <div className="mb-2 flex items-center gap-2 rounded-[0.85rem] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1">Section status unavailable</span>
+              <button type="button" onClick={reloadSectionStatus} className="shrink-0 rounded-full p-1 hover:bg-amber-100" aria-label="Retry">
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : null}
           <div className="scrollbar-hidden flex gap-1 overflow-x-auto lg:block lg:space-y-1 lg:overflow-visible">
             {visibleDetailTabs.map((tab) => {
               const Icon = tab.icon;
@@ -3055,6 +3095,49 @@ function ProfileDetailsGrid({
               );
             })}
           </div>
+
+          {hiddenDetailTabs.length > 0 ? (
+            <div className="relative mt-2 border-t border-slate-200/70 pt-2">
+              <button
+                type="button"
+                onClick={() => setAddSectionMenuOpen((isOpen) => !isOpen)}
+                className="flex w-full items-center gap-2 rounded-[1rem] px-3 py-2.5 text-left text-xs font-semibold tracking-[0.06em] text-slate-500 transition hover:bg-white/70 hover:text-slate-800"
+              >
+                <Plus className="h-4 w-4 shrink-0" />
+                <span className="flex-1 whitespace-nowrap">Add section</span>
+              </button>
+              <AnimatePresence>
+                {addSectionMenuOpen ? (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-1 space-y-0.5 rounded-[0.85rem] bg-slate-100/70 p-1.5">
+                      {hiddenDetailTabs.map((tab) => {
+                        const Icon = tab.icon;
+                        const isAdding = addingSectionKey === tab.sectionKey;
+                        return (
+                          <button
+                            key={tab.label}
+                            type="button"
+                            disabled={isAdding}
+                            onClick={() => addSection(tab)}
+                            className="flex w-full items-center gap-2 rounded-[0.75rem] px-3 py-2 text-left text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-900 disabled:opacity-60"
+                          >
+                            <Icon className="h-3.5 w-3.5 shrink-0" />
+                            <span className="flex-1 whitespace-nowrap">{tab.label}</span>
+                            {isAdding ? <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+            </div>
+          ) : null}
         </aside>
 
         <main className="min-w-0 p-4">
