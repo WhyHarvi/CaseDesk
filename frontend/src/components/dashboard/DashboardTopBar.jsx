@@ -1,32 +1,19 @@
-import { Plus, Search, UserPlus } from "lucide-react";
+import { Plus, UserPlus } from "lucide-react";
 import NotificationBell from "../notifications/NotificationBell";
-import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
+import GlobalSearch from "../search/GlobalSearch";
 
 export default function DashboardTopBar({ leading }) {
   const navigate = useNavigate();
   const { role } = useAuth();
   const isFrontdesk = role === "frontdesk";
-  const [searchQuery, setSearchQuery] = useState("");
 
   return (
     <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:justify-between">
       <div className="flex w-full max-w-3xl flex-1 items-center gap-3">
         {leading}
-        <label className="flex h-14 flex-1 items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/80 px-5 shadow-sm backdrop-blur-sm transition-all duration-200 focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-200">
-          <Search className="h-5 w-5 shrink-0 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search clients, cases, documents, notes..."
-            className="w-full border-0 bg-transparent p-0 text-base text-slate-700 outline-none placeholder:text-slate-400"
-          />
-          <span className="hidden rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-400 sm:inline-flex">
-            /
-          </span>
-        </label>
+        <GlobalSearch />
       </div>
 
       <div className="flex w-full flex-wrap items-center justify-end gap-3 lg:w-auto lg:flex-nowrap">
