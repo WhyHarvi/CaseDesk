@@ -1,0 +1,46 @@
+import api from "../services/api";
+
+export async function getCaseEasyImportContacts(params) {
+  const response = await api.get("/case-easy-import/contacts", { params, cache: false });
+  return response.data.data;
+}
+
+export async function getCaseEasyImportContact(id) {
+  const response = await api.get(`/case-easy-import/contacts/${id}`, { cache: false });
+  return response.data.data;
+}
+
+export async function convertCaseEasyImportContact(id, payload) {
+  const response = await api.post(`/case-easy-import/contacts/${id}/convert`, payload);
+  return response.data.data;
+}
+
+export async function getUnlinkedCaseEasyImportCases() {
+  const response = await api.get("/case-easy-import/unlinked-cases", {
+    cache: false,
+  });
+  return response.data.data;
+}
+
+export async function getCaseEasyReportSummary() {
+  const response = await api.get("/case-easy-import/reports/summary", {
+    cache: false,
+  });
+  return response.data.data;
+}
+
+export async function getCaseEasyReportRows(params) {
+  const response = await api.get("/case-easy-import/reports", {
+    params,
+    cache: false,
+  });
+  return response.data.data;
+}
+
+export async function getCaseEasyReportsForClient(clientId) {
+  const response = await api.get(
+    `/case-easy-import/clients/${clientId}/reports`,
+    { cache: false },
+  );
+  return response.data.data;
+}
