@@ -391,9 +391,10 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate }) {
+function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate, settings }) {
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", recurrenceFrequency: "NONE", recurrenceCount: 2 });
+  const locations = Array.isArray(settings?.locations) ? settings.locations : [];
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", recurrenceFrequency: "NONE", recurrenceCount: 2 });
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -447,6 +448,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         guestPhone: form.mode === "guest" ? form.guestPhone : undefined,
         subject: form.subject || undefined,
         location: form.location || undefined,
+        locationId: (form.meetingMode || "InPerson") === "InPerson" ? form.locationId || undefined : undefined,
         meetingMode: form.meetingMode || "InPerson",
         source: form.mode === "guest" ? "WalkIn" : "Internal",
         recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
@@ -552,9 +554,18 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               <label className="block text-xs font-medium text-slate-600">Subject (optional)
                 <input value={form.subject} onChange={(event) => setForm((c) => ({ ...c, subject: event.target.value }))} placeholder={selectedType?.name || "Appointment"} className={`mt-1.5 ${input}`} />
               </label>
-              <label className="block text-xs font-medium text-slate-600">Location (optional)
-                <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office, phone, or video link" className={`mt-1.5 ${input}`} />
-              </label>
+              {(form.meetingMode || "InPerson") === "InPerson" && locations.length ? (
+                <label className="block text-xs font-medium text-slate-600">Office location
+                  <Select value={form.locationId} onChange={(event) => setForm((c) => ({ ...c, locationId: event.target.value }))} className="mt-1.5 w-full" ariaLabel="Office location">
+                    <option value="">Choose a location…</option>
+                    {locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </Select>
+                </label>
+              ) : (
+                <label className="block text-xs font-medium text-slate-600">Location (optional)
+                  <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office, phone, or video link" className={`mt-1.5 ${input}`} />
+                </label>
+              )}
 
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
                 <label className="block text-xs font-medium text-slate-600">Repeat
@@ -921,6 +932,7 @@ export default function CalendarPage() {
         role={role}
         userId={appUser?.id}
         initialDate={dateKey(selectedDate)}
+        settings={bookingSettings}
       />
     </PageContainer>
   );

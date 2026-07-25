@@ -328,6 +328,12 @@ export async function createBookingAppointment(req, res) {
   const requestedMeetingMode = body.meetingMode === "Online" ? "Online" : "InPerson";
   if (sessionType && !sessionType.allowedMeetingModes.includes(requestedMeetingMode)) throw createHttpError(400, "That appointment format is unavailable for this session type.", "VALIDATION_ERROR");
 
+  const locations = Array.isArray(settings.locations) ? settings.locations : [];
+  const selectedLocation = requestedMeetingMode === "InPerson"
+    ? locations.find((item) => item.id === String(body.locationId || "")) || (locations.length === 1 ? locations[0] : null)
+    : null;
+  if (requestedMeetingMode === "InPerson" && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+
   let assignedToId = String(body.assignedToId || "") || null;
   if (req.auth.role === "consultant") assignedToId = req.auth.userId;
 
@@ -393,7 +399,8 @@ export async function createBookingAppointment(req, res) {
         caseId: null,
         sessionTypeId: sessionType?.id || null,
         subject,
-        location: String(body.location || "").trim().slice(0, 200) || null,
+        location: selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : String(body.location || "").trim().slice(0, 200) || null,
+        locationMapsUrl: selectedLocation?.mapsUrl || null,
         calendar: "Workspace Calendar",
         startsAt: occurrenceStart,
         endsAt: occurrenceEnd,
