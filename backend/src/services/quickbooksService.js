@@ -325,8 +325,12 @@ function mapQuickBooksInvoice(invoice) {
     totalAmount: Number(invoice.TotalAmt ?? 0),
     balance: Number(invoice.Balance ?? 0),
     dueDate: invoice.DueDate || null,
-    // Only present when the company has QuickBooks Payments enabled — a
-    // hosted "Pay now" checkout page for this invoice. Absent otherwise.
+    // Only present once the invoice has been sent — QuickBooks Payments
+    // being enabled is necessary but not sufficient; QBO doesn't generate
+    // the hosted "Pay now" page at creation time, only on send (confirmed
+    // empirically: a freshly created invoice has no InvoiceLink even with
+    // Payments fully active, and calling QBO's own /send endpoint on it
+    // populates one immediately). See createQuickBooksInvoice.
     invoiceLink: invoice.InvoiceLink || null,
   };
 }
@@ -338,8 +342,6 @@ export async function createQuickBooksInvoice(agencyId, { customerId, itemId, de
     body: {
       CustomerRef: { value: customerId },
       ...(dueDate ? { DueDate: dueDate } : {}),
-      // Requests the QuickBooks Payments "Pay now" hosted link. Ignored by
-      // QBO (no InvoiceLink returned) if the company has Payments disabled.
       AllowOnlineCreditCardPayment: true,
       AllowOnlineACHPayment: true,
       Line: [
@@ -352,7 +354,23 @@ export async function createQuickBooksInvoice(agencyId, { customerId, itemId, de
       ],
     },
   });
-  return mapQuickBooksInvoice(payload.Invoice);
+  const invoice = payload.Invoice;
+
+  // QuickBooks only provisions the hosted "Pay now" InvoiceLink once the
+  // invoice is sent, never at creation. CaseDesk delivers the link to the
+  // client itself (its own notification flow, not QuickBooks' email), so
+  // "sending" here targets a reserved, non-deliverable address purely to
+  // trigger link generation — nothing is actually emailed to anyone.
+  try {
+    const sendResult = await qboRequest(agencyId, {
+      method: "POST",
+      path: `/invoice/${invoice.Id}/send?sendTo=${encodeURIComponent(`qbo-link-trigger+${invoice.Id}@example.com`)}`,
+    });
+    return mapQuickBooksInvoice(sendResult.Invoice);
+  } catch (error) {
+    logger.warn("quickbooks.invoice_link_trigger_failed", { agencyId, invoiceId: invoice.Id, error: error.message });
+    return mapQuickBooksInvoice(invoice);
+  }
 }
 
 // Batched refresh for the invoices already known to CaseDesk — one round
