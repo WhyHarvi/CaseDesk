@@ -20,6 +20,21 @@ test("availability is bounded and cancelled appointments do not block generated 
   assert.equal(slots.length, 2);
 });
 
+test("staff booking bypasses the public minimum-notice window to allow same-day slots", () => {
+  const workingHours = [{ day: 1, enabled: true, start: "09:00", end: "17:00" }];
+  // 2026-08-03 is a Monday; "now" is mid-afternoon local time, well past the
+  // point where a 12h public notice window would push past today's close.
+  const now = new Date("2026-08-03T18:30:00.000Z"); // 14:30 America/Toronto (UTC-4)
+  const publicSettings = { timezone: "America/Toronto", workingHours, daysOff: [], minNoticeMinutes: 720, horizonDays: 365, bufferMinutes: 0 };
+  const publicSlots = slotsForDay({ settings: publicSettings, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15 });
+  assert.equal(publicSlots.length, 0, "public notice window should still block same-day booking");
+
+  const staffSettings = { ...publicSettings, minNoticeMinutes: 0 };
+  const staffSlots = slotsForDay({ settings: staffSettings, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15 });
+  assert.ok(staffSlots.length > 0, "internal staff booking should offer remaining same-day slots");
+  assert.ok(new Date(staffSlots[0].startsAt).getTime() >= now.getTime(), "no slot should start in the past");
+});
+
 test("assignment prefers the existing client's consultant when free", async () => {
   const users = ["alpha", "beta"].map((id) => ({ id, fullName: id, role: "consultant", schedulingPreference: null }));
   const db = {

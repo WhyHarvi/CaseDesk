@@ -270,6 +270,7 @@ export async function getAvailability(req, res) {
     sessionBufferMinutes: req.query.sessionTypeId ? (await prisma.bookingSessionType.findFirst({ where: { id: String(req.query.sessionTypeId), agencyId: req.auth.agencyId }, select: { bufferMinutes: true } }))?.bufferMinutes ?? undefined : undefined,
     fromKey: from,
     toKey: to,
+    minNoticeOverrideMinutes: 0,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -351,6 +352,7 @@ export async function createBookingAppointment(req, res) {
       sessionBufferMinutes: effectiveBuffer,
       fromKey: dayKey,
       toKey: dayKey,
+      minNoticeOverrideMinutes: 0,
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
@@ -539,7 +541,7 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0 });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
@@ -558,7 +560,7 @@ export async function rescheduleBookingAppointment(req, res) {
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_rescheduled", details: `${updated.length} recurring appointments rescheduled` });
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0 });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {

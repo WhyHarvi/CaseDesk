@@ -170,11 +170,17 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null }) {
   validateAvailabilityRange(fromKey, toKey);
   const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
   const timezone = settings.timezone || "America/Toronto";
+  // minNoticeMinutes is a *public* self-service policy (don't let strangers
+  // book with less than N hours' notice online) — staff booking directly
+  // from the internal Appointments tab aren't subject to it, so callers
+  // there pass minNoticeOverrideMinutes: 0 to still block past slots but
+  // allow same-day/right-now bookings.
+  const baseSettings = minNoticeOverrideMinutes != null ? { ...settings, minNoticeMinutes: minNoticeOverrideMinutes } : settings;
   const rangeStart = localDateTimeToUtc(fromKey, 0, timezone);
   const rangeEnd = localDateTimeToUtc(toKey, 24 * 60, timezone);
   const staffIds = assignedToId ? [assignedToId] : pooled ? assignedToIds : [];
@@ -210,7 +216,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     const dateKey = localDateKey(new Date(cursor + 12 * 60 * 60_000), timezone);
     if (days[dateKey]) continue;
     if (!pooled) {
-      const effective = assignedToId ? effectiveStaffSettings(settings, preferenceByStaff.get(assignedToId), sessionBufferMinutes) : { ...settings, bufferMinutes: sessionBufferMinutes ?? settings.bufferMinutes };
+      const effective = assignedToId ? effectiveStaffSettings(baseSettings, preferenceByStaff.get(assignedToId), sessionBufferMinutes) : { ...baseSettings, bufferMinutes: sessionBufferMinutes ?? baseSettings.bufferMinutes };
       days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy, now });
       continue;
     }
@@ -219,7 +225,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       const dailyCount = busyAppointments.filter((item) => item.assignedToId === staffId && localDateKey(new Date(item.startsAt), timezone) === dateKey).length;
       if (dailyMaximum != null && dailyCount >= dailyMaximum) return [];
       return slotsForDay({
-      settings: effectiveStaffSettings(settings, preferenceByStaff.get(staffId), sessionBufferMinutes),
+      settings: effectiveStaffSettings(baseSettings, preferenceByStaff.get(staffId), sessionBufferMinutes),
       dateKey,
       durationMinutes,
       busy: busy.filter((item) => item.assignedToId === staffId),
