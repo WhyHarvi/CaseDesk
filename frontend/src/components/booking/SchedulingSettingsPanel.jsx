@@ -141,6 +141,10 @@ export default function SchedulingSettingsPanel() {
   const [error, setError] = useState("");
   const [newDayOff, setNewDayOff] = useState("");
   const [newLocation, setNewLocation] = useState({ name: "", address: "", mapsUrl: "" });
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [addressSuggestionsOpen, setAddressSuggestionsOpen] = useState(false);
+  const [addressPicked, setAddressPicked] = useState(false);
   const [newType, setNewType] = useState({ name: "", durationMinutes: 30 });
   const [addingType, setAddingType] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -168,6 +172,40 @@ export default function SchedulingSettingsPanel() {
   useEffect(() => {
     getSchedulingBlocks().then(setBlocks).catch(() => {});
   }, []);
+
+  // Address-as-you-type search via OpenStreetMap's free Nominatim API — no
+  // API key/billing setup needed, and this is low-volume enough (a handful
+  // of office addresses, typed occasionally in Settings) to stay well
+  // within its usage policy. Debounced so keystrokes don't each fire a
+  // request, and skipped right after a suggestion is picked so selecting
+  // one doesn't immediately re-open the dropdown for its own text.
+  useEffect(() => {
+    if (addressPicked) { setAddressPicked(false); return undefined; }
+    const query = newLocation.address.trim();
+    if (query.length < 4) { setAddressSuggestions([]); setAddressSearching(false); return undefined; }
+    let active = true;
+    setAddressSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=0&limit=5&q=${encodeURIComponent(query)}`;
+        const response = await fetch(url, { headers: { Accept: "application/json" } });
+        const results = response.ok ? await response.json() : [];
+        if (active) { setAddressSuggestions(results); setAddressSuggestionsOpen(true); }
+      } catch {
+        if (active) setAddressSuggestions([]);
+      } finally {
+        if (active) setAddressSearching(false);
+      }
+    }, 400);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [newLocation.address, addressPicked]);
+
+  function pickAddressSuggestion(result) {
+    setAddressPicked(true);
+    setNewLocation((c) => ({ ...c, address: result.display_name }));
+    setAddressSuggestions([]);
+    setAddressSuggestionsOpen(false);
+  }
 
   const hoursByDay = useMemo(() => {
     const map = new Map((settings?.workingHours || []).map((rule) => [Number(rule.day), rule]));
@@ -526,7 +564,33 @@ export default function SchedulingSettingsPanel() {
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.4fr]">
           <input value={newLocation.name} onChange={(event) => setNewLocation((c) => ({ ...c, name: event.target.value }))} placeholder="Office name (e.g. Main Office)" className={inputClass} />
-          <input value={newLocation.address} onChange={(event) => setNewLocation((c) => ({ ...c, address: event.target.value }))} placeholder="Full street address" className={inputClass} />
+          <div className="relative">
+            <input
+              value={newLocation.address}
+              onChange={(event) => setNewLocation((c) => ({ ...c, address: event.target.value }))}
+              onFocus={() => { if (addressSuggestions.length) setAddressSuggestionsOpen(true); }}
+              onBlur={() => setAddressSuggestionsOpen(false)}
+              placeholder="Full street address"
+              autoComplete="off"
+              className={`${inputClass} w-full`}
+            />
+            {addressSearching ? <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-slate-400" /> : null}
+            {addressSuggestionsOpen && addressSuggestions.length ? (
+              <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
+                {addressSuggestions.map((result) => (
+                  <li key={result.place_id}>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => { event.preventDefault(); pickAddressSuggestion(result); }}
+                      className="block w-full truncate px-3 py-2 text-left text-slate-700 hover:bg-sky-50 hover:text-sky-800"
+                    >
+                      {result.display_name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
           <input value={newLocation.mapsUrl} onChange={(event) => setNewLocation((c) => ({ ...c, mapsUrl: event.target.value }))} placeholder="Google Maps link (optional)" className={`${inputClass} sm:col-span-2`} />
         </div>
         <button

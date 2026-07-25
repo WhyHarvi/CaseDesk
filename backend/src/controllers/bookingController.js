@@ -49,6 +49,16 @@ function validDaysOff(value) {
   return [...new Set(days)].sort();
 }
 
+// google.com only isn't enough — Google routinely serves Maps links on
+// regional domains (google.ca, google.co.uk, ...), and Canadian users in
+// particular get google.ca by default. Anchored so "google.evil.com" or
+// "notgoogle.com" still can't sneak past as a lookalike.
+function isValidGoogleMapsHost(hostname) {
+  const host = hostname.toLowerCase();
+  if (host === "goo.gl" || host.endsWith(".goo.gl")) return true;
+  return /^(maps\.|www\.)?google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host);
+}
+
 function validLocations(value) {
   if (!Array.isArray(value) || value.length > 20) throw createHttpError(400, "Locations are invalid.", "VALIDATION_ERROR");
   return value.map((item, index) => {
@@ -59,8 +69,7 @@ function validLocations(value) {
     if (mapsUrl) {
       try {
         const parsed = new URL(mapsUrl);
-        const googleHost = parsed.hostname === "goo.gl" || parsed.hostname === "maps.app.goo.gl" || parsed.hostname.endsWith(".google.com") || parsed.hostname === "google.com";
-        if (parsed.protocol !== "https:" || !googleHost) throw new Error("invalid map URL");
+        if (parsed.protocol !== "https:" || !isValidGoogleMapsHost(parsed.hostname)) throw new Error("invalid map URL");
         mapsUrl = parsed.href;
       } catch {
         throw createHttpError(400, "Use a valid HTTPS Google Maps link.", "VALIDATION_ERROR");
@@ -164,7 +173,7 @@ export async function updateBookingSettings(req, res) {
     ? await prisma.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data })
     : await prisma.$transaction(async (tx) => {
       const updated = await tx.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data });
-      await tx.$executeRaw`UPDATE appointments SET reminder_due_at = starts_at - make_interval(mins => ${data.reminderMinutes}) WHERE agency_id = ${req.auth.agencyId} AND status = 'Scheduled' AND starts_at > NOW() AND reminder_queued_at IS NULL`;
+      await tx.$executeRaw`UPDATE appointments SET reminder_due_at = starts_at - make_interval(mins => ${data.reminderMinutes}::int) WHERE agency_id = ${req.auth.agencyId} AND status = 'Scheduled' AND starts_at > NOW() AND reminder_queued_at IS NULL`;
       return updated;
     });
   res.json({ data: settings });
