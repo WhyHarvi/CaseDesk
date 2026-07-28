@@ -46,7 +46,14 @@ function writerStatusOptions(document) {
       ? [["Issued", "Awaiting client signature"]]
       : [["Issued", "Issued"], ["Finalized", "Finalize"]];
   }
-  return [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"], ["Issued", document?.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]];
+  const options = [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"]];
+  // The backend rejects Issued until the doc has a saved .docx version
+  // linked (clientDocumentId) — offering it before Save has ever run just
+  // sends the consultant into a confusing 409. Hide it until then.
+  if (document?.clientDocument) {
+    options.push(["Issued", document?.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]);
+  }
+  return options;
 }
 
 const toolButton =

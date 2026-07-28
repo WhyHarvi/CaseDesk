@@ -39,7 +39,15 @@ function correspondenceStatusOptions(item) {
       ? [["Issued", "Awaiting client signature"]]
       : [["Issued", "Issued"], ["Finalized", "Finalize"]];
   }
-  return [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"], ["Issued", item.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]];
+  const options = [["Draft", "Draft"], ["ReadyToIssue", "Ready to Issue"]];
+  // The backend rejects Issued without a saved .docx version linked
+  // (clientDocumentId) — offering it before that exists just sends the
+  // consultant into a confusing 409. Hide it until _count.versions shows
+  // at least one real saved version.
+  if ((item._count?.versions || 0) > 0) {
+    options.push(["Issued", item.correspondenceKind === "Agreement" ? "Send for signature" : "Issue"]);
+  }
+  return options;
 }
 
 function formatDate(value) {
@@ -639,7 +647,7 @@ function TemplateCatalogOverlay({
             <select
               value={kind}
               onChange={(event) => onKindChange(event.target.value)}
-              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
+              className="select-field h-9 py-0 text-xs"
             >
               <option>All</option>
               <option>Agreement</option>
@@ -1160,7 +1168,7 @@ export default function AgreementsLettersWorkspace({ caseItem, eSignMode = false
                 <select
                   value={kind}
                   onChange={(event) => setKind(event.target.value)}
-                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600"
+                  className="select-field h-9 py-0 text-xs"
                 >
                   <option>All</option>
                   <option>Agreement</option>
