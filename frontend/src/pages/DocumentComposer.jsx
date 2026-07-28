@@ -651,6 +651,7 @@ export default function DocumentComposer() {
           <span className="mx-1 h-6 w-px bg-slate-200" />
           <button
             onClick={() => setTemplatesOpen(true)}
+            disabled={documentLocked}
             className={toolButton}
             title="Insert template"
           >
@@ -661,6 +662,7 @@ export default function DocumentComposer() {
               setSignatureName(caseItem?.assignedTo?.fullName || "");
               setSignatureOpen(true);
             }}
+            disabled={documentLocked}
             className={toolButton}
             title="Insert signature"
           >
@@ -668,6 +670,7 @@ export default function DocumentComposer() {
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
+            disabled={documentLocked}
             className={toolButton}
             title="Page setup"
           >
@@ -957,7 +960,8 @@ export default function DocumentComposer() {
                 </div>
                 <button
                   onClick={() => restoreVersion(version)}
-                  className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold"
+                  disabled={documentLocked}
+                  className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Restore
                 </button>
