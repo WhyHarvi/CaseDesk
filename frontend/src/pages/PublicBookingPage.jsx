@@ -104,27 +104,27 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
     : "";
 
   return (
-    <div className="flex flex-col gap-6 sm:flex-row">
-      <div className="shrink-0 sm:w-[260px]">
+    <div className="flex flex-col gap-8 sm:flex-row">
+      <div className="shrink-0 sm:w-[340px]">
         <div className="flex items-center justify-between">
           <AnimatePresence mode="wait">
-            <motion.p key={cursor.toISOString()} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="text-[13.5px] font-semibold text-slate-900">
+            <motion.p key={cursor.toISOString()} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="text-base font-semibold text-slate-900">
               {cursor.toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
             </motion.p>
           </AnimatePresence>
-          <div className="flex items-center gap-1.5">
-            <button type="button" aria-label="Previous month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)); setSelectedDay(null); }} className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-sky-50">
-              <ChevronLeft className="h-3 w-3" />
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="Previous month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)); setSelectedDay(null); }} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-sky-50">
+              <ChevronLeft className="h-4 w-4" />
             </button>
-            <button type="button" aria-label="Next month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)); setSelectedDay(null); }} className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-sky-50">
-              <ChevronRight className="h-3 w-3" />
+            <button type="button" aria-label="Next month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)); setSelectedDay(null); }} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-sky-50">
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        <div className="mt-3.5 grid grid-cols-7 text-center">
+        <div className="mt-5 grid grid-cols-7 gap-y-1 text-center">
           {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
-            <span key={`${label}-${index}`} className="pb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+            <span key={`${label}-${index}`} className="pb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{label}</span>
           ))}
           {cells.map((cell) => {
             const key = dateKey(cell);
@@ -132,7 +132,7 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
             const available = (days[key] || []).length > 0;
             const isSelected = key === selectedDay;
             return (
-              <span key={key} className="flex aspect-square items-center justify-center">
+              <span key={key} className="flex aspect-square items-center justify-center p-0.5">
                 <motion.button
                   type="button"
                   disabled={!available}
@@ -141,7 +141,7 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
                   transition={spring}
                   whileTap={available ? { scale: 0.9 } : undefined}
                   onClick={() => setSelectedDay(key)}
-                  className={`relative flex h-full w-full items-center justify-center rounded-full text-xs font-medium transition-colors ${
+                  className={`relative flex h-full w-full items-center justify-center rounded-full text-sm font-medium transition-colors ${
                     isSelected
                       ? "bg-gradient-to-br from-sky-600 to-sky-400 text-white shadow-[0_6px_14px_rgba(2,132,199,0.4)]"
                       : available
@@ -152,22 +152,22 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
                   } ${key === todayKey && !isSelected ? "ring-1 ring-inset ring-sky-300" : ""}`}
                 >
                   {cell.getDate()}
-                  {available && !isSelected ? <span className="absolute bottom-[3px] h-[3px] w-[3px] rounded-full bg-sky-500 opacity-60" /> : null}
+                  {available && !isSelected ? <span className="absolute bottom-1.5 h-1 w-1 rounded-full bg-sky-500 opacity-60" /> : null}
                 </motion.button>
               </span>
             );
           })}
         </div>
-        {loading ? <p className="mt-2 flex items-center gap-2 text-[11.5px] text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking availability…</p> : null}
+        {loading ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking availability…</p> : null}
       </div>
 
       <div className="min-w-0 flex-1">
         {!selectedDay ? (
-          <p className="text-[12.5px] text-slate-400">Pick a date to see available times</p>
+          <p className="text-sm text-slate-400">Pick a date to see available times</p>
         ) : (
           <>
-            <p className="text-[12.5px] text-slate-500">Times for <b className="font-semibold text-slate-900">{selectedDayLabel}</b> · {timezone}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <p className="text-sm text-slate-500">Times for <b className="font-semibold text-slate-900">{selectedDayLabel}</b> · {timezone}</p>
+            <div className="mt-4 flex flex-wrap gap-2.5">
               {slots.map((slot, index) => (
                 <motion.button
                   key={slot.startsAt}
@@ -177,7 +177,7 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
                   transition={{ delay: Math.min(index * 0.02, 0.25), ...spring }}
                   whileTap={{ scale: 0.94 }}
                   onClick={() => onPickSlot(slot)}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-[12.5px] font-semibold text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50"
+                  className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50"
                 >
                   {formatTime(slot.startsAt, timezone)}
                 </motion.button>
@@ -227,21 +227,21 @@ function SummaryRow({ icon: Icon, label, value, empty }) {
 function SectionShell({ index, title, sub, locked, active, done, onToggle, children, sectionRef }) {
   return (
     <div ref={sectionRef} className={`overflow-hidden rounded-[24px] rounded-bl-md border bg-white shadow-[0_2px_10px_rgba(15,23,42,0.06)] transition-all ${active ? "border-transparent shadow-[0_10px_30px_rgba(15,23,42,0.10),0_0_0_2px_rgba(2,132,199,0.16)]" : "border-slate-200"} ${locked ? "pointer-events-none opacity-45" : ""}`}>
-      <button type="button" onClick={onToggle} className="flex w-full items-center gap-3.5 px-5 py-4 text-left sm:px-6">
-        <span className={`flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold transition-colors ${
+      <button type="button" onClick={onToggle} className="flex w-full items-center gap-4 px-6 py-5 text-left sm:px-7">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold transition-colors ${
           done ? "bg-emerald-500 text-white" : active ? "bg-gradient-to-br from-sky-600 to-sky-400 text-white shadow-[0_6px_16px_rgba(2,132,199,0.32)]" : "bg-sky-50 text-slate-400"
         }`}>
-          {done ? <CheckCircle2 className="h-4 w-4" strokeWidth={2.5} /> : index}
+          {done ? <CheckCircle2 className="h-[18px] w-[18px]" strokeWidth={2.5} /> : index}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[15px] font-bold tracking-tight text-slate-900">{title}</span>
-          {sub ? <span className="block truncate text-[12.5px] text-slate-500">{sub}</span> : null}
+          <span className="block text-base font-bold tracking-tight text-slate-900">{title}</span>
+          {sub ? <span className="block truncate text-[13px] text-slate-500">{sub}</span> : null}
         </span>
       </button>
       <AnimatePresence initial={false}>
         {active ? (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }} className="overflow-hidden">
-            <div className="border-t border-slate-100 px-5 pb-6 pt-4 sm:px-6">{children}</div>
+            <div className="border-t border-slate-100 px-6 pb-7 pt-5 sm:px-7">{children}</div>
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -560,26 +560,27 @@ export default function PublicBookingPage() {
   return (
     <>
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-50">
-      <div ref={scrollAreaRef} className="mx-auto flex min-h-0 w-full max-w-[1180px] flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-6">
+      <div ref={scrollAreaRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6 xl:max-w-[1320px] xl:px-8">
 
         <div ref={heroRef} className="shrink-0">
-          <div data-booking-hero="topbar" className="mb-5 flex items-center justify-between gap-3 rounded-full border border-white/70 bg-white/80 px-5 py-2.5 shadow-[0_2px_10px_rgba(15,23,42,0.06)] backdrop-blur">
-            <div className="flex min-w-0 items-center gap-2.5 font-extrabold tracking-tight text-slate-900">
-              {brandLogo("h-8 w-8 shrink-0 rounded-[10px] text-xs")}
-              <span className="truncate text-[15px]">{info.agencyName}</span>
+          <div data-booking-hero="topbar" className="mb-6 flex items-center justify-between gap-3 rounded-full border border-white/70 bg-white/80 px-6 py-3 shadow-[0_2px_10px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="flex min-w-0 items-center gap-3 font-extrabold tracking-tight text-slate-900">
+              {brandLogo("h-9 w-9 shrink-0 rounded-[10px] text-xs")}
+              <span className="truncate text-base">{info.agencyName}</span>
             </div>
-            <div className="flex shrink-0 items-center gap-4 text-[12px] font-medium text-slate-500">
+            <div className="flex shrink-0 items-center gap-4 text-[13px] font-medium text-slate-500">
               <button type="button" onClick={() => setInfoOpen(true)} className="transition hover:text-sky-700">Need help?</button>
-              <span className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 sm:flex">🌐 {info.timezone}</span>
+              <span className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 sm:flex">🌐 {info.timezone}</span>
             </div>
           </div>
 
           {step === "booking" ? (
-            <div className="mb-5">
-              <div data-booking-hero="eyebrow" className="mb-2.5 inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3.5 py-1.5 text-[11.5px] font-bold uppercase tracking-wide text-sky-700">
+            <div className="mb-6">
+              <div data-booking-hero="eyebrow" className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-3.5 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-700">
                 {eyebrow}
               </div>
-              <h1 data-booking-hero="title" className="text-2xl font-extrabold leading-tight tracking-tight text-slate-950 sm:text-[28px]">{headline}</h1>
+              <h1 data-booking-hero="title" className="text-2xl font-extrabold leading-tight tracking-tight text-slate-950 sm:text-[28px] xl:text-[32px]">{headline}</h1>
               {info.publicWelcomeMessage ? <p className="mt-1.5 max-w-xl text-[13.5px] leading-5 text-slate-500">{info.publicWelcomeMessage}</p> : null}
             </div>
           ) : null}
@@ -587,9 +588,9 @@ export default function PublicBookingPage() {
 
         <AnimatePresence mode="wait">
           {step === "booking" ? (
-            <motion.div key="booking" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="grid gap-7 lg:grid-cols-[1fr_340px]">
+            <motion.div key="booking" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="grid gap-8 lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px]">
 
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-5">
                 {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
 
                 {/* SECTION 1 — meeting type */}
@@ -610,7 +611,7 @@ export default function PublicBookingPage() {
                           key={type.id}
                           type="button"
                           onClick={() => setSessionTypeId(type.id)}
-                          className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition ${sessionTypeId === type.id ? "border-sky-500 bg-sky-50/70 ring-1 ring-sky-400" : "border-slate-200 bg-white hover:border-sky-300"}`}
+                          className={`flex w-full items-center justify-between rounded-2xl border px-5 py-4 text-left transition ${sessionTypeId === type.id ? "border-sky-500 bg-sky-50/70 ring-1 ring-sky-400" : "border-slate-200 bg-white hover:border-sky-300"}`}
                         >
                           <span>
                             <span className="block text-sm font-semibold text-slate-900">{type.name}</span>
@@ -622,7 +623,7 @@ export default function PublicBookingPage() {
                     </div>
                   ) : null}
 
-                  <div className={`grid gap-3 ${meetingModeOptions.length > 1 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
+                  <div className={`grid gap-4 ${meetingModeOptions.length > 1 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
                     {meetingModeOptions.map(({ id, label, sub, icon: Icon, disabled }) => (
                       <motion.button
                         key={id}
@@ -630,11 +631,11 @@ export default function PublicBookingPage() {
                         disabled={disabled}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => setMeetingMode(id)}
-                        className={`rounded-2xl border p-4 text-left transition disabled:opacity-40 ${meetingMode === id ? "border-transparent bg-gradient-to-b from-sky-50 to-white shadow-[0_0_0_2px_rgb(2,132,199)]" : "border-slate-200 bg-white hover:border-sky-300 hover:-translate-y-0.5"}`}
+                        className={`rounded-2xl border p-5 text-left transition disabled:opacity-40 ${meetingMode === id ? "border-transparent bg-gradient-to-b from-sky-50 to-white shadow-[0_0_0_2px_rgb(2,132,199)]" : "border-slate-200 bg-white hover:border-sky-300 hover:-translate-y-0.5"}`}
                       >
-                        <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-600 to-sky-400 text-white shadow-[0_8px_18px_rgba(2,132,199,0.3)]"><Icon className="h-[18px] w-[18px]" /></span>
-                        <span className="block text-[14px] font-semibold text-slate-900">{label}</span>
-                        <span className="block text-xs text-slate-500">{sub}</span>
+                        <span className="mb-3.5 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-sky-600 to-sky-400 text-white shadow-[0_8px_18px_rgba(2,132,199,0.3)]"><Icon className="h-5 w-5" /></span>
+                        <span className="block text-[15px] font-semibold text-slate-900">{label}</span>
+                        <span className="block text-[13px] text-slate-500">{sub}</span>
                       </motion.button>
                     ))}
                   </div>
@@ -676,7 +677,7 @@ export default function PublicBookingPage() {
                           key={item.id}
                           type="button"
                           onClick={() => setLocationId(item.id)}
-                          className={`flex w-full items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition ${locationId === item.id ? "border-transparent bg-sky-50 shadow-[0_0_0_2px_rgb(2,132,199)]" : "border-slate-200 bg-white hover:border-sky-300"}`}
+                          className={`flex w-full items-center gap-4 rounded-2xl border px-5 py-4 text-left transition ${locationId === item.id ? "border-transparent bg-sky-50 shadow-[0_0_0_2px_rgb(2,132,199)]" : "border-slate-200 bg-white hover:border-sky-300"}`}
                         >
                           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600"><MapPin className="h-4 w-4" /></span>
                           <span className="min-w-0 flex-1">
@@ -764,7 +765,7 @@ export default function PublicBookingPage() {
 
               {/* SUMMARY SIDEBAR */}
               <div className="lg:sticky lg:top-6 lg:self-start">
-                <div className="rounded-[24px] rounded-bl-md border border-slate-200 bg-gradient-to-b from-white to-sky-50/40 p-6 shadow-[0_10px_30px_rgba(15,23,42,0.10)]">
+                <div className="rounded-[24px] rounded-bl-md border border-slate-200 bg-gradient-to-b from-white to-sky-50/40 p-7 shadow-[0_10px_30px_rgba(15,23,42,0.10)]">
                   <div className="mb-5 flex items-center gap-3.5">
                     <svg viewBox="0 0 50 50" className="h-[50px] w-[50px] shrink-0">
                       <circle cx="25" cy="25" r="21" stroke="#e0f2fe" fill="none" strokeWidth="5" />
@@ -882,6 +883,7 @@ export default function PublicBookingPage() {
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
       </div>
     </div>
     {infoOpen ? createPortal(
