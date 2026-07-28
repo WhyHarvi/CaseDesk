@@ -698,14 +698,32 @@ export async function updateCaseDocumentAssignment(req, res) {
 export async function listCaseTypes(req, res) {
   const agencyId = req.user.agencyId;
   const [cases, documentTemplates, workflowTemplates] = await Promise.all([
-    prisma.case.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
+    prisma.case.findMany({ where: { agencyId }, select: { caseType: true } }),
     prisma.documentTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
     prisma.workflowTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
   ]);
 
-  const caseTypes = [...new Set([...cases, ...documentTemplates, ...workflowTemplates].map((row) => row.caseType).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+  // Real case data can accumulate casing variants of the same case type
+  // ("Study Permit" / "study permit" / "STUDY PERMIT") from manual entry or
+  // import — a case-sensitive Set previously let those show up as separate
+  // dropdown options instead of collapsing to one. Group case-insensitively
+  // and pick one display casing per group: template case types are
+  // curated, so they always win a collision (huge weight); otherwise
+  // whichever casing is used most often across real cases wins.
+  const countsByNormalized = new Map();
+  const bump = (caseType, weight) => {
+    if (!caseType) return;
+    const normalized = caseType.toLowerCase();
+    const counts = countsByNormalized.get(normalized) || new Map();
+    counts.set(caseType, (counts.get(caseType) || 0) + weight);
+    countsByNormalized.set(normalized, counts);
+  };
+  for (const { caseType } of cases) bump(caseType, 1);
+  for (const { caseType } of [...documentTemplates, ...workflowTemplates]) bump(caseType, 1000);
+
+  const caseTypes = [...countsByNormalized.values()]
+    .map((counts) => [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0])
+    .sort((a, b) => a.localeCompare(b));
 
   res.json({ data: caseTypes });
 }
