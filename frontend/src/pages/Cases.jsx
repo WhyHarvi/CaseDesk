@@ -218,7 +218,7 @@ function buildDocumentSummary(caseId, documents) {
 }
 
 function buildPaymentSummary(caseId, payments) {
-  const payment = payments.find((item) => item.case?.id === caseId);
+  const payment = payments.find((item) => item.caseId === caseId);
 
   if (!payment) {
     return {
@@ -1264,14 +1264,14 @@ export default function Cases() {
             api.getFresh("/clients"),
             api.getFresh("/leads/staff"),
             api.getFresh("/client-documents"),
-            api.getFresh("/payments"),
+            api.getFresh("/cases/payment-summaries"),
           ]
         : [
             api.get("/cases", { params: { view } }),
             api.get("/clients"),
             api.get("/leads/staff"),
             api.get("/client-documents"),
-            api.get("/payments"),
+            api.get("/cases/payment-summaries"),
           ];
       const results = await Promise.allSettled(requests);
 

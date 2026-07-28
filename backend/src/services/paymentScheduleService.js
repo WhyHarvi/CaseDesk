@@ -272,6 +272,79 @@ export async function voidRemainingInstallments(agencyId, caseId, { reason, acto
   return getCaseSchedule(agencyId, caseId);
 }
 
+// ---------- Payment summaries ----------
+
+// The legacy `Payment` model (paymentController.js) is never written to by
+// any live UI path — invoicing now happens entirely through
+// CasePaymentInstallment -> CaseInvoice (fireInstallment, above). A "Total
+// Fee" display that reads Payment rows is stuck at $0 on every case no
+// matter how a schedule is built. This computes the real numbers from the
+// data staff actually create: total fee = sum of non-voided installment
+// amounts (what was agreed to be charged, invoiced or not yet); paid =
+// sum of (invoice.amount - invoice.balance) across the installments that
+// have actually been invoiced; balance = the rest still owed.
+function summarizeInstallments(installments, invoiceById) {
+  let totalFee = 0;
+  let paidAmount = 0;
+  for (const installment of installments) {
+    totalFee += Number(installment.amount);
+    if (installment.caseInvoiceId) {
+      const invoice = invoiceById.get(installment.caseInvoiceId);
+      if (invoice) paidAmount += Number(invoice.amount) - Number(invoice.balance);
+    }
+  }
+  const balance = Math.max(totalFee - paidAmount, 0);
+  const status = totalFee === 0 ? "Unpaid" : balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
+  return { totalFee, paidAmount, balance, status };
+}
+
+async function loadInvoicesById(invoiceIds) {
+  if (!invoiceIds.length) return new Map();
+  const invoices = await prisma.caseInvoice.findMany({
+    where: { id: { in: invoiceIds } },
+    select: { id: true, amount: true, balance: true },
+  });
+  return new Map(invoices.map((invoice) => [invoice.id, invoice]));
+}
+
+const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" };
+
+export async function getCasePaymentSummary(agencyId, caseId) {
+  const installments = await prisma.casePaymentInstallment.findMany({
+    where: { agencyId, caseId, status: { not: "Void" } },
+    select: { amount: true, caseInvoiceId: true },
+  });
+  if (!installments.length) return { ...EMPTY_SUMMARY };
+  const invoiceById = await loadInvoicesById(installments.map((item) => item.caseInvoiceId).filter(Boolean));
+  return summarizeInstallments(installments, invoiceById);
+}
+
+/**
+ * Same computation as getCasePaymentSummary, batched across every case in
+ * the agency in two grouped queries instead of one round-trip per case —
+ * for list views like the case dashboard.
+ */
+export async function getCasePaymentSummariesByCase(agencyId) {
+  const installments = await prisma.casePaymentInstallment.findMany({
+    where: { agencyId, status: { not: "Void" } },
+    select: { caseId: true, amount: true, caseInvoiceId: true },
+  });
+  const invoiceById = await loadInvoicesById(installments.map((item) => item.caseInvoiceId).filter(Boolean));
+
+  const byCaseId = new Map();
+  for (const installment of installments) {
+    const list = byCaseId.get(installment.caseId) || [];
+    list.push(installment);
+    byCaseId.set(installment.caseId, list);
+  }
+
+  const summaries = new Map();
+  for (const [caseId, items] of byCaseId) {
+    summaries.set(caseId, summarizeInstallments(items, invoiceById));
+  }
+  return summaries;
+}
+
 // ---------- Trigger firing ----------
 
 async function claimInstallment(installmentId) {

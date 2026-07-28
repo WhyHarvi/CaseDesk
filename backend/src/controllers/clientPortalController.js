@@ -6,7 +6,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
 import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
-import { getCaseSchedule } from "../services/paymentScheduleService.js";
+import { getCasePaymentSummary, getCaseSchedule } from "../services/paymentScheduleService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 
 // Everything in this controller is scoped through the logged-in user's
@@ -261,21 +261,18 @@ function publicDocument(document) {
   };
 }
 
-function paymentSummary(payments, agency) {
-  const totalFee = money(payments.reduce((sum, item) => sum + Number(item.totalFee || 0), 0));
-  const paidAmount = money(payments.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0));
-  const balance = money(payments.reduce((sum, item) => sum + Number(item.balance || 0), 0));
-  let status = "Not Paid";
-  if (!payments.length || totalFee === 0) status = "No Fee Recorded";
-  else if (payments.every((item) => item.status === "Refunded")) status = "Refunded";
-  else if (balance <= 0) status = "Paid";
-  else if (paidAmount > 0) status = "Partially Paid";
+// The real numbers now come from getCasePaymentSummary (schedule
+// installments + invoices — see paymentScheduleService.js for why the
+// legacy Payment model this used to read is never actually written to by
+// any live UI path). This just attaches display fields to that summary.
+function withPaymentDisplay(summary, agency) {
+  const status = summary.totalFee === 0 ? "No Fee Recorded" : summary.status === "Paid" ? "Paid" : summary.status === "Partial" ? "Partially Paid" : "Not Paid";
   return {
-    totalFee,
-    paidAmount,
-    balance,
+    totalFee: money(summary.totalFee),
+    paidAmount: money(summary.paidAmount),
+    balance: money(summary.balance),
     status,
-    currency: payments[0]?.currency || agency?.defaultCurrency || "CAD",
+    currency: agency?.defaultCurrency || "CAD",
     nextDueDate: null,
   };
 }
@@ -330,7 +327,7 @@ function nextActionFor({ caseItem, documents, payment, assessment, agreements })
   return { type: "none", title: "You're all caught up", reason: "There is nothing you need to do right now. We will let you know when something changes.", dueDate: null, documentId: null, actionUrl: null };
 }
 
-function buildTimeline({ caseItem, documents, payments, assessment, agreements }) {
+function buildTimeline({ caseItem, documents, invoices, assessment, agreements }) {
   const events = [];
   sharedAssignments(assessment?.formData || {}).forEach((assignment) => {
     if (assignment.assignedAt) events.push({ id: `questionnaire-${assignment.id}-assigned`, title: `Questionnaire assigned: ${assignment.name || assignment.applicationType}`, description: "Complete it from the Forms tab.", createdAt: assignment.assignedAt, type: "questionnaire" });
@@ -350,15 +347,16 @@ function buildTimeline({ caseItem, documents, payments, assessment, agreements }
     if (document.reviewedAt && ["Approved", "Finalized"].includes(document.status)) events.push({ id: `doc-${document.id}-accepted`, title: `Document accepted: ${document.documentName}`, description: "No further action needed for this document.", createdAt: document.reviewedAt, type: "document" });
     if (document.reviewedAt && document.status === "ChangesRequested") events.push({ id: `doc-${document.id}-changes`, title: `Changes requested: ${document.documentName}`, description: document.clientInstructions || "Please re-upload this document.", createdAt: document.reviewedAt, type: "document" });
   });
-  payments.forEach((payment) => {
-    if (Number(payment.paidAmount) > 0) events.push({ id: `payment-${payment.id}`, title: "Payment recorded", description: `${payment.currency} ${money(payment.paidAmount).toFixed(2)} received.`, createdAt: payment.updatedAt, type: "payment" });
+  (invoices || []).forEach((invoice) => {
+    events.push({ id: `invoice-${invoice.id}-issued`, title: "Invoice issued", description: `$${money(invoice.amount).toFixed(2)} invoiced.`, createdAt: invoice.createdAt, type: "payment" });
+    if (Number(invoice.balance) <= 0) events.push({ id: `invoice-${invoice.id}-paid`, title: "Payment received", description: `$${money(invoice.amount).toFixed(2)} paid in full.`, createdAt: invoice.updatedAt, type: "payment" });
   });
   return events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 25);
 }
 
 async function portalData(req) {
   const link = await linkedClient(req);
-  const [agency, caseItem, documents, payments, agreements] = await Promise.all([
+  const [agency, caseItem, documents, agreements] = await Promise.all([
     prisma.agency.findUnique({
       where: { id: req.auth.agencyId },
       select: { name: true, email: true, phone: true, address: true, city: true, province: true, country: true, postalCode: true, logoUrl: true, paymentInstructions: true, defaultCurrency: true },
@@ -373,19 +371,24 @@ async function portalData(req) {
       select: { id: true, documentName: true, status: true, clientInstructions: true, receivedAt: true, reviewedAt: true, originalFilename: true, updatedAt: true },
       orderBy: { updatedAt: "desc" },
     }),
-    prisma.payment.findMany({
-      where: { agencyId: req.auth.agencyId, clientId: link.clientId },
-      select: { id: true, totalFee: true, paidAmount: true, balance: true, status: true, currency: true, notes: true, createdAt: true, updatedAt: true },
-      orderBy: { createdAt: "desc" },
-    }),
     prisma.writtenDocument.findMany({
       where: clientAgreementsWhere(req, link.clientId),
       select: agreementSelect,
       orderBy: { updatedAt: "desc" },
     }),
   ]);
-  const assessment = caseItem ? await caseAssessmentFor(req, caseItem.id) : null;
-  return { link, agency, caseItem, documents, payments, agreements, assessment };
+  const [assessment, paymentSummary, invoices] = await Promise.all([
+    caseItem ? caseAssessmentFor(req, caseItem.id) : null,
+    caseItem ? getCasePaymentSummary(req.auth.agencyId, caseItem.id) : Promise.resolve({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" }),
+    caseItem
+      ? prisma.caseInvoice.findMany({
+          where: { agencyId: req.auth.agencyId, caseId: caseItem.id },
+          select: { id: true, amount: true, balance: true, status: true, createdAt: true, updatedAt: true },
+          orderBy: { createdAt: "desc" },
+        })
+      : Promise.resolve([]),
+  ]);
+  return { link, agency, caseItem, documents, paymentSummary, invoices, agreements, assessment };
 }
 
 function agencyAddress(agency) {
@@ -393,8 +396,8 @@ function agencyAddress(agency) {
 }
 
 export async function getPortalOverview(req, res) {
-  const { link, agency, caseItem, documents, payments, agreements, assessment } = await portalData(req);
-  const payment = paymentSummary(payments, agency);
+  const { link, agency, caseItem, documents, paymentSummary, invoices, agreements, assessment } = await portalData(req);
+  const payment = withPaymentDisplay(paymentSummary, agency);
   const nameParts = String(link.client.fullName || "").trim().split(/\s+/);
   const shared = sharedAssignments(assessment?.formData || {});
 
@@ -439,7 +442,7 @@ export async function getPortalOverview(req, res) {
         total: agreements.length,
         awaitingSignature: agreements.filter((item) => item.correspondenceStatus === "Issued").length,
       },
-      timeline: buildTimeline({ caseItem, documents, payments, assessment, agreements }),
+      timeline: buildTimeline({ caseItem, documents, invoices, assessment, agreements }),
     },
   });
 }
@@ -456,7 +459,7 @@ export async function getPortalDocuments(req, res) {
 
 export async function getPortalPayments(req, res) {
   const link = await linkedClient(req);
-  const { agency, caseItem, payments } = await portalData(req);
+  const { agency, caseItem, paymentSummary } = await portalData(req);
   const [invoices, schedule] = await Promise.all([
     listClientInvoices(req.auth.agencyId, link.clientId).catch(() => []),
     caseItem ? getCaseSchedule(req.auth.agencyId, caseItem.id).catch(() => null) : null,
@@ -464,7 +467,7 @@ export async function getPortalPayments(req, res) {
   res.json({
     success: true,
     data: {
-      summary: paymentSummary(payments, agency),
+      summary: withPaymentDisplay(paymentSummary, agency),
       instructions: agency?.paymentInstructions || null,
       schedule: schedule
         ? {
@@ -502,16 +505,11 @@ export async function getPortalPayments(req, res) {
         createdAt: invoice.createdAt,
         payNowUrl: Number(invoice.balance) > 0 ? invoice.qbInvoiceLink || null : null,
       })),
-      history: payments.map((payment) => ({
-        id: payment.id,
-        totalFee: money(payment.totalFee),
-        paidAmount: money(payment.paidAmount),
-        balance: money(payment.balance),
-        status: payment.status,
-        currency: payment.currency,
-        note: payment.notes || null,
-        recordedAt: payment.createdAt,
-      })),
+      // The "invoices" list above is the real, populated record of what's
+      // been billed — this legacy standalone payment-history list never had
+      // a live writer (see paymentScheduleService.js's getCasePaymentSummary
+      // comment) and stays empty rather than duplicating invoice data.
+      history: [],
     },
   });
 }
@@ -526,8 +524,8 @@ export async function downloadPortalInvoicePdf(req, res) {
 }
 
 export async function getPortalTimeline(req, res) {
-  const { caseItem, documents, payments, assessment, agreements } = await portalData(req);
-  res.json({ success: true, data: buildTimeline({ caseItem, documents, payments, assessment, agreements }) });
+  const { caseItem, documents, invoices, assessment, agreements } = await portalData(req);
+  res.json({ success: true, data: buildTimeline({ caseItem, documents, invoices, assessment, agreements }) });
 }
 
 export async function getPortalQuestionnaires(req, res) {

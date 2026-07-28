@@ -62,7 +62,7 @@ export default function CaseProfile() {
   const { role } = useAuth();
   const [caseItem, setCaseItem] = useState(null);
   const [documents, setDocuments] = useState([]);
-  const [payments, setPayments] = useState([]);
+  const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
   const [followUps, setFollowUps] = useState([]);
   const [notes, setNotes] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
@@ -175,7 +175,7 @@ export default function CaseProfile() {
         const results = await Promise.allSettled([
           api.get(`/cases/${id}`),
           fetchAllCaseDocuments(id),
-          api.get(`/payments?caseId=${id}`),
+          api.get(`/cases/${id}/payment-summary`),
           api.get(`/follow-ups?caseId=${id}`),
           api.get(`/notes?caseId=${id}`),
           api.get(`/activity-logs?caseId=${id}`),
@@ -187,7 +187,7 @@ export default function CaseProfile() {
         const [
           caseResult,
           documentsResult,
-          paymentsResult,
+          paymentSummaryResult,
           followUpsResult,
           notesResult,
           activityResult,
@@ -204,10 +204,10 @@ export default function CaseProfile() {
         setDocuments(
           documentsResult.status === "fulfilled" ? documentsResult.value : [],
         );
-        setPayments(
-          paymentsResult.status === "fulfilled"
-            ? paymentsResult.value.data.data || []
-            : [],
+        setPaymentSummary(
+          paymentSummaryResult.status === "fulfilled"
+            ? paymentSummaryResult.value.data.data || { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" }
+            : { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" },
         );
         setFollowUps(
           followUpsResult.status === "fulfilled"
@@ -258,28 +258,6 @@ export default function CaseProfile() {
 
     loadCaseProfile();
   }, [id]);
-
-  const paymentSummary = useMemo(() => {
-    const totals = payments.reduce(
-      (summary, payment) => ({
-        totalFee: summary.totalFee + Number(payment.totalFee || 0),
-        paidAmount: summary.paidAmount + Number(payment.paidAmount || 0),
-        balance: summary.balance + Number(payment.balance || 0),
-      }),
-      { totalFee: 0, paidAmount: 0, balance: 0 },
-    );
-
-    return {
-      ...totals,
-      status:
-        payments[0]?.status ||
-        (totals.balance <= 0 && totals.totalFee > 0
-          ? "Paid"
-          : totals.paidAmount > 0
-            ? "Partial"
-            : "Unpaid"),
-    };
-  }, [payments]);
 
   const outstandingDocuments = useMemo(
     () =>

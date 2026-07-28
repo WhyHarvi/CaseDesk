@@ -6,6 +6,8 @@ import {
   createCaseSchedule,
   createScheduleTemplate,
   deleteScheduleTemplate,
+  getCasePaymentSummariesByCase,
+  getCasePaymentSummary,
   getCaseSchedule,
   listScheduleTemplates,
   updateCaseInstallments,
@@ -97,6 +99,16 @@ export async function deleteTemplate(req, res) {
 export async function getSchedule(req, res) {
   const data = await getCaseSchedule(req.auth.agencyId, req.params.id);
   res.json({ data });
+}
+
+export async function getPaymentSummary(req, res) {
+  const data = await getCasePaymentSummary(req.auth.agencyId, req.params.id);
+  res.json({ data });
+}
+
+export async function getPaymentSummaries(req, res) {
+  const summaries = await getCasePaymentSummariesByCase(req.auth.agencyId);
+  res.json({ data: [...summaries.entries()].map(([caseId, summary]) => ({ caseId, ...summary })) });
 }
 
 export async function createSchedule(req, res) {
