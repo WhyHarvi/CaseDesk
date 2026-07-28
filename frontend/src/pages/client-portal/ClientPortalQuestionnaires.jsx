@@ -340,7 +340,12 @@ function AssignmentSheet({ assignment, answers, onClose, onOpenStep, onSubmit, s
                 {step.completed ? <CheckCircle2 className="h-[18px] w-[18px]" /> : <ClipboardList className="h-[18px] w-[18px]" />}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-slate-900">{step.label}</span>
+                <span className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-slate-900">{step.label}</span>
+                  {step.requirementLevel === "required" ? (
+                    <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-600">Required</span>
+                  ) : null}
+                </span>
                 <span className={["mt-0.5 block text-xs font-medium", step.completed ? "text-emerald-600" : "text-amber-600"].join(" ")}>{step.completed ? "Completed" : "To do"}</span>
               </span>
               {!disabled ? <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" /> : null}

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowLeft,
   CalendarClock,
   Check,
@@ -15,6 +16,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getCaseTypeMatch } from "../../api/caseInformationApi";
 
 const categories = [
   {
@@ -191,9 +193,10 @@ const categories = [
   },
 ];
 
-function CatalogueOverlay({ saving, error, onClose, onAssign }) {
+function CatalogueOverlay({ caseId, caseType, saving, error, onClose, onAssign }) {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [search, setSearch] = useState("");
+  const [mismatchedOptions, setMismatchedOptions] = useState(new Set());
   const visible = useMemo(
     () =>
       categories.filter((category) =>
@@ -203,6 +206,28 @@ function CatalogueOverlay({ saving, error, onClose, onAssign }) {
       ),
     [search],
   );
+
+  useEffect(() => {
+    if (!selectedCategory || !caseId) {
+      setMismatchedOptions(new Set());
+      return undefined;
+    }
+    let cancelled = false;
+    setMismatchedOptions(new Set());
+    Promise.all(
+      selectedCategory.options.map((option) =>
+        getCaseTypeMatch(caseId, option)
+          .then((result) => (result.matches ? null : option))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      setMismatchedOptions(new Set(results.filter(Boolean)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCategory, caseId]);
   return typeof document === "undefined"
     ? null
     : createPortal(
@@ -329,8 +354,14 @@ function CatalogueOverlay({ saving, error, onClose, onAssign }) {
                               {selectedCategory.modules.length} assigned
                               information sections
                             </p>
+                            {mismatchedOptions.has(option) ? (
+                              <p className="mt-2 flex items-start gap-1.5 text-xs font-medium text-amber-700">
+                                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                This case is classified as {caseType || "a different type"}. Update the case type for a tailored questionnaire.
+                              </p>
+                            ) : null}
                           </div>
-                          <Plus className="h-4 w-4 text-slate-400" />
+                          <Plus className="h-4 w-4 shrink-0 text-slate-400" />
                         </button>
                       ))}
                     </div>
@@ -664,6 +695,8 @@ function AssignmentFieldDialog({ mode, assignment, saving, onCancel, onSave }) {
 }
 
 export default function QuestionnaireCatalog({
+  caseId,
+  caseType,
   assignments = [],
   profileData = {},
   applicant = {},
@@ -836,6 +869,8 @@ export default function QuestionnaireCatalog({
       )}
       {overlayOpen ? (
         <CatalogueOverlay
+          caseId={caseId}
+          caseType={caseType}
           saving={saving}
           error={error}
           onClose={() => setOverlayOpen(false)}

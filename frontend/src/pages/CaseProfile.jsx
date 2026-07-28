@@ -21,6 +21,7 @@ import CommunicationSetupOverlay from "../components/case-profile/communication/
 import CaseActionDialog from "../components/case-profile/CaseActionDialog";
 import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
 import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOverlay";
+import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
@@ -78,6 +79,7 @@ export default function CaseProfile() {
   const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
   const [eSignCenterOpen, setESignCenterOpen] = useState(false);
   const [permissionsOverlayOpen, setPermissionsOverlayOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
   const [restoreError, setRestoreError] = useState("");
@@ -113,6 +115,8 @@ export default function CaseProfile() {
     useState(false);
   const [profileQuestionnaireError, setProfileQuestionnaireError] =
     useState("");
+  const [applicantProfileSaving, setApplicantProfileSaving] = useState(false);
+  const [applicantProfileError, setApplicantProfileError] = useState("");
   const [workHistorySaving, setWorkHistorySaving] = useState(false);
   const [workHistoryError, setWorkHistoryError] = useState("");
   const [educationHistorySaving, setEducationHistorySaving] = useState(false);
@@ -1065,6 +1069,30 @@ export default function CaseProfile() {
     }
   }
 
+  async function saveApplicantProfile(maritalStatus) {
+    try {
+      setApplicantProfileSaving(true);
+      setApplicantProfileError("");
+      const currentFormData = assessment?.formData || {};
+      const response = await api.patch(`/cases/${id}/assessment`, {
+        formData: {
+          ...currentFormData,
+          profile: { ...currentFormData.profile, maritalStatus },
+        },
+        declaredComplete: Boolean(assessment?.declaredComplete),
+      });
+      setAssessment(response.data.data || null);
+    } catch (requestError) {
+      setApplicantProfileError(
+        requestError.response?.data?.message ||
+          "Unable to save marital status.",
+      );
+      throw requestError;
+    } finally {
+      setApplicantProfileSaving(false);
+    }
+  }
+
   async function saveSpouseDetails(section, payload) {
     try {
       setSpouseDetailsSaving(true);
@@ -1620,6 +1648,17 @@ export default function CaseProfile() {
         />
       ) : null}
 
+      {editingClient ? (
+        <ClientEditDrawer
+          client={caseItem.client}
+          onClose={() => setEditingClient(false)}
+          onSaved={(updatedClient) => {
+            setCaseItem((current) => ({ ...current, client: { ...current.client, ...updatedClient } }));
+            setEditingClient(false);
+          }}
+        />
+      ) : null}
+
       <section className="space-y-8">
         {caseItem?.deletedAt ? (
           <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-rose-200/80 bg-rose-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(190,18,60,0.08)]">
@@ -1701,6 +1740,7 @@ export default function CaseProfile() {
           paymentSummary={paymentSummary}
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
+          onEditClient={() => setEditingClient(true)}
         />
 
         <CaseProfileToolbar
@@ -1898,6 +1938,10 @@ export default function CaseProfile() {
           onSaveProfileQuestionnaire={saveProfileQuestionnaire}
           savingProfileQuestionnaire={profileQuestionnaireSaving}
           profileQuestionnaireError={profileQuestionnaireError}
+          onSaveApplicantProfile={saveApplicantProfile}
+          savingApplicantProfile={applicantProfileSaving}
+          applicantProfileError={applicantProfileError}
+          onEditClient={() => setEditingClient(true)}
           onSaveSpouseDetails={saveSpouseDetails}
           savingSpouseDetails={spouseDetailsSaving}
           spouseDetailsError={spouseDetailsError}

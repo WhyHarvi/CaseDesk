@@ -445,7 +445,7 @@ function AddFormsOverlay({
                       requirement: event.target.value,
                     }))
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal"
+                  className="select-field mt-2 w-full"
                 >
                   <option>Required</option>
                   <option>Conditional</option>
@@ -462,7 +462,7 @@ function AddFormsOverlay({
                       language: event.target.value,
                     }))
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal"
+                  className="select-field mt-2 w-full"
                 >
                   <option>English</option>
                   <option>French</option>
@@ -986,6 +986,8 @@ function MissingInformationOverlay({
   readiness,
   onClose,
   onOpenProfileSection,
+  onEditClient,
+  onOpenAssessment,
 }) {
   const [filter, setFilter] = useState(
     readiness.analysis?.missing
@@ -1069,7 +1071,9 @@ function MissingInformationOverlay({
                     {entry.note ||
                       (entry.value
                         ? entry.value
-                        : `Add this under ${entry.profileTab.toLowerCase()}.`)}
+                        : entry.profileTab
+                          ? `Add this under ${entry.profileTab.toLowerCase()}.`
+                          : "Add this information to continue.")}
                   </p>
                 </div>
                 {entry.status !== "ready" ? (
@@ -1077,14 +1081,21 @@ function MissingInformationOverlay({
                     type="button"
                     onClick={() => {
                       onClose();
-                      onOpenProfileSection?.(
-                        entry.profileTab,
-                        entry.profileView,
-                      );
+                      if (entry.clientField) onEditClient?.();
+                      else if (entry.assessmentOverlay) onOpenAssessment?.();
+                      else
+                        onOpenProfileSection?.(
+                          entry.profileTab,
+                          entry.profileView,
+                        );
                     }}
                     className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-950 px-3 py-2 text-[11px] font-semibold text-white"
                   >
-                    Open Profile
+                    {entry.clientField
+                      ? "Edit Client"
+                      : entry.assessmentOverlay
+                        ? "Update Assessment"
+                        : "Open Profile"}
                     <ChevronRight className="h-3.5 w-3.5" />
                   </button>
                 ) : (
@@ -1583,6 +1594,8 @@ export default function CaseFormsWorkspace({
   assessment,
   onCountChange,
   onOpenProfileSection,
+  onEditClient,
+  onOpenAssessment,
 }) {
   const [forms, setForms] = useState([]);
   const [catalog, setCatalog] = useState(null);
@@ -2602,6 +2615,8 @@ export default function CaseFormsWorkspace({
           readiness={readinessTarget.readiness}
           onClose={() => setReadinessTarget(null)}
           onOpenProfileSection={onOpenProfileSection}
+          onEditClient={onEditClient}
+          onOpenAssessment={onOpenAssessment}
         />
       ) : null}
       {reviewTarget ? (

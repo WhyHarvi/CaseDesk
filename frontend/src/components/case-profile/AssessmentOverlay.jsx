@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Award, BriefcaseBusiness, CheckCircle2, FileText, GraduationCap, Languages, Save, UsersRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { maritalStatusOptions } from "./applicantProfileOptions";
 
 const assessmentSections = [
   {
@@ -39,16 +40,6 @@ const yesNoOptions = ["", "Yes", "No"];
 const ageOptions = ["", ...Array.from({ length: 49 }, (_, index) => String(index + 17)), "66 or older"];
 const yearOptions = ["", "None or less than a year", "1 year", "2 years", "3 years", "4 years", "5 years or more"];
 const foreignYearOptions = ["", "None or less than a year", "1 year", "2 years", "3 years or more"];
-const maritalStatusOptions = [
-  "",
-  "Annulled Marriage",
-  "Common-Law",
-  "Divorced / Separated",
-  "Legally Separated",
-  "Married",
-  "Never Married / Single",
-  "Widowed",
-];
 const educationLevelOptions = [
   "",
   "None, or less than secondary (high school)",
@@ -476,7 +467,7 @@ function AssessmentField({ sectionId, field, value, onChange }) {
       {field.type === "textarea" ? (
         <textarea value={value || ""} onChange={handleChange} className={`${sharedClassName} min-h-[94px] resize-none`} />
       ) : field.type === "select" ? (
-        <select value={value || ""} onChange={handleChange} className={sharedClassName}>
+        <select value={value || ""} onChange={handleChange} className="select-field mt-2 w-full">
           {(field.options || [""]).map((option) => (
             <option key={option || "empty"} value={option}>
               {option || "Select"}

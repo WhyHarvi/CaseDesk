@@ -28,6 +28,7 @@ import {
   formatDate,
   getPaymentStatusStyles,
 } from "./caseProfileUtils";
+import { maritalStatusOptions } from "./applicantProfileOptions";
 import RemindersWorkspace from "./RemindersWorkspace";
 import QuestionnaireCatalog from "./QuestionnaireCatalog";
 import ProfileQuestionnaireSection from "./ProfileQuestionnaireSection";
@@ -361,6 +362,39 @@ function DetailField({ label, value }) {
   );
 }
 
+function MaritalStatusField({ value, onSave, saving, error }) {
+  const [selected, setSelected] = useState(value || "");
+
+  useEffect(() => {
+    setSelected(value || "");
+  }, [value]);
+
+  return (
+    <div className="rounded-[1.05rem] bg-slate-50 px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+        Marital status
+      </p>
+      <select
+        value={selected}
+        disabled={saving}
+        onChange={(event) => {
+          const next = event.target.value;
+          setSelected(next);
+          onSave?.(next);
+        }}
+        className="select-field mt-1 w-full"
+      >
+        {maritalStatusOptions.map((option) => (
+          <option key={option || "empty"} value={option}>
+            {option || "Not set"}
+          </option>
+        ))}
+      </select>
+      {error ? <p className="mt-1 text-xs text-rose-600">{error}</p> : null}
+    </div>
+  );
+}
+
 function QuestionnaireField({ label, value, detail }) {
   const displayValue = value === 0 ? "0" : value || "Not captured yet";
 
@@ -445,7 +479,7 @@ function WorkHistoryInput({ field, value, onChange }) {
         <select
           value={value || ""}
           onChange={(event) => onChange(field.key, event.target.value)}
-          className={inputClassName}
+          className="select-field mt-2 w-full"
         >
           {(field.options || [""]).map((option) => (
             <option key={option || "empty"} value={option}>
@@ -633,7 +667,7 @@ function WorkHistoryOverlay({
                   onChange={(event) =>
                     updateMeta("hasWorkExperience", event.target.value)
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 md:max-w-xs"
+                  className="select-field mt-2 w-full md:max-w-xs"
                 >
                   {yesNoOptions.map((option) => (
                     <option key={option || "empty"} value={option}>
@@ -974,7 +1008,7 @@ function EducationHistoryOverlay({
                   onChange={(event) =>
                     updateMeta("hasEducation", event.target.value)
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-slate-400 md:max-w-xs"
+                  className="select-field mt-2 w-full md:max-w-xs"
                 >
                   {yesNoOptions.map((option) => (
                     <option key={option || "empty"} value={option}>
@@ -1562,6 +1596,9 @@ function ProfileDetailsGrid({
   activityLogs,
   assessment,
   profileSectionRequest,
+  onSaveApplicantProfile,
+  savingApplicantProfile,
+  applicantProfileError,
   onSaveProfileQuestionnaire,
   savingProfileQuestionnaire,
   profileQuestionnaireError,
@@ -2439,6 +2476,12 @@ function ProfileDetailsGrid({
             value={formatDate(client.dateOfBirth)}
           />
           <DetailField label="Client status" value={client.status} />
+          <MaritalStatusField
+            value={assessmentForm.profile?.maritalStatus}
+            onSave={(nextValue) => onSaveApplicantProfile?.(nextValue)}
+            saving={savingApplicantProfile}
+            error={applicantProfileError}
+          />
           <DetailField
             label="Assigned staff"
             value={caseItem.assignedUser?.fullName || "Unassigned"}
@@ -2946,6 +2989,7 @@ function ProfileDetailsGrid({
               const isActive = activeDetailTab === tab.label;
               const sectionStatus = sectionStatusByKey[tab.sectionKey]?.status;
               const dotClass = SECTION_STATUS_DOT_CLASS[sectionStatus];
+              const isRequiredSection = sectionStatusByKey[tab.sectionKey]?.requirementLevel === "required";
               const isApplicantTab = tab.label === "APPLICANT DETAILS";
               const isSpouseTab = tab.label === "SPOUSE DETAILS";
               const isApplicantMenuOpen =
@@ -2994,6 +3038,11 @@ function ProfileDetailsGrid({
                     <span className="flex-1 whitespace-nowrap">
                       {tab.label}
                     </span>
+                    {isRequiredSection ? (
+                      <span className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.04em] text-rose-600">
+                        Required
+                      </span>
+                    ) : null}
                     {dotClass ? (
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} title={sectionStatus.replace("_", " ")} />
                     ) : null}
@@ -3202,6 +3251,10 @@ function CaseWorkspacePanel({
   savingCaseDocuments,
   caseDocumentsError,
   onOpenProfile,
+  onEditClient,
+  onSaveApplicantProfile,
+  savingApplicantProfile,
+  applicantProfileError,
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
@@ -3262,6 +3315,9 @@ function CaseWorkspacePanel({
           activityLogs={activityLogs}
           assessment={assessment}
           profileSectionRequest={profileSectionRequest}
+          onSaveApplicantProfile={onSaveApplicantProfile}
+          savingApplicantProfile={savingApplicantProfile}
+          applicantProfileError={applicantProfileError}
           onSaveProfileQuestionnaire={onSaveProfileQuestionnaire}
           savingProfileQuestionnaire={savingProfileQuestionnaire}
           profileQuestionnaireError={profileQuestionnaireError}
@@ -3317,6 +3373,8 @@ function CaseWorkspacePanel({
   if (activeTab === "QUESTIONNAIRES") {
     return (
       <QuestionnaireCatalog
+        caseId={caseItem.id}
+        caseType={caseItem.caseType}
         assignments={assessment?.formData?.questionnaireAssignments || []}
         profileData={assessment?.formData || {}}
         applicant={caseItem.client || {}}
@@ -3371,6 +3429,8 @@ function CaseWorkspacePanel({
           caseItem={caseItem}
           assessment={assessment}
           onOpenProfileSection={onOpenProfile}
+          onEditClient={onEditClient}
+          onOpenAssessment={onConductAssessment}
         />
       </div>
     );
@@ -3540,6 +3600,10 @@ export default function CaseWorkspaceTabs({
   onSaveSpouseDetails,
   savingSpouseDetails,
   spouseDetailsError,
+  onEditClient,
+  onSaveApplicantProfile,
+  savingApplicantProfile,
+  applicantProfileError,
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(() =>
@@ -3650,6 +3714,10 @@ export default function CaseWorkspaceTabs({
               onUpdateTask={onUpdateTask}
               onDeleteTask={onDeleteTask}
               onOpenProfile={openProfileSection}
+              onEditClient={onEditClient}
+              onSaveApplicantProfile={onSaveApplicantProfile}
+              savingApplicantProfile={savingApplicantProfile}
+              applicantProfileError={applicantProfileError}
               onSaveProfileQuestionnaire={onSaveProfileQuestionnaire}
               savingProfileQuestionnaire={savingProfileQuestionnaire}
               profileQuestionnaireError={profileQuestionnaireError}

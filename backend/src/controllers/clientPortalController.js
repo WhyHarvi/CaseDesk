@@ -7,6 +7,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
 import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
 import { getCaseSchedule } from "../services/paymentScheduleService.js";
+import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -52,6 +53,29 @@ const money = (value) => Math.round(Number(value || 0) * 100) / 100;
 const CLIENT_FLAT_SECTIONS = new Set(["applicantIdentity", "canadianStatus", "background", "sponsorship", "programDetails", "humanitarianCitizenship", "rehabilitation", "refugeeProtection"]);
 const CLIENT_COLLECTION_SECTIONS = new Set(["addressHistory", "travelHistory", "activityHistory", "identityPermits", "dependantsAndChildren", "siblings", "parents"]);
 
+// moduleSteps() step ids predate informationSectionCatalog.js's 16 canonical
+// sectionKeys and don't share its naming — this maps the ones that overlap
+// so publicAssignment() can ask caseRequirementResolver.js whether a step is
+// actually relevant to this case's case type. Steps with no entry here
+// (there are none today) fall back to "optional" rather than being hidden.
+const STEP_ID_TO_SECTION_KEY = {
+  applicantIdentity: "applicantDetails",
+  canadianStatus: "canadianStatus",
+  background: "backgroundAdmissibility",
+  identityPermits: "identityPermits",
+  addressHistory: "addressHistory",
+  activityHistory: "activityHistory",
+  travelHistory: "travelHistory",
+  dependantsAndChildren: "children",
+  siblings: "siblingDetails",
+  parents: "parentDetails",
+  sponsorship: "relationshipSponsorship",
+  programDetails: "programDetails",
+  humanitarianCitizenship: "humanitarianCitizenship",
+  rehabilitation: "rehabilitation",
+  refugeeProtection: "refugeeProtection",
+};
+
 function moduleSteps(moduleName) {
   const name = String(moduleName || "").toLowerCase();
   if (name.includes("applicant")) return [{ type: "flat", id: "applicantIdentity", label: "Applicant identity" }];
@@ -92,13 +116,25 @@ function sharedAssignments(formData) {
   return assignments.filter((item) => item?.sharing === "Shared");
 }
 
-function publicAssignment(assignment, formData) {
+function publicAssignment(assignment, formData, caseType) {
+  const requirementByKey = new Map(resolveSectionRequirements(caseType).map((entry) => [entry.sectionKey, entry.level]));
   const modules = (assignment.modules || []).map((moduleName) => {
     const steps = moduleSteps(moduleName);
     return {
       name: moduleName,
       steps: steps
-        ? steps.map((step) => ({ ...step, completed: stepHasData(step, formData) }))
+        ? steps
+            .map((step) => ({
+              ...step,
+              completed: stepHasData(step, formData),
+              requirementLevel: requirementByKey.get(STEP_ID_TO_SECTION_KEY[step.id]) || "optional",
+            }))
+            // Sections not_applicable to this case's case type never show —
+            // a study-permit client never sees Siblings/Parents steps, for
+            // example — while an unclassified case type resolves every
+            // section to "optional" (see caseRequirementResolver.js's
+            // fail-open default) so nothing is hidden by mistake.
+            .filter((step) => step.requirementLevel !== "not_applicable")
         : null,
     };
   });
@@ -511,7 +547,7 @@ export async function getPortalQuestionnaires(req, res) {
     success: true,
     data: {
       caseType: caseItem?.caseType || null,
-      assignments: sharedAssignments(formData).map((assignment) => publicAssignment(assignment, formData)),
+      assignments: sharedAssignments(formData).map((assignment) => publicAssignment(assignment, formData, caseItem?.caseType)),
       answers,
     },
   });

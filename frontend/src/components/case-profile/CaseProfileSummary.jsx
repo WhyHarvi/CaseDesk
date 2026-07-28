@@ -17,7 +17,7 @@ import PortalAccessCard from "../clients/PortalAccessCard";
 import { ExpandingPillMenu, QuickActionLink, SimpleActionPill } from "./CaseProfileActions";
 import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./caseProfileUtils";
 
-export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, onContactClient }) {
+export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, onContactClient, onEditClient }) {
   return (
     <section className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
       <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -70,6 +70,13 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
           </div>
 
           <div className="flex flex-wrap gap-2 lg:max-w-[42%] lg:justify-end">
+            {caseItem.client?.id ? (
+              <QuickActionLink
+                icon={Pencil}
+                label="Edit client"
+                onClick={onEditClient}
+              />
+            ) : null}
             <QuickActionLink
               icon={Mail}
               label="Mail"

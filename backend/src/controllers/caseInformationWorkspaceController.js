@@ -1,6 +1,7 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { buildCaseInformationSummary } from "../modules/case-information/caseInformationWorkspace.js";
+import { resolveCaseTypeKey } from "../modules/case-information/caseTypeCatalog.js";
 
 async function findScopedCase(req) {
   const data = await prisma.case.findFirst({
@@ -64,4 +65,25 @@ export async function getCaseInformationWorkspace(req, res) {
       recentSubmissions: [],
     },
   });
+}
+
+/**
+ * Lets the questionnaire-assignment picker warn a consultant when the
+ * application type they're about to assign doesn't match the case's own
+ * caseType — e.g. assigning a "Study Permit" questionnaire on a case
+ * classified as "Spousal Sponsorship". Reuses resolveCaseTypeKey (the same
+ * alias resolution caseRequirementResolver.js already relies on) instead of
+ * duplicating that matching logic in the frontend. Fails open (matches:
+ * true) whenever either side can't be confidently classified, since a
+ * possibly-wrong nudge is worse than no nudge.
+ */
+export async function getCaseTypeMatch(req, res) {
+  const scopedCase = await findScopedCase(req);
+  const applicationType = String(req.query.applicationType || "");
+
+  const caseKey = resolveCaseTypeKey(scopedCase.caseType);
+  const applicationKey = resolveCaseTypeKey(applicationType);
+  const matches = !caseKey || !applicationKey || caseKey === applicationKey;
+
+  res.json({ data: { matches, caseType: scopedCase.caseType } });
 }

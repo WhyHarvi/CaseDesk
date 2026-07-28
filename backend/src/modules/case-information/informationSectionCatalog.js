@@ -33,7 +33,7 @@
 
 const CANADIAN_STATUS_FIELDS = ["currentlyInCanada", "currentStatus", "statusExpiry", "uci", "priorCanadaApplication", "refusedCanadaApplication", "refusalDetails"];
 const BACKGROUND_FIELDS = ["medicalCondition", "medicalDetails", "criminalHistory", "criminalDetails", "immigrationViolation", "violationDetails", "visaRefusal", "visaRefusalDetails", "militaryService", "militaryDetails", "governmentPosition", "governmentDetails", "securityConcern", "securityDetails"];
-const SPONSORSHIP_FIELDS = ["sponsorStatus", "relationshipType", "relationshipStartDate", "cohabitationStartDate", "marriageDate", "relationshipEvidence", "sponsorFinancialSupport"];
+const SPONSORSHIP_FIELDS = ["sponsorStatus", "relationshipType", "relationshipStartDate", "cohabitationStartDate", "marriageDate", "relationshipEvidence", "sponsorFinancialSupport", "sponsorIncomeYear1", "sponsorIncomeYear2", "sponsorIncomeYear3", "sponsorDependentsCount", "sponsorPriorSponsorship", "sponsorPriorSponsorshipDetails"];
 const PROGRAM_DETAILS_FIELDS = ["purposeOfTravel", "plannedArrivalDate", "plannedDepartureDate", "intendedLengthOfStay", "destination", "accommodation", "invitingPerson", "fundsAvailable", "fundsCurrency", "fundingSource", "tripPayer", "financialEvidence", "homeCountryTies", "returnPlan", "canadianEmployer", "educationalInstitution", "provincialNomination", "nominationDetails", "businessProposal"];
 const HUMANITARIAN_CITIZENSHIP_FIELDS = ["canadianEstablishment", "hardshipDetails", "childrenBestInterest", "physicalPresenceDays", "taxFiledYears", "citizenshipProhibition", "prohibitionDetails"];
 const REHABILITATION_FIELDS = ["offenceDate", "offenceCountry", "offenceDescription", "courtOutcome", "sentenceCompletedDate", "policeCertificates", "rehabilitationEvidence"];

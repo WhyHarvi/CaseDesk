@@ -19,7 +19,7 @@ import {
   getCaseAssessment,
   saveCaseAssessment,
 } from "../controllers/caseAssessmentController.js";
-import { getCaseInformationWorkspace } from "../controllers/caseInformationWorkspaceController.js";
+import { getCaseInformationWorkspace, getCaseTypeMatch } from "../controllers/caseInformationWorkspaceController.js";
 import { patchCaseInformationSection, putCaseInformationSectionState } from "../controllers/caseInformationMutationController.js";
 import { reviewQuestionnaireAssignment } from "../controllers/questionnaireReviewController.js";
 import {
@@ -52,6 +52,7 @@ router.get("/:id/permissions", requireRole("admin"), asyncHandler(getCasePermiss
 router.put("/:id/permissions", requireRole("admin"), asyncHandler(updateCasePermissions));
 router.get("/:id/assessment", asyncHandler(getCaseAssessment));
 router.get("/:id/information-workspace", asyncHandler(getCaseInformationWorkspace));
+router.get("/:id/case-type-match", asyncHandler(getCaseTypeMatch));
 router.patch("/:id/information-sections/:sectionKey", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 60 }), asyncHandler(patchCaseInformationSection));
 router.put("/:id/information-sections/:sectionKey/state", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 60 }), asyncHandler(putCaseInformationSectionState));
 router.post("/:id/questionnaire-assignments/:assignmentId/review", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(reviewQuestionnaireAssignment));
