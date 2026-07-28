@@ -3480,7 +3480,7 @@ function CaseWorkspacePanel({
             value={formatCurrency(paymentSummary.paidAmount)}
           />
           <CompactMetric
-            label="Balance"
+            label="Remaining"
             value={formatCurrency(paymentSummary.balance)}
           />
           <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
