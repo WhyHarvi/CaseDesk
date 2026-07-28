@@ -3,9 +3,13 @@ import { Banknote, Calendar, Landmark, Lock, Plus, Trash2 } from "lucide-react";
 import { CASE_STAGES } from "../../constants/caseStages";
 import Select from "../ui/Select";
 
+// Labels matched to CaseBillingWorkspace.jsx's PAYMENT_TYPE_META — the
+// manual "Add invoice" form already used clear terms here; this editor's
+// generic "Fees" / "Disbursement" labels made the government-fee option
+// easy to miss or mistake for a professional fee.
 const PAYMENT_TYPES = [
-  { value: "fees", label: "Fees", icon: Banknote },
-  { value: "disbursement", label: "Disbursement", icon: Landmark },
+  { value: "fees", label: "Professional fees", icon: Banknote },
+  { value: "disbursement", label: "Govt. fee disbursement", icon: Landmark },
 ];
 
 let nextTempId = 1;
@@ -61,7 +65,7 @@ export default function InstallmentListEditor({ installments, onChange, lockedId
                     className={`mt-1 ${inputClass} disabled:bg-slate-100 disabled:text-slate-500`}
                   />
                 </label>
-                <label className="block text-[11px] font-medium text-slate-500">Type
+                <label className="block text-[11px] font-medium text-slate-500">Payment type
                   <Select disabled={locked} value={row.paymentType} onChange={(event) => updateRow(index, { paymentType: event.target.value })} className="mt-1 w-full">
                     {PAYMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                   </Select>
