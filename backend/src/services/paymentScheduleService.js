@@ -166,9 +166,11 @@ export async function createCaseSchedule(agencyId, { caseId, signingDate, instal
   });
 
   // A schedule built against a case that's already past some of its stage
-  // triggers (e.g. added retroactively) should catch those up immediately
-  // rather than waiting for the next stage change that may never come.
-  await evaluateStageTriggers(agencyId, caseId, null, caseItem.stage, actorUserId).catch((error) => {
+  // or date triggers (e.g. added retroactively, or a date-triggered
+  // installment whose days-after-signing already elapsed) should catch
+  // those up immediately rather than waiting for the next stage change or
+  // the next 15-minute date-trigger poll that may be a while away.
+  await catchUpDueInstallments(agencyId, caseId, actorUserId).catch((error) => {
     logger.warn("payment_schedule.catchup_failed", { agencyId, caseId, reason: error.message });
   });
 
@@ -239,6 +241,14 @@ export async function updateCaseInstallments(agencyId, caseId, { installments, a
     details: "Payment schedule installments updated",
     entityType: "casePaymentSchedule",
     entityId: schedule.id,
+  });
+
+  // A correction that fixes a due-but-stuck installment (wrong amount,
+  // wrong trigger, or just a payment type fixed after voiding a bad
+  // invoice) should invoice immediately if it's already due, not wait for
+  // the next 15-minute date-trigger poll.
+  await catchUpDueInstallments(agencyId, caseId, actorUserId).catch((error) => {
+    logger.warn("payment_schedule.catchup_failed", { agencyId, caseId, reason: error.message });
   });
 
   return getCaseSchedule(agencyId, caseId);
@@ -464,6 +474,40 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
   }
 
   return getCaseSchedule(agencyId, caseId);
+}
+
+/**
+ * Fires every Scheduled installment that's already due right now,
+ * regardless of how it got that way — a stage trigger the case has
+ * already reached, or a date trigger whose date has already passed. Used
+ * after creating or correcting a schedule so a fix doesn't have to wait
+ * for the next stage change (which may never come) or the next
+ * 15-minute date-trigger poll.
+ */
+async function catchUpDueInstallments(agencyId, caseId, actorUserId) {
+  const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { stage: true } });
+  if (!caseItem) return [];
+  const currentIndex = CASE_STAGES.indexOf(caseItem.stage);
+  const now = new Date();
+
+  const candidates = await prisma.casePaymentInstallment.findMany({ where: { agencyId, caseId, status: "Scheduled" } });
+  const due = candidates.filter((item) => {
+    if (item.triggerType === "Date") return Boolean(item.triggerDate) && item.triggerDate <= now;
+    const stageIndex = CASE_STAGES.indexOf(item.triggerStage);
+    return stageIndex !== -1 && currentIndex !== -1 && stageIndex <= currentIndex;
+  });
+
+  const results = [];
+  for (const installment of due) {
+    try {
+      const fired = await fireInstallment(agencyId, installment, actorUserId);
+      if (fired) results.push(fired);
+    } catch {
+      // Already logged inside fireInstallment; one failing installment must
+      // not block the others due right now.
+    }
+  }
+  return results;
 }
 
 /**
