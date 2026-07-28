@@ -29,6 +29,12 @@ export function buildMicrosoftMailboxState(agencyId, userId) {
   return Buffer.from(`${payload}.${signature}`).toString("base64url");
 }
 
+export function buildAgencyMicrosoftMailboxState(agencyId, userId) {
+  const payload = `system.${agencyId}.${userId}.${Date.now() + STATE_TTL_MS}.${randomUUID().slice(0, 12)}`;
+  const signature = createHmac("sha256", stateSecret()).update(payload).digest("hex");
+  return Buffer.from(`${payload}.${signature}`).toString("base64url");
+}
+
 export function parseMicrosoftMailboxState(state) {
   try {
     const parts = Buffer.from(String(state || ""), "base64url").toString().split(".");
@@ -39,6 +45,21 @@ export function parseMicrosoftMailboxState(state) {
     if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
     if (Number(expiry) < Date.now()) return null;
     return { agencyId, userId };
+  } catch {
+    return null;
+  }
+}
+
+export function parseAgencyMicrosoftMailboxState(state) {
+  try {
+    const parts = Buffer.from(String(state || ""), "base64url").toString().split(".");
+    if (parts.length !== 6 || parts[0] !== "system") return null;
+    const [, agencyId, userId, expiry, nonce, signature] = parts;
+    const payload = `system.${agencyId}.${userId}.${expiry}.${nonce}`;
+    const expected = createHmac("sha256", stateSecret()).update(payload).digest("hex");
+    if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    if (Number(expiry) < Date.now()) return null;
+    return { agencyId, userId, purpose: "system" };
   } catch {
     return null;
   }
@@ -127,6 +148,13 @@ export async function saveMicrosoftMailboxConnection({ agencyId, userId, tokens 
     select: { id: true },
   });
   if (existingForAddress) throw createHttpError(409, "This mailbox is already connected to another team member.");
+  const systemConnection = await prisma.agencyMicrosoftMailboxConnection.findFirst({
+    where: { emailAddress },
+    select: { id: true },
+  });
+  if (systemConnection) {
+    throw createHttpError(409, "This mailbox is already connected as a workspace system mailbox.");
+  }
   const claims = jwtClaims(tokens.access_token);
   const now = Date.now();
   return prisma.userMailboxConnection.upsert({
@@ -166,6 +194,67 @@ export async function saveMicrosoftMailboxConnection({ agencyId, userId, tokens 
   });
 }
 
+export async function saveAgencyMicrosoftMailboxConnection({ agencyId, userId, tokens }) {
+  const profile = await graphFetch(tokens.access_token, "/me?$select=id,displayName,mail,userPrincipalName");
+  const emailAddress = String(profile.mail || profile.userPrincipalName || "").trim().toLowerCase();
+  if (!emailAddress) throw createHttpError(409, "Microsoft did not provide an email address for this account.");
+  if (!tokens.refresh_token) {
+    throw createHttpError(409, "Microsoft did not provide long-term mailbox access. Approve offline access and try again.");
+  }
+  const personalConnection = await prisma.userMailboxConnection.findFirst({
+    where: { emailAddress },
+    select: { id: true },
+  });
+  if (personalConnection) {
+    throw createHttpError(409, "This mailbox is already connected as a team member's personal mailbox.");
+  }
+  const claims = jwtClaims(tokens.access_token);
+  const now = Date.now();
+  const connection = await prisma.agencyMicrosoftMailboxConnection.upsert({
+    where: { agencyId },
+    create: {
+      agencyId,
+      providerAccountId: profile.id,
+      tenantId: claims.tid || null,
+      emailAddress,
+      displayName: profile.displayName || null,
+      accessTokenEncrypted: encryptSecret(tokens.access_token),
+      refreshTokenEncrypted: encryptSecret(tokens.refresh_token),
+      accessTokenExpiresAt: new Date(now + Number(tokens.expires_in || 3600) * 1000),
+      grantedScopes: tokens.scope || SCOPES.join(" "),
+      status: "connected",
+      enabled: true,
+      inboundEnabled: true,
+      connectedById: userId,
+      lastError: null,
+      lastSyncStatus: "Ready",
+      lastSyncMessage: "System mailbox connected. Inbox synchronization is ready.",
+    },
+    update: {
+      providerAccountId: profile.id,
+      tenantId: claims.tid || null,
+      emailAddress,
+      displayName: profile.displayName || null,
+      accessTokenEncrypted: encryptSecret(tokens.access_token),
+      refreshTokenEncrypted: encryptSecret(tokens.refresh_token),
+      accessTokenExpiresAt: new Date(now + Number(tokens.expires_in || 3600) * 1000),
+      grantedScopes: tokens.scope || SCOPES.join(" "),
+      status: "connected",
+      enabled: true,
+      connectedById: userId,
+      connectedAt: new Date(),
+      lastError: null,
+      lastSyncStatus: "Ready",
+      lastSyncMessage: "System mailbox reconnected. Inbox synchronization is ready.",
+    },
+  });
+  await prisma.agencyMailSettings.updateMany({
+    where: { agencyId },
+    data: { enabled: false, inboundEnabled: false },
+  });
+  return connection;
+}
+
 async function refreshConnection(connection) {
   try {
     const tokens = await tokenRequest({
@@ -192,6 +281,35 @@ async function refreshConnection(connection) {
   }
 }
 
+async function refreshAgencyConnection(connection) {
+  try {
+    const tokens = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: decryptSecret(connection.refreshTokenEncrypted),
+    });
+    return prisma.agencyMicrosoftMailboxConnection.update({
+      where: { id: connection.id },
+      data: {
+        accessTokenEncrypted: encryptSecret(tokens.access_token),
+        ...(tokens.refresh_token ? { refreshTokenEncrypted: encryptSecret(tokens.refresh_token) } : {}),
+        accessTokenExpiresAt: new Date(Date.now() + Number(tokens.expires_in || 3600) * 1000),
+        grantedScopes: tokens.scope || connection.grantedScopes,
+        status: "connected",
+        lastError: null,
+      },
+    });
+  } catch (error) {
+    await prisma.agencyMicrosoftMailboxConnection.update({
+      where: { id: connection.id },
+      data: {
+        status: "reauthorization_required",
+        lastError: String(error.message || "Microsoft authorization expired.").slice(0, 500),
+      },
+    }).catch(() => {});
+    throw createHttpError(409, "Reconnect the system Microsoft mailbox in Settings.", "MICROSOFT_SYSTEM_MAIL_RECONNECT_REQUIRED");
+  }
+}
+
 export async function microsoftGraphClient(userId, { forceRefresh = false } = {}) {
   let connection = await prisma.userMailboxConnection.findUnique({ where: { userId } });
   if (!connection || connection.status !== "connected") {
@@ -214,7 +332,36 @@ export async function microsoftGraphClient(userId, { forceRefresh = false } = {}
   };
 }
 
+export async function agencyMicrosoftGraphClient(agencyId, { forceRefresh = false, requireEnabled = true } = {}) {
+  let connection = await prisma.agencyMicrosoftMailboxConnection.findUnique({ where: { agencyId } });
+  if (!connection || connection.status !== "connected" || (requireEnabled && !connection.enabled)) {
+    throw createHttpError(409, "Connect and enable the system Microsoft mailbox in Settings.", "SYSTEM_MAILBOX_NOT_CONNECTED");
+  }
+  if (forceRefresh || connection.accessTokenExpiresAt.getTime() < Date.now() + 2 * 60_000) {
+    connection = await refreshAgencyConnection(connection);
+  }
+  return {
+    connection,
+    request: async (path, options = {}) => {
+      try {
+        return await graphFetch(decryptSecret(connection.accessTokenEncrypted), path, options);
+      } catch (error) {
+        if (error.graphStatus !== 401) throw error;
+        connection = await refreshAgencyConnection(connection);
+        return graphFetch(decryptSecret(connection.accessTokenEncrypted), path, options);
+      }
+    },
+  };
+}
+
 const recipients = (values = []) => values.filter(Boolean).map((address) => ({ emailAddress: { address } }));
+const recipientValues = (values) => {
+  if (!values) return [];
+  if (Array.isArray(values)) return values.flatMap(recipientValues);
+  if (typeof values === "string") return values.split(",").map((item) => item.trim()).filter(Boolean);
+  if (values.address) return [values.address];
+  return [];
+};
 const escapeHtml = (value) =>
   String(value || "")
     .replace(/&/g, "&amp;")
@@ -260,6 +407,107 @@ export async function sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, 
     }),
   });
   return { id: null, provider: "Microsoft 365", response: { accepted: true, mailbox: connection.emailAddress } };
+}
+
+export async function sendAgencyMicrosoftMailboxEmail({
+  agencyId,
+  to,
+  cc,
+  bcc,
+  replyTo,
+  subject,
+  text,
+  html,
+  headers,
+  attachments = [],
+}) {
+  const { connection, request } = await agencyMicrosoftGraphClient(agencyId);
+  const totalBytes = attachments.reduce((sum, item) => sum + Number(item.content?.length || 0), 0);
+  if (totalBytes > 2.5 * 1024 * 1024) {
+    throw createHttpError(413, "Microsoft mailbox attachments are currently limited to 2.5 MB per email.");
+  }
+  await request("/me/sendMail", {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        subject: subject || "",
+        body: { contentType: html ? "HTML" : "Text", content: html || text || "" },
+        toRecipients: recipients(recipientValues(to)),
+        ccRecipients: recipients(recipientValues(cc)),
+        bccRecipients: recipients(recipientValues(bcc)),
+        ...(replyTo ? { replyTo: recipients(recipientValues(replyTo)) } : {}),
+        internetMessageHeaders: Object.entries(headers || {})
+          .filter(([name, value]) => /^x-/i.test(name) && value)
+          .map(([name, value]) => ({ name, value: String(value) })),
+        attachments: attachments.map((item) => ({
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: item.filename,
+          contentType: item.contentType || "application/octet-stream",
+          contentBytes: Buffer.from(item.content).toString("base64"),
+        })),
+      },
+      saveToSentItems: true,
+    }),
+  });
+  return {
+    id: null,
+    provider: "Microsoft 365",
+    response: { accepted: true, mailbox: connection.emailAddress },
+  };
+}
+
+export async function testAgencyMicrosoftMailbox(agencyId) {
+  const { connection, request } = await agencyMicrosoftGraphClient(agencyId, {
+    forceRefresh: true,
+    requireEnabled: false,
+  });
+  await request("/me/mailFolders/inbox?$select=id,displayName");
+  return prisma.agencyMicrosoftMailboxConnection.update({
+    where: { id: connection.id },
+    data: {
+      lastSyncStatus: "Connected",
+      lastSyncMessage: "Microsoft Graph can send mail and read this inbox.",
+      lastError: null,
+    },
+  });
+}
+
+export async function agencyMicrosoftMailboxStatus(agencyId) {
+  const connection = await prisma.agencyMicrosoftMailboxConnection.findUnique({
+    where: { agencyId },
+    select: {
+      provider: true,
+      emailAddress: true,
+      displayName: true,
+      status: true,
+      enabled: true,
+      inboundEnabled: true,
+      connectedAt: true,
+      lastSyncedAt: true,
+      lastSyncStatus: true,
+      lastSyncMessage: true,
+      lastError: true,
+    },
+  });
+  return {
+    configured: microsoftMailboxConfigured(),
+    connected: connection?.status === "connected",
+    ...(connection || {}),
+  };
+}
+
+export async function updateAgencyMicrosoftMailbox(agencyId, values) {
+  return prisma.agencyMicrosoftMailboxConnection.update({
+    where: { agencyId },
+    data: {
+      ...(values.enabled !== undefined ? { enabled: values.enabled === true } : {}),
+      ...(values.inboundEnabled !== undefined ? { inboundEnabled: values.inboundEnabled === true } : {}),
+    },
+  });
+}
+
+export async function disconnectAgencyMicrosoftMailbox(agencyId) {
+  await prisma.agencyMicrosoftMailboxConnection.delete({ where: { agencyId } }).catch(() => {});
 }
 
 export async function personalMailboxStatus(userId) {

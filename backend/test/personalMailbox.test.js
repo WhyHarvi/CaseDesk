@@ -52,3 +52,35 @@ test("user-authored CRM email uses its sender mailbox while automation keeps the
   assert.match(inbound, /only CRM-related mail is imported/);
   assert.match(inbound, /microsoftMessageId/);
 });
+
+test("workspace administrators connect a Microsoft system mailbox for automation and inbound replies", async () => {
+  const [schema, migration, routes, controller, service, agencyMail, inbound, panel] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260728183000_agency_microsoft_mailbox_connection/migration.sql"),
+    source("../src/routes/personalMailboxRoutes.js"),
+    source("../src/controllers/personalMailboxController.js"),
+    source("../src/services/microsoftMailboxService.js"),
+    source("../src/services/agencyMailService.js"),
+    source("../src/services/inboundMailSyncService.js"),
+    source("../../frontend/src/components/settings/AgencyMailSettingsPanel.jsx"),
+  ]);
+
+  assert.match(schema, /model AgencyMicrosoftMailboxConnection/);
+  assert.match(schema, /agencyId\s+String\s+@unique/);
+  assert.match(schema, /inboundEnabled\s+Boolean\s+@default\(true\)/);
+  assert.match(migration, /CREATE TABLE "agency_microsoft_mailbox_connections"/);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+  assert.match(routes, /\/system\/microsoft\/connect/);
+  assert.match(routes, /requireAuth, admin/);
+  assert.match(controller, /buildAgencyMicrosoftMailboxState/);
+  assert.match(controller, /saveAgencyMicrosoftMailboxConnection/);
+  assert.match(service, /agencyMicrosoftGraphClient/);
+  assert.match(service, /sendAgencyMicrosoftMailboxEmail/);
+  assert.match(agencyMail, /config\.graph === true/);
+  assert.match(agencyMail, /sendAgencyMicrosoftMailboxEmail/);
+  assert.match(inbound, /syncAgencyMicrosoftMailbox/);
+  assert.match(inbound, /microsoft-system:/);
+  assert.match(panel, /Connect the Microsoft system mailbox/);
+  assert.match(panel, /\/mailboxes\/system\/microsoft\/connect/);
+  assert.match(panel, /Receive client replies in CaseDesk/);
+});

@@ -47,6 +47,7 @@ const shouldReusePrisma =
   cachedPrisma.communicationMessage &&
   cachedPrisma.communicationOutbox &&
   cachedPrisma.agencyMailSettings &&
+  cachedPrisma.agencyMicrosoftMailboxConnection &&
   cachedPrisma.agencyOomaSettings &&
   cachedPrisma.notification &&
   cachedPrisma.notificationPreference &&

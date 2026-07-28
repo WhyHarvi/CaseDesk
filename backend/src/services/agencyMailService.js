@@ -2,6 +2,11 @@ import nodemailer from "nodemailer";
 import prisma from "./prisma/client.js";
 import { decryptSecret, secretEncryptionReady } from "./secretEncryption.js";
 import { createHttpError } from "../utils/http.js";
+import {
+  agencyMicrosoftMailboxStatus,
+  sendAgencyMicrosoftMailboxEmail,
+  testAgencyMicrosoftMailbox,
+} from "./microsoftMailboxService.js";
 
 const envReady = () => ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"].every((key) => String(process.env[key] || "").trim());
 
@@ -46,6 +51,32 @@ function storedConfig(settings) {
 }
 
 export function createMailTransport(config) {
+  if (config.graph === true) {
+    return {
+      verify: () => testAgencyMicrosoftMailbox(config.agencyId),
+      close: () => {},
+      sendMail: async (message) => {
+        const result = await sendAgencyMicrosoftMailboxEmail({
+          agencyId: config.agencyId,
+          to: message.to,
+          cc: message.cc,
+          bcc: message.bcc,
+          replyTo: message.replyTo,
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+          headers: message.headers,
+          attachments: message.attachments,
+        });
+        return {
+          messageId: result.id,
+          accepted: result.response?.accepted ? message.to : [],
+          provider: result.provider,
+          response: result.response,
+        };
+      },
+    };
+  }
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
@@ -59,6 +90,24 @@ export function createMailTransport(config) {
 }
 
 export async function resolveAgencyMailConfig(agencyId, { requireVerified = true } = {}) {
+  const microsoft = agencyId ? await agencyMicrosoftMailboxStatus(agencyId) : null;
+  if (microsoft?.emailAddress) {
+    if (!microsoft.connected) {
+      throw createHttpError(409, "Reconnect the system Microsoft mailbox in Settings.");
+    }
+    if (!microsoft.enabled) {
+      throw createHttpError(409, "System email is currently turned off in Settings.");
+    }
+    return {
+      source: "Agency",
+      provider: "Microsoft 365",
+      graph: true,
+      agencyId,
+      from: microsoft.displayName
+        ? { name: microsoft.displayName, address: microsoft.emailAddress }
+        : microsoft.emailAddress,
+    };
+  }
   const settings = agencyId
     ? await prisma.agencyMailSettings.findUnique({ where: { agencyId } })
     : null;
@@ -88,9 +137,23 @@ export async function resolveAgencyImapConfig(agencyId, { requireVerified = true
 }
 
 export async function agencyMailConnectionStatus(agencyId) {
-  const settings = agencyId
-    ? await prisma.agencyMailSettings.findUnique({ where: { agencyId } })
-    : null;
+  const [settings, microsoft] = await Promise.all([
+    agencyId ? prisma.agencyMailSettings.findUnique({ where: { agencyId } }) : null,
+    agencyId ? agencyMicrosoftMailboxStatus(agencyId) : null,
+  ]);
+  if (microsoft?.emailAddress) {
+    return {
+      configured: microsoft.connected && microsoft.enabled,
+      source: "Agency",
+      provider: "Microsoft 365",
+      detail: !microsoft.connected
+        ? "Reconnect the system Microsoft mailbox in Settings"
+        : !microsoft.enabled
+          ? "System Microsoft mailbox is turned off"
+          : `Connected as ${microsoft.emailAddress}`,
+      secureStorageReady: secretEncryptionReady(),
+    };
+  }
   const systemFallback = !settings && envReady();
   return {
     configured: Boolean((settings?.enabled && settings.lastTestStatus === "Connected") || systemFallback),

@@ -1,22 +1,35 @@
 import { agencyMailConnectionStatus, createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { personalMailboxStatus, sendMicrosoftMailboxEmail } from "./microsoftMailboxService.js";
+import {
+  agencyMicrosoftMailboxStatus,
+  personalMailboxStatus,
+  sendMicrosoftMailboxEmail,
+} from "./microsoftMailboxService.js";
 import { agencyOomaConnectionStatus, sendAgencyOomaSms, startAgencyOomaCall } from "./agencyOomaService.js";
 import { supabaseRealtimeReady } from "./supabaseRealtimeService.js";
 
 const enabled = (value) => Boolean(String(value || "").trim());
 
 export async function communicationProviderStatus(agencyId, userId = null) {
-  const [agencyMail, personalMail, ooma] = await Promise.all([
+  const [agencyMail, agencyMicrosoftMail, personalMail, ooma] = await Promise.all([
     agencyMailConnectionStatus(agencyId),
+    agencyMicrosoftMailboxStatus(agencyId),
     userId ? personalMailboxStatus(userId) : null,
     agencyOomaConnectionStatus(agencyId),
   ]);
   const imapConfigured = ["IMAP_HOST", "IMAP_PORT", "IMAP_USER", "IMAP_PASSWORD"].every((key) => enabled(process.env[key]));
   return {
     Email: {
-      provider: personalMail?.connected ? "Microsoft 365" : "Personal mailbox",
+      provider: personalMail?.connected
+        ? "Microsoft 365"
+        : agencyMicrosoftMail?.connected
+          ? "Microsoft 365"
+          : agencyMail.provider || "System email",
       sendConfigured: personalMail?.connected || (!userId && agencyMail.configured),
-      receiveConfigured: personalMail?.connected ? personalMail.syncEnabled : (!userId && imapConfigured),
+      receiveConfigured: personalMail?.connected
+        ? personalMail.syncEnabled
+        : !userId && agencyMicrosoftMail?.connected
+          ? agencyMicrosoftMail.inboundEnabled
+          : !userId && imapConfigured,
       detail: personalMail?.connected
         ? `Connected as ${personalMail.emailAddress}`
         : userId
@@ -66,7 +79,11 @@ export async function sendEmailMessage({ agencyId, userId = null, to, cc, bcc, r
     attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
     messageId: messageId || undefined,
   });
-  return { id: result.messageId, provider: "SMTP" };
+  return {
+    id: result.messageId,
+    provider: result.provider || "SMTP",
+    response: result.response,
+  };
 }
 
 export function sendOomaSms({ agencyId, to, body, idempotencyKey }) {

@@ -114,11 +114,12 @@ const SECTIONS = [
         icon: "check",
         h3: "Optional integrations.",
         h4: "Connected only if a Workplace enables them",
-        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Ooma (via Zapier) for SMS and calls; Microsoft 365 for personal mailbox connections — each only where a Workplace or individual user chooses to connect it.",
+        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Ooma (via Zapier) for SMS and calls; Microsoft 365 for personal and Workplace system mailbox connections — each only where a Workplace or individual user chooses to connect it.",
       },
     ],
     quickFacts: [
       { title: "Workplace email servers", text: "A Workplace's own email server (SMTP/IMAP), where the Workplace configures one for outbound and inbound mail." },
+      { title: "Microsoft 365 mailboxes", text: "A Workplace may connect a dedicated system mailbox through Microsoft Graph for automated messages and client reply synchronization." },
       { title: "Cross-border processing", text: "Some of these providers may store or process data outside of Canada. We take reasonable steps to ensure comparable protection wherever it's processed." },
     ],
   },

@@ -557,6 +557,7 @@ model Agency {
   immigrationProfiles            ImmigrationProfile[]
   immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
   mailSettings                   AgencyMailSettings?
+  microsoftMailboxConnection     AgencyMicrosoftMailboxConnection?
   userMailboxConnections         UserMailboxConnection[]
   quickBooksSettings             AgencyQuickBooksSettings?
   bookingPaymentHolds            BookingPaymentHold[]
@@ -894,6 +895,36 @@ model AgencyMailSettings {
 
   @@index([agencyId])
   @@map("agency_mail_settings")
+}
+
+model AgencyMicrosoftMailboxConnection {
+  id                    String    @id @default(uuid())
+  agencyId              String    @unique @map("agency_id")
+  provider              String    @default("Microsoft 365")
+  providerAccountId     String    @map("provider_account_id")
+  tenantId              String?   @map("tenant_id")
+  emailAddress          String    @unique @map("email_address")
+  displayName           String?   @map("display_name")
+  accessTokenEncrypted  String    @map("access_token_encrypted")
+  refreshTokenEncrypted String    @map("refresh_token_encrypted")
+  accessTokenExpiresAt  DateTime  @map("access_token_expires_at")
+  grantedScopes         String    @map("granted_scopes")
+  status                String    @default("connected")
+  enabled               Boolean   @default(true)
+  inboundEnabled        Boolean   @default(true) @map("inbound_enabled")
+  connectedById         String?   @map("connected_by_id")
+  connectedAt           DateTime  @default(now()) @map("connected_at")
+  lastSyncedAt          DateTime? @map("last_synced_at")
+  lastSyncStatus        String?   @map("last_sync_status")
+  lastSyncMessage       String?   @map("last_sync_message")
+  lastError             String?   @map("last_error")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  agency                Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([status, enabled])
+  @@index([inboundEnabled, status])
+  @@map("agency_microsoft_mailbox_connections")
 }
 
 model UserMailboxConnection {

@@ -23,7 +23,7 @@ const SECTIONS = [
     quickFacts: [
       { title: "QuickBooks", text: "Accounting, invoicing, and payment processing, where a Workplace connects a QuickBooks account." },
       { title: "Ooma, via Zapier", text: "SMS and call communications, where a Workplace enables this integration." },
-      { title: "Microsoft 365", text: "Personal mailbox connections, where an individual user connects one." },
+      { title: "Microsoft 365", text: "Personal mailbox connections and Workplace system mailboxes, where a user or Workplace administrator connects one." },
     ],
   },
   {

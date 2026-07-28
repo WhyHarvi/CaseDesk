@@ -15,6 +15,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "react-router-dom";
 import api from "../../services/api";
 
 const providers = [
@@ -206,7 +207,21 @@ function DisconnectDialog({ busy, error, onClose, onConfirm }) {
 }
 
 export default function AgencyMailSettingsPanel() {
+  const [searchParams] = useSearchParams();
   const [form, setForm] = useState(blankSettings);
+  const [microsoftMailbox, setMicrosoftMailbox] = useState({
+    configured: false,
+    connected: false,
+    emailAddress: "",
+    displayName: "",
+    status: "disconnected",
+    enabled: true,
+    inboundEnabled: true,
+    lastSyncedAt: null,
+    lastSyncStatus: null,
+    lastSyncMessage: null,
+    lastError: null,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -221,15 +236,22 @@ export default function AgencyMailSettingsPanel() {
 
   useEffect(() => {
     let active = true;
-    api
-      .get("/settings/mail")
-      .then((response) => {
-        if (active)
+    Promise.all([
+      api.get("/settings/mail"),
+      api.getFresh("/mailboxes/system"),
+    ])
+      .then(([settingsResponse, microsoftResponse]) => {
+        if (active) {
           setForm((current) => ({
             ...current,
-            ...response.data.data,
+            ...settingsResponse.data.data,
             password: "",
           }));
+          setMicrosoftMailbox((current) => ({
+            ...current,
+            ...microsoftResponse.data.data,
+          }));
+        }
       })
       .catch((requestError) => {
         if (active)
@@ -245,6 +267,14 @@ export default function AgencyMailSettingsPanel() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const result = searchParams.get("systemMailbox");
+    if (result === "connected") setNotice("System Microsoft mailbox connected and ready.");
+    if (["denied", "invalid", "error"].includes(result)) {
+      setError(searchParams.get("message") || "The Microsoft system mailbox could not be connected.");
+    }
+  }, [searchParams]);
 
   const chooseProvider = (provider) => {
     setForm((current) => ({
@@ -262,6 +292,71 @@ export default function AgencyMailSettingsPanel() {
     }));
     if (provider.id === "Custom") setAdvanced(true);
     setNotice("");
+  };
+
+  const connectMicrosoft = async () => {
+    try {
+      setSaving(true);
+      setError("");
+      setNotice("");
+      const response = await api.post("/mailboxes/system/microsoft/connect");
+      window.location.assign(response.data.data.url);
+    } catch (requestError) {
+      setSaving(false);
+      setError(requestError.response?.data?.message || "Microsoft sign-in could not be started.");
+    }
+  };
+
+  const saveMicrosoftPreferences = async (values) => {
+    try {
+      setSaving(true);
+      setError("");
+      const response = await api.patch("/mailboxes/system", {
+        enabled: values.enabled,
+        inboundEnabled: values.inboundEnabled,
+      });
+      setMicrosoftMailbox((current) => ({ ...current, ...response.data.data }));
+      setNotice("System mailbox preferences saved.");
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "System mailbox preferences could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testMicrosoft = async () => {
+    try {
+      setTesting(true);
+      setError("");
+      const response = await api.post("/mailboxes/system/test");
+      setMicrosoftMailbox((current) => ({ ...current, ...response.data.data }));
+      setNotice("Microsoft Graph connection checked successfully.");
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Microsoft Graph connection check failed.");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const disconnectMicrosoft = async () => {
+    if (!window.confirm("Disconnect the system Microsoft mailbox from CaseDesk?")) return;
+    try {
+      setSaving(true);
+      setError("");
+      await api.delete("/mailboxes/system");
+      setMicrosoftMailbox((current) => ({
+        ...current,
+        connected: false,
+        emailAddress: "",
+        displayName: "",
+        status: "disconnected",
+      }));
+      setNotice("System Microsoft mailbox disconnected.");
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "The system mailbox could not be disconnected.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveAndTest = async (event) => {
@@ -389,6 +484,135 @@ export default function AgencyMailSettingsPanel() {
             className="h-24 animate-pulse rounded-3xl bg-slate-100"
           />
         ))}
+      </div>
+    );
+  }
+
+  if (form.provider === "Microsoft 365" || microsoftMailbox.connected) {
+    const microsoftBusy = saving || testing;
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-4 border-b border-slate-200/80 pb-6 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-[13px] font-medium text-slate-500">Automated communication</p>
+            <h2 className="mt-1 text-[28px] font-semibold leading-9 tracking-[-0.03em] text-slate-950">System Email</h2>
+            <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
+              Send automated notices and synchronize client replies through Microsoft Graph.
+            </p>
+          </div>
+          {microsoftMailbox.connected ? (
+            <span className="inline-flex items-center gap-2 self-start rounded-full bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" /> Connected
+            </span>
+          ) : null}
+        </div>
+
+        {notice ? (
+          <div className="flex items-start gap-3 rounded-3xl bg-emerald-50 px-5 py-4 text-sm leading-6 text-emerald-800">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{notice}
+          </div>
+        ) : null}
+        {error ? (
+          <div className="flex items-start gap-3 rounded-3xl bg-rose-50 px-5 py-4 text-sm leading-6 text-rose-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}
+          </div>
+        ) : null}
+
+        {!microsoftMailbox.connected ? (
+          <section className="rounded-[1.8rem] border border-sky-100 bg-gradient-to-br from-sky-50 via-white to-indigo-50 p-6 shadow-[0_18px_50px_rgba(14,165,233,0.08)]">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-950">Connect the Microsoft system mailbox</h3>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">
+                  Sign in as the dedicated mailbox account. CaseDesk will use Microsoft Graph for system-wide messages and inbox synchronization—no app password or SMTP connection is needed.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={saving || !microsoftMailbox.configured}
+                onClick={connectMicrosoft}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                {saving ? "Opening Microsoft…" : "Connect Outlook"}
+              </button>
+            </div>
+            {!microsoftMailbox.configured ? (
+              <p className="mt-4 rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                Add the Microsoft OAuth credentials and mailbox encryption key to the backend before connecting.
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => chooseProvider(providers[3])}
+              className="mt-5 text-xs font-semibold text-slate-500 underline underline-offset-4"
+            >
+              Configure a different email provider
+            </button>
+          </section>
+        ) : (
+          <>
+            <section className="rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-[0_14px_38px_rgba(15,23,42,0.05)]">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#eef4ff] text-[#2563eb]">
+                    <Mail className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-950">{microsoftMailbox.displayName || "Microsoft system mailbox"}</p>
+                    <p className="mt-0.5 truncate text-sm text-slate-500">{microsoftMailbox.emailAddress} · Microsoft Graph</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" disabled={microsoftBusy} onClick={testMicrosoft} className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
+                    {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} Check connection
+                  </button>
+                  <button type="button" disabled={microsoftBusy} onClick={disconnectMicrosoft} className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-50 text-rose-600 disabled:opacity-50" aria-label="Disconnect Microsoft system mailbox">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              {microsoftMailbox.lastSyncMessage ? (
+                <p className={`mt-4 rounded-2xl px-4 py-3 text-sm ${microsoftMailbox.lastSyncStatus === "Failed" ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>
+                  {microsoftMailbox.lastSyncMessage}
+                </p>
+              ) : null}
+            </section>
+
+            <section className="space-y-3 rounded-[1.6rem] border border-slate-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.04)]">
+              <label className="flex items-center justify-between gap-5">
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">Use for automated system email</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-500">Appointment, billing, portal, and reminder messages will use this mailbox.</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={microsoftBusy}
+                  onClick={() => saveMicrosoftPreferences({ ...microsoftMailbox, enabled: !microsoftMailbox.enabled })}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${microsoftMailbox.enabled ? "bg-slate-950" : "bg-slate-300"}`}
+                  aria-label="Toggle automated system email"
+                >
+                  <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${microsoftMailbox.enabled ? "left-6" : "left-1"}`} />
+                </button>
+              </label>
+              <label className="flex items-center justify-between gap-5 border-t border-slate-100 pt-4">
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">Receive client replies in CaseDesk</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-500">Match Microsoft inbox replies to cases and send unmatched mail to the Unassigned inbox.</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={microsoftBusy}
+                  onClick={() => saveMicrosoftPreferences({ ...microsoftMailbox, inboundEnabled: !microsoftMailbox.inboundEnabled })}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition disabled:opacity-50 ${microsoftMailbox.inboundEnabled ? "bg-slate-950" : "bg-slate-300"}`}
+                  aria-label="Toggle Microsoft inbox synchronization"
+                >
+                  <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${microsoftMailbox.inboundEnabled ? "left-6" : "left-1"}`} />
+                </button>
+              </label>
+            </section>
+          </>
+        )}
       </div>
     );
   }
