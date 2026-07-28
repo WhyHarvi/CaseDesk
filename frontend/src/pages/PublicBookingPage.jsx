@@ -2,24 +2,29 @@ import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-mo
 import {
   ArrowLeft,
   ArrowRight,
-  Building2,
-  CalendarDays,
+  Briefcase,
+  Calendar,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
   ExternalLink,
   Globe2,
+  Info,
   Loader2,
   Mail,
   MapPin,
   Phone,
+  User,
   Video,
   Wallet,
+  X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { gsap } from "gsap";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "react-router-dom";
-import { createPublicBooking, createPublicBookingPaymentHold, getPublicAvailability, getPublicBookingInfo, getPublicBookingPaymentHoldStatus, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
+import { createPublicBooking, createPublicBookingPaymentHold, getPublicAvailability, getPublicBookingAvatarUrl, getPublicBookingInfo, getPublicBookingPaymentHoldStatus, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const spring = { type: "spring", stiffness: 380, damping: 32 };
@@ -35,26 +40,62 @@ function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function zonedDateKey(value, timezone) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date(value))
+    .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function formatTime(value, timezone) {
   return new Date(value).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" });
+}
+
+function formatTimeWithZone(value, timezone) {
+  return new Date(value).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
+function isAfternoon(value, timezone) {
+  const hour = Number(new Intl.DateTimeFormat("en-CA", { timeZone: timezone, hour: "numeric", hour12: false }).format(new Date(value)));
+  return hour >= 12;
 }
 
 function externalUrl(value) {
   return /^https?:\/\//i.test(value || "") ? value : `https://${value}`;
 }
 
-const glass = "rounded-[1.6rem] border border-white/70 bg-white/70 shadow-[0_18px_50px_rgba(15,23,42,0.10)] backdrop-blur-2xl";
+function DetailRow({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600"><Icon className="h-4 w-4" /></span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-medium text-slate-400">{label}</span>
+        <span className="block truncate text-sm font-semibold text-slate-900">{value}</span>
+      </span>
+    </div>
+  );
+}
 
-/** Month calendar with available-day highlighting; slots render BELOW via onDaySelect. */
-export function BookingMonthPicker({ fetchAvailability, onPickSlot, timezone }) {
+const MICRO_STEPS = ["Select date", "Select time", "Confirm"];
+
+/**
+ * Three persistent columns — date, time, confirm — matching the target
+ * layout: picking a day never hides the calendar, and picking a slot
+ * never hides the time list. The confirm column is a standing panel,
+ * not a state that swaps another column away.
+ */
+export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot, timezone, sessionType, agencyName, consultantName }) {
+  const initialDay = initialSlot?.startsAt
+    ? zonedDateKey(initialSlot.startsAt, timezone)
+    : null;
   const [cursor, setCursor] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const startingDate = initialDay ? new Date(`${initialDay}T12:00:00`) : new Date();
+    return new Date(startingDate.getFullYear(), startingDate.getMonth(), 1);
   });
   const [days, setDays] = useState({});
   const [loading, setLoading] = useState(true);
-  const [selectedDay, setSelectedDay] = useState(null);
-  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [selectedDay, setSelectedDay] = useState(initialDay);
+  const [selectedSlot, setSelectedSlot] = useState(initialSlot || null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,118 +123,189 @@ export function BookingMonthPicker({ fetchAvailability, onPickSlot, timezone }) 
   }, [cursor]);
 
   const slots = selectedDay ? days[selectedDay] || [] : [];
+  const morningSlots = slots.filter((item) => !isAfternoon(item.startsAt, timezone));
+  const afternoonSlots = slots.filter((item) => isAfternoon(item.startsAt, timezone));
   const todayKey = dateKey(new Date());
+  const selectedDayLabel = selectedDay
+    ? new Date(`${selectedDay}T12:00:00`).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" })
+    : "";
+  const selectedDayLabelFull = selectedDay
+    ? new Date(`${selectedDay}T12:00:00`).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+    : "";
+  const microStep = !selectedDay ? 0 : !selectedSlot ? 1 : 2;
+
+  const renderSlot = (slotItem, index) => (
+    <motion.button
+      key={slotItem.startsAt}
+      type="button"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: Math.min(index * 0.02, 0.25), ...spring }}
+      whileTap={{ scale: 0.94 }}
+      onClick={() => setSelectedSlot(slotItem)}
+      className={`min-h-[44px] rounded-2xl border px-2 py-2.5 text-sm font-semibold transition-colors ${
+        selectedSlot?.startsAt === slotItem.startsAt
+          ? "border-sky-600 bg-sky-600 text-white"
+          : "border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50"
+      }`}
+    >
+      {formatTime(slotItem.startsAt, timezone)}
+    </motion.button>
+  );
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <AnimatePresence mode="wait">
-          <motion.p key={cursor.toISOString()} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="text-base font-semibold text-slate-900">
-            {cursor.toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
-          </motion.p>
-        </AnimatePresence>
-        <div className="flex items-center gap-1.5">
-          <button type="button" aria-label="Previous month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)); setSelectedDay(null); setSelectedSlot(null); }} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:bg-white active:scale-95">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button type="button" aria-label="Next month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)); setSelectedDay(null); setSelectedSlot(null); }} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:bg-white active:scale-95">
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-7 text-center">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
-          <span key={label} className="pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-4 flex shrink-0 items-center gap-2">
+        {MICRO_STEPS.map((label, index) => (
+          <Fragment key={label}>
+            <div className="flex items-center gap-1.5">
+              <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                index === microStep ? "bg-sky-600 text-white" : index < microStep ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-400"
+              }`}>
+                {index < microStep ? "✓" : index + 1}
+              </span>
+              <span className={`text-xs font-semibold ${index === microStep ? "text-slate-900" : "text-slate-400"}`}>{label}</span>
+            </div>
+            {index < MICRO_STEPS.length - 1 ? <span className="h-px w-5 shrink-0 bg-slate-200" /> : null}
+          </Fragment>
         ))}
-        {cells.map((cell, index) => {
-          const key = dateKey(cell);
-          const inMonth = cell.getMonth() === cursor.getMonth();
-          const available = (days[key] || []).length > 0;
-          const isSelected = key === selectedDay;
-          return (
-            <span key={key} className="flex h-12 items-center justify-center">
-              <motion.button
-                type="button"
-                disabled={!available}
-                initial={false}
-                animate={{ scale: isSelected ? 1.08 : 1 }}
-                transition={spring}
-                whileTap={available ? { scale: 0.9 } : undefined}
-                onClick={() => { setSelectedDay(key); setSelectedSlot(null); }}
-                className={`relative flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium transition-colors ${
-                  isSelected
-                    ? "bg-sky-600 text-white shadow-[0_10px_24px_rgba(2,132,199,0.45)]"
-                    : available
-                      ? "font-semibold text-slate-800 hover:bg-white"
-                      : inMonth
-                        ? "text-slate-300"
-                        : "text-slate-200"
-                } ${key === todayKey && !isSelected ? "ring-1 ring-inset ring-sky-300" : ""}`}
-              >
-                {cell.getDate()}
-                {available && !isSelected ? <span className="absolute bottom-1 h-1 w-1 rounded-full bg-sky-500" /> : null}
-              </motion.button>
-            </span>
-          );
-        })}
       </div>
-      {loading ? <p className="mt-1 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking availability…</p> : null}
 
-      <AnimatePresence mode="wait">
-        {selectedDay ? (
-          <motion.div
-            key={selectedDay}
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="mt-4 border-t border-slate-200/60 pt-4">
-              <p className="text-sm font-semibold text-slate-900">
-                {new Date(`${selectedDay}T12:00:00`).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}
-              </p>
-              <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
-                {slots.map((slot, index) => (
+      <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
+        <div className="shrink-0 lg:w-[260px]">
+          <div className="flex items-center justify-between">
+            <AnimatePresence mode="wait">
+              <motion.p key={cursor.toISOString()} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="text-base font-semibold text-slate-900">
+                {cursor.toLocaleDateString("en-CA", { month: "long", year: "numeric" })}
+              </motion.p>
+            </AnimatePresence>
+            <div className="flex items-center gap-1.5">
+              <button type="button" aria-label="Previous month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1)); setSelectedDay(null); setSelectedSlot(null); }} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:scale-95">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button type="button" aria-label="Next month" onClick={() => { setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)); setSelectedDay(null); setSelectedSlot(null); }} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 active:scale-95">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-7 text-center">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
+              <span key={label} className="pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+            ))}
+            {cells.map((cell) => {
+              const key = dateKey(cell);
+              const inMonth = cell.getMonth() === cursor.getMonth();
+              const available = (days[key] || []).length > 0;
+              const isSelected = key === selectedDay;
+              return (
+                <span key={key} className="flex h-11 items-center justify-center">
                   <motion.button
-                    key={slot.startsAt}
                     type="button"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(index * 0.02, 0.25), ...spring }}
-                    whileTap={{ scale: 0.94 }}
-                    onClick={() => { setSelectedSlot(slot); onPickSlot(slot); }}
-                    className={`rounded-2xl border px-2 py-2.5 text-sm font-semibold transition-colors ${
-                      selectedSlot?.startsAt === slot.startsAt
-                        ? "border-sky-600 bg-sky-600 text-white shadow-[0_10px_24px_rgba(2,132,199,0.4)]"
-                        : "border-slate-200/80 bg-white/80 text-slate-700 hover:border-sky-300 hover:bg-white"
-                    }`}
+                    disabled={!available}
+                    initial={false}
+                    animate={{ scale: isSelected ? 1.08 : 1 }}
+                    transition={spring}
+                    whileTap={available ? { scale: 0.9 } : undefined}
+                    onClick={() => { setSelectedDay(key); setSelectedSlot(null); }}
+                    className={`relative flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium transition-colors ${
+                      isSelected
+                        ? "bg-sky-600 text-white shadow-[0_10px_24px_rgba(2,132,199,0.45)]"
+                        : available
+                          ? "font-semibold text-slate-800 hover:bg-slate-100"
+                          : inMonth
+                            ? "text-slate-300"
+                            : "text-slate-200"
+                    } ${key === todayKey && !isSelected ? "ring-1 ring-inset ring-sky-300" : ""}`}
                   >
-                    {formatTime(slot.startsAt, timezone)}
+                    {cell.getDate()}
+                    {available && !isSelected ? <span className="absolute bottom-1 h-1 w-1 rounded-full bg-sky-500" /> : null}
                   </motion.button>
-                ))}
+                </span>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-sky-500" /> Available</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-300" /> Unavailable</span>
+          </div>
+          {loading ? <p className="mt-2 flex items-center gap-2 text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking availability…</p> : null}
+        </div>
+
+        <div className={`flex min-h-0 flex-1 flex-col border-t border-slate-100 pt-5 lg:border-l lg:border-t-0 lg:px-6 lg:pt-0 ${selectedDay ? "flex" : "hidden lg:flex"}`}>
+          {!selectedDay ? (
+            <div className="hidden flex-1 items-center justify-center rounded-2xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-400 lg:flex">
+              Select a date to see available times
+            </div>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-slate-900">Select a time for {selectedDayLabel}</p>
+              <p className="mt-0.5 text-xs text-slate-400">All times shown in {timezone}</p>
+              <div className="mt-3 grid flex-1 auto-rows-min grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
+                {morningSlots.map((slotItem, index) => renderSlot(slotItem, index))}
+                {afternoonSlots.length ? (
+                  <div className="col-span-full my-1 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <span className="h-px flex-1 bg-slate-200" /> Afternoon <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                ) : null}
+                {afternoonSlots.map((slotItem, index) => renderSlot(slotItem, morningSlots.length + index))}
                 {!slots.length ? <p className="col-span-full text-sm text-slate-400">No times left on this day.</p> : null}
               </div>
+            </>
+          )}
+        </div>
+
+        <div className={`shrink-0 flex-col border-t border-slate-100 pt-5 lg:w-[300px] lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 ${selectedSlot ? "flex" : "hidden lg:flex"}`}>
+          {!selectedSlot ? (
+            <div className="hidden flex-1 flex-col items-center justify-center rounded-2xl bg-slate-50 p-6 text-center text-sm text-slate-400 lg:flex">
+              Pick a date and time to review your booking
             </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+          ) : (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-1 flex-col">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <CheckCircle2 className="h-5 w-5" />
+                <p className="text-sm font-semibold text-slate-900">Confirm your booking</p>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">Review your details and continue.</p>
+
+              <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <DetailRow icon={Calendar} label="Date" value={selectedDayLabelFull} />
+                <DetailRow icon={Clock3} label="Time" value={formatTimeWithZone(selectedSlot.startsAt, timezone)} />
+                {sessionType ? <DetailRow icon={Briefcase} label="Service" value={`${sessionType.name} (${sessionType.durationMinutes} min)`} /> : null}
+                <DetailRow icon={User} label="With" value={consultantName || agencyName} />
+              </div>
+
+              <div className="mt-4 flex flex-col gap-2">
+                <button type="button" onClick={() => onPickSlot(selectedSlot)} className="flex h-12 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800">
+                  Continue
+                </button>
+                <button type="button" onClick={() => setSelectedSlot(null)} className="flex h-12 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                  Choose another time
+                </button>
+                <button type="button" onClick={() => { setSelectedDay(null); setSelectedSlot(null); }} className="mt-1 flex items-center justify-center gap-1 text-xs font-semibold text-slate-500 transition hover:text-slate-800">
+                  <ArrowLeft className="h-3.5 w-3.5" /> Back to date selection
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 export function PublicShell({ children, agencyName }) {
   return (
-    <main className="min-h-[100dvh] bg-[radial-gradient(circle_at_15%_10%,rgba(56,130,246,0.14),transparent_38%),radial-gradient(circle_at_85%_85%,rgba(125,159,201,0.16),transparent_40%),linear-gradient(160deg,#f2f6fb_0%,#e7eef7_60%,#e2ebf5_100%)] px-4 py-6 sm:px-6 sm:py-10">
-      <div className="mx-auto flex min-h-[calc(100dvh-3rem)] w-full max-w-xl flex-col justify-center sm:min-h-[calc(100dvh-5rem)]">
+    <main className="flex min-h-[100dvh] flex-col items-center justify-center bg-white px-4 py-6 sm:px-6">
+      <div className="w-full max-w-xl">
         {agencyName ? (
           <div className="mb-5 text-center">
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Book with</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">{agencyName}</h1>
           </div>
         ) : null}
-        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }} className={`${glass} p-6 sm:p-8`}>
+        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }} className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
           {children}
         </motion.div>
         <p className="mt-5 text-center text-xs text-slate-400">Powered by CaseDesk</p>
@@ -275,7 +387,10 @@ export default function PublicBookingPage() {
   const [waitlistDates, setWaitlistDates] = useState(() => ({ from: dateKey(new Date()), to: dateKey(new Date(Date.now() + 30 * DAY_MS)) }));
   const [paymentHold, setPaymentHold] = useState(null);
   const [verification, setVerification] = useState({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null });
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [cookieInfoOpen, setCookieInfoOpen] = useState(false);
   const bookingKey = useRef(crypto.randomUUID());
+  const heroRef = useRef(null);
 
   useEffect(() => {
     getPublicBookingInfo(token, offerToken)
@@ -320,13 +435,20 @@ export default function PublicBookingPage() {
   const selectableLocations = sessionType?.allowedLocationIds?.length ? info.locations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : info?.locations || [];
   const selectableConsultants = sessionType?.eligibleStaff?.length ? info.consultants.filter((item) => sessionType.eligibleStaff.some((eligible) => eligible.userId === item.id)) : info?.consultants || [];
   const location = selectableLocations.find((item) => item.id === locationId) || null;
+  const consultantName = selectableConsultants.find((item) => item.id === consultantId)?.name || null;
   const needsLocationStep = meetingMode === "InPerson" && selectableLocations.length > 1;
+  const meetingModeOptions = [
+    { id: "InPerson", label: "In person", icon: MapPin, disabled: !selectableLocations.length || (sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("InPerson")) },
+    { id: "Online", label: "Online video call", icon: Video, disabled: sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("Online") },
+  ].filter((option) => option.id !== "Online" || info?.onlineBookingEnabled !== false);
 
   useEffect(() => {
-    if (!sessionType?.allowedMeetingModes?.length || sessionType.allowedMeetingModes.includes(meetingMode)) return;
-    setMeetingMode(sessionType.allowedMeetingModes[0]);
+    const allowedModes = (sessionType?.allowedMeetingModes?.length ? sessionType.allowedMeetingModes : ["InPerson", "Online"])
+      .filter((mode) => mode !== "Online" || info?.onlineBookingEnabled !== false);
+    if (!allowedModes.length || allowedModes.includes(meetingMode)) return;
+    setMeetingMode(allowedModes[0] || "InPerson");
     setSlot(null);
-  }, [sessionType, meetingMode]);
+  }, [sessionType, meetingMode, info?.onlineBookingEnabled]);
 
   useEffect(() => {
     if (consultantId && !selectableConsultants.some((item) => item.id === consultantId)) setConsultantId("");
@@ -343,6 +465,17 @@ export default function PublicBookingPage() {
   }
 
   const requiresPayment = Boolean(info?.consultFeeEnabled && Number(info?.consultFeeAmount) > 0);
+
+  useEffect(() => {
+    if (!info || !heroRef.current) return undefined;
+    const context = gsap.context(() => {
+      gsap.timeline({ defaults: { ease: "power3.out" } })
+        .from("[data-booking-hero='logo']", { opacity: 0, scale: 0.82, y: -6, duration: 0.4 })
+        .from("[data-booking-hero='copy']", { opacity: 0, y: 10, duration: 0.4, stagger: 0.08 }, "-=0.2")
+        .from("[data-booking-hero='pill']", { opacity: 0, scale: 0.8, duration: 0.5, ease: "elastic.out(1, 0.55)" }, "-=0.25");
+    }, heroRef);
+    return () => context.revert();
+  }, [info]);
 
   async function submit() {
     if (saving) return;
@@ -457,73 +590,66 @@ export default function PublicBookingPage() {
   const agency = info.agency || { name: info.agencyName };
   const agencyAddress = [agency.address, agency.city, agency.province, agency.postalCode, agency.country].filter(Boolean).join(", ");
   const stepIndex = { service: 0, location: 1, time: 2, details: 3, waitlist: 3, payment: 3, done: 4 }[step];
+  const summarySession = sessionType || info.sessionTypes[0] || null;
+  const currency = agency.defaultCurrency || "CAD";
+  const bookingLogoUrl = agency.hasAvatar ? getPublicBookingAvatarUrl(token) : agency.logoUrl;
+  const summaryMeta = [
+    summarySession ? `${summarySession.durationMinutes} min` : null,
+    requiresPayment ? Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency }) : null,
+  ].filter(Boolean).join(" · ");
+  const headline = info.publicHeadline || "Schedule your consultation";
+  const signOff = info.publicSignOffName || `TEAM — ${info.agencyName}`;
 
-  const summaryPanel = (
-    <div className="flex flex-col">
-      {agency.logoUrl ? (
-        <img src={agency.logoUrl} alt={`${info.agencyName} logo`} className="h-16 w-16 rounded-2xl border border-white/80 bg-white object-contain p-1 shadow-[0_14px_30px_rgba(15,23,42,0.12)]" />
-      ) : (
-        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-lg font-bold text-white shadow-[0_14px_30px_rgba(56,130,246,0.35)]">{initials}</span>
-      )}
-      <h1 className="mt-4 text-xl font-semibold leading-7 tracking-tight text-slate-950">{info.agencyName}</h1>
-      <p className="mt-1 text-sm text-slate-500">Immigration consultation booking</p>
+  const brandLogo = (className) => bookingLogoUrl ? (
+    <img src={bookingLogoUrl} alt={`${info.agencyName} logo`} className={`${className} border border-white/80 bg-white object-contain p-1 shadow-[0_14px_30px_rgba(15,23,42,0.12)]`} />
+  ) : (
+    <span className={`${className} flex items-center justify-center bg-gradient-to-br from-sky-500 to-indigo-600 font-bold text-white shadow-[0_14px_30px_rgba(56,130,246,0.35)]`}>{initials}</span>
+  );
 
-      {(agencyAddress || agency.phone || agency.email || agency.website) ? (
-        <div className="mt-6 space-y-3 border-y border-slate-200/70 py-5 text-sm text-slate-600">
-          {agencyAddress ? <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{agencyAddress}</span></p> : null}
-          {agency.phone ? <a href={`tel:${agency.phone}`} className="flex items-center gap-2.5 transition hover:text-sky-700"><Phone className="h-4 w-4 shrink-0 text-slate-400" />{agency.phone}</a> : null}
-          {agency.email ? <a href={`mailto:${agency.email}`} className="flex items-center gap-2.5 break-all transition hover:text-sky-700"><Mail className="h-4 w-4 shrink-0 text-slate-400" />{agency.email}</a> : null}
-          {agency.website ? <a href={externalUrl(agency.website)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2.5 transition hover:text-sky-700"><Globe2 className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate">{agency.website.replace(/^https?:\/\//, "")}</span><ExternalLink className="h-3 w-3 shrink-0" /></a> : null}
-        </div>
-      ) : null}
+  const contactBlock = (className = "") => (agencyAddress || agency.phone || agency.email || agency.website) ? (
+    <div className={`space-y-1.5 text-sm text-slate-600 ${className}`}>
+      {agencyAddress ? <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{agencyAddress}</span></p> : null}
+      {agency.phone ? <a href={`tel:${agency.phone}`} className="flex items-center gap-2.5 transition hover:text-sky-700"><Phone className="h-4 w-4 shrink-0 text-slate-400" />{agency.phone}</a> : null}
+      {agency.email ? <a href={`mailto:${agency.email}`} className="flex items-center gap-2.5 break-all transition hover:text-sky-700"><Mail className="h-4 w-4 shrink-0 text-slate-400" />{agency.email}</a> : null}
+      {agency.website ? <a href={externalUrl(agency.website)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2.5 transition hover:text-sky-700"><Globe2 className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate">{agency.website.replace(/^https?:\/\//, "")}</span><ExternalLink className="h-3 w-3 shrink-0" /></a> : null}
+    </div>
+  ) : null;
 
-      <div className="mt-6 space-y-3.5 text-sm text-slate-600">
-        {sessionType ? (
-          <p className="flex items-center gap-2.5"><Clock3 className="h-4 w-4 shrink-0 text-slate-400" />{sessionType.name} · {sessionType.durationMinutes} mins</p>
-        ) : null}
-        {meetingMode === "Online" ? (
-          <p className="flex items-start gap-2.5"><Video className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />Video call details provided upon confirmation</p>
-        ) : location ? (
-          <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{location.name}<span className="block text-xs text-slate-400">{location.address}</span></span></p>
-        ) : selectableLocations.length ? (
-          <p className="flex items-center gap-2.5"><Building2 className="h-4 w-4 shrink-0 text-slate-400" />{selectableLocations.length} office location{selectableLocations.length > 1 ? "s" : ""}</p>
-        ) : null}
-        {slot ? (
-          <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{new Date(slot.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "short", month: "short", day: "numeric" })} · {formatTime(slot.startsAt, info.timezone)}</p>
-        ) : null}
-      </div>
-
-      <div className="mt-6 hidden lg:block">
-        <div className="flex gap-1.5">
-          {[0, 1, 2, 3].map((index) => (
-            <span key={index} className={`h-1 flex-1 rounded-full transition-colors duration-300 ${index <= stepIndex ? "bg-sky-500" : "bg-slate-200"}`} />
-          ))}
-        </div>
-      </div>
+  const legalLinks = (
+    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] font-medium text-slate-400">
+      <button type="button" onClick={() => setCookieInfoOpen(true)} className="transition hover:text-slate-600">Cookie settings</button>
+      <a href="/legal/privacy" className="transition hover:text-slate-600">Privacy Policy</a>
     </div>
   );
 
   return (
-    <main className="min-h-[100dvh] bg-[radial-gradient(circle_at_15%_10%,rgba(56,130,246,0.14),transparent_38%),radial-gradient(circle_at_85%_85%,rgba(125,159,201,0.16),transparent_40%),linear-gradient(160deg,#f2f6fb_0%,#e7eef7_60%,#e2ebf5_100%)]">
-      <div className="mx-auto flex min-h-[100dvh] w-full max-w-6xl items-stretch p-3 sm:p-5 lg:items-center lg:p-6">
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className={`${glass} grid min-h-[calc(100dvh-1.5rem)] w-full overflow-hidden sm:min-h-[calc(100dvh-2.5rem)] lg:h-[calc(100dvh-3rem)] lg:min-h-0 lg:grid-cols-[340px_1fr]`}
-        >
-          <aside className="hidden overflow-y-auto border-r border-white/60 bg-white/40 p-8 lg:block">{summaryPanel}</aside>
+    <>
+    <main className="flex h-[100dvh] flex-col overflow-hidden bg-white">
+      <header ref={heroRef} className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-8">
+        <div className="flex min-w-0 items-center gap-3">
+          <div data-booking-hero="logo">{brandLogo("h-10 w-10 shrink-0 rounded-xl text-sm")}</div>
+          <div className="min-w-0" data-booking-hero="copy">
+            <p className="truncate text-sm font-semibold text-slate-950">{info.agencyName}</p>
+            <p className="truncate text-xs text-slate-500">{headline}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {summaryMeta ? <span data-booking-hero="pill" className="hidden rounded-full border border-sky-100 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-800 sm:inline-block">{summaryMeta}</span> : null}
+          <button type="button" onClick={() => setInfoOpen(true)} aria-label="About this consultation" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50">
+            <Info className="h-4 w-4" />
+          </button>
+        </div>
+      </header>
 
-          <div className="flex min-h-0 flex-col overflow-y-auto p-5 sm:p-8">
-            <div className="mb-5 flex items-center gap-3 lg:hidden">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-sm font-bold text-white">{initials}</span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-950">{info.agencyName}</p>
-                <p className="text-xs text-slate-400">Immigration consultation booking</p>
-              </div>
-            </div>
+      <div className="flex min-h-0 flex-1 items-stretch justify-center overflow-hidden">
+        <div className={`flex w-full flex-col overflow-y-auto px-4 py-5 sm:px-8 sm:py-6 ${step === "time" ? "max-w-6xl" : "max-w-4xl"}`}>
+          <div className="mb-3 hidden items-center gap-1.5 sm:flex">
+            {[0, 1, 2, 3].map((index) => (
+              <span key={index} className={`h-1 flex-1 rounded-full transition-colors duration-300 ${index <= stepIndex ? "bg-sky-500" : "bg-slate-200"}`} />
+            ))}
+          </div>
 
-            <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait">
               {step === "service" ? (
                 <motion.div key="service" {...stepMotion} className="flex flex-1 flex-col">
                   <h2 className="text-lg font-semibold text-slate-950">What would you like to book?</h2>
@@ -548,26 +674,27 @@ export default function PublicBookingPage() {
                     {!info.sessionTypes.length ? <p className="text-sm text-slate-400">No bookable services right now.</p> : null}
                   </div>
 
-                  <p className="mt-5 text-sm font-medium text-slate-700">How would you like to meet?</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    {[
-                      { id: "InPerson", label: "In person", icon: MapPin, disabled: !selectableLocations.length || (sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("InPerson")) },
-                      { id: "Online", label: "Online video call", icon: Video, disabled: sessionType?.allowedMeetingModes && !sessionType.allowedMeetingModes.includes("Online") },
-                    ].map(({ id, label, icon: Icon, disabled }) => (
-                      <motion.button
-                        key={id}
-                        type="button"
-                        disabled={disabled}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={() => setMeetingMode(id)}
-                        className={`flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                          meetingMode === id ? "border-sky-600 bg-sky-600 text-white shadow-[0_10px_25px_rgba(2,132,199,0.35)]" : "border-slate-200/80 bg-white/70 text-slate-700 hover:border-slate-300"
-                        } disabled:opacity-40`}
-                      >
-                        <Icon className="h-4 w-4" /> {label}
-                      </motion.button>
-                    ))}
-                  </div>
+                  {meetingModeOptions.length > 1 ? (
+                    <>
+                      <p className="mt-5 text-sm font-medium text-slate-700">How would you like to meet?</p>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {meetingModeOptions.map(({ id, label, icon: Icon, disabled }) => (
+                          <motion.button
+                            key={id}
+                            type="button"
+                            disabled={disabled}
+                            whileTap={{ scale: 0.97 }}
+                            onClick={() => setMeetingMode(id)}
+                            className={`flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                              meetingMode === id ? "border-sky-600 bg-sky-600 text-white shadow-[0_10px_25px_rgba(2,132,199,0.35)]" : "border-slate-200/80 bg-white/70 text-slate-700 hover:border-slate-300"
+                            } disabled:opacity-40`}
+                          >
+                            <Icon className="h-4 w-4" /> {label}
+                          </motion.button>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
 
                   {selectableConsultants.length > 1 ? (
                     <div className="mt-5"><p className="text-sm font-medium text-slate-700">Consultant preference <span className="font-normal text-slate-400">(optional)</span></p><div className="mt-2 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setConsultantId(""); setSlot(null); }} className={`rounded-2xl border px-3 py-3 text-left transition ${!consultantId ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200/80 bg-white/70"}`}><span className="block text-sm font-semibold text-slate-900">First available</span><span className="block text-xs text-slate-400">Fastest matching consultant</span></button>{selectableConsultants.map((consultant) => <button key={consultant.id} type="button" onClick={() => { setConsultantId(consultant.id); setSlot(null); }} className={`rounded-2xl border px-3 py-3 text-left transition ${consultantId === consultant.id ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200/80 bg-white/70"}`}><span className="block text-sm font-semibold text-slate-900">{consultant.name}</span><span className="block text-xs text-slate-400">{consultant.title}{consultant.specializations?.length ? ` · ${consultant.specializations.slice(0, 2).join(", ")}` : ""}</span></button>)}</div></div>
@@ -624,27 +751,29 @@ export default function PublicBookingPage() {
                   </motion.button>
                 </motion.div>
               ) : step === "time" ? (
-                <motion.div key="time" {...stepMotion} className="flex flex-1 flex-col">
+                <motion.div key="time" {...stepMotion} className="flex min-h-0 flex-1 flex-col">
                   <div className="mb-4 flex items-center justify-between">
                     <button type="button" onClick={() => setStep(needsLocationStep ? "location" : "service")} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-800">
                       <ArrowLeft className="h-4 w-4" /> Back
                     </button>
                     <p className="text-sm text-slate-500">{sessionType?.name} · {sessionType?.durationMinutes} min</p>
                   </div>
-                  <h2 className="mb-4 text-lg font-semibold text-slate-950">Select date and time</h2>
                   {error ? <p className="mb-3 rounded-2xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
-                  <BookingMonthPicker key={`${sessionTypeId}:${consultantId}`} fetchAvailability={fetchAvailability} timezone={info.timezone} onPickSlot={(picked) => { setSlot(picked); setError(""); }} />
-                  <div className="flex-1" />
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.98 }}
-                    disabled={!slot}
-                    onClick={() => setStep("details")}
-                    className="mt-6 flex min-h-[52px] w-full items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-                  >
-                    {slot ? `Continue with ${formatTime(slot.startsAt, info.timezone)}` : "Pick a time to continue"}
-                  </motion.button>
-                  {info.waitlistEnabled ? <button type="button" onClick={() => setStep("waitlist")} className="mt-3 text-sm font-semibold text-sky-700 transition hover:text-sky-900">Can’t find a suitable time? Join the waitlist</button> : null}
+                  <BookingMonthPicker
+                    key={`${sessionTypeId}:${consultantId}`}
+                    fetchAvailability={fetchAvailability}
+                    initialSlot={slot}
+                    timezone={info.timezone}
+                    sessionType={sessionType}
+                    agencyName={info.agencyName}
+                    consultantName={consultantName}
+                    onPickSlot={(picked) => {
+                      setSlot(picked);
+                      setError("");
+                      setStep("details");
+                    }}
+                  />
+                  {info.waitlistEnabled ? <button type="button" onClick={() => setStep("waitlist")} className="mt-4 shrink-0 text-sm font-semibold text-sky-700 transition hover:text-sky-900">Can’t find a suitable time? Join the waitlist</button> : null}
                 </motion.div>
               ) : step === "waitlist" ? (
                 <motion.div key="waitlist" {...stepMotion} className="flex flex-1 flex-col">
@@ -669,7 +798,7 @@ export default function PublicBookingPage() {
                   <button type="button" onClick={() => setStep("time")} className="mb-4 flex w-fit items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-slate-800">
                     <ArrowLeft className="h-4 w-4" /> Back
                   </button>
-                  <div className={`${glass} !rounded-2xl px-4 py-3.5 text-sm`}>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm">
                     <p className="font-semibold text-slate-900">{sessionType?.name}</p>
                     <p className="mt-0.5 text-slate-500">
                       {new Date(slot.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} · {formatTime(slot.startsAt, info.timezone)}
@@ -679,7 +808,7 @@ export default function PublicBookingPage() {
                     </p>
                     {requiresPayment ? (
                       <p className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2.5 text-xs font-semibold text-slate-600">
-                        <Wallet className="h-3.5 w-3.5 text-sky-600" /> {Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} due to confirm — paid securely by card on the next step
+                        <Wallet className="h-3.5 w-3.5 text-sky-600" /> {Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency })} due to confirm — paid securely by card on the next step
                       </p>
                     ) : null}
                   </div>
@@ -697,7 +826,7 @@ export default function PublicBookingPage() {
                     <label className="block text-xs font-medium text-slate-600">Phone (optional)
                       <input value={form.phone} onChange={(e) => setForm((c) => ({ ...c, phone: e.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="tel" />
                     </label>
-                    <label className="block text-xs font-medium text-slate-600">Anything we should know? (optional)
+                    <label className="block text-xs font-medium text-slate-600">What is your question? <span className="font-normal text-slate-400">Please share anything that will help prepare for our meeting.</span>
                       <textarea rows={2} value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} className={`mt-1.5 resize-none ${inputClass}`} />
                     </label>
                   </div>
@@ -708,7 +837,7 @@ export default function PublicBookingPage() {
                       <>
                         <div className="lg:hidden"><SlideToConfirm onConfirm={submit} busy={saving} label={requiresPayment ? "Slide to continue to payment" : "Slide to confirm booking"} /></div>
                         <motion.button type="button" whileTap={{ scale: 0.98 }} disabled={saving} onClick={submit} className="hidden min-h-[52px] w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60 lg:flex">
-                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Preparing…" : requiresPayment ? `Continue to payment · ${Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}` : "Confirm appointment"}
+                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Preparing…" : requiresPayment ? `Continue to payment · ${Number(info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency })}` : "Confirm appointment"}
                         </motion.button>
                       </>
                     ) : (
@@ -737,7 +866,7 @@ export default function PublicBookingPage() {
                         <Wallet className="h-8 w-8 text-sky-600" />
                       </motion.span>
                       <h2 className="mt-5 text-lg font-semibold text-slate-950">
-                        {Number(paymentHold?.amount ?? info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} to confirm your appointment
+                        {Number(paymentHold?.amount ?? info.consultFeeAmount).toLocaleString("en-CA", { style: "currency", currency })} to confirm your appointment
                       </h2>
                       <p className="mx-auto mt-1.5 max-w-[300px] text-sm leading-6 text-slate-500">
                         Pay securely on QuickBooks — your time is held for the next {paymentHold?.expiresAt ? Math.max(1, Math.round((new Date(paymentHold.expiresAt).getTime() - Date.now()) / 60000)) : "a few"} minutes.
@@ -766,7 +895,7 @@ export default function PublicBookingPage() {
                   {!done?.waitlist && (done?.referenceCode || done?.assignedTo?.fullName) ? <div className="mt-3 flex flex-wrap justify-center gap-2 text-xs">{done.referenceCode ? <span className="rounded-full bg-slate-100 px-2.5 py-1 font-mono font-semibold text-slate-600">{done.referenceCode}</span> : null}{done.assignedTo?.fullName ? <span className="rounded-full bg-sky-50 px-2.5 py-1 font-semibold text-sky-700">With {done.assignedTo.fullName}</span> : null}</div> : null}
 
                   {done?.location ? (
-                    <div className={`${glass} mt-5 w-full max-w-[340px] !rounded-2xl px-4 py-3.5 text-left text-sm`}>
+                    <div className="mt-5 w-full max-w-[340px] rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-left text-sm">
                       <p className="flex items-start gap-2.5 text-slate-700">
                         <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
                         <span>{done.location}
@@ -791,8 +920,39 @@ export default function PublicBookingPage() {
               )}
             </AnimatePresence>
           </div>
-        </motion.div>
-      </div>
+        </div>
     </main>
+    {infoOpen ? createPortal(
+      <div className="fixed inset-0 z-[9999] flex items-end justify-center bg-slate-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6" onMouseDown={() => setInfoOpen(false)}>
+        <div role="dialog" aria-modal="true" aria-labelledby="about-info-title" onMouseDown={(event) => event.stopPropagation()} className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-[24px] bg-white p-6 shadow-[0_30px_100px_rgba(15,23,42,0.35)] sm:rounded-[24px]">
+          <div className="flex items-start justify-between gap-3">
+            {brandLogo("h-12 w-12 shrink-0 rounded-xl text-base")}
+            <button type="button" onClick={() => setInfoOpen(false)} aria-label="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <h2 id="about-info-title" className="mt-4 text-lg font-semibold text-slate-950">{info.agencyName}</h2>
+          {info.publicWelcomeMessage ? <p className="mt-2 text-sm leading-6 text-slate-600">{info.publicWelcomeMessage}</p> : null}
+          {contactBlock("mt-4 border-t border-slate-100 pt-4")}
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{signOff}</p>
+          <div className="mt-4 border-t border-slate-100 pt-4">{legalLinks}</div>
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+    {cookieInfoOpen ? createPortal(
+      <div className="fixed inset-0 z-[9999] flex items-end justify-center bg-slate-950/45 p-0 backdrop-blur-sm sm:items-center sm:p-6" onMouseDown={() => setCookieInfoOpen(false)}>
+        <div role="dialog" aria-modal="true" aria-labelledby="cookie-info-title" onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-md rounded-t-[24px] bg-white p-6 shadow-[0_30px_100px_rgba(15,23,42,0.35)] sm:rounded-[24px]">
+          <h2 id="cookie-info-title" className="text-lg font-semibold text-slate-950">Cookies & storage</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">This booking page uses session storage only to preserve your in-progress booking if you refresh or navigate back. It does not use third-party advertising or analytics cookies.</p>
+          <div className="mt-5 flex items-center justify-between gap-3">
+            <a href="/legal/privacy" className="text-sm font-semibold text-sky-700">Read our Privacy Policy</a>
+            <button type="button" onClick={() => setCookieInfoOpen(false)} className="rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white">Close</button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    ) : null}
+    </>
   );
 }

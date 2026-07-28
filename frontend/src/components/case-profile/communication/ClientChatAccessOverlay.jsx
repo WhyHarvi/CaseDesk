@@ -262,7 +262,7 @@ export default function ClientChatAccessOverlay({
                     <select
                       value={days}
                       onChange={(event) => setDays(event.target.value)}
-                      className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold"
+                      className="select-field h-10 min-w-0 flex-1 py-0 text-xs"
                     >
                       <option value="7">7 days</option>
                       <option value="30">30 days</option>

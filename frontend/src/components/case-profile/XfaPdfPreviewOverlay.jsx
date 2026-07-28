@@ -451,7 +451,7 @@ export default function XfaPdfPreviewOverlay({
                       filename: defaultCopyFilename(event.target.value),
                     }))
                   }
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal"
+                  className="select-field mt-2 w-full"
                 >
                   <option value="Working">Working Copy</option>
                   <option value="Filled">Filled Copy</option>

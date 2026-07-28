@@ -1,4 +1,4 @@
-import { CalendarClock, Check, Copy, Eye, Loader2, MapPin, Plus, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, Copy, Eye, Loader2, MapPin, Plus, Send, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -8,7 +8,6 @@ import {
   deleteSchedulingBlock,
   getBookingSettings,
   getSchedulingBlocks,
-  regenerateBookingToken,
   previewBookingEmail,
   sendBookingTestEmail,
   updateBookingSettings,
@@ -238,6 +237,7 @@ export default function SchedulingSettingsPanel() {
         reminderSchedule: settings.reminderSchedule?.length ? settings.reminderSchedule : [settings.reminderMinutes],
         waitlistEnabled: settings.waitlistEnabled,
         attendanceConfirmationEnabled: settings.attendanceConfirmationEnabled,
+        onlineBookingEnabled: settings.onlineBookingEnabled,
         messageTemplates: settings.messageTemplates || {},
         publicBookingEnabled: settings.publicBookingEnabled,
         freeConsultationsEnabled: settings.freeConsultationsEnabled,
@@ -247,6 +247,9 @@ export default function SchedulingSettingsPanel() {
         consultFeeEnabled: settings.consultFeeEnabled,
         consultFeeAmount: settings.consultFeeAmount,
         consultFeeHoldMinutes: settings.consultFeeHoldMinutes,
+        publicHeadline: settings.publicHeadline || "",
+        publicWelcomeMessage: settings.publicWelcomeMessage || "",
+        publicSignOffName: settings.publicSignOffName || "",
       });
       setSettings(updated);
       setSaved(true);
@@ -312,11 +315,6 @@ export default function SchedulingSettingsPanel() {
     if (!result) return;
     if (result.meta?.deleted) setSessionTypes((current) => current.filter((item) => item.id !== type.id));
     else setSessionTypes((current) => current.map((item) => (item.id === type.id ? result.data : item)));
-  }
-
-  async function regenerate() {
-    const updated = await regenerateBookingToken().catch(() => null);
-    if (updated) setSettings((current) => ({ ...current, publicToken: updated.publicToken, publicSlug: updated.publicSlug }));
   }
 
   async function changeStaff(member, patch) {
@@ -527,6 +525,7 @@ export default function SchedulingSettingsPanel() {
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>
           <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.attendanceConfirmationEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, attendanceConfirmationEnabled: value }))} label="Attendance confirmation enabled" /><span><span className="block text-sm font-medium text-slate-800">Attendance confirmation</span><span className="block text-xs text-slate-400">Let clients confirm before arrival.</span></span></label>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.onlineBookingEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, onlineBookingEnabled: value }))} label="Online video call booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Online video call bookings</span><span className="block text-xs text-slate-400">Turn off to hide the video call option from the public page entirely.</span></span></label>
         </div>
         <details className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
           <summary className="cursor-pointer text-sm font-medium text-slate-800">Email wording</summary>
@@ -666,7 +665,7 @@ export default function SchedulingSettingsPanel() {
       <section className={card}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Public booking link</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Public booking page</h3>
             <p className="mt-0.5 text-xs text-slate-500">Share this link so clients can book directly with your immigration firm.</p>
           </div>
           <Toggle checked={settings.publicBookingEnabled} onChange={(value) => setSettings((c) => ({ ...c, publicBookingEnabled: value }))} label="Public booking enabled" />
@@ -680,9 +679,36 @@ export default function SchedulingSettingsPanel() {
           >
             {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
           </button>
-          <button type="button" onClick={regenerate} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-            <RefreshCw className="h-3.5 w-3.5" /> Regenerate
-          </button>
+        </div>
+        <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5">
+          <label className="text-xs font-semibold text-slate-600">Headline
+            <input
+              value={settings.publicHeadline || ""}
+              maxLength={140}
+              onChange={(event) => setSettings((current) => ({ ...current, publicHeadline: event.target.value }))}
+              placeholder="Schedule your consultation"
+              className={`${inputClass} mt-1.5 w-full font-normal`}
+            />
+          </label>
+          <label className="text-xs font-semibold text-slate-600">Welcome message
+            <textarea
+              value={settings.publicWelcomeMessage || ""}
+              maxLength={2000}
+              rows={4}
+              onChange={(event) => setSettings((current) => ({ ...current, publicWelcomeMessage: event.target.value }))}
+              placeholder="Welcome clients and help them prepare for their consultation."
+              className={`${inputClass} mt-1.5 w-full resize-y font-normal leading-6`}
+            />
+          </label>
+          <label className="text-xs font-semibold text-slate-600">Sign-off
+            <input
+              value={settings.publicSignOffName || ""}
+              maxLength={160}
+              onChange={(event) => setSettings((current) => ({ ...current, publicSignOffName: event.target.value }))}
+              placeholder="TEAM — Your agency name"
+              className={`${inputClass} mt-1.5 w-full font-normal`}
+            />
+          </label>
         </div>
       </section>
 

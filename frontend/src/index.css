@@ -57,6 +57,51 @@ input {
   background: rgba(93, 130, 178, 0.18);
 }
 
+/* Shared look for raw <select> elements outside components/ui/Select.jsx
+   (which wraps <select> in a span + separate chevron icon — not always
+   practical in dense forms). Same visual language, done in pure CSS via a
+   background-image chevron so it's a drop-in className with no markup
+   changes. Wrapped in @layer components so it lands before Tailwind's
+   utilities in the cascade — a utility like pl-8 combined in the same
+   className (e.g. to make room for a leading icon) still wins over this
+   class's own padding, instead of losing to it just because this rule is
+   physically written later in the file. */
+@layer components {
+  .select-field {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    border-radius: 1rem;
+    border: 1px solid #e2e8f0;
+    background-color: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+    padding: 0.625rem 2.25rem 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #0f172a;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .select-field:hover {
+    border-color: #cbd5e1;
+  }
+
+  .select-field:focus {
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 4px rgba(224, 242, 254, 0.7);
+  }
+
+  .select-field:disabled {
+    cursor: not-allowed;
+    background-color: #f1f5f9;
+    color: #64748b;
+  }
+}
+
 @media print {
   body * {
     visibility: hidden !important;

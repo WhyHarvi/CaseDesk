@@ -83,7 +83,7 @@ function ClientPreferences({ value, disabled, busy, onChange, onSave }) {
             onChange={(event) =>
               onChange("preferredChannel", event.target.value)
             }
-            className={inputClass}
+            className="select-field mt-2 h-10 w-full py-0"
           >
             <option value="">No preference</option>
             <option>Email</option>
@@ -263,7 +263,7 @@ function Automations({
               <select
                 value={rule.trigger}
                 onChange={(event) => update("trigger", event.target.value)}
-                className={inputClass}
+                className="select-field mt-2 h-10 w-full py-0"
               >
                 {Object.entries(triggerLabels).map(([key, label]) => (
                   <option key={key} value={key}>
@@ -277,7 +277,7 @@ function Automations({
               <select
                 value={rule.channel}
                 onChange={(event) => update("channel", event.target.value)}
-                className={inputClass}
+                className="select-field mt-2 h-10 w-full py-0"
               >
                 <option value="">Any channel</option>
                 <option>Email</option>
@@ -300,7 +300,7 @@ function Automations({
               <select
                 value={rule.priority}
                 onChange={(event) => update("priority", event.target.value)}
-                className={inputClass}
+                className="select-field mt-2 h-10 w-full py-0"
               >
                 <option>Normal</option>
                 <option>High</option>
@@ -315,7 +315,7 @@ function Automations({
                 onChange={(event) =>
                   update("assignToUserId", event.target.value)
                 }
-                className={inputClass}
+                className="select-field mt-2 h-10 w-full py-0"
               >
                 <option value="">Keep case owner</option>
                 {users.map((user) => (

@@ -140,14 +140,35 @@ export async function updateCorrespondenceStatus(req, res) {
       const duplicate = await prisma.clientDocument.findFirst({ where: { caseId: existing.caseId, normalizedName } });
       if (duplicate) normalizedName = normalizeDocumentName(`${existing.title} issued ${Date.now()}`);
       const published = await prisma.clientDocument.create({ data: { agencyId: req.user.agencyId, clientId: existing.clientId, caseId: existing.caseId, documentName: existing.title, normalizedName, visibility: "Client", status: "Uploaded", notes: `Issued ${existing.correspondenceKind.toLowerCase()} from CaseDesk Writer`, storageKey: copiedStorageKey, originalFilename: existing.clientDocument.originalFilename, mimeType: existing.clientDocument.mimeType, fileSize: existing.clientDocument.fileSize, receivedAt: new Date(), uploadedById: req.user.id } });
-      publishedDocumentId = published.id;
+
+      // Atomically claim the right to publish — the WHERE re-checks
+      // issuedClientDocumentId is still null at claim time, so a concurrent
+      // duplicate request (double-click, retry, slow upload racing a
+      // second attempt) loses instead of both creating a ClientDocument.
+      // The unique index on (caseId, normalizedName) can't do this job by
+      // itself since the fallback above deliberately renames around it.
+      const claim = await prisma.writtenDocument.updateMany({
+        where: { id: existing.id, issuedClientDocumentId: null },
+        data: { issuedClientDocumentId: published.id },
+      });
+      if (claim.count === 1) {
+        publishedDocumentId = published.id;
+      } else {
+        // Lost the race — another request already published this document.
+        // Discard the copy we just made instead of leaving two client-facing
+        // duplicates.
+        await prisma.clientDocument.delete({ where: { id: published.id } }).catch(() => {});
+        await removeStorageFile(DOCUMENT_BUCKET, copiedStorageKey).catch(() => {});
+        const winner = await prisma.writtenDocument.findUnique({ where: { id: existing.id }, select: { issuedClientDocumentId: true } });
+        publishedDocumentId = winner?.issuedClientDocumentId || null;
+      }
     } catch (error) {
       if (copiedStorageKey) await removeStorageFile(DOCUMENT_BUCKET, copiedStorageKey).catch(() => {});
       throw error;
     }
   }
 
-  const data = await prisma.writtenDocument.update({ where: { id: existing.id }, data: { correspondenceStatus: status, ...(publishedDocumentId ? { issuedClientDocumentId: publishedDocumentId } : {}), ...(issued ? { issuedAt: existing.issuedAt || new Date(), issuedById: req.user.id } : status === "Draft" ? { issuedAt: null, issuedById: null, issuedClientDocumentId: null } : {}) }, include: documentInclude });
+  const data = await prisma.writtenDocument.update({ where: { id: existing.id }, data: { correspondenceStatus: status, ...(issued ? { issuedAt: existing.issuedAt || new Date(), issuedById: req.user.id } : status === "Draft" ? { issuedAt: null, issuedById: null, issuedClientDocumentId: null } : {}) }, include: documentInclude });
   await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, clientId: existing.clientId, caseId: existing.caseId, action: "correspondence.status_updated", details: `${existing.title} marked ${status.toLowerCase()}` });
   res.json({ data });
 }

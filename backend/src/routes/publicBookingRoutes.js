@@ -8,6 +8,7 @@ import {
   getManagedBooking,
   getPublicAvailability,
   getPublicBookingInfo,
+  getPublicBookingAvatar,
   getPublicBookingPaymentHoldStatus,
   rescheduleManagedBooking,
   confirmManagedBooking,
@@ -29,6 +30,7 @@ router.post("/manage/:manageToken/reschedule", writeLimit, asyncHandler(reschedu
 router.post("/manage/:manageToken/confirm", writeLimit, asyncHandler(confirmManagedBooking));
 router.post("/manage/:manageToken/preparation-complete", writeLimit, asyncHandler(completeManagedPreparation));
 router.get("/:token", readLimit, asyncHandler(getPublicBookingInfo));
+router.get("/:token/avatar", readLimit, asyncHandler(getPublicBookingAvatar));
 router.get("/:token/availability", readLimit, asyncHandler(getPublicAvailability));
 router.post("/:token/appointments", writeLimit, asyncHandler(createPublicBooking));
 router.post("/:token/payment-hold", writeLimit, asyncHandler(createPublicBookingPaymentHold));

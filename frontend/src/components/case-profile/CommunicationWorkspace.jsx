@@ -421,7 +421,7 @@ function TemplateOverlay({
                         channel: event.target.value,
                       }))
                     }
-                    className={inputClass}
+                    className="select-field mt-2 w-full"
                   >
                     <option>Email</option>
                     <option value="Sms">SMS</option>
@@ -656,7 +656,7 @@ function ConsentOverlay({
                   disabled={!permissions?.canManageConsent}
                   value={emailStatus}
                   onChange={(event) => setEmailStatus(event.target.value)}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   <option>Unknown</option>
                   <option>Consented</option>
@@ -671,7 +671,7 @@ function ConsentOverlay({
                   disabled={!permissions?.canManageConsent}
                   value={smsStatus}
                   onChange={(event) => setSmsStatus(event.target.value)}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   <option>Unknown</option>
                   <option>Consented</option>
@@ -1250,7 +1250,7 @@ export default function CommunicationWorkspace({ caseItem }) {
               <select
                 value={sort}
                 onChange={(event) => setSort(event.target.value)}
-                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold outline-none"
+                className="select-field h-9 py-0 text-xs"
                 aria-label="Sort communication"
               >
                 <option value="newest">Newest</option>
@@ -1266,7 +1266,7 @@ export default function CommunicationWorkspace({ caseItem }) {
                 <select
                   value={inboxScope}
                   onChange={(event) => setInboxScope(event.target.value)}
-                  className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold"
+                  className="select-field h-9 py-0 text-xs"
                   aria-label="Inbox scope"
                 >
                   <option value="all">All active</option>
@@ -1283,7 +1283,7 @@ export default function CommunicationWorkspace({ caseItem }) {
                     <select
                       value={status}
                       onChange={(event) => setStatus(event.target.value)}
-                      className="h-9 appearance-none rounded-xl border border-slate-200 bg-white pl-8 pr-7 text-xs font-semibold outline-none"
+                      className="select-field h-9 py-0 pl-8 text-xs"
                     >
                       {statuses.map((item) => (
                         <option key={item}>{item}</option>
@@ -1329,7 +1329,7 @@ export default function CommunicationWorkspace({ caseItem }) {
                       void bulkInboxAction(event.target.value);
                       event.target.value = "";
                     }}
-                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold"
+                    className="select-field h-9 py-0 text-xs"
                   >
                     <option value="" disabled>
                       Bulk action

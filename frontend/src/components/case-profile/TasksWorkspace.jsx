@@ -187,7 +187,7 @@ function TaskEditorOverlay({
                   onChange={(event) =>
                     update("assignedToId", event.target.value)
                   }
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   <option value="">Unassigned</option>
                   {users.map((user) => (
@@ -202,7 +202,7 @@ function TaskEditorOverlay({
                 <select
                   value={values.priority}
                   onChange={(event) => update("priority", event.target.value)}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   {priorities.map((priority) => (
                     <option key={priority}>{priority}</option>
@@ -235,7 +235,7 @@ function TaskEditorOverlay({
                 <select
                   value={values.status}
                   onChange={(event) => update("status", event.target.value)}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   <option value="Pending">Open</option>
                   <option value="Completed">Completed</option>

@@ -15,6 +15,7 @@ import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/b
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
 import { createPaymentHoldForPublicBooking, getPaymentHoldStatus } from "../services/bookingPaymentHoldService.js";
+import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -37,6 +38,8 @@ async function resolveAgencyByToken(token) {
           name: true,
           legalName: true,
           logoUrl: true,
+          avatarStorageKey: true,
+          avatarMimeType: true,
           phone: true,
           email: true,
           website: true,
@@ -45,6 +48,7 @@ async function resolveAgencyByToken(token) {
           province: true,
           postalCode: true,
           country: true,
+          defaultCurrency: true,
         },
       },
     },
@@ -58,6 +62,7 @@ async function resolveAgencyByToken(token) {
 export async function getPublicBookingInfo(req, res) {
   const settings = await resolveAgencyByToken(req.params.token);
   const agencyName = settings.agency.legalName || settings.agency.name;
+  const { avatarStorageKey: _avatarStorageKey, avatarMimeType: _avatarMimeType, ...publicAgency } = settings.agency;
   const [sessionTypes, consultants] = await Promise.all([prisma.bookingSessionType.findMany({
     where: { agencyId: settings.agencyId, isActive: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -68,7 +73,10 @@ export async function getPublicBookingInfo(req, res) {
   res.json({
     data: {
       agencyName,
-      agency: settings.agency,
+      agency: {
+        ...publicAgency,
+        hasAvatar: Boolean(settings.agency.avatarStorageKey),
+      },
       timezone: settings.timezone,
       horizonDays: settings.horizonDays,
       sessionTypes,
@@ -76,12 +84,26 @@ export async function getPublicBookingInfo(req, res) {
       locations: Array.isArray(settings.locations) ? settings.locations : [],
       waitlistEnabled: settings.waitlistEnabled,
       attendanceConfirmationEnabled: settings.attendanceConfirmationEnabled,
+      onlineBookingEnabled: settings.onlineBookingEnabled,
       consultFeeEnabled: settings.consultFeeEnabled,
       consultFeeAmount: settings.consultFeeAmount,
+      publicHeadline: settings.publicHeadline,
+      publicWelcomeMessage: settings.publicWelcomeMessage,
+      publicSignOffName: settings.publicSignOffName,
       offer: hold ? { token: hold.claimToken, startsAt: hold.startsAt, endsAt: hold.endsAt, expiresAt: hold.expiresAt, sessionTypeId: hold.sessionTypeId, consultantId: hold.assignedToId, name: hold.waitlistEntry.name, email: hold.waitlistEntry.email, phone: hold.waitlistEntry.phone, meetingMode: hold.waitlistEntry.meetingMode, locationId: hold.waitlistEntry.locationId } : null,
       offerExpired: Boolean(offerToken && !hold),
     },
   });
+}
+
+export async function getPublicBookingAvatar(req, res) {
+  const settings = await resolveAgencyByToken(req.params.token);
+  if (!settings.agency.avatarStorageKey) throw createHttpError(404, "No workspace image is available.", "NOT_FOUND");
+  const buffer = await downloadStorageFile(AVATAR_BUCKET, settings.agency.avatarStorageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The workspace image could not be found.", "NOT_FOUND");
+  res.set("Cache-Control", "public, max-age=300");
+  res.type(settings.agency.avatarMimeType || "application/octet-stream");
+  res.send(buffer);
 }
 
 export async function getPublicAvailability(req, res) {

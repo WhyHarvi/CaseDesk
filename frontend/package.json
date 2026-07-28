@@ -24,6 +24,7 @@
     "docx": "^9.7.1",
     "dompurify": "^3.4.12",
     "framer-motion": "^12.42.2",
+    "gsap": "^3.15.0",
     "heic2any": "^0.0.4",
     "jszip": "^3.10.1",
     "lucide-react": "^0.542.0",

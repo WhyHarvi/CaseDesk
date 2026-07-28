@@ -7,7 +7,6 @@ import {
   getAvailability,
   getBookingSettings,
   listCalendarAppointments,
-  regeneratePublicToken,
   rescheduleBookingAppointment,
   updateBookingSettings,
   updateSessionType,
@@ -32,7 +31,6 @@ const router = Router();
 
 router.get("/settings", asyncHandler(getBookingSettings));
 router.put("/settings", asyncHandler(updateBookingSettings));
-router.post("/settings/regenerate-token", asyncHandler(regeneratePublicToken));
 router.post("/session-types", asyncHandler(createSessionType));
 router.patch("/session-types/:id", asyncHandler(updateSessionType));
 router.patch("/staff/:userId", asyncHandler(updateSchedulingStaff));

@@ -43,6 +43,7 @@ export default function DashboardAppointments({ items = null, loading = false })
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-slate-800">{item.case?.client?.fullName || item.client?.fullName || item.guestName || item.subject}</p>
                   <p className="truncate text-xs text-slate-400">{item.sessionType?.name || item.subject}{item.assignedTo ? ` · ${item.assignedTo.fullName}` : ""}</p>
+                  {item.description ? <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.description}</p> : null}
                 </div>
                 {item.meetingMode === "Online" ? (
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600" title="Online video call">

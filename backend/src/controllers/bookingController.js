@@ -10,7 +10,6 @@ import {
   localDateKey,
   localDateTimeToUtc,
 } from "../services/bookingAvailabilityService.js";
-import { generatePublicBookingSlug } from "../services/bookingPublicLinkService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
 import {
@@ -115,6 +114,14 @@ function optionalTimezone(value) {
   return zone;
 }
 
+function optionalPublicCopy(value, field, max) {
+  const normalized = String(value ?? "").trim();
+  if (normalized.length > max) {
+    throw createHttpError(400, `${field} must be ${max} characters or fewer.`, "VALIDATION_ERROR");
+  }
+  return normalized || null;
+}
+
 export async function getBookingSettings(req, res) {
   const [settings, sessionTypes, staff] = await Promise.all([
     getOrCreateBookingSettings(req.auth.agencyId),
@@ -147,6 +154,7 @@ export async function updateBookingSettings(req, res) {
     ...(body.reminderSchedule !== undefined ? { reminderSchedule: validReminderSchedule(body.reminderSchedule) } : {}),
     ...(typeof body.waitlistEnabled === "boolean" ? { waitlistEnabled: body.waitlistEnabled } : {}),
     ...(typeof body.attendanceConfirmationEnabled === "boolean" ? { attendanceConfirmationEnabled: body.attendanceConfirmationEnabled } : {}),
+    ...(typeof body.onlineBookingEnabled === "boolean" ? { onlineBookingEnabled: body.onlineBookingEnabled } : {}),
     ...(body.messageTemplates !== undefined && body.messageTemplates && typeof body.messageTemplates === "object" && !Array.isArray(body.messageTemplates) ? { messageTemplates: body.messageTemplates } : {}),
     ...(typeof body.freeConsultationsEnabled === "boolean" ? { freeConsultationsEnabled: body.freeConsultationsEnabled } : {}),
     ...(body.freeConsultationsPerContact !== undefined ? { freeConsultationsPerContact: boundedInt(body.freeConsultationsPerContact, "Free consultations per contact", 1, 20) } : {}),
@@ -157,6 +165,9 @@ export async function updateBookingSettings(req, res) {
     ...(typeof body.consultFeeEnabled === "boolean" ? { consultFeeEnabled: body.consultFeeEnabled } : {}),
     ...(body.consultFeeAmount !== undefined ? { consultFeeAmount: body.consultFeeAmount === null ? null : validFeeAmount(body.consultFeeAmount) } : {}),
     ...(body.consultFeeHoldMinutes !== undefined ? { consultFeeHoldMinutes: boundedInt(body.consultFeeHoldMinutes, "Payment hold window", 5, 120) } : {}),
+    ...(body.publicHeadline !== undefined ? { publicHeadline: optionalPublicCopy(body.publicHeadline, "Public headline", 140) } : {}),
+    ...(body.publicWelcomeMessage !== undefined ? { publicWelcomeMessage: optionalPublicCopy(body.publicWelcomeMessage, "Welcome message", 2000) } : {}),
+    ...(body.publicSignOffName !== undefined ? { publicSignOffName: optionalPublicCopy(body.publicSignOffName, "Sign-off", 160) } : {}),
   };
   const current = await getOrCreateBookingSettings(req.auth.agencyId);
   const finalLocations = data.locations !== undefined ? data.locations : (Array.isArray(current.locations) ? current.locations : []);
@@ -169,6 +180,14 @@ export async function updateBookingSettings(req, res) {
   if (enablingConsultFee && !finalFeeAmount) {
     throw createHttpError(400, "Set a consultation fee amount before enabling paid bookings.", "VALIDATION_ERROR");
   }
+  if (data.onlineBookingEnabled === false) {
+    const onlineOnlyTypeCount = await prisma.bookingSessionType.count({
+      where: { agencyId: req.auth.agencyId, isActive: true, allowedMeetingModes: { has: "Online" }, NOT: { allowedMeetingModes: { has: "InPerson" } } },
+    });
+    if (onlineOnlyTypeCount > 0) {
+      throw createHttpError(400, "One or more active session types only allow online video calls. Update those session types before turning off online bookings.", "VALIDATION_ERROR");
+    }
+  }
   const settings = data.reminderMinutes === undefined
     ? await prisma.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data })
     : await prisma.$transaction(async (tx) => {
@@ -176,17 +195,6 @@ export async function updateBookingSettings(req, res) {
       await tx.$executeRaw`UPDATE appointments SET reminder_due_at = starts_at - make_interval(mins => ${data.reminderMinutes}::int) WHERE agency_id = ${req.auth.agencyId} AND status = 'Scheduled' AND starts_at > NOW() AND reminder_queued_at IS NULL`;
       return updated;
     });
-  res.json({ data: settings });
-}
-
-export async function regeneratePublicToken(req, res) {
-  requireAdmin(req);
-  await getOrCreateBookingSettings(req.auth.agencyId);
-  const publicSlug = await generatePublicBookingSlug(req.auth.agencyId, prisma, { forceSuffix: true });
-  const settings = await prisma.bookingSettings.update({
-    where: { agencyId: req.auth.agencyId },
-    data: { publicToken: randomUUID(), publicSlug },
-  });
   res.json({ data: settings });
 }
 

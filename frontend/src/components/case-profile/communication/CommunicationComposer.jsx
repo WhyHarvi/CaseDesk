@@ -460,7 +460,7 @@ export default function CommunicationComposer({
                     insertTemplate(event.target.value);
                     event.target.value = "";
                   }}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   <option value="">Choose a reusable template…</option>
                   {channelTemplates.map((item) => (
@@ -521,7 +521,7 @@ export default function CommunicationComposer({
                         onChange={(event) =>
                           update("callDisposition", event.target.value)
                         }
-                        className={inputClass}
+                        className="select-field mt-2 w-full"
                       >
                         <option>Completed</option>
                         <option>Missed</option>

@@ -1,10 +1,15 @@
 import {
   ArrowRight,
   CalendarDays,
+  ChevronRight,
   CircleAlert,
   FolderKanban,
   ListChecks,
+  X,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 
 const toneStyles = {
@@ -30,58 +35,6 @@ function initials(name) {
     .toUpperCase();
 }
 
-function taskItem(task, tone, badge) {
-  return {
-    id: `task-${task.id}`,
-    to: `/app/cases/${task.case.id}`,
-    client: task.case.client.fullName,
-    caseType: task.case.caseType,
-    title: task.title,
-    detail: task.description || `${task.priority} priority task`,
-    dueAt: task.dueAt,
-    initials: initials(task.case.client.fullName),
-    tone,
-    badge,
-  };
-}
-
-function buildWorkItems(dashboard) {
-  const overdue = (dashboard?.overdueTasks || []).map((task) => taskItem(task, "urgent", "Overdue"));
-  const today = (dashboard?.todayTasks || []).map((task) => taskItem(task, "info", "Due today"));
-  const documents = (dashboard?.documentActions || []).map((document) => ({
-    id: `document-${document.id}`,
-    to: document.case ? `/app/cases/${document.case.id}` : `/app/clients/${document.client.id}`,
-    client: document.client.fullName,
-    caseType: document.case?.caseType || "Client document",
-    title: document.documentName,
-    detail: `Document status: ${document.status.replace(/([a-z])([A-Z])/g, "$1 $2")}`,
-    dueAt: document.updatedAt,
-    initials: initials(document.client.fullName),
-    tone: "warning",
-    badge: "Document",
-  }));
-  const waiting = (dashboard?.casesWaitingUpdate || []).map((caseRecord) => ({
-    id: `case-${caseRecord.id}`,
-    to: `/app/cases/${caseRecord.id}`,
-    client: caseRecord.client.fullName,
-    caseType: caseRecord.caseType,
-    title: "Case needs a next action",
-    detail: caseRecord.nextAction || "No pending workflow step or next action is recorded.",
-    dueAt: caseRecord.updatedAt,
-    initials: initials(caseRecord.client.fullName),
-    tone: "warning",
-    badge: "Needs update",
-  }));
-  const current = [...today, ...documents, ...waiting];
-  const visibleOverdue = overdue.slice(0, 4);
-  const visibleCurrent = current.slice(0, Math.max(0, 4 - visibleOverdue.length));
-  return {
-    overdue: visibleOverdue,
-    current: visibleCurrent,
-    visibleCount: visibleOverdue.length + visibleCurrent.length,
-  };
-}
-
 function SectionHeader({ icon: Icon, iconClass, title, subtitle, chip, chipClass }) {
   return (
     <div className="mb-4 flex items-start justify-between gap-3">
@@ -105,13 +58,10 @@ function EmptyState({ loading, children }) {
 
 function WorkItemRow({ item, timezone }) {
   return (
-    <Link to={item.to} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-white/70 p-3.5 transition hover:border-sky-200 hover:bg-slate-50/80">
-      <div className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-xs font-bold", toneStyles[item.tone]].join(" ")}>{item.initials}</div>
+    <Link to={item.to} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white/80 p-3 transition hover:border-sky-200 hover:bg-slate-50/80">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-slate-900">{item.client}</p>
-        <p className="truncate text-xs text-slate-500">{item.caseType}</p>
-        <p className="mt-1 text-sm font-medium text-slate-800">{item.title}</p>
-        <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.detail}</p>
+        <p className="truncate text-sm font-medium text-slate-800">{item.title}</p>
+        <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{item.caseType} · {item.detail}</p>
       </div>
       <div className="shrink-0 text-right">
         <span className={["rounded-full border px-2.5 py-1 text-[11px] font-semibold", toneStyles[item.tone]].join(" ")}>{item.badge}</span>
@@ -121,18 +71,86 @@ function WorkItemRow({ item, timezone }) {
   );
 }
 
+const PRIORITY_CLIENT_VISIBLE = 4;
+
+function ClientWorkCard({ entry, onOpen }) {
+  const { client, overdueCount, totalCount } = entry;
+  const tone = overdueCount > 0 ? "urgent" : "warning";
+  return (
+    <button type="button" onClick={onOpen} className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white/70 p-3.5 text-left transition hover:border-sky-200 hover:bg-slate-50/80">
+      <div className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-xs font-bold", toneStyles[tone]].join(" ")}>{initials(client.fullName)}</div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-slate-900">{client.fullName}</p>
+        <p className="mt-0.5 truncate text-xs text-slate-500">
+          {totalCount} thing{totalCount === 1 ? "" : "s"} need{totalCount === 1 ? "s" : ""} to be done
+          {overdueCount > 0 ? ` · ${overdueCount} overdue` : ""}
+        </p>
+      </div>
+      <span className={["shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", toneStyles[tone]].join(" ")}>{totalCount} open</span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+    </button>
+  );
+}
+
+function ClientWorkDrawer({ entry, timezone, onClose }) {
+  if (typeof document === "undefined") return null;
+  const open = Boolean(entry);
+  return createPortal(
+    <AnimatePresence>
+      {open ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[400] flex justify-end bg-slate-950/25 backdrop-blur-[2px]"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+        >
+          <motion.aside
+            initial={{ x: 60, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 60, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 380, damping: 34 }}
+            className="flex h-full w-full max-w-[440px] flex-col overflow-hidden border-l border-white/70 bg-white/95 shadow-[-30px_0_90px_rgba(15,23,42,0.2)] backdrop-blur-2xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Priority work</p>
+                <h2 className="mt-1 truncate text-lg font-semibold text-slate-950">{entry?.client.fullName}</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {entry?.totalCount} open{entry?.overdueCount ? ` · ${entry.overdueCount} overdue` : ""}
+                </p>
+              </div>
+              <button type="button" onClick={onClose} aria-label="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100">
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-4">
+              {entry?.items.map((item) => <WorkItemRow key={item.id} item={item} timezone={timezone} />)}
+            </div>
+          </motion.aside>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
 export default function DashboardWorkRow({ dashboard, loading, role }) {
   const isAdmin = role === "admin";
   const timezone = dashboard?.timezone || "America/Toronto";
   const appointments = dashboard?.upcomingAppointments || [];
-  const workItems = buildWorkItems(dashboard);
+  const priorityClients = dashboard?.priorityWork || [];
+  const visibleClients = priorityClients.slice(0, PRIORITY_CLIENT_VISIBLE);
+  const [selectedClientId, setSelectedClientId] = useState(null);
+  const selectedEntry = visibleClients.find((entry) => entry.client.id === selectedClientId) || null;
   const pipelineStages = dashboard?.casePipeline || [];
   const pipelineMax = Math.max(...pipelineStages.map((stage) => stage.count), 1);
   const workCount = (dashboard?.stats?.tasksDueToday || 0)
     + (dashboard?.stats?.overdueTasks || 0)
     + (dashboard?.stats?.pendingDocuments || 0)
     + (dashboard?.stats?.casesWaitingUpdate || 0);
-  const hiddenWorkCount = Math.max(0, workCount - workItems.visibleCount);
+  const visibleWorkCount = visibleClients.reduce((sum, entry) => sum + entry.totalCount, 0);
+  const hiddenWorkCount = Math.max(0, workCount - visibleWorkCount);
 
   return (
     <section aria-label="Dashboard work overview" className="mb-6 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
@@ -155,6 +173,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{item.case?.client?.fullName || item.guestName || "Appointment"}</p>
                 <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.subject}{isAdmin && item.isMine ? " · Your appointment" : ""}</p>
+                {item.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.description}</p> : null}
               </div>
             </Link>
           )) : <EmptyState loading={loading}>No upcoming appointments.</EmptyState>}
@@ -173,12 +192,11 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
           chip={`${workCount} open`}
           chipClass="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"
         />
-        <div className="flex-1 space-y-3">
-          {workItems.overdue.length ? <p className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-rose-600">Overdue work</p> : null}
-          {workItems.overdue.map((item) => <WorkItemRow key={item.id} item={item} timezone={timezone} />)}
-          {workItems.current.length ? <p className="px-1 pt-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Today and queued actions</p> : null}
-          {workItems.current.map((item) => <WorkItemRow key={item.id} item={item} timezone={timezone} />)}
-          {!workItems.overdue.length && !workItems.current.length ? <EmptyState loading={loading}>You have no open work items.</EmptyState> : null}
+        <div className="flex-1 space-y-2.5">
+          {visibleClients.map((entry) => (
+            <ClientWorkCard key={entry.client.id} entry={entry} onOpen={() => setSelectedClientId(entry.client.id)} />
+          ))}
+          {!visibleClients.length ? <EmptyState loading={loading}>You have no open work items.</EmptyState> : null}
         </div>
         <div className="mt-4 border-t border-slate-100 pt-4">
           <Link to="/app/workload" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">{hiddenWorkCount > 0 ? `View ${hiddenWorkCount} more` : isAdmin ? "View team workload" : "View all my work"} <ArrowRight className="h-3.5 w-3.5" /></Link>
@@ -211,6 +229,8 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
           <Link to="/app/cases" className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800">View full pipeline <ArrowRight className="h-3.5 w-3.5" /></Link>
         </div>
       </article>
+
+      <ClientWorkDrawer entry={selectedEntry} timezone={timezone} onClose={() => setSelectedClientId(null)} />
     </section>
   );
 }

@@ -1,4 +1,7 @@
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import prisma from "../services/prisma/client.js";
+import { AVATAR_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 
@@ -18,6 +21,8 @@ const agencySelect = {
   defaultCurrency: true,
   businessNumber: true,
   taxNumber: true,
+  avatarStorageKey: true,
+  avatarMimeType: true,
   createdAt: true,
 };
 
@@ -91,6 +96,7 @@ function publicAgency(agency, stats = undefined) {
     defaultCurrency: agency.defaultCurrency,
     businessNumber: agency.businessNumber,
     taxNumber: agency.taxNumber,
+    hasAvatar: Boolean(agency.avatarStorageKey),
     createdAt: agency.createdAt,
     ...(stats ? { stats } : {}),
   };
@@ -106,6 +112,7 @@ export async function getAgencyProfile(req, res) {
 }
 
 export async function updateAgencyProfile(req, res) {
+  const existing = await prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: { avatarStorageKey: true } });
   const name = requiredText(req.body.name, "Agency name");
   const data = {
     name,
@@ -123,12 +130,31 @@ export async function updateAgencyProfile(req, res) {
     businessNumber: optionalText(req.body.businessNumber, "Business number", 60),
     taxNumber: optionalText(req.body.taxNumber, "Tax number", 60),
   };
+  let nextAvatar = null;
+  if (req.file) {
+    const image = detectedImage(req.file.buffer);
+    const storageKey = path.posix.join(req.auth.agencyId, "workspace", `${randomUUID()}${image.extension}`);
+    await uploadStorageFile(AVATAR_BUCKET, storageKey, req.file.buffer, image.mimeType);
+    nextAvatar = { storageKey, mimeType: image.mimeType };
+  }
 
-  const agency = await prisma.agency.update({
-    where: { id: req.auth.agencyId },
-    data,
-    select: agencySelect,
-  });
+  let agency;
+  try {
+    agency = await prisma.agency.update({
+      where: { id: req.auth.agencyId },
+      data: {
+        ...data,
+        ...(nextAvatar ? { avatarStorageKey: nextAvatar.storageKey, avatarMimeType: nextAvatar.mimeType } : {}),
+      },
+      select: agencySelect,
+    });
+  } catch (error) {
+    if (nextAvatar) await removeStorageFile(AVATAR_BUCKET, nextAvatar.storageKey);
+    throw error;
+  }
+  if (nextAvatar && existing?.avatarStorageKey && existing.avatarStorageKey !== nextAvatar.storageKey) {
+    await removeStorageFile(AVATAR_BUCKET, existing.avatarStorageKey);
+  }
 
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -138,4 +164,34 @@ export async function updateAgencyProfile(req, res) {
   });
 
   res.json({ success: true, data: publicAgency(agency, await agencyStats(req.auth.agencyId)), message: "Agency profile updated." });
+}
+
+function detectedImage(buffer) {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return { extension: ".jpg", mimeType: "image/jpeg" };
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { extension: ".png", mimeType: "image/png" };
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return { extension: ".webp", mimeType: "image/webp" };
+  throw createHttpError(400, "The uploaded file is not a valid JPG, PNG, or WebP image.", "INVALID_AVATAR");
+}
+
+export async function getAgencyAvatar(req, res) {
+  const agency = await prisma.agency.findUnique({
+    where: { id: req.auth.agencyId },
+    select: { avatarStorageKey: true, avatarMimeType: true },
+  });
+  if (!agency?.avatarStorageKey) throw createHttpError(404, "No workspace image is available.", "NOT_FOUND");
+  const buffer = await downloadStorageFile(AVATAR_BUCKET, agency.avatarStorageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The workspace image could not be found.", "NOT_FOUND");
+  res.set("Cache-Control", "private, max-age=300");
+  res.type(agency.avatarMimeType || "application/octet-stream");
+  res.send(buffer);
+}
+
+export async function deleteAgencyAvatar(req, res) {
+  const existing = await prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: { avatarStorageKey: true } });
+  await prisma.agency.update({
+    where: { id: req.auth.agencyId },
+    data: { avatarStorageKey: null, avatarMimeType: null },
+  });
+  if (existing?.avatarStorageKey) await removeStorageFile(AVATAR_BUCKET, existing.avatarStorageKey);
+  res.status(204).send();
 }

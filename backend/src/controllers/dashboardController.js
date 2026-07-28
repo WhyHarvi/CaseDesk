@@ -49,6 +49,14 @@ export function dashboardScopes(req) {
       : { ...agencyWhere, OR: [{ assignedToId: req.auth.userId }, { case: activeCaseAccess }] },
     documentWhere: {
       ...agencyWhere,
+      // Internal-visibility documents are staff-only working files — e.g.
+      // the source copy behind an issued agreement/letter (see
+      // correspondenceController.js's updateCorrespondenceStatus, which
+      // creates a separate Client-visibility copy once issued). Once that
+      // exists, the internal source has already done its job; counting it
+      // as a still-pending action alongside the issued copy is what made
+      // the same document appear to show up twice.
+      visibility: "Client",
       OR: [
         { case: activeCaseAccess },
         { caseId: null, ...(req.auth.role === "admin" ? {} : { client: clientAccessWhere(req) }) },
@@ -69,6 +77,93 @@ export function dashboardScopes(req) {
       ? agencyWhere
       : { ...agencyWhere, client: clientAccessWhere(req) },
   };
+}
+
+const PRIORITY_CLIENT_LIMIT = 8;
+const WORK_TONE_RANK = { urgent: 0, info: 1, warning: 2 };
+
+// Groups overdue tasks, due-today tasks, pending client-facing documents,
+// and cases needing a next action by client, so the Priority Work widget
+// can show "N clients with M things to do" instead of a flat agency-wide
+// list where one client's backlog can crowd every other client out of the
+// visible slots entirely.
+function groupWorkByClient({ overdueTasksByClient, todayTasksByClient, documentActionsByClient, casesWaitingUpdateByClient }) {
+  const byClient = new Map();
+  function bucket(client) {
+    if (!client) return null;
+    if (!byClient.has(client.id)) byClient.set(client.id, { client, overdueCount: 0, currentCount: 0, items: [] });
+    return byClient.get(client.id);
+  }
+
+  for (const task of overdueTasksByClient) {
+    const b = bucket(task.case?.client);
+    if (!b) continue;
+    b.overdueCount += 1;
+    b.items.push({
+      id: `task-${task.id}`,
+      to: `/app/cases/${task.case.id}`,
+      caseType: task.case.caseType,
+      title: task.title,
+      detail: task.description || `${task.priority} priority task`,
+      dueAt: task.dueAt,
+      tone: "urgent",
+      badge: "Overdue",
+    });
+  }
+  for (const task of todayTasksByClient) {
+    const b = bucket(task.case?.client);
+    if (!b) continue;
+    b.currentCount += 1;
+    b.items.push({
+      id: `task-${task.id}`,
+      to: `/app/cases/${task.case.id}`,
+      caseType: task.case.caseType,
+      title: task.title,
+      detail: task.description || `${task.priority} priority task`,
+      dueAt: task.dueAt,
+      tone: "info",
+      badge: "Due today",
+    });
+  }
+  for (const document of documentActionsByClient) {
+    const b = bucket(document.client);
+    if (!b) continue;
+    b.currentCount += 1;
+    b.items.push({
+      id: `document-${document.id}`,
+      to: document.case ? `/app/cases/${document.case.id}` : `/app/clients/${document.client.id}`,
+      caseType: document.case?.caseType || "Client document",
+      title: document.documentName,
+      detail: `Document status: ${document.status.replace(/([a-z])([A-Z])/g, "$1 $2")}`,
+      dueAt: document.updatedAt,
+      tone: "warning",
+      badge: "Document",
+    });
+  }
+  for (const caseRecord of casesWaitingUpdateByClient) {
+    const b = bucket(caseRecord.client);
+    if (!b) continue;
+    b.currentCount += 1;
+    b.items.push({
+      id: `case-${caseRecord.id}`,
+      to: `/app/cases/${caseRecord.id}`,
+      caseType: caseRecord.caseType,
+      title: "Case needs a next action",
+      detail: caseRecord.nextAction || "No pending workflow step or next action is recorded.",
+      dueAt: caseRecord.updatedAt,
+      tone: "warning",
+      badge: "Needs update",
+    });
+  }
+
+  const clients = [...byClient.values()].map((entry) => ({
+    client: entry.client,
+    overdueCount: entry.overdueCount,
+    totalCount: entry.overdueCount + entry.currentCount,
+    items: entry.items.sort((a, b) => (WORK_TONE_RANK[a.tone] - WORK_TONE_RANK[b.tone]) || (new Date(a.dueAt || 0) - new Date(b.dueAt || 0))),
+  }));
+  clients.sort((a, b) => b.overdueCount - a.overdueCount || b.totalCount - a.totalCount || a.client.fullName.localeCompare(b.client.fullName));
+  return clients.slice(0, PRIORITY_CLIENT_LIMIT);
 }
 
 export async function getDashboardSummary(req, res) {
@@ -135,6 +230,10 @@ export async function getDashboardSummary(req, res) {
     casesWaitingUpdateCount,
     casesWaitingUpdate,
     recentActivity,
+    overdueTasksByClient,
+    todayTasksByClient,
+    documentActionsByClient,
+    casesWaitingUpdateByClient,
   ] = await Promise.all([
     prisma.client.count({ where: clientWhere }),
     prisma.client.count({ where: { ...clientWhere, status: "Active" } }),
@@ -184,6 +283,7 @@ export async function getDashboardSummary(req, res) {
       select: {
         id: true,
         subject: true,
+        description: true,
         location: true,
         startsAt: true,
         endsAt: true,
@@ -277,7 +377,45 @@ export async function getDashboardSummary(req, res) {
         case: { select: { id: true, caseType: true } },
       },
     }),
+    // Kept separate from the take:5 queries above, which other dashboard
+    // cards (e.g. "Cases Waiting for Update") rely on staying capped for
+    // their own layout — these feed the Priority Work widget's per-client
+    // grouping instead, so a client with a lot of open work can't crowd
+    // every other client out of the visible slots. Bounded generously
+    // rather than left uncapped, as a defensive limit against a pathological
+    // agency-wide backlog, not a designed UX cap.
+    prisma.caseWorkflowStep.findMany({
+      where: { ...pendingTaskWhere, dueAt: { lt: todayStart } },
+      orderBy: { dueAt: "asc" },
+      take: 300,
+      select: { id: true, title: true, description: true, priority: true, dueAt: true, case: { select: caseSummarySelect } },
+    }),
+    prisma.caseWorkflowStep.findMany({
+      where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
+      orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
+      take: 300,
+      select: { id: true, title: true, description: true, priority: true, dueAt: true, case: { select: caseSummarySelect } },
+    }),
+    prisma.clientDocument.findMany({
+      where: { ...documentWhere, status: { in: ["Requested", "Uploaded", "UnderReview", "ChangesRequested"] } },
+      orderBy: { updatedAt: "asc" },
+      take: 300,
+      select: { id: true, documentName: true, status: true, updatedAt: true, client: { select: { id: true, fullName: true } }, case: { select: { id: true, caseType: true } } },
+    }),
+    prisma.case.findMany({
+      where: waitingCaseWhere,
+      orderBy: { updatedAt: "asc" },
+      take: 300,
+      select: caseSummarySelect,
+    }),
   ]);
+
+  const priorityWork = groupWorkByClient({
+    overdueTasksByClient,
+    todayTasksByClient,
+    documentActionsByClient,
+    casesWaitingUpdateByClient,
+  });
 
   const data = {
       timezone,
@@ -306,6 +444,7 @@ export async function getDashboardSummary(req, res) {
       todayTasks,
       overdueTasks,
       documentActions,
+      priorityWork,
       upcomingFollowUps,
       casesWaitingUpdate,
       recentActivity,

@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   CalendarPlus,
   Check,
-  ChevronDown,
   Clock3,
   Download,
   Loader2,
@@ -465,7 +464,7 @@ export default function ConversationOverlay({
                   onChange={(event) =>
                     update({ assignedToId: event.target.value || null })
                   }
-                  className="h-9 w-full appearance-none rounded-xl border border-slate-200 bg-white pl-8 pr-7 text-xs font-semibold outline-none"
+                  className="select-field h-9 w-full py-0 pl-8 text-xs"
                 >
                   <option value="">Unassigned</option>
                   {users.map((user) => (
@@ -474,14 +473,13 @@ export default function ConversationOverlay({
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               </label>
               <label className="relative">
                 <Clock3 className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <select
                   value={conversation.state}
                   onChange={(event) => update({ state: event.target.value })}
-                  className="h-9 w-full appearance-none rounded-xl border border-slate-200 bg-white pl-8 pr-7 text-xs font-semibold outline-none"
+                  className="select-field h-9 w-full py-0 pl-8 text-xs"
                 >
                   {states.map((state) => (
                     <option key={state} value={state}>
@@ -495,7 +493,7 @@ export default function ConversationOverlay({
                 <select
                   value={conversation.priority}
                   onChange={(event) => update({ priority: event.target.value })}
-                  className="h-9 w-full appearance-none rounded-xl border border-slate-200 bg-white pl-8 pr-7 text-xs font-semibold outline-none"
+                  className="select-field h-9 w-full py-0 pl-8 text-xs"
                 >
                   {priorities.map((priority) => (
                     <option key={priority}>{priority}</option>

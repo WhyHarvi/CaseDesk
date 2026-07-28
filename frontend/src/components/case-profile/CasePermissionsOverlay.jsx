@@ -107,7 +107,7 @@ export default function CasePermissionsOverlay({ caseItem, onClose, onSaved }) {
                         setOwnerUserId(nextOwner);
                         setCollaboratorUserIds((current) => current.filter((id) => id !== nextOwner));
                       }}
-                      className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-base outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
+                      className="select-field mt-2 h-12 py-0 text-base"
                     >
                       <option value="">Choose a consultant</option>
                       {currentOwnerUnavailable ? <option value={data.owner.id} disabled>{data.owner.fullName} (unavailable)</option> : null}

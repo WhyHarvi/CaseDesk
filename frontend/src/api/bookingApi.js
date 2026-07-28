@@ -10,11 +10,6 @@ export async function updateBookingSettings(values) {
   return response.data.data;
 }
 
-export async function regenerateBookingToken() {
-  const response = await api.post("/booking/settings/regenerate-token");
-  return response.data.data;
-}
-
 export async function createSessionType(values) {
   const response = await api.post("/booking/session-types", values);
   return response.data.data;
@@ -135,6 +130,11 @@ export async function rescheduleBookingAppointment(id, startsAt, options = {}) {
 export async function getPublicBookingInfo(token, offerToken) {
   const response = await api.get(`/public/booking/${token}${offerToken ? `?offer=${encodeURIComponent(offerToken)}` : ""}`);
   return response.data.data;
+}
+
+export function getPublicBookingAvatarUrl(token) {
+  const base = String(api.defaults.baseURL || "").replace(/\/$/, "");
+  return `${base}/public/booking/${encodeURIComponent(token)}/avatar`;
 }
 
 export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken }) {

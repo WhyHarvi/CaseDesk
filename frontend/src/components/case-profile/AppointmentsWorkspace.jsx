@@ -105,7 +105,7 @@ function TimePicker({ label, hour, minute, period, onChange }) {
         <select
           value={hour}
           onChange={(event) => onChange("hour", event.target.value)}
-          className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+          className="select-field h-11 py-0"
           aria-label={`${label} hour`}
         >
           {Array.from({ length: 12 }, (_, index) => String(index + 1)).map(
@@ -118,7 +118,7 @@ function TimePicker({ label, hour, minute, period, onChange }) {
         <select
           value={minute}
           onChange={(event) => onChange("minute", event.target.value)}
-          className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+          className="select-field h-11 py-0"
           aria-label={`${label} minute`}
         >
           {Array.from({ length: 12 }, (_, index) => pad(index * 5)).map(
@@ -270,7 +270,7 @@ function AppointmentEditorOverlay({
                 <select
                   value={values.calendar}
                   onChange={(event) => update("calendar", event.target.value)}
-                  className={inputClass}
+                  className="select-field mt-2 w-full"
                 >
                   {calendars.map((calendar) => (
                     <option key={calendar}>{calendar}</option>
@@ -314,7 +314,7 @@ function AppointmentEditorOverlay({
               <select
                 value={values.assignedToId}
                 onChange={(event) => update("assignedToId", event.target.value)}
-                className={inputClass}
+                className="select-field mt-2 w-full"
               >
                 <option value="">Unassigned</option>
                 {users.map((user) => (

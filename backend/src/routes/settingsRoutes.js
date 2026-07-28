@@ -16,7 +16,8 @@ import {
   testOomaSms,
   testZapierOutboundSms,
 } from "../controllers/oomaSettingsController.js";
-import { getAgencyProfile, updateAgencyProfile } from "../controllers/agencyProfileController.js";
+import { deleteAgencyAvatar, getAgencyAvatar, getAgencyProfile, updateAgencyProfile } from "../controllers/agencyProfileController.js";
+import { receiveProfileAvatar } from "../middleware/profileAvatarUpload.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import {
   getAutomatedReminderSettings,
@@ -31,7 +32,9 @@ import {
 
 const router = Router();
 router.get("/agency-profile", asyncHandler(getAgencyProfile));
-router.patch("/agency-profile", asyncHandler(updateAgencyProfile));
+router.patch("/agency-profile", receiveProfileAvatar, asyncHandler(updateAgencyProfile));
+router.get("/agency-profile/avatar", asyncHandler(getAgencyAvatar));
+router.delete("/agency-profile/avatar", asyncHandler(deleteAgencyAvatar));
 router.get("/mail", asyncHandler(getMailSettings));
 router.put("/mail", asyncHandler(saveMailSettings));
 router.post("/mail/test", asyncHandler(testMailSettings));
