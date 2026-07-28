@@ -50,3 +50,8 @@ export async function voidCaseSchedule(caseId, reason) {
   const response = await api.post(`/cases/${caseId}/payment-schedule/void`, { reason });
   return response.data.data;
 }
+
+export async function voidInstallmentInvoice(caseId, installmentId, reason) {
+  const response = await api.post(`/cases/${caseId}/payment-schedule/installments/${installmentId}/void`, { reason });
+  return response.data.data;
+}

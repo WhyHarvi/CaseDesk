@@ -4,6 +4,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { CASE_STAGES } from "../constants/caseStages.js";
 import { PAYMENT_TYPES, createInvoiceRecord } from "./caseInvoiceService.js";
 import { notifyInstallmentInvoiced, notifyStaffInstallmentVoided } from "./paymentNotificationService.js";
+import { voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
 
 const TRIGGER_TYPES = new Set(["Date", "Stage"]);
@@ -395,6 +396,74 @@ async function fireInstallment(agencyId, installment, actorUserId) {
     logger.warn("payment_schedule.fire_failed", { agencyId, installmentId: installment.id, reason: error.message });
     throw error;
   }
+}
+
+async function claimInstallmentForVoid(installmentId) {
+  const result = await prisma.casePaymentInstallment.updateMany({
+    where: { id: installmentId, status: "Invoiced" },
+    data: { status: "Voiding" },
+  });
+  return result.count === 1;
+}
+
+/**
+ * Voids an already-invoiced installment's QuickBooks invoice and resets the
+ * installment back to Scheduled so it can be corrected (label, payment
+ * type, amount, trigger) and re-fired — the only existing void path
+ * (voidRemainingInstallments) explicitly never touches invoiced
+ * installments, so a mistake caught after firing had no recovery short of
+ * editing QuickBooks directly and leaving CaseDesk permanently out of sync.
+ * Refuses to void an invoice that already has a payment applied — that
+ * needs a refund handled in QuickBooks first, not a silent void here.
+ */
+export async function voidInvoicedInstallment(agencyId, caseId, installmentId, { reason, actorUserId }) {
+  const installment = await prisma.casePaymentInstallment.findFirst({
+    where: { id: installmentId, agencyId, caseId },
+    include: { caseInvoice: true },
+  });
+  if (!installment) throw createHttpError(404, "Installment not found.", "NOT_FOUND");
+  if (installment.status !== "Invoiced" || !installment.caseInvoice) {
+    throw createHttpError(400, "Only an invoiced installment can be voided this way.", "VALIDATION_ERROR");
+  }
+  const invoice = installment.caseInvoice;
+  if (Number(invoice.balance) !== Number(invoice.amount)) {
+    throw createHttpError(409, "This invoice already has a payment applied — void or refund it in QuickBooks first.", "INVOICE_HAS_PAYMENT");
+  }
+
+  const claimed = await claimInstallmentForVoid(installment.id);
+  if (!claimed) throw createHttpError(409, "This installment changed — reload and try again.", "CONFLICT");
+
+  const trimmedReason = String(reason || "").trim().slice(0, 500);
+  try {
+    await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
+
+    await prisma.$transaction([
+      prisma.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void" } }),
+      prisma.casePaymentInstallment.update({
+        where: { id: installment.id },
+        data: { status: "Scheduled", caseInvoiceId: null, invoicedAt: null },
+      }),
+    ]);
+
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: installment.clientId,
+      caseId,
+      action: "payment_schedule.installment_invoice_voided",
+      details: `${installment.label} — $${Number(installment.amount).toFixed(2)} invoice voided${trimmedReason ? `: ${trimmedReason}` : ""}; reset to Scheduled`,
+      entityType: "casePaymentInstallment",
+      entityId: installment.id,
+    });
+  } catch (error) {
+    // Release the claim so the row doesn't get stuck on "Voiding" if the
+    // QuickBooks call or the follow-up transaction failed.
+    await prisma.casePaymentInstallment.update({ where: { id: installment.id }, data: { status: "Invoiced" } }).catch(() => {});
+    logger.warn("payment_schedule.void_invoice_failed", { agencyId, installmentId: installment.id, reason: error.message });
+    throw error;
+  }
+
+  return getCaseSchedule(agencyId, caseId);
 }
 
 /**

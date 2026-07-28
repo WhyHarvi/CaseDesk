@@ -12,6 +12,7 @@ import {
   listScheduleTemplates,
   updateCaseInstallments,
   updateScheduleTemplate,
+  voidInvoicedInstallment,
   voidRemainingInstallments,
 } from "../services/paymentScheduleService.js";
 
@@ -133,6 +134,15 @@ export async function updateSchedule(req, res) {
 export async function voidSchedule(req, res) {
   requireAdmin(req);
   const data = await voidRemainingInstallments(req.auth.agencyId, req.params.id, {
+    reason: req.body?.reason,
+    actorUserId: req.auth.userId,
+  });
+  res.json({ data });
+}
+
+export async function voidInstallmentInvoice(req, res) {
+  requireAdmin(req);
+  const data = await voidInvoicedInstallment(req.auth.agencyId, req.params.id, req.params.installmentId, {
     reason: req.body?.reason,
     actorUserId: req.auth.userId,
   });

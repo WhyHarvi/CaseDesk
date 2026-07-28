@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, updateCaseSchedule, voidCaseSchedule } from "../../api/paymentScheduleApi";
+import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, updateCaseSchedule, voidCaseSchedule, voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import InstallmentListEditor, { blankInstallment } from "../payments/InstallmentListEditor";
 
 const STATUS_META = {
@@ -29,9 +29,27 @@ function triggerLabel(installment) {
   return `${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
 }
 
-function InstallmentRow({ installment }) {
+function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const meta = STATUS_META[installment.status] || STATUS_META.Scheduled;
   const invoice = installment.caseInvoice;
+  const canVoidInvoice = isAdmin && installment.status === "Invoiced" && invoice && Number(invoice.balance) === Number(invoice.amount);
+
+  async function confirmVoid() {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await voidInstallmentInvoice(caseId, installment.id, reason.trim() || undefined);
+      onVoided(updated);
+    } catch (reason_) {
+      setError(reason_.response?.data?.message || "Could not void this invoice.");
+      setBusy(false);
+    }
+  }
+
   return (
     <motion.div layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="rounded-[1.2rem] border border-white/70 bg-white/85 p-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)] backdrop-blur-xl">
       <div className="flex items-start justify-between gap-3">
@@ -57,6 +75,33 @@ function InstallmentRow({ installment }) {
           <span className="text-xs text-slate-400">Not yet invoiced</span>
         )}
       </div>
+      {canVoidInvoice ? (
+        confirming ? (
+          <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50/70 p-3">
+            <p className="text-xs font-semibold text-rose-700">Void this invoice?</p>
+            <p className="mt-1 text-[11px] leading-4 text-rose-600/90">
+              This voids the QuickBooks invoice and resets the installment to Scheduled so you can fix it and re-fire it. Logged in the case activity history.
+            </p>
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Reason (optional) — e.g. wrong payment type"
+              className="mt-2 w-full rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-rose-400"
+            />
+            {error ? <p className="mt-1.5 text-[11px] text-rose-700">{error}</p> : null}
+            <div className="mt-2 flex items-center gap-2">
+              <button type="button" onClick={confirmVoid} disabled={busy} className="flex h-7 items-center gap-1 rounded-full bg-rose-600 px-3 text-[11px] font-semibold text-white disabled:opacity-50">
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Confirm void
+              </button>
+              <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="h-7 rounded-full px-2.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setConfirming(true)} className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 transition hover:text-rose-700">
+            <X className="h-3 w-3" /> Void invoice
+          </button>
+        )
+      ) : null}
     </motion.div>
   );
 }
@@ -284,7 +329,15 @@ export default function CasePaymentScheduleWorkspace({ caseItem }) {
 
           <div className="space-y-2.5">
             <AnimatePresence initial={false}>
-              {schedule.installments.map((installment) => <InstallmentRow key={installment.id} installment={installment} />)}
+              {schedule.installments.map((installment) => (
+                <InstallmentRow
+                  key={installment.id}
+                  installment={installment}
+                  caseId={caseItem.id}
+                  isAdmin={isAdmin}
+                  onVoided={setSchedule}
+                />
+              ))}
             </AnimatePresence>
           </div>
         </div>
