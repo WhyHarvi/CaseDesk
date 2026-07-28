@@ -51,13 +51,38 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
     }
   }
 
-  const invoice = await createQuickBooksInvoice(agencyId, {
-    customerId: client.qbCustomerId,
-    itemId,
-    description,
-    amount,
-    dueDate: dueDate || undefined,
-  });
+  let invoice;
+  try {
+    invoice = await createQuickBooksInvoice(agencyId, {
+      customerId: client.qbCustomerId,
+      itemId,
+      description,
+      amount,
+      dueDate: dueDate || undefined,
+    });
+  } catch (error) {
+    // The client's cached QuickBooks customer id can go stale (deleted,
+    // merged, or a sandbox company reset) without CaseDesk ever finding
+    // out — QuickBooks only reports it as an "Invalid Reference Id" fault
+    // on the invoice create itself, not on lookup. syncClientToQuickBooks
+    // already knows how to recover from this ("linked customer is gone —
+    // fall through and treat as a fresh link"); this just wasn't reached
+    // before because createInvoiceRecord only called it when qbCustomerId
+    // was empty, not when it was set but no longer valid. Re-sync once and
+    // retry before giving up — a scheduled installment stuck retrying the
+    // same stale id every 15 minutes would otherwise never invoice.
+    if (!String(error.message || "").toLowerCase().includes("invalid reference id")) throw error;
+    const resynced = await syncClientToQuickBooks(agencyId, client.id);
+    if (!resynced?.qbCustomerId) throw error;
+    client = resynced;
+    invoice = await createQuickBooksInvoice(agencyId, {
+      customerId: client.qbCustomerId,
+      itemId,
+      description,
+      amount,
+      dueDate: dueDate || undefined,
+    });
+  }
 
   const row = await prisma.caseInvoice.create({
     data: {
