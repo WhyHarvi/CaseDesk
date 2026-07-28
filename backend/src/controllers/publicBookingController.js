@@ -102,6 +102,10 @@ export async function getPublicBookingAvatar(req, res) {
   const buffer = await downloadStorageFile(AVATAR_BUCKET, settings.agency.avatarStorageKey, { allowMissing: true });
   if (!buffer) throw createHttpError(404, "The workspace image could not be found.", "NOT_FOUND");
   res.set("Cache-Control", "public, max-age=300");
+  // The booking UI and API are deployed on different sites. This image is
+  // intentionally public and token-scoped, so override the API-wide
+  // same-site policy that would otherwise make browsers block the <img>.
+  res.set("Cross-Origin-Resource-Policy", "cross-origin");
   res.type(settings.agency.avatarMimeType || "application/octet-stream");
   res.send(buffer);
 }
