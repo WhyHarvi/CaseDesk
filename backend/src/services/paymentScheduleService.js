@@ -448,7 +448,11 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
     await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
 
     await prisma.$transaction([
-      prisma.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void" } }),
+      // balance: 0 alongside status: "Void" — a voided invoice isn't owed
+      // by anyone anymore. Leaving the old balance in place is what made
+      // the client portal keep showing a live "Pay now" link for an
+      // invoice that no longer exists in QuickBooks.
+      prisma.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void", balance: 0 } }),
       prisma.casePaymentInstallment.update({
         where: { id: installment.id },
         data: { status: "Scheduled", caseInvoiceId: null, invoicedAt: null },

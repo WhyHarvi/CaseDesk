@@ -26,6 +26,7 @@ const STATUS_TONE = {
   PartiallyPaid: "bg-amber-50 text-amber-700",
   Paid: "bg-emerald-50 text-emerald-700",
   Overdue: "bg-rose-50 text-rose-700",
+  Void: "bg-slate-100 text-slate-400",
 };
 
 function formatMoney(value) {

@@ -493,7 +493,12 @@ export async function getPortalPayments(req, res) {
               })),
           }
         : null,
-      invoices: invoices.map((invoice) => ({
+      // A voided invoice (e.g. corrected via the staff "Void invoice"
+      // action after a mistake) has nothing left for the client to act
+      // on — it's replaced by whatever real invoice gets created next, if
+      // any — so it's dropped here rather than shown with a stale balance
+      // or a dead pay-now link.
+      invoices: invoices.filter((invoice) => invoice.status !== "Void").map((invoice) => ({
         id: invoice.id,
         description: invoice.description,
         paymentType: invoice.paymentType,
