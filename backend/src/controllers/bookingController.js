@@ -435,6 +435,7 @@ export async function createBookingAppointment(req, res) {
         sessionTypeId: sessionType?.id || null,
         subject,
         location: selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : String(body.location || "").trim().slice(0, 200) || null,
+        locationId: selectedLocation?.id || null,
         locationMapsUrl: selectedLocation?.mapsUrl || null,
         calendar: "Workspace Calendar",
         startsAt: occurrenceStart,
@@ -592,7 +593,7 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0 });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === "InPerson" ? selectedLocation?.id || null : null });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
@@ -601,7 +602,7 @@ export async function rescheduleBookingAppointment(req, res) {
         await lockSchedulingTransaction(tx, req.auth.agencyId, move.startsAt);
         const conflict = await assertSlotAvailable(tx, { agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds });
         if (conflict) throw createHttpError(409, "A recurring time was just taken. The series was not changed.", "SLOT_TAKEN");
-        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, meetingMode, meetingUrl: meetingMode === "Online" ? move.item.meetingUrl || `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null, location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000), reminderQueuedAt: null }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } } });
+        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, meetingMode, meetingUrl: meetingMode === "Online" ? move.item.meetingUrl || `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null, location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === "InPerson" ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000), reminderQueuedAt: null }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } } });
         await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: move.item.id, actorUserId: req.auth.userId, type: "SERIES_RESCHEDULED", summary: "Appointment moved with recurring series", metadata: { from: move.item.startsAt, to: move.startsAt, seriesKey: existing.seriesKey } });
         results.push(result);
       }
@@ -614,7 +615,7 @@ export async function rescheduleBookingAppointment(req, res) {
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0 });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === "InPerson" ? selectedLocation?.id || existing.locationId || null : null });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {
@@ -636,6 +637,7 @@ export async function rescheduleBookingAppointment(req, res) {
         meetingMode,
         meetingUrl: meetingMode === "Online" ? existing.meetingUrl || `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null,
         location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : existing.location : null,
+        locationId: meetingMode === "InPerson" ? selectedLocation?.id || existing.locationId : null,
         locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || existing.locationMapsUrl : null,
         reminderSentAt: null,
         reminderDueAt: new Date(startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),

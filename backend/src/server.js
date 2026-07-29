@@ -161,6 +161,15 @@ app.use(errorHandler);
 
 const server = app.listen(port, () => {
   logger.info("server.started", { port, environment: process.env.NODE_ENV || "development" });
+  if (!process.env.QBO_WEBHOOK_VERIFIER_TOKEN) {
+    // Every connected agency's Intuit webhook silently rejects with 401
+    // when this is unset — there's no other startup-time signal, so this
+    // is the only chance to notice before a payment/refund's confirmation
+    // quietly falls back to the slower reconciliation-only path.
+    logger.warn("server.qbo_webhook_verifier_token_missing", {
+      detail: "QBO_WEBHOOK_VERIFIER_TOKEN is not set — all QuickBooks webhook deliveries will be rejected with 401 until it matches the token registered in the Intuit developer dashboard.",
+    });
+  }
   startFormRevisionMonitor();
   startCommunicationOutboxWorker();
   startInboundMailSync();

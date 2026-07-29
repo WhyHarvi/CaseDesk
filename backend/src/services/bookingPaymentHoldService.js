@@ -63,6 +63,7 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
   holdMinutes,
   idempotencyKey,
   bufferMinutes,
+  offerHold = null,
 }) {
   const itemId = await requireConsultFeeItem(agencyId);
 
@@ -76,9 +77,14 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
       requestedUserId: requestedConsultantId,
       publicOnly: true,
       bufferMinutes,
+      // Without this, a client paying for a slot they were personally
+      // offered from the waitlist collides with their own still-reserved
+      // BookingSlotHold — assertSlotAvailable sees it as a real conflict
+      // and rejects the very booking the offer was for.
+      excludeHoldToken: offerHold?.claimToken || null,
       db: tx,
     });
-    const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes });
+    const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes, excludeHoldToken: offerHold?.claimToken || null });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
 
     return tx.bookingPaymentHold.create({
@@ -98,6 +104,12 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
         notes: notes || null,
         amount,
         expiresAt: new Date(Date.now() + holdMinutes * 60_000),
+        // Deliberately NOT claiming the waitlist offer here — the client
+        // hasn't paid yet. It gets claimed (and the BookingWaitlistEntry
+        // marked "Booked") only once payment actually confirms, in
+        // confirmPaymentHold — if this hold expires unpaid instead, the
+        // offer stays open exactly as if it were never touched.
+        offerHoldId: offerHold?.id || null,
       },
     });
   });
@@ -207,6 +219,35 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
       createdById: actorUserId,
     },
   });
+}
+
+// ---------- Active-hold reconciliation ----------
+//
+// QuickBooks webhooks are the intended fast path for noticing a payment the
+// instant it completes, but they depend on external config (the app's
+// webhook verifier token matching what's registered in Intuit's developer
+// dashboard) that has silently drifted out of sync before with zero
+// server-side signal. Without this poller, the only thing that ever
+// re-checked an unpaid hold against QuickBooks was the expiry sweep just
+// before it gave up on the hold — so a real paid booking could sit
+// unconfirmed for the entire ~20-minute hold window. This checks every
+// still-active hold on a short interval regardless of webhook health, so
+// confirmation lands in seconds even if webhooks never get fixed.
+const ACTIVE_HOLD_POLL_MS = 20_000;
+let activeHoldPollTimer = null;
+
+export async function reconcileActivePaymentHolds() {
+  const active = await prisma.bookingPaymentHold.findMany({
+    where: { status: "AwaitingPayment", expiresAt: { gt: new Date() }, qbInvoiceId: { not: null } },
+    select: { id: true, agencyId: true },
+    take: 200,
+  });
+  for (const hold of active) {
+    await reconcilePaymentHold(hold.agencyId, hold.id).catch((error) => {
+      logger.warn("booking_payment_hold.active_reconcile_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+    });
+  }
+  return active.length;
 }
 
 // ---------- Expiry + void cleanup ----------
@@ -358,6 +399,12 @@ export async function retryFailedVoids() {
 }
 
 export function startPaymentHoldExpiryWorker() {
+  if (!activeHoldPollTimer) {
+    activeHoldPollTimer = setInterval(() => {
+      reconcileActivePaymentHolds().catch((error) => logger.warn("booking_payment_hold.active_reconcile_pass_failed", { reason: error.message }));
+    }, ACTIVE_HOLD_POLL_MS);
+    if (activeHoldPollTimer.unref) activeHoldPollTimer.unref();
+  }
   if (!holdExpiryTimer) {
     holdExpiryTimer = setInterval(() => {
       releaseExpiredPaymentHolds().catch((error) => logger.warn("booking_payment_hold.expiry_pass_failed", { reason: error.message }));
@@ -379,6 +426,8 @@ export function startPaymentHoldExpiryWorker() {
 }
 
 export function stopPaymentHoldExpiryWorker() {
+  if (activeHoldPollTimer) clearInterval(activeHoldPollTimer);
+  activeHoldPollTimer = null;
   if (holdExpiryTimer) clearInterval(holdExpiryTimer);
   holdExpiryTimer = null;
   if (voidRetryTimer) clearInterval(voidRetryTimer);

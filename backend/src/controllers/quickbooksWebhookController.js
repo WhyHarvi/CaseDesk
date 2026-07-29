@@ -1,6 +1,7 @@
 import { createHttpError } from "../utils/http.js";
 import { verifyIntuitWebhookSignature } from "../services/quickbooksService.js";
 import { confirmPaymentHold, recordWebhookEvent } from "../services/quickbooksWebhookService.js";
+import { logger } from "../services/logger.js";
 
 const ENTITY_NAMES = {
   account: "Account",
@@ -103,6 +104,14 @@ export async function receiveQuickBooksWebhook(req, res) {
   const signature = req.get("intuit-signature");
   const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
   if (!verifyIntuitWebhookSignature(rawBody, signature)) {
+    // Was silent before this — a verifier-token mismatch or unset env var
+    // rejected every single Intuit webhook with no trace anywhere, which is
+    // exactly the failure mode that let this go unnoticed in production.
+    logger.warn("quickbooks_webhook.signature_rejected", {
+      verifierConfigured: Boolean(process.env.QBO_WEBHOOK_VERIFIER_TOKEN),
+      signaturePresent: Boolean(signature),
+      bodyBytes: rawBody.length,
+    });
     throw createHttpError(401, "Invalid webhook signature.", "INVALID_SIGNATURE");
   }
 

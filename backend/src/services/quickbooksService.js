@@ -196,12 +196,21 @@ export async function qboRequest(agencyId, { method = "GET", path, query, body }
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    logger.warn("quickbooks.request_failed", { agencyId, path, status: response.status, fault: faultMessage(payload) });
-    throw createHttpError(
+    const faultCode = payload?.Fault?.Error?.[0]?.code || null;
+    logger.warn("quickbooks.request_failed", { agencyId, path, status: response.status, fault: faultMessage(payload), faultCode });
+    const error = createHttpError(
       response.status === 401 ? 409 : 502,
       faultMessage(payload) || "QuickBooks did not accept that request.",
       response.status === 401 ? "QBO_RECONNECT_REQUIRED" : "QBO_REQUEST_FAILED",
     );
+    // Intuit's fault code, not the HTTP status, is what actually
+    // distinguishes "this record genuinely doesn't exist" (610) from every
+    // other failure (rate limit, 5xx, a malformed request) — callers that
+    // treat "not found" as a meaningful signal (see getQuickBooksInvoice)
+    // need this to avoid conflating a transient outage with a deleted
+    // invoice.
+    error.qboFaultCode = faultCode;
+    throw error;
   }
   return payload;
 }
@@ -398,7 +407,13 @@ export async function getQuickBooksInvoice(agencyId, id) {
     const payload = await qboRequest(agencyId, { path: `/invoice/${id}` });
     return mapQuickBooksInvoice(payload.Invoice);
   } catch (error) {
-    if (error.statusCode === 502 || error.code === "QBO_REQUEST_FAILED") return null;
+    // Only Intuit's own "Object Not Found" fault (610) means the invoice is
+    // genuinely gone — callers (the webhook worker, expiry sweep) treat a
+    // null return as license to void a pending payment hold. Collapsing
+    // every other failure (rate limit, 5xx, timeout) into the same null
+    // would let a transient QuickBooks outage void a hold whose invoice is
+    // still perfectly valid — or, worse, already paid.
+    if (error.code === "QBO_REQUEST_FAILED" && error.qboFaultCode === "610") return null;
     throw error;
   }
 }

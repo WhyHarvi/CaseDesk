@@ -76,6 +76,15 @@ export function dashboardScopes(req) {
     paymentWhere: req.auth.role === "admin"
       ? agencyWhere
       : { ...agencyWhere, client: clientAccessWhere(req) },
+    caseInvoiceWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, client: clientAccessWhere(req) },
+    // BookingPaymentHold has no clientId (guest bookings, pre-lead) — the
+    // closest equivalent scoping for a non-admin is their own assigned
+    // consultations.
+    bookingPaymentHoldWhere: req.auth.role === "admin"
+      ? agencyWhere
+      : { ...agencyWhere, assignedToId: req.auth.userId },
   };
 }
 
@@ -183,6 +192,8 @@ export async function getDashboardSummary(req, res) {
     followUpWhere,
     activityWhere,
     paymentWhere,
+    caseInvoiceWhere,
+    bookingPaymentHoldWhere,
   } = dashboardScopes(req);
   const now = new Date();
   const agency = await prisma.agency.findUnique({
@@ -219,8 +230,12 @@ export async function getDashboardSummary(req, res) {
     followUpsDueToday,
     overdueFollowUpCount,
     appointmentsToday,
-    pendingPayments,
-    pendingPaymentTotals,
+    pendingLegacyPayments,
+    pendingLegacyPaymentTotals,
+    pendingCaseInvoices,
+    pendingCaseInvoiceTotals,
+    pendingBookingHolds,
+    pendingBookingHoldTotals,
     casePipelineRaw,
     upcomingAppointments,
     todayTasks,
@@ -269,6 +284,20 @@ export async function getDashboardSummary(req, res) {
     prisma.payment.aggregate({
       where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
       _sum: { balance: true },
+    }),
+    prisma.caseInvoice.count({
+      where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
+    }),
+    prisma.caseInvoice.aggregate({
+      where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
+      _sum: { balance: true },
+    }),
+    prisma.bookingPaymentHold.count({
+      where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+    }),
+    prisma.bookingPaymentHold.aggregate({
+      where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+      _sum: { amount: true },
     }),
     prisma.case.groupBy({
       by: ["stage"],
@@ -429,8 +458,15 @@ export async function getDashboardSummary(req, res) {
         followUpsDueToday,
         overdueFollowUps: overdueFollowUpCount,
         appointmentsToday,
-        pendingPayments,
-        pendingPaymentBalance: pendingPaymentTotals._sum.balance ?? 0,
+        // Combines three separate money-owed sources that used to only
+        // count legacy retainer Payments — case invoices and consultation
+        // payment holds are just as much "pending payments" and were
+        // invisible here before, even though both show up in the Payments
+        // page.
+        pendingPayments: pendingLegacyPayments + pendingCaseInvoices + pendingBookingHolds,
+        pendingPaymentBalance: Number(pendingLegacyPaymentTotals._sum.balance ?? 0)
+          + Number(pendingCaseInvoiceTotals._sum.balance ?? 0)
+          + Number(pendingBookingHoldTotals._sum.amount ?? 0),
         casesWaitingUpdate: casesWaitingUpdateCount,
       },
       casePipeline: casePipelineRaw.map((item) => ({

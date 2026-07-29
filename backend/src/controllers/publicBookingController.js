@@ -268,6 +268,7 @@ export async function createPublicBooking(req, res) {
         sessionTypeId: sessionType.id,
         subject: sessionType.name,
         location: location ? `${location.name} — ${location.address}` : null,
+        locationId: location?.id || null,
         locationMapsUrl: location?.mapsUrl || null,
         calendar: "Workspace Calendar",
         startsAt,
@@ -362,9 +363,15 @@ export async function createPublicBookingPaymentHold(req, res) {
   });
   if (!sessionType) throw createHttpError(400, "Choose a session type.", "VALIDATION_ERROR");
 
+  const offerToken = String(body.offerToken || "") || null;
+  const offerHold = offerToken ? await prisma.bookingSlotHold.findFirst({ where: { agencyId: settings.agencyId, claimToken: offerToken, claimedAt: null, expiresAt: { gt: new Date() } }, include: { waitlistEntry: true } }) : null;
+  if (offerToken && !offerHold) throw createHttpError(410, "This reserved waitlist time has expired.", "OFFER_EXPIRED");
+  if (offerHold && offerHold.sessionTypeId !== sessionType.id) throw createHttpError(400, "This waitlist offer is for a different session type.", "INVALID_OFFER");
+
   const startsAt = new Date(String(body.startsAt || ""));
   if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "Pick a time.", "VALIDATION_ERROR");
   const endsAt = new Date(startsAt.getTime() + sessionType.durationMinutes * 60_000);
+  if (offerHold && startsAt.getTime() !== new Date(offerHold.startsAt).getTime()) throw createHttpError(400, "Choose the time reserved by your waitlist offer.", "INVALID_OFFER");
 
   const name = String(body.name || "").trim().slice(0, 160);
   const email = String(body.email || "").trim().toLowerCase().slice(0, 254);
@@ -383,10 +390,11 @@ export async function createPublicBookingPaymentHold(req, res) {
   }
   if (!name) throw createHttpError(400, "Your name is required.", "VALIDATION_ERROR");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR");
+  if (offerHold && email !== offerHold.waitlistEntry.emailNormalized) throw createHttpError(400, "Use the email address that joined the waitlist.", "INVALID_OFFER");
 
   // Re-validate that the requested slot really is offered — never trust the widget.
   const dayKey = localDateKey(startsAt, settings.timezone);
-  const requestedConsultantId = String(body.consultantId || "") || null;
+  const requestedConsultantId = offerHold?.assignedToId || String(body.consultantId || "") || null;
   const staff = await eligibleSchedulingStaff({ agencyId: settings.agencyId, sessionTypeId: sessionType.id, publicOnly: true, requestedUserId: requestedConsultantId });
   const { days } = await availabilityForRange({
     agencyId: settings.agencyId,
@@ -395,6 +403,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     sessionBufferMinutes: sessionType.bufferMinutes,
     fromKey: dayKey,
     toKey: dayKey,
+    excludeHoldToken: offerHold?.claimToken || null,
     locationId: location?.id || null,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
@@ -422,6 +431,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     holdMinutes: settings.consultFeeHoldMinutes,
     idempotencyKey,
     bufferMinutes: settings.bufferMinutes,
+    offerHold,
   });
 
   res.status(201).json({ data: publicHoldView(hold) });
@@ -558,6 +568,7 @@ export async function getManagedAvailability(req, res) {
     fromKey: from,
     toKey: to,
     excludeAppointmentId: appointment.id,
+    locationId: appointment.meetingMode === "InPerson" ? appointment.locationId : null,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -645,7 +656,7 @@ export async function rescheduleManagedBooking(req, res) {
     const moves = series.map((item) => ({ item, startsAt: new Date(new Date(item.startsAt).getTime() + delta), endsAt: new Date(new Date(item.endsAt).getTime() + delta), buffer: item.sessionType?.bufferMinutes ?? item.assignedTo?.schedulingPreference?.bufferMinutes ?? settings?.bufferMinutes ?? 0 }));
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings?.timezone || "America/Toronto");
-      const offered = await availabilityForRange({ agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: move.item.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds });
+      const offered = await availabilityForRange({ agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: move.item.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, locationId: meetingMode === "InPerson" ? selectedLocation?.id || move.item.locationId || null : null });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updatedSeries = await prisma.$transaction(async (tx) => {
@@ -654,7 +665,7 @@ export async function rescheduleManagedBooking(req, res) {
         await lockSchedulingTransaction(tx, appointment.agencyId, move.startsAt);
         const conflict = await assertSlotAvailable(tx, { agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds });
         if (conflict) throw createHttpError(409, "A recurring time was just taken. The series was not changed.", "SLOT_TAKEN");
-        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, meetingMode, meetingUrl: meetingMode === "Online" ? move.item.meetingUrl || meetingLink() : null, location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440])) * 60_000), reminderQueuedAt: null }, include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } } });
+        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, meetingMode, meetingUrl: meetingMode === "Online" ? move.item.meetingUrl || meetingLink() : null, location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === "InPerson" ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440])) * 60_000), reminderQueuedAt: null }, include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } } });
         await recordAppointmentEvent(tx, { agencyId: appointment.agencyId, appointmentId: move.item.id, type: "SERIES_RESCHEDULED", summary: "Guest moved appointment with recurring series", metadata: { from: move.item.startsAt, to: move.startsAt, seriesKey: appointment.seriesKey } });
         results.push(result);
       }
@@ -676,6 +687,7 @@ export async function rescheduleManagedBooking(req, res) {
     fromKey: dayKey,
     toKey: dayKey,
     excludeAppointmentId: appointment.id,
+    locationId: meetingMode === "InPerson" ? selectedLocation?.id || appointment.locationId || null : null,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is not available. Pick another slot.", "SLOT_TAKEN");
@@ -701,6 +713,7 @@ export async function rescheduleManagedBooking(req, res) {
         location: meetingMode === "InPerson"
           ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : appointment.location
           : null,
+        locationId: meetingMode === "InPerson" ? selectedLocation?.id || appointment.locationId : null,
         locationMapsUrl: meetingMode === "InPerson"
           ? selectedLocation?.mapsUrl || (selectedLocation ? null : appointment.locationMapsUrl)
           : null,

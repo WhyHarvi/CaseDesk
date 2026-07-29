@@ -87,6 +87,19 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     // consult shows as a plain "Paid" row forever with no signal a refund
     // may be owed.
     refundOwed: row.status === "Paid" && row.appointment?.status === "Cancelled",
+    // The reverse of refundOwed: a refund landed in QuickBooks (via the
+    // RefundReceipt webhook/sweep) but nothing here ever cancels the
+    // appointment automatically — deliberately, since auto-cancelling a
+    // client's real meeting off a QuickBooks event with no other context
+    // could surprise them if the refund was partial or for an unrelated
+    // reason. This just makes the mismatch visible so staff decide.
+    appointmentNotCancelled: row.status === "Refunded" && row.appointment?.status === "Scheduled",
+    // A slot-conflict at payment confirmation (the hold expired and
+    // someone else took the slot right as this payment landed) leaves a
+    // hold "Paid" with no appointment ever created — walk-in holds always
+    // have one from the moment they're created, so its absence here is the
+    // actual signal, not just checking appointmentId in general.
+    needsManualBooking: row.status === "Paid" && row.source !== "WalkIn" && !row.appointmentId,
     qbInvoiceNumber: null,
     qbInvoiceLink: row.qbInvoiceLink,
     createdAt: row.createdAt,

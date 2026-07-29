@@ -1376,6 +1376,14 @@ model Appointment {
   sessionTypeId          String?                  @map("session_type_id")
   subject                String
   location               String?
+  // The rendered "name — address" string above is a display snapshot taken
+  // at booking time — it doesn't say which BookingSettings.locations[]
+  // entry the appointment actually belongs to, so nothing that reschedules
+  // this appointment (staff or guest) can know which location's working
+  // hours to enforce. Not a relation: locations live as JSON array entries
+  // on BookingSettings, not their own table — same pattern as
+  // BookingPaymentHold.locationId and BookingWaitlistEntry.locationId.
+  locationId             String?                  @map("location_id")
   locationMapsUrl        String?                  @map("location_maps_url")
   calendar               String                   @default("Case Calendar")
   startsAt               DateTime                 @map("starts_at")
@@ -1619,6 +1627,7 @@ model BookingSlotHold {
   createdAt       DateTime             @default(now()) @map("created_at")
   agency          Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   waitlistEntry   BookingWaitlistEntry @relation(fields: [waitlistEntryId], references: [id], onDelete: Cascade)
+  paymentHold     BookingPaymentHold?
 
   @@index([agencyId, assignedToId, startsAt, endsAt, expiresAt])
   @@map("booking_slot_holds")
@@ -1657,6 +1666,12 @@ model BookingPaymentHold {
   voidAttempts         Int                 @default(0) @map("void_attempts")
   nextVoidAttemptAt    DateTime?           @map("next_void_attempt_at")
   appointmentId        String?             @unique @map("appointment_id")
+  // Set when this paid booking is fulfilling a waitlist offer — the offer's
+  // own BookingSlotHold can't be claimed (and its BookingWaitlistEntry
+  // marked "Booked") until payment actually confirms, which happens later
+  // and in a different request (webhook/reconcile), so it has to be
+  // persisted here rather than handled inline like the free booking path.
+  offerHoldId          String?             @unique @map("offer_hold_id")
   createdById          String?             @map("created_by_id")
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
@@ -1664,6 +1679,7 @@ model BookingPaymentHold {
   assignedTo           User                @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
   sessionType          BookingSessionType? @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
   appointment          Appointment?        @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  offerHold            BookingSlotHold?    @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
   createdBy            User?               @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@unique([agencyId, idempotencyKey])

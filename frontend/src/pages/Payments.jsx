@@ -509,6 +509,22 @@ export default function Payments() {
                                 <ShieldAlert className="h-3 w-3" /> Refund owed
                               </span>
                             ) : null}
+                            {row.needsManualBooking ? (
+                              <span
+                                title="This client paid, but their slot was no longer available when the payment confirmed — no appointment was created. Book them manually or refund in QuickBooks."
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-100"
+                              >
+                                <ShieldAlert className="h-3 w-3" /> Needs manual booking
+                              </span>
+                            ) : null}
+                            {row.appointmentNotCancelled ? (
+                              <span
+                                title="This payment was refunded in QuickBooks, but the appointment is still scheduled — decide whether to cancel it."
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-violet-50 px-3 text-[11px] font-semibold text-violet-600 ring-1 ring-violet-100"
+                              >
+                                <ShieldAlert className="h-3 w-3" /> Still scheduled
+                              </span>
+                            ) : null}
                           </div>
                         </td>
                       </motion.tr>

@@ -14,6 +14,7 @@ import { appointmentReference, recordAppointmentEvent } from "./appointmentOpera
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booking.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
+import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 
 // Deliberately not as fast as it could be: the frontend polls the hold's
 // own status endpoint independently every few seconds regardless, so this
@@ -33,6 +34,32 @@ const refundReconciliationInFlight = new Map();
 
 function meetingLink() {
   return `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}`;
+}
+
+// A client paid, but by the time we could confirm it the slot they paid
+// for was gone (hold expired and someone else booked it, or a genuine
+// double-confirmation race). There is no way to create the appointment
+// they paid for, and no automated refund capability (QuickBooks Payments
+// API access isn't part of this app's OAuth scope) — this needs a human,
+// immediately, not buried in the payments list.
+async function notifyOrphanedPayment(hold) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  if (!recipientIds.length) return;
+  await notifyUsers({
+    agencyId: hold.agencyId,
+    recipientIds,
+    type: "booking_payment.orphaned",
+    category: "appointments",
+    title: "Paid consultation has no appointment",
+    body: `${hold.guestName} paid $${Number(hold.amount).toFixed(2)} for a consultation, but the slot was no longer available when the payment confirmed. Book them into a new slot manually, or refund in QuickBooks if they no longer want one.`,
+    severity: "critical",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: "/app/payments",
+    metadata: { holdId: hold.id, amount: Number(hold.amount), guestName: hold.guestName, guestEmail: hold.guestEmail, guestPhone: hold.guestPhone },
+    dedupeKey: `booking_payment_hold:${hold.id}:orphaned`,
+    channels: ["in_app"],
+  });
 }
 
 // Fast path called directly from the webhook HTTP handler: record one row
@@ -91,6 +118,27 @@ async function resolveInvoiceIdsForEvent(event) {
   return [];
 }
 
+async function notifyAmbiguousRefund(agencyId, refund, candidates) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  if (!recipientIds.length) return;
+  const names = [...new Set(candidates.map((item) => item.guestName))].join(", ");
+  await notifyUsers({
+    agencyId,
+    recipientIds,
+    type: "booking_payment.refund_ambiguous",
+    category: "appointments",
+    title: "A refund could not be auto-matched to a booking",
+    body: `A $${Number(refund.totalAmount).toFixed(2)} refund in QuickBooks matches ${candidates.length} paid consultations with the same amount and customer (${names}) — pick the right one manually and mark it refunded.`,
+    severity: "warning",
+    entityType: "quickBooksRefundReceipt",
+    entityId: refund.id,
+    actionUrl: "/app/payments",
+    metadata: { refundReceiptId: refund.id, amount: Number(refund.totalAmount), candidateHoldIds: candidates.map((item) => item.id) },
+    dedupeKey: `refund_receipt:${refund.id}:ambiguous`,
+    channels: ["in_app"],
+  });
+}
+
 async function applyBookingRefundReceipt(agencyId, refund) {
   if (!refund?.customerId || !(refund.totalAmount > 0)) return null;
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
@@ -115,6 +163,16 @@ async function applyBookingRefundReceipt(agencyId, refund) {
     take: 3,
   });
   if (candidates.length > 1) {
+    // Retrying this indefinitely (the webhook worker's normal failure path)
+    // never resolves it — the same two candidates match every time — so it
+    // just quietly dies as a FAILED webhook event after 8 attempts with no
+    // one ever told. Ambiguity needs a human to look at QuickBooks and
+    // decide which booking the refund was actually for; tell staff once
+    // (deduped per refund receipt) and still throw so the event bookkeeping
+    // behaves the same as before.
+    await notifyAmbiguousRefund(agencyId, refund, candidates).catch((notifyError) => {
+      logger.warn("booking_payment_hold.ambiguous_refund_notify_failed", { agencyId, refundReceiptId: refund.id, reason: notifyError.message });
+    });
     throw new Error(`RefundReceipt ${refund.id} matches multiple paid consultation bookings`);
   }
   const hold = candidates[0];
@@ -260,17 +318,83 @@ export async function processQuickBooksWebhookEvents() {
   return events.length;
 }
 
+// claimEvent moves PENDING -> PROCESSING right before processEvent runs —
+// a crash/restart in that window leaves the row stuck PROCESSING forever,
+// since processQuickBooksWebhookEvents only ever picks up PENDING rows.
+// Recovery reuses the same attempts/maxAttempts bookkeeping as a normal
+// failure so a poison-pill event still reaches FAILED eventually instead
+// of looping.
+const PROCESSING_STUCK_MS = 5 * 60_000;
+
+export async function recoverStuckWebhookEvents() {
+  const stuck = await prisma.quickBooksWebhookEvent.findMany({
+    where: { status: "PROCESSING", lockedAt: { lte: new Date(Date.now() - PROCESSING_STUCK_MS) } },
+    take: 100,
+  });
+  for (const event of stuck) {
+    const attempts = event.attempts + 1;
+    const terminal = attempts >= event.maxAttempts;
+    await prisma.quickBooksWebhookEvent.updateMany({
+      where: { id: event.id, status: "PROCESSING" },
+      data: {
+        status: terminal ? "FAILED" : "PENDING",
+        attempts,
+        lockedAt: null,
+        lastError: "Recovered from a stuck PROCESSING state (likely a crash/restart mid-processing).",
+      },
+    });
+  }
+  return stuck.length;
+}
+
+// Refunds issued directly in QuickBooks only reach us via the RefundReceipt
+// webhook (unreliable, see above) or whenever staff happen to open the
+// Payments page (reconcileAgencyBookingRefunds is called from there). This
+// sweep makes refund pickup proactive across every connected agency instead
+// of depending on someone looking.
+const REFUND_SWEEP_POLL_MS = 5 * 60_000;
+let refundSweepTimer = null;
+
+export async function sweepAgencyBookingRefunds() {
+  const agencies = await prisma.agencyQuickBooksSettings.findMany({ where: { status: "connected" }, select: { agencyId: true } });
+  let total = 0;
+  for (const { agencyId } of agencies) {
+    total += await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
+      logger.warn("quickbooks_webhook.refund_sweep_failed", { agencyId, reason: error.message });
+      return 0;
+    });
+  }
+  return total;
+}
+
 export function startQuickBooksWebhookWorker() {
-  if (eventTimer) return;
-  eventTimer = setInterval(() => {
-    processQuickBooksWebhookEvents().catch((error) => logger.warn("quickbooks_webhook.pass_failed", { reason: error.message }));
-  }, EVENT_POLL_MS);
-  if (eventTimer.unref) eventTimer.unref();
+  if (!eventTimer) {
+    eventTimer = setInterval(() => {
+      processQuickBooksWebhookEvents().catch((error) => logger.warn("quickbooks_webhook.pass_failed", { reason: error.message }));
+    }, EVENT_POLL_MS);
+    if (eventTimer.unref) eventTimer.unref();
+  }
+  if (!stuckEventTimer) {
+    stuckEventTimer = setInterval(() => {
+      recoverStuckWebhookEvents().catch((error) => logger.warn("quickbooks_webhook.stuck_recovery_pass_failed", { reason: error.message }));
+    }, PROCESSING_STUCK_MS);
+    if (stuckEventTimer.unref) stuckEventTimer.unref();
+  }
+  if (!refundSweepTimer) {
+    refundSweepTimer = setInterval(() => {
+      sweepAgencyBookingRefunds().catch((error) => logger.warn("quickbooks_webhook.refund_sweep_pass_failed", { reason: error.message }));
+    }, REFUND_SWEEP_POLL_MS);
+    if (refundSweepTimer.unref) refundSweepTimer.unref();
+  }
 }
 
 export function stopQuickBooksWebhookWorker() {
   if (eventTimer) clearInterval(eventTimer);
   eventTimer = null;
+  if (stuckEventTimer) clearInterval(stuckEventTimer);
+  stuckEventTimer = null;
+  if (refundSweepTimer) clearInterval(refundSweepTimer);
+  refundSweepTimer = null;
 }
 
 /**
@@ -361,9 +485,10 @@ export async function confirmPaymentHold(agencyId, holdId) {
       return appointment;
     }
 
-    const [sessionType, settings] = await Promise.all([
+    const [sessionType, settings, offerHold] = await Promise.all([
       hold.sessionTypeId ? prisma.bookingSessionType.findUnique({ where: { id: hold.sessionTypeId } }) : null,
       prisma.bookingSettings.findUnique({ where: { agencyId } }),
+      hold.offerHoldId ? prisma.bookingSlotHold.findUnique({ where: { id: hold.offerHoldId } }) : null,
     ]);
     const online = hold.meetingMode === "Online";
     const locations = Array.isArray(settings?.locations) ? settings.locations : [];
@@ -371,8 +496,15 @@ export async function confirmPaymentHold(agencyId, holdId) {
     const reminderMinutes = Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440]));
 
     const appointment = await prisma.$transaction(async (tx) => {
-      const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: hold.assignedToId, startsAt: hold.startsAt, endsAt: hold.endsAt, excludePaymentHoldId: hold.id });
-      if (conflict) throw new Error("Slot conflict detected at payment confirmation time");
+      // Same exclusion the hold's own creation used — without it, a client
+      // fulfilling their own waitlist offer collides with their own
+      // still-unclaimed BookingSlotHold right here at confirmation time too.
+      const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: hold.assignedToId, startsAt: hold.startsAt, endsAt: hold.endsAt, excludePaymentHoldId: hold.id, excludeHoldToken: offerHold?.claimToken || null });
+      if (conflict) {
+        const error = new Error("Slot conflict detected at payment confirmation time");
+        error.code = "SLOT_CONFLICT_AT_CONFIRMATION";
+        throw error;
+      }
 
       const created = await tx.appointment.create({
         data: {
@@ -380,6 +512,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
           sessionTypeId: hold.sessionTypeId,
           subject: sessionType?.name || "Consultation",
           location: location ? `${location.name} — ${location.address}` : null,
+          locationId: hold.locationId,
           locationMapsUrl: location?.mapsUrl || null,
           calendar: "Workspace Calendar",
           startsAt: hold.startsAt,
@@ -403,6 +536,14 @@ export async function confirmPaymentHold(agencyId, holdId) {
       await recordAppointmentEvent(tx, { agencyId, appointmentId: created.id, type: "BOOKED", summary: "Paid consultation confirmed after payment", metadata: { holdId: hold.id, meetingMode: created.meetingMode } });
       await createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment: created });
       await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id } });
+      if (offerHold) {
+        // Only now — payment genuinely confirmed and the appointment
+        // genuinely created — is the waitlist offer actually fulfilled.
+        // Claiming it earlier (at hold-creation) would have marked it
+        // "Booked" even for an abandoned checkout that never pays.
+        await tx.bookingSlotHold.updateMany({ where: { id: offerHold.id, claimedAt: null }, data: { claimedAt: new Date() } });
+        await tx.bookingWaitlistEntry.update({ where: { id: offerHold.waitlistEntryId }, data: { status: "Booked" } });
+      }
       return created;
     });
 
@@ -420,6 +561,25 @@ export async function confirmPaymentHold(agencyId, holdId) {
     invalidateDashboardCache(agencyId);
     return appointment;
   } catch (error) {
+    // A genuine slot conflict at confirmation time (the hold expired and
+    // was released, another client took the slot, and *then* this payment
+    // landed) is unrecoverable by retrying — reverting to "AwaitingPayment"
+    // here used to send it straight back into the same conflict on every
+    // future reconcile pass forever (the expiry sweep's pre-expiry
+    // reconcile always "continue"s on error, so it never re-expires or
+    // voids either — a silent infinite loop). The money is real and
+    // collected either way, so record that honestly as "Paid" with no
+    // appointment attached, and get a human involved immediately instead
+    // of hiding it.
+    if (error.code === "SLOT_CONFLICT_AT_CONFIRMATION") {
+      const orphaned = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date() } });
+      logger.warn("booking_payment_hold.confirmed_with_no_slot", { agencyId, holdId });
+      await notifyOrphanedPayment(orphaned).catch((notifyError) => {
+        logger.warn("booking_payment_hold.orphaned_notify_failed", { agencyId, holdId, reason: notifyError.message });
+      });
+      invalidateDashboardCache(agencyId);
+      return null;
+    }
     // The invoice IS paid at this point — release the claim so a future
     // webhook redelivery or the safety-net poll can retry rather than
     // silently dropping a paid booking.
