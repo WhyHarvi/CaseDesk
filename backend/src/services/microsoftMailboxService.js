@@ -405,6 +405,13 @@ export async function sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, 
           name: item.filename,
           contentType: item.contentType || "application/octet-stream",
           contentBytes: Buffer.from(item.content).toString("base64"),
+          // Nodemailer's cid/contentDisposition convention (used
+          // elsewhere in the codebase, e.g. the booking-confirmation
+          // avatar) has no Graph equivalent by default — without this,
+          // every attachment lands as a plain file, and an
+          // <img src="cid:..."> reference in the HTML body never
+          // resolves inline.
+          ...(item.cid ? { contentId: item.cid, isInline: item.contentDisposition === "inline" } : {}),
         })),
       },
       saveToSentItems: true,
@@ -447,6 +454,13 @@ export async function sendAgencyMicrosoftMailboxEmail({
           name: item.filename,
           contentType: item.contentType || "application/octet-stream",
           contentBytes: Buffer.from(item.content).toString("base64"),
+          // Nodemailer's cid/contentDisposition convention (used
+          // elsewhere in the codebase, e.g. the booking-confirmation
+          // avatar) has no Graph equivalent by default — without this,
+          // every attachment lands as a plain file, and an
+          // <img src="cid:..."> reference in the HTML body never
+          // resolves inline.
+          ...(item.cid ? { contentId: item.cid, isInline: item.contentDisposition === "inline" } : {}),
         })),
       },
       saveToSentItems: true,
