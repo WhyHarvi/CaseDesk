@@ -362,6 +362,11 @@ const recipientValues = (values) => {
   if (values.address) return [values.address];
   return [];
 };
+export const microsoftInternetMessageHeaders = (headers) =>
+  Object.entries(headers || {})
+    .filter(([name, value]) => /^x-/i.test(name) && value)
+    .slice(0, 5)
+    .map(([name, value]) => ({ name, value: String(value) }));
 const escapeHtml = (value) =>
   String(value || "")
     .replace(/&/g, "&amp;")
@@ -383,6 +388,7 @@ export async function sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, 
     : signature
       ? `${escapeHtml(text).replace(/\n/g, "<br>")}<br><br>${signature}`
       : text || "";
+  const internetMessageHeaders = microsoftInternetMessageHeaders(headers);
   await request("/me/sendMail", {
     method: "POST",
     body: JSON.stringify({
@@ -393,9 +399,7 @@ export async function sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, 
         ccRecipients: recipients(cc),
         bccRecipients: recipients(bcc),
         ...(replyTo ? { replyTo: recipients([replyTo]) } : {}),
-        internetMessageHeaders: Object.entries(headers || {})
-          .filter(([name, value]) => /^x-/i.test(name) && value)
-          .map(([name, value]) => ({ name, value: String(value) })),
+        ...(internetMessageHeaders.length ? { internetMessageHeaders } : {}),
         attachments: attachments.map((item) => ({
           "@odata.type": "#microsoft.graph.fileAttachment",
           name: item.filename,
@@ -426,6 +430,7 @@ export async function sendAgencyMicrosoftMailboxEmail({
   if (totalBytes > 2.5 * 1024 * 1024) {
     throw createHttpError(413, "Microsoft mailbox attachments are currently limited to 2.5 MB per email.");
   }
+  const internetMessageHeaders = microsoftInternetMessageHeaders(headers);
   await request("/me/sendMail", {
     method: "POST",
     body: JSON.stringify({
@@ -436,9 +441,7 @@ export async function sendAgencyMicrosoftMailboxEmail({
         ccRecipients: recipients(recipientValues(cc)),
         bccRecipients: recipients(recipientValues(bcc)),
         ...(replyTo ? { replyTo: recipients(recipientValues(replyTo)) } : {}),
-        internetMessageHeaders: Object.entries(headers || {})
-          .filter(([name, value]) => /^x-/i.test(name) && value)
-          .map(([name, value]) => ({ name, value: String(value) })),
+        ...(internetMessageHeaders.length ? { internetMessageHeaders } : {}),
         attachments: attachments.map((item) => ({
           "@odata.type": "#microsoft.graph.fileAttachment",
           name: item.filename,

@@ -30,15 +30,16 @@ function cx(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Overdue: "Overdue", Voided: "Voided" };
+const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", Overdue: "Overdue", Voided: "Voided" };
 const STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600 ring-slate-200",
   PartiallyPaid: "bg-amber-50 text-amber-600 ring-amber-100",
   Paid: "bg-emerald-50 text-emerald-600 ring-emerald-100",
+  Refunded: "bg-violet-50 text-violet-600 ring-violet-100",
   Overdue: "bg-rose-50 text-rose-600 ring-rose-100",
   Voided: "bg-slate-100 text-slate-400 ring-slate-200",
 };
-const STATUS_COLOR = { Paid: "#10B981", PartiallyPaid: "#F59E0B", Open: "#94A3B8", Overdue: "#F43F5E", Voided: "#CBD5E1" };
+const STATUS_COLOR = { Paid: "#10B981", Refunded: "#8B5CF6", PartiallyPaid: "#F59E0B", Open: "#94A3B8", Overdue: "#F43F5E", Voided: "#CBD5E1" };
 const SOURCE_LABEL = { case_invoice: "Case invoices", booking_payment: "Consultation bookings", legacy_payment: "Legacy retainers" };
 const SOURCE_ROW_LABEL = { case_invoice: "Case invoice", booking_payment: "Consultation booking", legacy_payment: "Legacy retainer" };
 const SOURCE_ICON = { case_invoice: Banknote, booking_payment: CalendarClock, legacy_payment: Landmark };
@@ -47,6 +48,13 @@ const SOURCE_COLOR = { case_invoice: "#0EA5E9", booking_payment: "#8B5CF6", lega
 function formatDate(value) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function paymentBalanceLabel(row) {
+  if (row.status === "Refunded") return <span className="font-medium text-violet-600">Refunded</span>;
+  if (row.status === "Voided") return <span className="font-medium text-slate-400">Not collected</span>;
+  if (row.balance > 0) return money.format(row.balance);
+  return <span className="font-medium text-emerald-600">Paid in full</span>;
 }
 
 /** Animated number that springs from 0 (or the previous value) to `value`. */
@@ -486,7 +494,7 @@ export default function Payments() {
                           ) : <span className="text-xs text-slate-400">—</span>}
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5 font-semibold tabular-nums text-slate-900">{money.format(row.amount)}</td>
-                        <td className="border-t border-slate-100 px-4 py-3.5 tabular-nums text-slate-600">{row.balance > 0 ? money.format(row.balance) : <span className="font-medium text-emerald-600">Paid in full</span>}</td>
+                        <td className="border-t border-slate-100 px-4 py-3.5 tabular-nums text-slate-600">{paymentBalanceLabel(row)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5 text-slate-500">{formatDate(row.createdAt)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           <span className={cx("inline-flex h-7 items-center rounded-full px-3 text-[11px] font-semibold ring-1", STATUS_TONE[row.status] || STATUS_TONE.Open)}>

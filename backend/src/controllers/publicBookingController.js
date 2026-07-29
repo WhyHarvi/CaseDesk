@@ -1,6 +1,7 @@
 import { createHash, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { logger } from "../services/logger.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { assertSlotAvailable, availabilityForRange, localDateKey } from "../services/bookingAvailabilityService.js";
 import { sendBookingMessages, sendBookingStaffNotification } from "../services/bookingNotificationService.js";
@@ -15,6 +16,7 @@ import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/b
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
 import { createPaymentHoldForPublicBooking, getPaymentHoldStatus } from "../services/bookingPaymentHoldService.js";
+import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -421,7 +423,18 @@ export async function createPublicBookingPaymentHold(req, res) {
 
 export async function getPublicBookingPaymentHoldStatus(req, res) {
   const settings = await resolveAgencyByToken(req.params.token);
-  const hold = await getPaymentHoldStatus(settings.agencyId, String(req.params.claimToken || ""));
+  const claimToken = String(req.params.claimToken || "");
+  let hold = await getPaymentHoldStatus(settings.agencyId, claimToken);
+  if (hold.qbInvoiceId && ["AwaitingPayment", "Expired"].includes(hold.status)) {
+    await reconcilePaymentHold(settings.agencyId, hold.id, { allowExpired: true }).catch((error) => {
+      logger.warn("booking_payment_hold.status_reconcile_failed", {
+        agencyId: settings.agencyId,
+        holdId: hold.id,
+        reason: error.message,
+      });
+    });
+    hold = await getPaymentHoldStatus(settings.agencyId, claimToken);
+  }
   res.json({ data: publicHoldView(hold) });
 }
 

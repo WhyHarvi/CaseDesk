@@ -1,4 +1,6 @@
 import prisma from "./prisma/client.js";
+import { logger } from "./logger.js";
+import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 
 const MAX_ROWS_PER_SOURCE = 1000;
 
@@ -6,8 +8,9 @@ const CASE_INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Gove
 
 // Every source has its own status vocabulary — normalize to one set so the
 // admin table and filters don't need to know where a row came from.
-function normalizeCaseInvoiceStatus(status) {
+export function normalizeCaseInvoiceStatus(status) {
   if (status === "PartiallyPaid") return "PartiallyPaid";
+  if (status === "Void" || status === "Voided") return "Voided";
   return status; // Open | Paid | Overdue already match the unified set
 }
 
@@ -20,8 +23,12 @@ function normalizeBookingStatus(status) {
 function normalizeLegacyStatus(status) {
   if (status === "Unpaid") return "Open";
   if (status === "Partial") return "PartiallyPaid";
-  if (status === "Refunded") return "Voided";
-  return status; // Paid
+  return status; // Paid | Refunded
+}
+
+export function netCollectedAmount(row) {
+  if (row.status === "Voided" || row.status === "Refunded") return 0;
+  return Math.max(0, Number(row.amount) - Number(row.balance));
 }
 
 async function fetchCaseInvoiceRows(agencyId, { from, to }) {
@@ -31,24 +38,27 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
   });
-  return rows.map((row) => ({
-    id: `case_invoice:${row.id}`,
-    source: "case_invoice",
-    type: CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
-    description: row.description,
-    clientName: row.client?.fullName || "Unknown client",
-    clientId: row.clientId,
-    caseId: row.caseId,
-    caseType: row.case?.caseType || null,
-    amount: Number(row.amount),
-    balance: Number(row.balance),
-    status: normalizeCaseInvoiceStatus(row.status),
-    qbInvoiceNumber: row.qbInvoiceNumber,
-    qbInvoiceLink: row.qbInvoiceLink,
-    createdAt: row.createdAt,
-    paidAt: Number(row.balance) <= 0 ? row.updatedAt : null,
-    dueDate: row.dueDate,
-  }));
+  return rows.map((row) => {
+    const status = normalizeCaseInvoiceStatus(row.status);
+    return {
+      id: `case_invoice:${row.id}`,
+      source: "case_invoice",
+      type: CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
+      description: row.description,
+      clientName: row.client?.fullName || "Unknown client",
+      clientId: row.clientId,
+      caseId: row.caseId,
+      caseType: row.case?.caseType || null,
+      amount: Number(row.amount),
+      balance: Number(row.balance),
+      status,
+      qbInvoiceNumber: row.qbInvoiceNumber,
+      qbInvoiceLink: row.qbInvoiceLink,
+      createdAt: row.createdAt,
+      paidAt: status === "Paid" ? row.updatedAt : null,
+      dueDate: row.dueDate,
+    };
+  });
 }
 
 async function fetchBookingPaymentRows(agencyId, { from, to }) {
@@ -67,7 +77,7 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     caseId: null,
     caseType: null,
     amount: Number(row.amount),
-    balance: row.status === "Paid" ? 0 : Number(row.amount),
+    balance: ["Paid", "Refunded"].includes(row.status) ? 0 : Number(row.amount),
     status: normalizeBookingStatus(row.status),
     qbInvoiceNumber: null,
     qbInvoiceLink: row.qbInvoiceLink,
@@ -112,6 +122,9 @@ async function fetchLegacyPaymentRows(agencyId, { from, to }) {
  * enough at single-agency scale, capped per source as a safety valve.
  */
 export async function listAgencyPayments(agencyId, { status, source, query, from, to, page = 1, pageSize = 25 } = {}) {
+  await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
+    logger.warn("payments_overview.refund_reconcile_failed", { agencyId, reason: error.message });
+  });
   const dateRange = { from: from ? new Date(from) : null, to: to ? new Date(to) : null };
   const [caseInvoices, bookingPayments, legacyPayments] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, dateRange),
@@ -135,6 +148,9 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
 }
 
 export async function getPaymentsSummary(agencyId) {
+  await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
+    logger.warn("payments_summary.refund_reconcile_failed", { agencyId, reason: error.message });
+  });
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
@@ -173,7 +189,7 @@ export async function getPaymentsSummary(agencyId) {
   const lastMonthStart = new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1);
 
   for (const row of all) {
-    const paidAmount = row.amount - row.balance;
+    const paidAmount = netCollectedAmount(row);
     totalCollected += paidAmount;
     if (row.status !== "Voided") outstandingBalance += row.balance;
     if (row.paidAt) {

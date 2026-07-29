@@ -13,7 +13,7 @@ import {
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
-function deriveStatus(row) {
+export function deriveCaseInvoiceStatus(row) {
   const balance = Number(row.balance);
   const amount = Number(row.amount);
   if (balance <= 0) return "Paid";
@@ -97,7 +97,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
       qbSyncToken: invoice.syncToken,
       amount,
       balance: invoice.balance,
-      status: deriveStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
+      status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
       dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
       createdById: actorUserId,
       lastSyncedAt: new Date(),
@@ -166,7 +166,9 @@ async function refreshInvoiceRows(agencyId, rows) {
     rows.map(async (row) => {
       const fresh = liveById.get(row.qbInvoiceId);
       if (!fresh) return row;
-      const status = deriveStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate });
+      const status = fresh.isVoided
+        ? "Void"
+        : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate });
       if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
       return prisma.caseInvoice.update({
         where: { id: row.id },
@@ -228,7 +230,7 @@ export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, n
     where: { id: row.id },
     data: {
       balance: newBalance,
-      status: deriveStatus({ balance: newBalance, amount: row.amount, dueDate: refreshed?.dueDate || row.dueDate }),
+      status: deriveCaseInvoiceStatus({ balance: newBalance, amount: row.amount, dueDate: refreshed?.dueDate || row.dueDate }),
       qbSyncToken: refreshed?.syncToken || row.qbSyncToken,
       lastSyncedAt: new Date(),
     },

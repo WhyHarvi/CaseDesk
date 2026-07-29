@@ -325,6 +325,8 @@ function mapQuickBooksInvoice(invoice) {
     totalAmount: Number(invoice.TotalAmt ?? 0),
     balance: Number(invoice.Balance ?? 0),
     dueDate: invoice.DueDate || null,
+    isVoided: String(invoice.PrivateNote || "").trim().toLowerCase() === "voided"
+      || String(invoice.TxnStatus || "").trim().toLowerCase() === "voided",
     // Only present once the invoice has been sent — QuickBooks Payments
     // being enabled is necessary but not sufficient; QBO doesn't generate
     // the hosted "Pay now" page at creation time, only on send (confirmed
@@ -383,7 +385,7 @@ export async function getQuickBooksInvoicesByIds(agencyId, ids) {
   const list = ids.map((id) => `'${escapeQueryLiteral(id)}'`).join(",");
   const payload = await qboRequest(agencyId, {
     path: "/query",
-    query: `SELECT Id, SyncToken, DocNumber, TotalAmt, Balance, DueDate FROM Invoice WHERE Id IN (${list}) MAXRESULTS 300`,
+    query: `SELECT Id, SyncToken, DocNumber, TotalAmt, Balance, DueDate, PrivateNote FROM Invoice WHERE Id IN (${list}) MAXRESULTS 300`,
   });
   return (payload.QueryResponse?.Invoice || []).map(mapQuickBooksInvoice);
 }
@@ -413,13 +415,48 @@ export async function getQuickBooksPayment(agencyId, id) {
   return { id: payment.Id, totalAmount: Number(payment.TotalAmt ?? 0), invoiceIds: [...new Set(invoiceIds)] };
 }
 
+function mapQuickBooksRefundReceipt(receipt) {
+  const itemIds = (receipt.Line || [])
+    .map((line) => line.SalesItemLineDetail?.ItemRef?.value)
+    .filter(Boolean);
+  return {
+    id: receipt.Id,
+    syncToken: receipt.SyncToken,
+    customerId: receipt.CustomerRef?.value || null,
+    totalAmount: Number(receipt.TotalAmt ?? 0),
+    itemIds: [...new Set(itemIds)],
+    paymentRefNum: receipt.PaymentRefNum || null,
+    transactionDate: receipt.TxnDate || null,
+    createdAt: receipt.MetaData?.CreateTime || receipt.TxnDate || null,
+    updatedAt: receipt.MetaData?.LastUpdatedTime || null,
+    cardStatus: receipt.CreditCardPayment?.CreditChargeResponse?.Status || null,
+  };
+}
+
+export async function getQuickBooksRefundReceipt(agencyId, id) {
+  const payload = await qboRequest(agencyId, { path: `/refundreceipt/${id}` });
+  return mapQuickBooksRefundReceipt(payload.RefundReceipt);
+}
+
+export async function listQuickBooksRefundReceiptsSince(agencyId, since) {
+  const date = new Date(since);
+  const from = Number.isNaN(date.getTime()) ? new Date(Date.now() - 30 * 86_400_000) : date;
+  const day = from.toISOString().slice(0, 10);
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: `SELECT * FROM RefundReceipt WHERE TxnDate >= '${escapeQueryLiteral(day)}' MAXRESULTS 1000`,
+  });
+  return (payload.QueryResponse?.RefundReceipt || []).map(mapQuickBooksRefundReceipt);
+}
+
 // Voids an abandoned/expired invoice so it doesn't sit Open in QuickBooks
-// forever once a payment hold expires unpaid. QBO's delete operation is
-// passed as a URL param (?operation=delete), not the SQL-query param.
+// forever once a payment hold expires unpaid. A void preserves the
+// transaction's audit trail; a hard delete would permanently remove it
+// and can strand a late QuickBooks payment as unapplied.
 export async function voidQuickBooksInvoice(agencyId, { id, syncToken }) {
   await qboRequest(agencyId, {
     method: "POST",
-    path: "/invoice?operation=delete",
+    path: "/invoice?operation=void",
     body: { Id: id, SyncToken: syncToken },
   });
 }

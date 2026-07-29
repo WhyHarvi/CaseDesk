@@ -2,12 +2,18 @@ import { randomUUID } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { getQuickBooksInvoice, getQuickBooksPayment } from "./quickbooksService.js";
+import {
+  getQuickBooksInvoice,
+  getQuickBooksPayment,
+  getQuickBooksRefundReceipt,
+  listQuickBooksRefundReceiptsSince,
+} from "./quickbooksService.js";
 import { assertSlotAvailable } from "./bookingAvailabilityService.js";
 import { sendBookingMessages } from "./bookingNotificationService.js";
 import { appointmentReference, recordAppointmentEvent } from "./appointmentOperationsService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booking.js";
+import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 
 // Deliberately not as fast as it could be: the frontend polls the hold's
 // own status endpoint independently every few seconds regardless, so this
@@ -17,8 +23,13 @@ import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booki
 // competes with every other background worker and live request for the
 // same handful of connections — 30s keeps this worker's footprint modest.
 const EVENT_POLL_MS = Math.max(Number(process.env.QBO_WEBHOOK_POLL_MS) || 30_000, 10_000);
+const RECONCILE_COOLDOWN_MS = Math.max(Number(process.env.QBO_HOLD_RECONCILE_COOLDOWN_MS) || 10_000, 5_000);
 const BATCH_SIZE = 20;
 let eventTimer = null;
+const reconciliationChecks = new Map();
+const reconciliationInFlight = new Map();
+const refundReconciliationChecks = new Map();
+const refundReconciliationInFlight = new Map();
 
 function meetingLink() {
   return `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}`;
@@ -38,7 +49,7 @@ export async function recordWebhookEvent({ realmId, entities }) {
       entityName: entity.name,
       entityId: entity.id,
       operation: entity.operation,
-      rawPayload: entity,
+      rawPayload: entity.rawPayload || entity,
     })),
   });
 }
@@ -80,14 +91,109 @@ async function resolveInvoiceIdsForEvent(event) {
   return [];
 }
 
+async function applyBookingRefundReceipt(agencyId, refund) {
+  if (!refund?.customerId || !(refund.totalAmount > 0)) return null;
+  const settings = await prisma.agencyQuickBooksSettings.findUnique({
+    where: { agencyId },
+    select: { consultFeeItemId: true },
+  });
+  if (!settings?.consultFeeItemId || !refund.itemIds.includes(settings.consultFeeItemId)) return null;
+
+  const refundAt = new Date(refund.createdAt || refund.transactionDate || Date.now());
+  const candidates = await prisma.bookingPaymentHold.findMany({
+    where: {
+      agencyId,
+      qbCustomerId: refund.customerId,
+      amount: refund.totalAmount,
+      status: "Paid",
+      createdAt: {
+        gte: new Date(refundAt.getTime() - 30 * 86_400_000),
+        lte: refundAt,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 3,
+  });
+  if (candidates.length > 1) {
+    throw new Error(`RefundReceipt ${refund.id} matches multiple paid consultation bookings`);
+  }
+  const hold = candidates[0];
+  if (!hold) return null;
+
+  const updated = await prisma.bookingPaymentHold.updateMany({
+    where: { id: hold.id, agencyId, status: "Paid" },
+    data: { status: "Refunded" },
+  });
+  if (updated.count !== 1) return null;
+
+  await recordActivity({
+    agencyId,
+    userId: null,
+    clientId: null,
+    caseId: null,
+    action: "appointment.payment_refunded",
+    details: `Consultation payment of $${Number(refund.totalAmount).toFixed(2)} refunded in QuickBooks for ${hold.guestName}`,
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    metadata: { refundReceiptId: refund.id, appointmentId: hold.appointmentId },
+  }).catch(() => {});
+  invalidateDashboardCache(agencyId);
+  return prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
+}
+
+async function processCaseInvoiceEvent(event, invoiceId) {
+  const row = await prisma.caseInvoice.findFirst({
+    where: { agencyId: event.agencyId, qbInvoiceId: invoiceId },
+  });
+  if (!row) return false;
+
+  if (["Delete", "Void"].includes(event.operation)) {
+    await prisma.caseInvoice.update({
+      where: { id: row.id },
+      data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
+    });
+    return true;
+  }
+
+  const invoice = await getQuickBooksInvoice(event.agencyId, invoiceId);
+  if (!invoice) return true;
+  await prisma.caseInvoice.update({
+    where: { id: row.id },
+    data: {
+      balance: invoice.balance,
+      status: invoice.isVoided
+        ? "Void"
+        : deriveCaseInvoiceStatus({ balance: invoice.balance, amount: row.amount, dueDate: invoice.dueDate || row.dueDate }),
+      qbSyncToken: invoice.syncToken,
+      qbInvoiceNumber: invoice.docNumber,
+      lastSyncedAt: new Date(),
+    },
+  });
+  return true;
+}
+
 async function processEvent(event) {
   if (!event.agencyId) {
     await prisma.quickBooksWebhookEvent.update({ where: { id: event.id }, data: { status: "IGNORED", processedAt: new Date() } });
     return;
   }
+  if (event.entityName === "RefundReceipt") {
+    if (["Delete", "Void"].includes(event.operation)) {
+      await prisma.quickBooksWebhookEvent.update({ where: { id: event.id }, data: { status: "IGNORED", processedAt: new Date() } });
+      return;
+    }
+    const refund = await getQuickBooksRefundReceipt(event.agencyId, event.entityId);
+    const hold = await applyBookingRefundReceipt(event.agencyId, refund);
+    await prisma.quickBooksWebhookEvent.update({
+      where: { id: event.id },
+      data: { status: hold ? "PROCESSED" : "IGNORED", processedAt: new Date() },
+    });
+    return;
+  }
   const invoiceIds = await resolveInvoiceIdsForEvent(event);
   let matched = false;
   for (const invoiceId of invoiceIds) {
+    if (await processCaseInvoiceEvent(event, invoiceId)) matched = true;
     const hold = await prisma.bookingPaymentHold.findFirst({ where: { agencyId: event.agencyId, qbInvoiceId: invoiceId, status: "AwaitingPayment" } });
     if (!hold) continue;
     matched = true;
@@ -103,6 +209,38 @@ async function processEvent(event) {
     }
   }
   await prisma.quickBooksWebhookEvent.update({ where: { id: event.id }, data: { status: matched ? "PROCESSED" : "IGNORED", processedAt: new Date() } });
+}
+
+export async function reconcileAgencyBookingRefunds(agencyId, { force = false } = {}) {
+  const active = refundReconciliationInFlight.get(agencyId);
+  if (active) return active;
+  const checkedAt = refundReconciliationChecks.get(agencyId) || 0;
+  if (!force && Date.now() - checkedAt < 30_000) return 0;
+  refundReconciliationChecks.set(agencyId, Date.now());
+
+  const reconciliation = (async () => {
+    const refunds = await listQuickBooksRefundReceiptsSince(agencyId, new Date(Date.now() - 30 * 86_400_000));
+    let matched = 0;
+    for (const refund of refunds) {
+      try {
+        if (await applyBookingRefundReceipt(agencyId, refund)) matched += 1;
+      } catch (error) {
+        logger.warn("booking_payment_hold.refund_reconcile_failed", {
+          agencyId,
+          refundReceiptId: refund.id,
+          reason: error.message,
+        });
+      }
+    }
+    return matched;
+  })();
+
+  refundReconciliationInFlight.set(agencyId, reconciliation);
+  try {
+    return await reconciliation;
+  } finally {
+    refundReconciliationInFlight.delete(agencyId);
+  }
 }
 
 export async function processQuickBooksWebhookEvents() {
@@ -133,6 +271,61 @@ export function startQuickBooksWebhookWorker() {
 export function stopQuickBooksWebhookWorker() {
   if (eventTimer) clearInterval(eventTimer);
   eventTimer = null;
+}
+
+/**
+ * Safety net for a missed or delayed webhook. The public status endpoint
+ * calls this while its checkout page is polling, and the expiry worker
+ * calls it before expiring or retrying a void. That keeps the webhook as
+ * the fast path without making it the only path to a paid appointment.
+ */
+export async function reconcilePaymentHold(agencyId, holdId, { allowExpired = false, force = false } = {}) {
+  const key = `${agencyId}:${holdId}`;
+  const active = reconciliationInFlight.get(key);
+  if (active) return active;
+
+  const checkedAt = reconciliationChecks.get(key) || 0;
+  if (!force && Date.now() - checkedAt < RECONCILE_COOLDOWN_MS) {
+    return prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  }
+
+  if (reconciliationChecks.size >= 1_000) reconciliationChecks.clear();
+  reconciliationChecks.set(key, Date.now());
+
+  const reconciliation = (async () => {
+    let hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+    const eligible = hold?.status === "AwaitingPayment"
+      || (allowExpired && hold?.status === "Expired" && !hold.voidedAt);
+    if (!eligible || !hold.qbInvoiceId) return hold;
+
+    const invoice = await getQuickBooksInvoice(agencyId, hold.qbInvoiceId);
+    if (!invoice || invoice.balance > 0) return hold;
+
+    if (hold.status === "Expired") {
+      const revived = await prisma.bookingPaymentHold.updateMany({
+        where: { id: hold.id, agencyId, status: "Expired", voidedAt: null },
+        data: { status: "AwaitingPayment", nextVoidAttemptAt: null },
+      });
+      if (revived.count !== 1) {
+        return prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+      }
+      hold = { ...hold, status: "AwaitingPayment" };
+    }
+
+    await confirmPaymentHold(agencyId, hold.id);
+    const latest = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+    if (latest?.status !== "AwaitingPayment" && latest?.status !== "Expired") {
+      reconciliationChecks.delete(key);
+    }
+    return latest;
+  })();
+
+  reconciliationInFlight.set(key, reconciliation);
+  try {
+    return await reconciliation;
+  } finally {
+    reconciliationInFlight.delete(key);
+  }
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   findQuickBooksCustomerByEmail,
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
+import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
 
 // Standalone resolver, deliberately not layered onto caseInvoiceService.js's
 // requireMappedItem/PAYMENT_TYPES — those are also consumed by payment
@@ -243,7 +244,27 @@ export async function releaseExpiredPaymentHolds() {
     take: 100,
   });
   for (const hold of expired) {
-    const updated = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Expired" } });
+    if (hold.qbInvoiceId) {
+      try {
+        const reconciled = await reconcilePaymentHold(hold.agencyId, hold.id, { force: true });
+        if (reconciled?.status !== "AwaitingPayment") continue;
+      } catch (error) {
+        // A temporary QBO outage must not cause a potentially paid invoice
+        // to be expired and voided. The next expiry pass will retry.
+        logger.warn("booking_payment_hold.pre_expiry_reconcile_failed", {
+          agencyId: hold.agencyId,
+          holdId: hold.id,
+          reason: error.message,
+        });
+        continue;
+      }
+    }
+    const claimed = await prisma.bookingPaymentHold.updateMany({
+      where: { id: hold.id, status: "AwaitingPayment", expiresAt: { lte: new Date() } },
+      data: { status: "Expired" },
+    });
+    if (claimed.count !== 1) continue;
+    const updated = await prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
     await attemptVoid(updated);
   }
   return expired.length;
@@ -264,7 +285,22 @@ export async function retryFailedVoids() {
     },
     take: 100,
   });
-  for (const hold of pending) await attemptVoid(hold);
+  for (const hold of pending) {
+    if (hold.qbInvoiceId) {
+      try {
+        const reconciled = await reconcilePaymentHold(hold.agencyId, hold.id, { allowExpired: true, force: true });
+        if (reconciled?.status !== "Expired") continue;
+      } catch (error) {
+        logger.warn("booking_payment_hold.pre_void_reconcile_failed", {
+          agencyId: hold.agencyId,
+          holdId: hold.id,
+          reason: error.message,
+        });
+        continue;
+      }
+    }
+    await attemptVoid(hold);
+  }
   return pending.length;
 }
 
