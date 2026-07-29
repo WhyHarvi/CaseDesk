@@ -89,6 +89,7 @@ export async function getPublicBookingInfo(req, res) {
       onlineBookingEnabled: settings.onlineBookingEnabled,
       consultFeeEnabled: settings.consultFeeEnabled,
       consultFeeAmount: settings.consultFeeAmount,
+      consultFeeTerms: settings.consultFeeTerms,
       publicHeadline: settings.publicHeadline,
       publicWelcomeMessage: settings.publicWelcomeMessage,
       publicSignOffName: settings.publicSignOffName,
@@ -142,6 +143,7 @@ export async function getPublicAvailability(req, res) {
     fromKey: from,
     toKey: to,
     excludeHoldToken: offerHold?.claimToken || null,
+    locationId: String(req.query.locationId || "") || null,
   });
   const publicDays = Object.fromEntries(Object.entries(days).map(([key, slots]) => [key, slots.map(({ staffIds, ...slot }) => slot)]));
   res.json({ data: { days: publicDays, timezone: settings.timezone } });
@@ -199,6 +201,7 @@ export async function createPublicBooking(req, res) {
     fromKey: dayKey,
     toKey: dayKey,
     excludeHoldToken: offerHold?.claimToken || null,
+    locationId: location?.id || null,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is no longer available. Pick another slot.", "SLOT_TAKEN");
@@ -390,6 +393,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     sessionBufferMinutes: sessionType.bufferMinutes,
     fromKey: dayKey,
     toKey: dayKey,
+    locationId: location?.id || null,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is no longer available. Pick another slot.", "SLOT_TAKEN");

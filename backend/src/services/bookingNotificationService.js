@@ -4,14 +4,12 @@ import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailServic
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { releaseExpiredWaitlistHolds } from "./bookingWaitlistService.js";
+import { publicBookingManageUrl } from "./bookingPublicLinkService.js";
+import { AVATAR_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
 
 const REMINDER_POLL_MS = 5 * 60_000;
 let reminderTimer = null;
 let deliveryRunning = false;
-
-function frontendBase() {
-  return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
-}
 
 function icsDate(value) {
   return new Date(value).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -85,6 +83,30 @@ function safeWebUrl(value) {
   }
 }
 
+function safeEmailImageUrl(value) {
+  const normalized = String(value || "");
+  if (/^cid:[a-z0-9._@-]+$/i.test(normalized)) return normalized;
+  if (/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(normalized)) return normalized;
+  return safeWebUrl(normalized);
+}
+
+function workspaceAvatarDataUrl(agency, buffer) {
+  const mimeType = ["image/jpeg", "image/png", "image/webp"].includes(agency?.avatarMimeType)
+    ? agency.avatarMimeType
+    : "image/png";
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function workspaceAvatarBuffer(agency, agencyId) {
+  if (!agency?.avatarStorageKey) return null;
+  try {
+    return await downloadStorageFile(AVATAR_BUCKET, agency.avatarStorageKey, { allowMissing: true });
+  } catch (error) {
+    logger.warn("booking.workspace_avatar_unavailable", { agencyId, reason: error.message });
+    return null;
+  }
+}
+
 function appointmentDateParts(appointment, timezone) {
   const start = new Date(appointment.startsAt);
   const end = new Date(appointment.endsAt);
@@ -100,7 +122,7 @@ function detailRow(label, value) {
   return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${escapeHtml(value)}</td></tr>`;
 }
 
-export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, messageTemplates = {} }) {
+export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {} }) {
   const template = messageTemplates?.[kind] && typeof messageTemplates[kind] === "object" ? messageTemplates[kind] : {};
   const copy = { ...(KIND_COPY[kind] || KIND_COPY.booked), ...(template.subject ? { title: String(template.subject).slice(0, 140) } : {}), ...(template.intro ? { intro: String(template.intro).slice(0, 600) } : {}) };
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
@@ -111,7 +133,8 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     ? safeWebUrl(appointment.locationMapsUrl) || `https://maps.google.com/?q=${encodeURIComponent(appointment.location.split(" — ").pop())}`
     : null;
   const safeManageUrl = safeWebUrl(manageUrl);
-  const logoUrl = safeWebUrl(agency?.logoUrl);
+  const workspaceAvatarUrl = safeEmailImageUrl(brandImageUrl);
+  const logoUrl = workspaceAvatarUrl || safeWebUrl(agency?.logoUrl);
   const inPerson = !meetingUrl && appointment.location;
   const primaryUrl = kind === "cancelled" ? null : (meetingUrl || mapsUrl || safeManageUrl);
   const primaryLabel = meetingUrl ? "Join online appointment" : mapsUrl ? "Open directions" : "Manage appointment";
@@ -119,7 +142,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
   const agencyContact = [agency?.phone, agency?.email].filter(Boolean).join(" · ");
   const agencyAddress = [agency?.address, agency?.city, agency?.province, agency?.postalCode].filter(Boolean).join(", ");
   const brandMark = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" width="46" height="46" alt="" style="display:block;width:46px;height:46px;border-radius:13px;background:#ffffff;object-fit:contain">`
+    ? `<img src="${escapeHtml(logoUrl)}" width="46" height="46" alt="${escapeHtml(agencyName)}" style="display:block;width:46px;height:46px;border-radius:${workspaceAvatarUrl ? "50%" : "13px"};background:#ffffff;object-fit:${workspaceAvatarUrl ? "cover" : "contain"}">`
     : `<div style="width:46px;height:46px;border-radius:13px;background:#ffffff;color:#0f172a;font-size:20px;font-weight:800;line-height:46px;text-align:center">${escapeHtml(agencyName.charAt(0).toUpperCase())}</div>`;
 
   const html = `<!doctype html>
@@ -192,10 +215,11 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
 
 export async function bookingTemplatePreview({ agencyId, kind = "booked", messageTemplates = null, contactName = "Jordan Lee" }) {
   const [agency, settings, consultant] = await Promise.all([
-    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
+    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
     prisma.user.findFirst({ where: { agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { fullName: true } }),
   ]);
+  const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
   const startsAt = new Date(Date.now() + 2 * 86_400_000);
   startsAt.setHours(10, 0, 0, 0);
   const appointment = {
@@ -210,7 +234,7 @@ export async function bookingTemplatePreview({ agencyId, kind = "booked", messag
     assignedTo: { fullName: consultant?.fullName || "Immigration Consultant" },
     sessionType: { preparationInstructions: "Please arrive ten minutes early.", preparationChecklist: ["Passport or government-issued identification", "Relevant immigration documents"], parkingInstructions: "Visitor parking is available behind the building." },
   };
-  return bookingEmailContent({ appointment, kind, agency, timezone: settings?.timezone || "America/Toronto", contactName, manageUrl: `${frontendBase()}/book/manage/preview`, messageTemplates: messageTemplates || settings?.messageTemplates || {} });
+  return bookingEmailContent({ appointment, kind, agency, timezone: settings?.timezone || "America/Toronto", contactName, manageUrl: publicBookingManageUrl(settings, "preview"), brandImageUrl: avatarBuffer ? workspaceAvatarDataUrl(agency, avatarBuffer) : null, messageTemplates: messageTemplates || settings?.messageTemplates || {} });
 }
 
 export async function sendBookingTemplateTest({ agencyId, userId, kind, messageTemplates }) {
@@ -230,7 +254,7 @@ export async function sendBookingTemplateTest({ agencyId, userId, kind, messageT
  */
 async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "" }) {
   const [agency, settings] = await Promise.all([
-    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
+    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
   ]);
   const timezone = settings?.timezone || "America/Toronto";
@@ -238,13 +262,15 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
   const contact = recipientContact(appointment);
   const copy = KIND_COPY[kind] || KIND_COPY.booked;
   const when = formatWhen(appointment, timezone);
-  const manageUrl = appointment.manageToken ? `${frontendBase()}/book/manage/${appointment.manageToken}` : null;
+  const manageUrl = publicBookingManageUrl(settings, appointment.manageToken);
 
   if (contact.email && (!channel || channel === "email")) {
     try {
       const config = await resolveAgencyMailConfig(agencyId);
       const transport = createMailTransport(config);
-      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, messageTemplates: settings?.messageTemplates });
+      const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
+      const avatarCid = avatarBuffer ? `workspace-avatar-${appointment.id}-${kind}@casedesk` : null;
+      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates });
       await transport.sendMail({
         from: config.from,
         to: contact.email,
@@ -252,7 +278,16 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
         subject: email.subject,
         text: email.text,
         html: email.html,
-        attachments: [{ filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: `text/calendar; method=${kind === "cancelled" ? "CANCEL" : "PUBLISH"}` }],
+        attachments: [
+          ...(avatarBuffer ? [{
+            filename: `workspace-avatar.${agency.avatarMimeType === "image/jpeg" ? "jpg" : agency.avatarMimeType === "image/webp" ? "webp" : "png"}`,
+            content: avatarBuffer,
+            contentType: agency.avatarMimeType || "image/png",
+            cid: avatarCid,
+            contentDisposition: "inline",
+          }] : []),
+          { filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: `text/calendar; method=${kind === "cancelled" ? "CANCEL" : "PUBLISH"}` },
+        ],
       });
     } catch (error) {
       logger.warn("booking.email_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
@@ -264,7 +299,7 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
     try {
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
-        : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${appointment.meetingUrl ? ` Join: ${appointment.meetingUrl}` : appointment.location ? ` Location: ${appointment.location}${appointment.locationMapsUrl ? ` Maps: ${appointment.locationMapsUrl}` : ""}` : ""}${kind !== "reminder" && manageUrl ? ` Manage: ${manageUrl}` : ""}`;
+        : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${appointment.meetingUrl ? ` Join: ${appointment.meetingUrl}` : appointment.location ? ` Location: ${appointment.location}${appointment.locationMapsUrl ? ` Maps: ${appointment.locationMapsUrl}` : ""}` : ""}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${appointment.startsAt}:${dedupeSuffix}` });
     } catch (error) {
       logger.warn("booking.sms_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
@@ -436,7 +471,7 @@ export function startBookingReminderWorker() {
   reminderTimer = setInterval(() => {
     Promise.all([runReminderPass(), processBookingDeliveryPass(), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
   }, REMINDER_POLL_MS);
-  void Promise.all([runReminderPass(), processBookingDeliveryPass(), releaseExpiredWaitlistHolds()]);
+  Promise.all([runReminderPass(), processBookingDeliveryPass(), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
   if (reminderTimer.unref) reminderTimer.unref();
 }
 

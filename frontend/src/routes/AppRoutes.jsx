@@ -63,6 +63,7 @@ export default function AppRoutes() {
     <Route path="/client-chat/:token" element={<Deferred><ClientChatPortal /></Deferred>} />
     <Route path="/public/intake/:publicToken" element={<Deferred><PublicLeadIntakePage /></Deferred>} />
     <Route path="/book/manage/:manageToken" element={<Deferred><ManageBookingPage /></Deferred>} />
+    <Route path="/b/:token/manage/:manageToken" element={<Deferred><ManageBookingPage /></Deferred>} />
     <Route path="/b/:token" element={<Deferred><PublicBookingPage /></Deferred>} />
     <Route path="/book/:token" element={<Deferred><PublicBookingPage /></Deferred>} />
     <Route path="/portal/*" element={<Navigate to="/client-portal" replace />} />

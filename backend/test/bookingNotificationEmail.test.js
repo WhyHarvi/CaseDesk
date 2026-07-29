@@ -51,6 +51,22 @@ test("booking email escapes visitor-controlled content", () => {
   assert.match(email.html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
 });
 
+test("booking email uses the workspace avatar ahead of the legacy logo", () => {
+  const email = bookingEmailContent({
+    appointment: baseAppointment,
+    kind: "booked",
+    agency: { ...agency, logoUrl: "https://legacy.example.test/logo.png" },
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+    brandImageUrl: "cid:workspace-avatar-appointment-1@casedesk",
+  });
+
+  assert.match(email.html, /src="cid:workspace-avatar-appointment-1@casedesk"/);
+  assert.match(email.html, /border-radius:50%/);
+  assert.doesNotMatch(email.html, /legacy\.example\.test/);
+});
+
 test("online and cancelled emails show only relevant actions", () => {
   const online = bookingEmailContent({
     appointment: { ...baseAppointment, location: null, locationMapsUrl: null, meetingUrl: "https://meet.example.test/room" },

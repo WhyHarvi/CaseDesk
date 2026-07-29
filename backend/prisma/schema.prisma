@@ -1462,6 +1462,7 @@ model BookingSettings {
   consultFeeEnabled             Boolean  @default(false) @map("consult_fee_enabled")
   consultFeeAmount              Decimal? @map("consult_fee_amount") @db.Decimal(10, 2)
   consultFeeHoldMinutes         Int      @default(20) @map("consult_fee_hold_minutes")
+  consultFeeTerms               String?  @map("consult_fee_terms")
   publicHeadline                String?  @map("public_headline")
   publicWelcomeMessage          String?  @map("public_welcome_message")
   publicSignOffName             String?  @map("public_sign_off_name")

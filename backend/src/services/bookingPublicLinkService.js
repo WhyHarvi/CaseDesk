@@ -1,6 +1,55 @@
 import { randomBytes } from "node:crypto";
 import prisma from "./prisma/client.js";
 
+export const DEFAULT_BOOKING_PUBLIC_ORIGIN = "https://casedesk.chkimmigration.ca";
+
+function validPublicOrigin(value) {
+  try {
+    const parsed = new URL(String(value || "").split(",")[0].trim());
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      parsed.protocol !== "https:" ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname.endsWith(".localhost")
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Client-facing booking links must never inherit a localhost FRONTEND_URL.
+ * BOOKING_PUBLIC_ORIGIN can override the canonical CHK domain for another
+ * deployment without coupling CORS/application URLs to outbound messages.
+ */
+export function bookingPublicOrigin(environment = process.env) {
+  return validPublicOrigin(environment.BOOKING_PUBLIC_ORIGIN) || DEFAULT_BOOKING_PUBLIC_ORIGIN;
+}
+
+export function publicBookingPageUrl(settings, { offerToken = null, environment = process.env } = {}) {
+  const slug = settings?.publicSlug || settings?.publicToken;
+  if (!slug) return null;
+  const url = new URL(`/b/${encodeURIComponent(slug)}`, bookingPublicOrigin(environment));
+  if (offerToken) url.searchParams.set("offer", offerToken);
+  return url.toString();
+}
+
+export function publicBookingManageUrl(settings, manageToken, { environment = process.env } = {}) {
+  if (!manageToken) return null;
+  const publicPageUrl = publicBookingPageUrl(settings, { environment });
+  if (publicPageUrl) {
+    const url = new URL(publicPageUrl);
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/manage/${encodeURIComponent(manageToken)}`;
+    return url.toString();
+  }
+  return new URL(`/book/manage/${encodeURIComponent(manageToken)}`, bookingPublicOrigin(environment)).toString();
+}
+
 export function bookingSlugBase(value) {
   return String(value || "")
     .toLowerCase()

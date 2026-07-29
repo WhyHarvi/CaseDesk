@@ -137,10 +137,11 @@ export function getPublicBookingAvatarUrl(token) {
   return `${base}/public/booking/${encodeURIComponent(token)}/avatar`;
 }
 
-export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken }) {
+export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken, locationId }) {
   const params = new URLSearchParams({ sessionTypeId, from, to });
   if (consultantId) params.set("consultantId", consultantId);
   if (offerToken) params.set("offerToken", offerToken);
+  if (locationId) params.set("locationId", locationId);
   const response = await api.get(`/public/booking/${token}/availability?${params.toString()}`);
   return response.data.data;
 }

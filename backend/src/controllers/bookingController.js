@@ -74,7 +74,10 @@ function validLocations(value) {
         throw createHttpError(400, "Use a valid HTTPS Google Maps link.", "VALIDATION_ERROR");
       }
     }
-    return { id: String(item?.id || `loc-${index + 1}-${Date.now()}`), name, address, mapsUrl: mapsUrl || null };
+    const useCustomHours = Boolean(item?.useCustomHours);
+    const workingHours = useCustomHours && item?.workingHours !== undefined ? validWorkingHours(item.workingHours) : [];
+    const daysOff = useCustomHours && item?.daysOff !== undefined ? validDaysOff(item.daysOff) : [];
+    return { id: String(item?.id || `loc-${index + 1}-${Date.now()}`), name, address, mapsUrl: mapsUrl || null, useCustomHours, workingHours, daysOff };
   });
 }
 
@@ -165,6 +168,7 @@ export async function updateBookingSettings(req, res) {
     ...(typeof body.consultFeeEnabled === "boolean" ? { consultFeeEnabled: body.consultFeeEnabled } : {}),
     ...(body.consultFeeAmount !== undefined ? { consultFeeAmount: body.consultFeeAmount === null ? null : validFeeAmount(body.consultFeeAmount) } : {}),
     ...(body.consultFeeHoldMinutes !== undefined ? { consultFeeHoldMinutes: boundedInt(body.consultFeeHoldMinutes, "Payment hold window", 5, 120) } : {}),
+    ...(body.consultFeeTerms !== undefined ? { consultFeeTerms: optionalPublicCopy(body.consultFeeTerms, "Payment terms", 2000) } : {}),
     ...(body.publicHeadline !== undefined ? { publicHeadline: optionalPublicCopy(body.publicHeadline, "Public headline", 140) } : {}),
     ...(body.publicWelcomeMessage !== undefined ? { publicWelcomeMessage: optionalPublicCopy(body.publicWelcomeMessage, "Welcome message", 2000) } : {}),
     ...(body.publicSignOffName !== undefined ? { publicSignOffName: optionalPublicCopy(body.publicSignOffName, "Sign-off", 160) } : {}),

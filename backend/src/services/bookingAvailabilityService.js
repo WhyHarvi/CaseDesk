@@ -170,7 +170,7 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null, locationId = null }) {
   validateAvailabilityRange(fromKey, toKey);
   const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
@@ -180,7 +180,19 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
   // from the internal Appointments tab aren't subject to it, so callers
   // there pass minNoticeOverrideMinutes: 0 to still block past slots but
   // allow same-day/right-now bookings.
-  const baseSettings = minNoticeOverrideMinutes != null ? { ...settings, minNoticeMinutes: minNoticeOverrideMinutes } : settings;
+  // A location with its own hours (e.g. a satellite office open fewer
+  // days than HQ) narrows the agency default before staff-level
+  // preferences are layered on top in effectiveStaffSettings — same
+  // override pattern, one more layer.
+  const location = locationId && Array.isArray(settings.locations) ? settings.locations.find((item) => item.id === locationId) : null;
+  const baseSettings = {
+    ...settings,
+    ...(minNoticeOverrideMinutes != null ? { minNoticeMinutes: minNoticeOverrideMinutes } : {}),
+    ...(location?.useCustomHours ? {
+      workingHours: Array.isArray(location.workingHours) && location.workingHours.length ? location.workingHours : [],
+      daysOff: [...new Set([...(Array.isArray(settings.daysOff) ? settings.daysOff : []), ...(Array.isArray(location.daysOff) ? location.daysOff : [])])],
+    } : {}),
+  };
   const rangeStart = localDateTimeToUtc(fromKey, 0, timezone);
   const rangeEnd = localDateTimeToUtc(toKey, 24 * 60, timezone);
   const staffIds = assignedToId ? [assignedToId] : pooled ? assignedToIds : [];

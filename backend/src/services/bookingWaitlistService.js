@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import { logger } from "./logger.js";
-
-function frontendBase() {
-  return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
-}
+import { publicBookingPageUrl } from "./bookingPublicLinkService.js";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -57,7 +54,7 @@ export async function offerWaitlistOpening(appointment) {
     const config = await resolveAgencyMailConfig(appointment.agencyId);
     const transport = createMailTransport(config);
     const agencyName = settings.agency.legalName || settings.agency.name;
-    const bookingUrl = `${frontendBase()}/b/${settings.publicSlug || settings.publicToken}?offer=${encodeURIComponent(offerToken)}`;
+    const bookingUrl = publicBookingPageUrl(settings, { offerToken });
     const when = new Date(appointment.startsAt).toLocaleString("en-CA", { timeZone: settings.timezone, dateStyle: "full", timeStyle: "short" });
     await transport.sendMail({
       from: config.from,
