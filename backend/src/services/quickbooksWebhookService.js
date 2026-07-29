@@ -27,6 +27,7 @@ const EVENT_POLL_MS = Math.max(Number(process.env.QBO_WEBHOOK_POLL_MS) || 30_000
 const RECONCILE_COOLDOWN_MS = Math.max(Number(process.env.QBO_HOLD_RECONCILE_COOLDOWN_MS) || 10_000, 5_000);
 const BATCH_SIZE = 20;
 let eventTimer = null;
+let stuckEventTimer = null;
 const reconciliationChecks = new Map();
 const reconciliationInFlight = new Map();
 const refundReconciliationChecks = new Map();
