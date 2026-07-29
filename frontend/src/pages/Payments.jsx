@@ -44,6 +44,14 @@ const SOURCE_LABEL = { case_invoice: "Case invoices", booking_payment: "Consulta
 const SOURCE_ROW_LABEL = { case_invoice: "Case invoice", booking_payment: "Consultation booking", legacy_payment: "Legacy retainer" };
 const SOURCE_ICON = { case_invoice: Banknote, booking_payment: CalendarClock, legacy_payment: Landmark };
 const SOURCE_COLOR = { case_invoice: "#0EA5E9", booking_payment: "#8B5CF6", legacy_payment: "#64748B" };
+const ORPHANED_PAYMENT_RUNBOOK = [
+  "Acknowledge the critical alert within 10 minutes.",
+  "Confirm the payment in QuickBooks.",
+  "If the original slot is available, create the appointment manually.",
+  "If it is unavailable, contact the client and offer alternative times.",
+  "If no suitable time is accepted, refund the payment in QuickBooks.",
+  "Record the resolution in CaseDesk and close the critical notification.",
+];
 
 function formatDate(value) {
   if (!value) return "—";
@@ -407,6 +415,38 @@ export default function Payments() {
           </p>
         </motion.div>
 
+        {summary?.manualBookingCount > 0 ? (
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ ...spring, delay: 0.04 }}
+            role="alert"
+            className="rounded-[1.6rem] border border-rose-200 bg-rose-50/90 p-5 shadow-[0_16px_40px_rgba(244,63,94,0.10)] sm:p-6"
+          >
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
+                <ShieldAlert className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-rose-950">
+                  Paid consultation{summary.manualBookingCount === 1 ? "" : "s"} requiring manual action
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-rose-800">
+                  {summary.manualBookingCount} payment{summary.manualBookingCount === 1 ? " has" : "s have"} no appointment. Treat this as urgent and follow every step below.
+                </p>
+                <ol className="mt-3 grid gap-2 text-sm leading-5 text-rose-900 sm:grid-cols-2">
+                  {ORPHANED_PAYMENT_RUNBOOK.map((step, index) => (
+                    <li key={step} className="flex items-start gap-2 rounded-xl bg-white/65 px-3 py-2">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-600 text-[10px] font-bold text-white">{index + 1}</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+          </motion.section>
+        ) : null}
+
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard label="Total Collected" value={summary?.totalCollected ?? 0} icon={HandCoins} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} />
           <KpiCard label="Outstanding Balance" value={summary?.outstandingBalance ?? 0} icon={Wallet} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.1} />
@@ -511,7 +551,7 @@ export default function Payments() {
                             ) : null}
                             {row.needsManualBooking ? (
                               <span
-                                title="This client paid, but their slot was no longer available when the payment confirmed — no appointment was created. Book them manually or refund in QuickBooks."
+                                title="Urgent: acknowledge within 10 minutes, confirm the QuickBooks payment, then arrange a new appointment or refund the client and record the resolution."
                                 className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-100"
                               >
                                 <ShieldAlert className="h-3 w-3" /> Needs manual booking

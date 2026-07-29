@@ -46,18 +46,34 @@ function meetingLink() {
 async function notifyOrphanedPayment(hold) {
   const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
   if (!recipientIds.length) return;
+  const runbook = [
+    "Acknowledge this alert within 10 minutes.",
+    "Confirm the payment in QuickBooks.",
+    "If the original slot is available, create the appointment manually.",
+    "If the slot is unavailable, contact the client and offer alternative times.",
+    "If no suitable time is accepted, refund the payment in QuickBooks.",
+    "Record the resolution in CaseDesk and close this alert.",
+  ];
   await notifyUsers({
     agencyId: hold.agencyId,
     recipientIds,
     type: "booking_payment.orphaned",
     category: "appointments",
     title: "Paid consultation has no appointment",
-    body: `${hold.guestName} paid $${Number(hold.amount).toFixed(2)} for a consultation, but the slot was no longer available when the payment confirmed. Book them into a new slot manually, or refund in QuickBooks if they no longer want one.`,
+    body: `${hold.guestName} paid $${Number(hold.amount).toFixed(2)}, but no appointment was created. Acknowledge within 10 minutes, confirm the payment in QuickBooks, then arrange a new slot or refund the client.`,
     severity: "critical",
     entityType: "bookingPaymentHold",
     entityId: hold.id,
     actionUrl: "/app/payments",
-    metadata: { holdId: hold.id, amount: Number(hold.amount), guestName: hold.guestName, guestEmail: hold.guestEmail, guestPhone: hold.guestPhone },
+    metadata: {
+      holdId: hold.id,
+      amount: Number(hold.amount),
+      guestName: hold.guestName,
+      guestEmail: hold.guestEmail,
+      guestPhone: hold.guestPhone,
+      responseDeadlineMinutes: 10,
+      runbook,
+    },
     dedupeKey: `booking_payment_hold:${hold.id}:orphaned`,
     channels: ["in_app"],
   });

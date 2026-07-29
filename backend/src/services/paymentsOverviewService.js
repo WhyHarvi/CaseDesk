@@ -243,6 +243,7 @@ export async function getPaymentsSummary(agencyId) {
     paidThisMonth,
     paidLastMonth,
     overdueCount,
+    manualBookingCount: bookingPayments.filter((row) => row.needsManualBooking).length,
     totalTransactions: all.length,
     monthlyTrend: trendMonths.map(({ key, ...rest }) => rest),
     statusBreakdown,

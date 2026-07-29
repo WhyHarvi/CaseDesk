@@ -101,6 +101,10 @@ test("paid booking holds have a missed-webhook reconciliation path before expiry
   assert.match(quickBooksService, /path: "\/invoice\?operation=void"/);
   assert.doesNotMatch(quickBooksService, /path: "\/invoice\?operation=delete"/);
   assert.match(webhookService, /event\.entityName === "RefundReceipt"/);
+  assert.match(webhookService, /Acknowledge this alert within 10 minutes/);
+  assert.match(webhookService, /responseDeadlineMinutes: 10/);
   assert.match(paymentsPage, /row\.status === "Voided"[\s\S]*Not collected/);
   assert.match(paymentsPage, /row\.status === "Refunded"[\s\S]*Refunded/);
+  assert.match(paymentsPage, /ORPHANED_PAYMENT_RUNBOOK/);
+  assert.match(paymentsPage, /summary\?\.manualBookingCount > 0/);
 });
