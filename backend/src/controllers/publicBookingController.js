@@ -306,7 +306,9 @@ export async function createPublicBooking(req, res) {
     action: "appointment.booked",
     details: `${sessionType.name} booked online by ${name} for ${localDateKey(startsAt, settings.timezone)}`,
   }).catch(() => {});
-  await sendBookingMessages({ agencyId: settings.agencyId, appointment, kind: "booked" }).catch(() => {});
+  await sendBookingMessages({ agencyId: settings.agencyId, appointment, kind: "booked" }).catch((error) => {
+    logger.warn("public_booking_controller.booked_message_failed", { agencyId: settings.agencyId, appointmentId: appointment.id, reason: error.message });
+  });
   invalidateDashboardCache(settings.agencyId);
 
   res.status(201).json({
@@ -574,7 +576,9 @@ export async function cancelManagedBooking(req, res) {
       if (series.length) await tx.appointmentEvent.createMany({ data: series.map((item) => ({ agencyId: appointment.agencyId, appointmentId: item.id, type: "SERIES_CANCELLED", summary: "Guest cancelled appointment with recurring series", metadata: { seriesKey: appointment.seriesKey } })) });
     });
     const cancelled = series.map((item) => ({ ...item, status: "Cancelled", cancelledAt: new Date(), cancellationReason: reason }));
-    await Promise.all(cancelled.flatMap((item) => [sendBookingMessages({ agencyId: appointment.agencyId, appointment: item, kind: "cancelled" }).catch(() => {}), offerWaitlistOpening(item).catch(() => {})]));
+    await Promise.all(cancelled.flatMap((item) => [sendBookingMessages({ agencyId: appointment.agencyId, appointment: item, kind: "cancelled" }).catch((error) => {
+      logger.warn("public_booking_controller.series_cancelled_message_failed", { agencyId: appointment.agencyId, appointmentId: item.id, reason: error.message });
+    }), offerWaitlistOpening(item).catch(() => {})]));
     invalidateDashboardCache(appointment.agencyId);
     return res.json({ data: { ...publicView(cancelled.find((item) => item.id === appointment.id), settings), seriesAffected: series.length } });
   }
@@ -592,7 +596,9 @@ export async function cancelManagedBooking(req, res) {
     action: "appointment.cancelled",
     details: `${appointment.subject} cancelled via booking link`,
   }).catch(() => {});
-  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "cancelled" }).catch(() => {});
+  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "cancelled" }).catch((error) => {
+    logger.warn("public_booking_controller.cancelled_message_failed", { agencyId: appointment.agencyId, appointmentId: updated.id, reason: error.message });
+  });
   await offerWaitlistOpening(updated).catch(() => {});
   invalidateDashboardCache(appointment.agencyId);
   res.json({ data: publicView(updated, settings) });
@@ -654,7 +660,9 @@ export async function rescheduleManagedBooking(req, res) {
       }
       return results;
     });
-    await Promise.all(updatedSeries.map((item) => sendBookingMessages({ agencyId: appointment.agencyId, appointment: item, kind: "rescheduled" }).catch(() => {})));
+    await Promise.all(updatedSeries.map((item) => sendBookingMessages({ agencyId: appointment.agencyId, appointment: item, kind: "rescheduled" }).catch((error) => {
+      logger.warn("public_booking_controller.series_rescheduled_message_failed", { agencyId: appointment.agencyId, appointmentId: item.id, reason: error.message });
+    })));
     invalidateDashboardCache(appointment.agencyId);
     return res.json({ data: { ...publicView(updatedSeries.find((item) => item.id === appointment.id), settings), seriesAffected: updatedSeries.length } });
   }
@@ -714,7 +722,9 @@ export async function rescheduleManagedBooking(req, res) {
     action: "appointment.rescheduled",
     details: `${appointment.subject} rescheduled via booking link`,
   }).catch(() => {});
-  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "rescheduled" }).catch(() => {});
+  await sendBookingMessages({ agencyId: appointment.agencyId, appointment: updated, kind: "rescheduled" }).catch((error) => {
+    logger.warn("public_booking_controller.rescheduled_message_failed", { agencyId: appointment.agencyId, appointmentId: updated.id, reason: error.message });
+  });
   invalidateDashboardCache(appointment.agencyId);
   res.json({ data: publicView(updated, settings) });
 }

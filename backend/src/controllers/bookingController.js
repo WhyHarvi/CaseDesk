@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { bookingTemplatePreview, sendBookingMessages, sendBookingStaffNotification, sendBookingTemplateTest } from "../services/bookingNotificationService.js";
+import { agencyMailConnectionStatus } from "../services/agencyMailService.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { logger } from "../services/logger.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import {
   assertSlotAvailable,
@@ -20,6 +22,7 @@ import {
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
 import { createPaymentHoldForWalkIn } from "../services/bookingPaymentHoldService.js";
+import { invalidateDashboardCache } from "../services/dashboardCache.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -178,6 +181,17 @@ export async function updateBookingSettings(req, res) {
   const enablingPublic = data.publicBookingEnabled === true || (data.publicBookingEnabled === undefined && current.publicBookingEnabled);
   if (enablingPublic && finalLocations.length === 0) {
     throw createHttpError(400, "Add at least one office location before the public booking link can be active.", "LOCATION_REQUIRED");
+  }
+  // Only gate the OFF -> ON transition, not every resave of an
+  // already-enabled page — a live agency whose mailbox connection later
+  // breaks must still be able to save unrelated settings changes. This
+  // exists because an agency ran with public booking live and zero mail/SMS
+  // config for 11 days, silently failing to notify 8 real clients.
+  if (data.publicBookingEnabled === true && current.publicBookingEnabled !== true) {
+    const mailStatus = await agencyMailConnectionStatus(req.auth.agencyId);
+    if (!mailStatus.configured) {
+      throw createHttpError(400, "Connect and verify a mailbox in Settings before turning on the public booking page — otherwise clients booking online won't receive a confirmation email.", "MAIL_REQUIRED");
+    }
   }
   const enablingConsultFee = data.consultFeeEnabled === true || (data.consultFeeEnabled === undefined && current.consultFeeEnabled);
   const finalFeeAmount = data.consultFeeAmount !== undefined ? data.consultFeeAmount : current.consultFeeAmount;
@@ -451,7 +465,9 @@ export async function createBookingAppointment(req, res) {
   });
   const data = createdAppointments[0];
 
-  await Promise.all(createdAppointments.map((appointment) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment, kind: "booked", actorUserId: req.auth.userId }).catch(() => {})));
+  await Promise.all(createdAppointments.map((appointment) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment, kind: "booked", actorUserId: req.auth.userId }).catch((error) => {
+    logger.warn("booking_controller.booked_message_failed", { agencyId: req.auth.agencyId, appointmentId: appointment.id, reason: error.message });
+  })));
 
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -461,6 +477,7 @@ export async function createBookingAppointment(req, res) {
     action: "appointment.booked",
     details: `${subject} booked for ${client?.fullName || guestName} on ${localDateKey(startsAt, settings.timezone)}${startDates.length > 1 ? ` (${startDates.length} recurring appointments)` : ""}`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
 
   res.status(201).json({ data: { ...data, series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null } });
 }
@@ -503,8 +520,11 @@ export async function cancelBookingAppointment(req, res) {
       if (tx.appointmentEvent && series.length) await tx.appointmentEvent.createMany({ data: series.map((item) => ({ agencyId: req.auth.agencyId, appointmentId: item.id, actorUserId: req.auth.userId, type: "SERIES_CANCELLED", summary: "Appointment cancelled with recurring series", metadata: { seriesKey: existing.seriesKey } })) });
     });
     const cancelled = series.map((item) => ({ ...item, status: "Cancelled", cancelledAt: new Date(), cancellationReason: reason }));
-    await Promise.all(cancelled.flatMap((item) => [sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId }).catch(() => {}), offerWaitlistOpening(item).catch(() => {})]));
+    await Promise.all(cancelled.flatMap((item) => [sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId }).catch((error) => {
+      logger.warn("booking_controller.series_cancelled_message_failed", { agencyId: req.auth.agencyId, appointmentId: item.id, reason: error.message });
+    }), offerWaitlistOpening(item).catch(() => {})]));
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_cancelled", details: `${series.length} recurring appointments cancelled` });
+    invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...cancelled.find((item) => item.id === existing.id), seriesAffected: series.length } });
   }
   const data = await prisma.appointment.update({
@@ -521,7 +541,10 @@ export async function cancelBookingAppointment(req, res) {
     action: "appointment.cancelled",
     details: `${existing.subject} cancelled`,
   });
-  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "cancelled", actorUserId: req.auth.userId }).catch(() => {});
+  invalidateDashboardCache(req.auth.agencyId);
+  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "cancelled", actorUserId: req.auth.userId }).catch((error) => {
+    logger.warn("booking_controller.cancelled_message_failed", { agencyId: req.auth.agencyId, appointmentId: data.id, reason: error.message });
+  });
   await offerWaitlistOpening(data).catch(() => {});
   res.json({ data });
 }
@@ -584,8 +607,11 @@ export async function rescheduleBookingAppointment(req, res) {
       }
       return results;
     });
-    await Promise.all(updated.map((item) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "rescheduled", actorUserId: req.auth.userId }).catch(() => {})));
+    await Promise.all(updated.map((item) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "rescheduled", actorUserId: req.auth.userId }).catch((error) => {
+      logger.warn("booking_controller.series_rescheduled_message_failed", { agencyId: req.auth.agencyId, appointmentId: item.id, reason: error.message });
+    })));
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_rescheduled", details: `${updated.length} recurring appointments rescheduled` });
+    invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
   const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0 });
@@ -629,7 +655,10 @@ export async function rescheduleBookingAppointment(req, res) {
     action: "appointment.rescheduled",
     details: `${existing.subject} rescheduled`,
   });
-  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.auth.userId }).catch(() => {});
+  invalidateDashboardCache(req.auth.agencyId);
+  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.auth.userId }).catch((error) => {
+    logger.warn("booking_controller.rescheduled_message_failed", { agencyId: req.auth.agencyId, appointmentId: data.id, reason: error.message });
+  });
   res.json({ data });
 }
 
@@ -743,6 +772,7 @@ export async function updateBookingAppointmentStatus(req, res) {
   });
   await recordAppointmentEvent(prisma, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
+  invalidateDashboardCache(req.auth.agencyId);
   if (["Completed", "NoShow"].includes(status)) {
     await sendBookingStaffNotification({ agencyId: req.auth.agencyId, appointment: data, kind: status === "Completed" ? "attended" : "no_show", actorUserId: req.auth.userId }).catch(() => {});
   }

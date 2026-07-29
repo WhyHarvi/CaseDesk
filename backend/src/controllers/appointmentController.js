@@ -5,6 +5,8 @@ import { caseAccessWhere } from "../middleware/authorization.js";
 import { assertSlotAvailable, getOrCreateBookingSettings } from "../services/bookingAvailabilityService.js";
 import { chooseAppointmentAssignee, lockSchedulingTransaction } from "../services/schedulingAssignmentService.js";
 import { sendBookingMessages } from "../services/bookingNotificationService.js";
+import { logger } from "../services/logger.js";
+import { invalidateDashboardCache } from "../services/dashboardCache.js";
 
 const statuses = new Set(["Scheduled", "Completed", "Cancelled", "NoShow"]);
 const include = {
@@ -113,7 +115,10 @@ export async function createAppointment(req, res) {
     action: "appointment.created",
     details: `${data.subject} scheduled for ${data.startsAt.toISOString()}`,
   });
-  await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "booked", actorUserId: req.user.id }).catch(() => {});
+  invalidateDashboardCache(req.user.agencyId);
+  await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "booked", actorUserId: req.user.id }).catch((error) => {
+    logger.warn("appointment_controller.booked_message_failed", { agencyId: req.user.agencyId, appointmentId: data.id, reason: error.message });
+  });
   res.status(201).json({ data });
 }
 
@@ -163,8 +168,12 @@ export async function updateAppointment(req, res) {
     action: "appointment.updated",
     details: `${data.subject} appointment updated`,
   });
-  if (status === "Cancelled" && existing.status !== "Cancelled") await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "cancelled", actorUserId: req.user.id }).catch(() => {});
-  else if (startsAt.getTime() !== new Date(existing.startsAt).getTime()) await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.user.id }).catch(() => {});
+  invalidateDashboardCache(req.user.agencyId);
+  const notifyFailed = (kind) => (error) => {
+    logger.warn("appointment_controller.status_message_failed", { agencyId: req.user.agencyId, appointmentId: data.id, kind, reason: error.message });
+  };
+  if (status === "Cancelled" && existing.status !== "Cancelled") await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "cancelled", actorUserId: req.user.id }).catch(notifyFailed("cancelled"));
+  else if (startsAt.getTime() !== new Date(existing.startsAt).getTime()) await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.user.id }).catch(notifyFailed("rescheduled"));
   res.json({ data });
 }
 
@@ -186,6 +195,9 @@ export async function deleteAppointment(req, res) {
     action: "appointment.cancelled",
     details: `${existing.subject} appointment cancelled`,
   });
-  await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "cancelled", actorUserId: req.user.id }).catch(() => {});
+  invalidateDashboardCache(req.user.agencyId);
+  await sendBookingMessages({ agencyId: req.user.agencyId, appointment: data, kind: "cancelled", actorUserId: req.user.id }).catch((error) => {
+    logger.warn("appointment_controller.cancelled_message_failed", { agencyId: req.user.agencyId, appointmentId: data.id, reason: error.message });
+  });
   res.status(204).send();
 }

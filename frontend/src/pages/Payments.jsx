@@ -497,9 +497,19 @@ export default function Payments() {
                         <td className="border-t border-slate-100 px-4 py-3.5 tabular-nums text-slate-600">{paymentBalanceLabel(row)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5 text-slate-500">{formatDate(row.createdAt)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
-                          <span className={cx("inline-flex h-7 items-center rounded-full px-3 text-[11px] font-semibold ring-1", STATUS_TONE[row.status] || STATUS_TONE.Open)}>
-                            {STATUS_LABEL[row.status] || row.status}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className={cx("inline-flex h-7 items-center rounded-full px-3 text-[11px] font-semibold ring-1", STATUS_TONE[row.status] || STATUS_TONE.Open)}>
+                              {STATUS_LABEL[row.status] || row.status}
+                            </span>
+                            {row.refundOwed ? (
+                              <span
+                                title="The consultation was cancelled after this payment was collected — QuickBooks does not refund automatically, this needs to be actioned manually."
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
+                              >
+                                <ShieldAlert className="h-3 w-3" /> Refund owed
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
                       </motion.tr>
                     );

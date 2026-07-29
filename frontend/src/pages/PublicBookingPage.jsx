@@ -438,7 +438,22 @@ export default function PublicBookingPage() {
   const [waitlistDates, setWaitlistDates] = useState(() => ({ from: dateKey(new Date()), to: dateKey(new Date(Date.now() + 30 * DAY_MS)) }));
   const [verification, setVerification] = useState({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null });
   const [cookieInfoOpen, setCookieInfoOpen] = useState(false);
-  const bookingKey = useRef(crypto.randomUUID());
+  // Persisted per booking-page token so a reload/new-tab resend reuses the
+  // same key instead of minting a fresh one — otherwise the backend's
+  // idempotency check (agencyId + idempotencyKey) never catches a
+  // reload-and-resubmit, only a same-page double-click.
+  const bookingKey = useRef((() => {
+    const storageKey = `casedesk:booking-key:${token}`;
+    try {
+      const existing = sessionStorage.getItem(storageKey);
+      if (existing) return existing;
+      const fresh = crypto.randomUUID();
+      sessionStorage.setItem(storageKey, fresh);
+      return fresh;
+    } catch {
+      return crypto.randomUUID();
+    }
+  })());
 
   useEffect(() => {
     getPublicBookingInfo(token, offerToken)
@@ -553,6 +568,11 @@ export default function PublicBookingPage() {
       }
       const result = await createPublicBooking(token, payload);
       sessionStorage.removeItem(`booking-draft:${token}`);
+      // Clear so a second, unrelated booking started later in this same tab
+      // gets a fresh key — reusing this one would make the backend's
+      // idempotency check silently return this same appointment instead of
+      // creating the new one.
+      sessionStorage.removeItem(`casedesk:booking-key:${token}`);
       setDone(result);
       setStep("done");
     } catch (reason) {

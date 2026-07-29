@@ -64,6 +64,7 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
 async function fetchBookingPaymentRows(agencyId, { from, to }) {
   const rows = await prisma.bookingPaymentHold.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
+    include: { appointment: { select: { status: true } } },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
   });
@@ -79,6 +80,13 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     amount: Number(row.amount),
     balance: ["Paid", "Refunded"].includes(row.status) ? 0 : Number(row.amount),
     status: normalizeBookingStatus(row.status),
+    // The hold's own status only tracks money collected/refunded — it has
+    // no idea the linked appointment was later cancelled. Cancelling never
+    // touches this row (refunding is a manual QuickBooks action, see
+    // appointmentController.js), so without this flag a cancelled-but-paid
+    // consult shows as a plain "Paid" row forever with no signal a refund
+    // may be owed.
+    refundOwed: row.status === "Paid" && row.appointment?.status === "Cancelled",
     qbInvoiceNumber: null,
     qbInvoiceLink: row.qbInvoiceLink,
     createdAt: row.createdAt,

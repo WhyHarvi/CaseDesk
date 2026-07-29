@@ -10,6 +10,7 @@ import {
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
+import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 
 // Standalone resolver, deliberately not layered onto caseInvoiceService.js's
 // requireMappedItem/PAYMENT_TYPES — those are also consumed by payment
@@ -221,8 +222,54 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
 const HOLD_EXPIRY_POLL_MS = 60_000;
 const VOID_RETRY_POLL_MS = 15 * 60_000;
 const MAX_VOID_ATTEMPTS = 5;
+// confirmPaymentHold claims a hold (AwaitingPayment -> Confirming) before
+// doing any real work, and its own catch block reverts that claim on any
+// thrown error — but a hard process crash/restart between the claim and the
+// catch resolving leaves nothing to revert it. Nothing else ever queries
+// "Confirming" (releaseExpiredPaymentHolds/retryFailedVoids/reconcilePaymentHold
+// all explicitly exclude it), so without this sweep a hold stuck here — an
+// invoice that IS paid in QuickBooks — would never produce an appointment.
+const CONFIRMING_STUCK_MS = 5 * 60_000;
 let holdExpiryTimer = null;
 let voidRetryTimer = null;
+let confirmingRecoveryTimer = null;
+
+export async function recoverStuckConfirmingHolds() {
+  const stuck = await prisma.bookingPaymentHold.findMany({
+    where: { status: "Confirming", updatedAt: { lte: new Date(Date.now() - CONFIRMING_STUCK_MS) } },
+    take: 100,
+  });
+  for (const hold of stuck) {
+    const reverted = await prisma.bookingPaymentHold.updateMany({
+      where: { id: hold.id, status: "Confirming" },
+      data: { status: "AwaitingPayment" },
+    });
+    if (reverted.count === 1) {
+      logger.warn("booking_payment_hold.confirming_recovered", { agencyId: hold.agencyId, holdId: hold.id });
+    }
+  }
+  return stuck.length;
+}
+
+async function notifyExpiredHold(hold) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  if (!recipientIds.length) return;
+  await notifyUsers({
+    agencyId: hold.agencyId,
+    recipientIds,
+    type: "booking_payment.expired",
+    category: "appointments",
+    title: "Consultation payment not completed",
+    body: `${hold.guestName} did not finish paying for their ${new Date(hold.startsAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })} consultation ($${Number(hold.amount).toFixed(2)}) — the hold expired and the slot has been released.`,
+    severity: "warning",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: "/app/payments",
+    metadata: { holdId: hold.id, amount: Number(hold.amount), guestName: hold.guestName },
+    dedupeKey: `booking_payment_hold:${hold.id}:expired`,
+    channels: ["in_app"],
+  });
+}
 
 async function attemptVoid(hold) {
   if (!hold.qbInvoiceId) return;
@@ -266,6 +313,12 @@ export async function releaseExpiredPaymentHolds() {
     if (claimed.count !== 1) continue;
     const updated = await prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
     await attemptVoid(updated);
+    // A declined/abandoned card produces no QuickBooks webhook at all — this
+    // expiry sweep is the only place that ever learns a checkout didn't
+    // complete, so it's also the only place that can tell staff about it.
+    await notifyExpiredHold(updated).catch((error) => {
+      logger.warn("booking_payment_hold.expiry_notify_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+    });
   }
   return expired.length;
 }
@@ -317,6 +370,12 @@ export function startPaymentHoldExpiryWorker() {
     }, VOID_RETRY_POLL_MS);
     if (voidRetryTimer.unref) voidRetryTimer.unref();
   }
+  if (!confirmingRecoveryTimer) {
+    confirmingRecoveryTimer = setInterval(() => {
+      recoverStuckConfirmingHolds().catch((error) => logger.warn("booking_payment_hold.confirming_recovery_pass_failed", { reason: error.message }));
+    }, HOLD_EXPIRY_POLL_MS);
+    if (confirmingRecoveryTimer.unref) confirmingRecoveryTimer.unref();
+  }
 }
 
 export function stopPaymentHoldExpiryWorker() {
@@ -324,4 +383,6 @@ export function stopPaymentHoldExpiryWorker() {
   holdExpiryTimer = null;
   if (voidRetryTimer) clearInterval(voidRetryTimer);
   voidRetryTimer = null;
+  if (confirmingRecoveryTimer) clearInterval(confirmingRecoveryTimer);
+  confirmingRecoveryTimer = null;
 }
