@@ -252,7 +252,22 @@ export async function sendBookingTemplateTest({ agencyId, userId, kind, messageT
  * booking event. Every channel is best-effort: a missing mailbox or Ooma
  * connection never fails the booking itself.
  */
-async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "" }) {
+async function reminderDeliveryAllowed(deliveryId, appointmentId) {
+  if (!deliveryId) return true;
+  const [delivery, appointment] = await Promise.all([
+    prisma.bookingMessageDelivery.findFirst({
+      where: { id: deliveryId, appointmentId, kind: "reminder", status: "processing" },
+      select: { id: true },
+    }),
+    prisma.appointment.findFirst({
+      where: { id: appointmentId, status: "Scheduled" },
+      select: { id: true },
+    }),
+  ]);
+  return Boolean(delivery && appointment);
+}
+
+async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null }) {
   const [agency, settings] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
@@ -271,6 +286,7 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
       const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
       const avatarCid = avatarBuffer ? `workspace-avatar-${appointment.id}-${kind}@casedesk` : null;
       const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates });
+      if (kind === "reminder" && !(await reminderDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await transport.sendMail({
         from: config.from,
         to: contact.email,
@@ -300,6 +316,7 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
         : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${appointment.meetingUrl ? ` Join: ${appointment.meetingUrl}` : appointment.location ? ` Location: ${appointment.location}${appointment.locationMapsUrl ? ` Maps: ${appointment.locationMapsUrl}` : ""}` : ""}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
+      if (kind === "reminder" && !(await reminderDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${appointment.startsAt}:${dedupeSuffix}` });
     } catch (error) {
       logger.warn("booking.sms_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
@@ -334,9 +351,25 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
   } catch (error) {
     logger.warn("booking.staff_notify_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
   }
+  return { suppressed: false };
+}
+
+export async function cancelQueuedBookingReminders(appointmentIds) {
+  const ids = [...new Set((Array.isArray(appointmentIds) ? appointmentIds : [appointmentIds]).filter(Boolean))];
+  if (!ids.length) return 0;
+  const result = await prisma.bookingMessageDelivery.updateMany({
+    where: {
+      appointmentId: { in: ids },
+      kind: "reminder",
+      status: { in: ["pending", "processing"] },
+    },
+    data: { status: "cancelled", failedAt: null, lastError: null },
+  });
+  return result.count;
 }
 
 export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "" }) {
+  if (kind === "cancelled") await cancelQueuedBookingReminders(appointment.id);
   const contact = recipientContact(appointment);
   const version = new Date(appointment.startsAt).toISOString();
   const jobs = [
@@ -395,15 +428,34 @@ async function processBookingDeliveryPass() {
           include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: { select: { preparationInstructions: true, preparationChecklist: true, parkingInstructions: true } } },
         });
         if (!appointment) throw new Error("Appointment no longer exists");
-        await deliverBookingMessages({
+        if (job.kind === "reminder" && appointment.status !== "Scheduled") {
+          await prisma.bookingMessageDelivery.updateMany({
+            where: { id: job.id, status: "processing" },
+            data: { status: "cancelled", failedAt: null, lastError: null },
+          });
+          continue;
+        }
+        const delivery = await deliverBookingMessages({
           agencyId: job.agencyId,
           appointment,
           kind: job.kind,
           actorUserId: job.payload?.actorUserId || null,
           channel: job.channel,
           dedupeSuffix: job.payload?.dedupeSuffix || "",
+          deliveryId: job.id,
         });
-        await prisma.bookingMessageDelivery.update({ where: { id: job.id }, data: { status: "sent", sentAt: new Date(), lastError: null } });
+        if (delivery?.suppressed) {
+          await prisma.bookingMessageDelivery.updateMany({
+            where: { id: job.id, status: "processing" },
+            data: { status: "cancelled", failedAt: null, lastError: null },
+          });
+          continue;
+        }
+        const sent = await prisma.bookingMessageDelivery.updateMany({
+          where: { id: job.id, status: "processing" },
+          data: { status: "sent", sentAt: new Date(), lastError: null },
+        });
+        if (!sent.count) continue;
         if (job.kind === "reminder") {
           const remaining = await prisma.bookingMessageDelivery.count({ where: { appointmentId: job.appointmentId, kind: "reminder", status: { not: "sent" } } });
           if (!remaining) await prisma.appointment.update({ where: { id: job.appointmentId }, data: { reminderSentAt: new Date() } });
@@ -411,8 +463,8 @@ async function processBookingDeliveryPass() {
       } catch (error) {
         const attempts = job.attempts + 1;
         const exhausted = attempts >= job.maxAttempts;
-        await prisma.bookingMessageDelivery.update({
-          where: { id: job.id },
+        const failed = await prisma.bookingMessageDelivery.updateMany({
+          where: { id: job.id, status: "processing" },
           data: {
             status: exhausted ? "failed" : "pending",
             failedAt: exhausted ? new Date() : null,
@@ -420,6 +472,7 @@ async function processBookingDeliveryPass() {
             availableAt: new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000),
           },
         });
+        if (!failed.count) continue;
         if (exhausted) {
           await notifyUsers({
             agencyId: job.agencyId,

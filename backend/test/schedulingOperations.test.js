@@ -55,6 +55,15 @@ test("calendar cancellations produce a cancellation event instead of a live invi
   assert.match(content, /STATUS:CANCELLED/);
 });
 
+test("cancelled appointments suppress queued and retrying reminders", async () => {
+  const service = await readFile(new URL("../src/services/bookingNotificationService.js", import.meta.url), "utf8");
+  assert.match(service, /kind === "cancelled"\) await cancelQueuedBookingReminders\(appointment\.id\)/);
+  assert.match(service, /kind: "reminder",[\s\S]*status: \{ in: \["pending", "processing"\] \}/);
+  assert.match(service, /job\.kind === "reminder" && appointment\.status !== "Scheduled"/);
+  assert.match(service, /reminderDeliveryAllowed\(deliveryId, appointment\.id\)/);
+  assert.match(service, /where: \{ id: job\.id, status: "processing" \},[\s\S]*if \(!failed\.count\) continue/);
+});
+
 test("scheduling migration adds durable delivery, assignment, and idempotency safeguards", async () => {
   const sql = await readFile(new URL("../prisma/migrations/20260719020000_scheduling_operations/migration.sql", import.meta.url), "utf8");
   assert.match(sql, /scheduling_staff_preferences/);
