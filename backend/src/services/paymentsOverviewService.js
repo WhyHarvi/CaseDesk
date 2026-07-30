@@ -100,6 +100,12 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     // have one from the moment they're created, so its absence here is the
     // actual signal, not just checking appointmentId in general.
     needsManualBooking: row.status === "Paid" && row.source !== "WalkIn" && !row.appointmentId,
+    // Set by the periodic balance-mismatch sweep (bookingPaymentHoldService.js)
+    // when a "Paid" hold's real QuickBooks invoice no longer shows a zero
+    // balance — usually a Payment deleted directly in QuickBooks rather
+    // than properly refunded, which produces no RefundReceipt for the
+    // normal refund-matching path to ever pick up.
+    balanceMismatch: Boolean(row.balanceMismatchAt),
     qbInvoiceNumber: null,
     qbInvoiceLink: row.qbInvoiceLink,
     createdAt: row.createdAt,

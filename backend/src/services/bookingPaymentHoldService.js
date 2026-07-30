@@ -7,6 +7,7 @@ import {
   createQuickBooksCustomer,
   createQuickBooksInvoice,
   findQuickBooksCustomerByEmail,
+  getQuickBooksInvoice,
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
@@ -512,6 +513,75 @@ export async function retryFailedVoids() {
   return pending.length;
 }
 
+// A hold only ever leaves "Paid" through a matching QuickBooks RefundReceipt
+// (see applyBookingRefundReceipt in quickbooksWebhookService.js) — that's
+// the only reversal path anything here ever watches for. Deleting the
+// Payment transaction directly in QuickBooks (instead of refunding it)
+// produces no RefundReceipt and no usable webhook (the Payment is gone by
+// the time the event is processed, so the lookup to find its invoice fails
+// and the event is silently ignored) — so a hold can go on showing "Paid"
+// indefinitely with no signal anything changed. This sweep is the backstop:
+// periodically re-check each recently-paid hold's real invoice balance and
+// flag the mismatch for a human, since there's no way to know *why* the
+// balance changed (deleted payment vs. something else) from here.
+const BALANCE_MISMATCH_POLL_MS = 30 * 60_000;
+const BALANCE_MISMATCH_WINDOW_DAYS = 30;
+let balanceMismatchTimer = null;
+
+async function notifyBalanceMismatch(hold, invoice) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  if (!recipientIds.length) return;
+  await notifyUsers({
+    agencyId: hold.agencyId,
+    recipientIds,
+    type: "booking_payment.balance_mismatch",
+    category: "appointments",
+    title: "A paid consultation no longer shows as paid in QuickBooks",
+    body: `${hold.guestName}'s $${Number(hold.amount).toFixed(2)} consultation payment shows as collected in CaseDesk, but ${invoice ? `the QuickBooks invoice now has a balance of $${Number(invoice.balance).toFixed(2)}` : "its QuickBooks invoice no longer exists"}. This usually means the payment was deleted in QuickBooks rather than refunded — check and refund or re-collect as appropriate.`,
+    severity: "critical",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: "/app/payments",
+    metadata: { holdId: hold.id, amount: Number(hold.amount), guestName: hold.guestName, qbInvoiceId: hold.qbInvoiceId },
+    dedupeKey: `booking_payment_hold:${hold.id}:balance_mismatch`,
+    channels: ["in_app"],
+  });
+}
+
+export async function detectPaidHoldBalanceMismatches() {
+  const holds = await prisma.bookingPaymentHold.findMany({
+    where: {
+      status: "Paid",
+      qbInvoiceId: { not: null },
+      paidAt: { gte: new Date(Date.now() - BALANCE_MISMATCH_WINDOW_DAYS * 86_400_000) },
+    },
+    take: 100,
+  });
+  let flagged = 0;
+  for (const hold of holds) {
+    let invoice;
+    try {
+      invoice = await getQuickBooksInvoice(hold.agencyId, hold.qbInvoiceId);
+    } catch (error) {
+      logger.warn("booking_payment_hold.balance_mismatch_check_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+      continue;
+    }
+    const hasMismatch = !invoice || Number(invoice.balance) > 0;
+    if (hasMismatch && !hold.balanceMismatchAt) {
+      await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { balanceMismatchAt: new Date() } });
+      await notifyBalanceMismatch(hold, invoice).catch((error) => {
+        logger.warn("booking_payment_hold.balance_mismatch_notify_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+      });
+      flagged += 1;
+    } else if (!hasMismatch && hold.balanceMismatchAt) {
+      // The balance is whole again (e.g. the payment was re-added) — clear
+      // the flag rather than leave a stale warning around.
+      await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { balanceMismatchAt: null } });
+    }
+  }
+  return { checked: holds.length, flagged };
+}
+
 export function startPaymentHoldExpiryWorker() {
   if (!activeHoldPollTimer) {
     activeHoldPollTimer = setInterval(() => {
@@ -537,6 +607,12 @@ export function startPaymentHoldExpiryWorker() {
     }, HOLD_EXPIRY_POLL_MS);
     if (confirmingRecoveryTimer.unref) confirmingRecoveryTimer.unref();
   }
+  if (!balanceMismatchTimer) {
+    balanceMismatchTimer = setInterval(() => {
+      detectPaidHoldBalanceMismatches().catch((error) => logger.warn("booking_payment_hold.balance_mismatch_pass_failed", { reason: error.message }));
+    }, BALANCE_MISMATCH_POLL_MS);
+    if (balanceMismatchTimer.unref) balanceMismatchTimer.unref();
+  }
 }
 
 export function stopPaymentHoldExpiryWorker() {
@@ -548,4 +624,6 @@ export function stopPaymentHoldExpiryWorker() {
   voidRetryTimer = null;
   if (confirmingRecoveryTimer) clearInterval(confirmingRecoveryTimer);
   confirmingRecoveryTimer = null;
+  if (balanceMismatchTimer) clearInterval(balanceMismatchTimer);
+  balanceMismatchTimer = null;
 }

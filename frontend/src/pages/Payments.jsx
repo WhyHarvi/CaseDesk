@@ -565,6 +565,14 @@ export default function Payments() {
                                 <ShieldAlert className="h-3 w-3" /> Still scheduled
                               </span>
                             ) : null}
+                            {row.balanceMismatch ? (
+                              <span
+                                title="This shows as Paid, but the QuickBooks invoice no longer has a zero balance — usually means the payment was deleted in QuickBooks instead of refunded. Check and refund or re-collect as needed."
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
+                              >
+                                <ShieldAlert className="h-3 w-3" /> Payment reversed in QuickBooks
+                              </span>
+                            ) : null}
                           </div>
                         </td>
                       </motion.tr>

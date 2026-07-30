@@ -1684,6 +1684,13 @@ model BookingPaymentHold {
   expiresAt            DateTime?           @map("expires_at")
   paidAt               DateTime?           @map("paid_at")
   voidedAt             DateTime?           @map("voided_at")
+  // Set by the periodic balance-mismatch sweep when a "Paid" hold's real
+  // QuickBooks invoice no longer shows a zero balance (or the invoice is
+  // gone entirely) — the usual cause is a Payment being deleted in
+  // QuickBooks directly rather than properly refunded, which produces no
+  // RefundReceipt for the normal refund-matching path to ever see. Cleared
+  // automatically if a later sweep finds the balance whole again.
+  balanceMismatchAt    DateTime?           @map("balance_mismatch_at")
   voidAttempts         Int                 @default(0) @map("void_attempts")
   nextVoidAttemptAt    DateTime?           @map("next_void_attempt_at")
   appointmentId        String?             @unique @map("appointment_id")
