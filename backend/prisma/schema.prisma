@@ -1249,6 +1249,7 @@ model Client {
   caseAssessments            CaseAssessment[]
   caseForms                  CaseForm[]
   appointments               Appointment[]
+  bookingPaymentHolds        BookingPaymentHold[]
   communicationConversations CommunicationConversation[]
   communicationMessages      CommunicationMessage[]
   communicationConsents      CommunicationConsent[]
@@ -1701,6 +1702,13 @@ model BookingPaymentHold {
   // persisted here rather than handled inline like the free booking path.
   offerHoldId          String?             @unique @map("offer_hold_id")
   createdById          String?             @map("created_by_id")
+  // Set only by the staff-initiated card-payment path (an existing client
+  // picked from the front-desk booking form) — the public flow never knows
+  // an internal Client row at hold-creation time, so this stays null there
+  // and the guest* snapshot fields remain the source of truth for contact
+  // info either way. Read by confirmPaymentHold to link the eventual
+  // Appointment to the right client instead of leaving it guest-only.
+  clientId             String?             @map("client_id")
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
   agency               Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1709,12 +1717,14 @@ model BookingPaymentHold {
   appointment          Appointment?        @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   offerHold            BookingSlotHold?    @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
   createdBy            User?               @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
+  client               Client?             @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
   @@unique([agencyId, qbRefundReceiptId])
   @@index([agencyId, assignedToId, startsAt, endsAt, status, expiresAt])
   @@index([agencyId, status, expiresAt])
+  @@index([clientId])
   @@map("booking_payment_holds")
 }
 

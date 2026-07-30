@@ -20,6 +20,7 @@ import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/b
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
 import { createPaymentHoldForPublicBooking, getPaymentHoldStatus } from "../services/bookingPaymentHoldService.js";
+import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 import {
@@ -279,18 +280,8 @@ export async function createPublicBooking(req, res) {
     where: { agencyId: settings.agencyId, email: { equals: email, mode: "insensitive" } },
     select: { id: true, assignedUserId: true },
   }) : null;
-  const priorFreeCount = settings.freeConsultationsEnabled ? await prisma.appointment.count({
-    where: {
-      agencyId: settings.agencyId,
-      isFreeConsultation: true,
-      status: { not: "Cancelled" },
-      OR: [
-        ...(existingClient ? [{ clientId: existingClient.id }] : []),
-        { guestEmailNormalized: email },
-      ],
-    },
-  }) : 0;
-  if (settings.freeConsultationsEnabled && priorFreeCount >= settings.freeConsultationsPerContact) {
+  const freeEligibility = await resolveFreeConsultationEligibility(settings.agencyId, settings, { clientId: existingClient?.id || null, guestEmailNormalized: email });
+  if (settings.freeConsultationsEnabled && !freeEligibility.eligible) {
     throw createHttpError(409, "The free consultation limit for this email has been reached. Please contact the office.", "FREE_LIMIT_REACHED");
   }
 
@@ -343,7 +334,7 @@ export async function createPublicBooking(req, res) {
         ...meetingFields,
         assignedToId: assignee.id,
         source: "Public",
-        isFreeConsultation: settings.freeConsultationsEnabled,
+        isFreeConsultation: freeEligibility.eligible,
         idempotencyKey,
         reminderDueAt: new Date(startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),
         referenceCode: appointmentReference(),

@@ -24,6 +24,10 @@ import {
   previewBookingEmailTemplate,
   testBookingEmailTemplate,
   createWalkInPayNowLink,
+  recordWalkInManualPayment,
+  getFreeConsultationEligibility,
+  lookupBookingClients,
+  getBookingPaymentHoldById,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -35,6 +39,9 @@ router.post("/session-types", asyncHandler(createSessionType));
 router.patch("/session-types/:id", asyncHandler(updateSessionType));
 router.patch("/staff/:userId", asyncHandler(updateSchedulingStaff));
 router.get("/analytics", asyncHandler(getSchedulingAnalytics));
+router.get("/free-consultation-eligibility", asyncHandler(getFreeConsultationEligibility));
+router.get("/client-lookup", asyncHandler(lookupBookingClients));
+router.get("/payment-holds/:id", asyncHandler(getBookingPaymentHoldById));
 router.get("/appointments/registry", asyncHandler(listAppointmentRegistry));
 router.get("/appointments/:id/detail", asyncHandler(getAppointmentRegistryDetail));
 router.get("/blocks", asyncHandler(listSchedulingBlocks));
@@ -53,5 +60,6 @@ router.patch("/appointments/:id/reschedule", asyncHandler(rescheduleBookingAppoi
 router.patch("/appointments/:id/status", asyncHandler(updateBookingAppointmentStatus));
 router.post("/appointments/:id/convert-client", asyncHandler(convertAppointmentToClient));
 router.post("/appointments/:id/pay-now-link", asyncHandler(createWalkInPayNowLink));
+router.post("/appointments/:id/manual-payment", asyncHandler(recordWalkInManualPayment));
 
 export default router;

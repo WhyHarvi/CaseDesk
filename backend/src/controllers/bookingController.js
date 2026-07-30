@@ -27,7 +27,9 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { createPaymentHoldForWalkIn } from "../services/bookingPaymentHoldService.js";
+import { createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService } from "../services/bookingPaymentHoldService.js";
+import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
+import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import {
   MEETING_MODES,
@@ -604,6 +606,14 @@ export async function createBookingAppointment(req, res) {
   }
   const guestName = String(body.guestName || "").trim().slice(0, 160) || null;
   if (!client && !guestName) throw createHttpError(400, "Pick a client or enter the visitor’s name.", "VALIDATION_ERROR");
+  const guestEmailNormalized = String(body.guestEmail || "").trim().toLowerCase().slice(0, 254) || null;
+  // Staff can always complete the booking even past the free-consultation
+  // cutoff — unlike the public page, this never blocks; it only decides
+  // whether the appointment is flagged free or billable.
+  const freeEligibility = await resolveFreeConsultationEligibility(req.auth.agencyId, settings, {
+    clientId: client?.id || null,
+    guestEmailNormalized: client ? client.email?.toLowerCase() || null : guestEmailNormalized,
+  });
   assertMeetingModeConfigured({
     settings,
     sessionType,
@@ -632,6 +642,52 @@ export async function createBookingAppointment(req, res) {
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
     }
+  }
+
+  // Card payment reserves the slot and waits for QuickBooks to confirm the
+  // charge before it becomes a real appointment (mirrors the public booking
+  // page). Cash/e-transfer/free walk-ins still book immediately below —
+  // staff already know the fee is settled or will be collected in person,
+  // so there's nothing to wait on.
+  const paymentMethod = ["Card", "Cash", "ETransfer"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
+  const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
+
+  if (paymentMethod === "Card" && feeApplies) {
+    if (startDates.length > 1) {
+      throw createHttpError(400, "Card payment isn't available for recurring appointments yet — choose cash, e-transfer, or skip payment for now.", "VALIDATION_ERROR");
+    }
+    const holdEmail = client?.email || String(body.guestEmail || "").trim().slice(0, 254);
+    if (!holdEmail) throw createHttpError(400, "An email is required to send the card payment link.", "VALIDATION_ERROR");
+    const hold = await createPaymentHoldForStaffBooking(req.auth.agencyId, {
+      sessionTypeId: sessionType?.id || null,
+      sessionTypeName: sessionType?.name || null,
+      subject,
+      startsAt,
+      endsAt,
+      requestedUserId: assignedToId,
+      meetingMode: requestedMeetingMode,
+      settings,
+      location: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation : null,
+      clientId: client?.id || null,
+      name: client?.fullName || guestName,
+      email: holdEmail,
+      phone: client?.phone || String(body.guestPhone || "").trim().slice(0, 40) || null,
+      notes: String(body.description || "").trim().slice(0, 2000) || null,
+      amount: Number(settings.consultFeeAmount),
+      bufferMinutes: effectiveBuffer,
+      actorUserId: req.auth.userId,
+    });
+    res.status(202).json({
+      data: {
+        pending: true,
+        holdId: hold.id,
+        status: hold.status,
+        amount: hold.amount,
+        payNowUrl: hold.qbInvoiceLink,
+        expiresAt: hold.expiresAt,
+      },
+    });
+    return;
   }
 
   const seriesKey = startDates.length > 1 ? randomUUID() : null;
@@ -682,12 +738,13 @@ export async function createBookingAppointment(req, res) {
         description: String(body.description || "").trim().slice(0, 2000) || null,
         guestName,
         guestEmail: String(body.guestEmail || "").trim().slice(0, 254) || null,
-        guestEmailNormalized: String(body.guestEmail || "").trim().toLowerCase().slice(0, 254) || null,
+        guestEmailNormalized,
         guestPhone: String(body.guestPhone || "").trim().slice(0, 40) || null,
         ...meetingFields,
         assignedToId: assignee.id,
         createdById: req.auth.userId,
         source: body.source === "WalkIn" ? "WalkIn" : "Internal",
+        isFreeConsultation: freeEligibility.eligible,
         reminderDueAt: new Date(occurrenceStart.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),
         referenceCode: appointmentReference(),
         seriesKey,
@@ -734,7 +791,70 @@ export async function createBookingAppointment(req, res) {
   });
   invalidateDashboardCache(req.auth.agencyId);
 
-  res.status(201).json({ data: { ...data, series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null } });
+  // Only the first occurrence of a recurring series gets the consultation
+  // fee recorded — a consult fee belongs to the initial visit, not every
+  // future occurrence in the series.
+  let manualPaymentWarning = null;
+  if ((paymentMethod === "Cash" || paymentMethod === "ETransfer") && feeApplies) {
+    try {
+      await recordWalkInManualPaymentService(req.auth.agencyId, { appointmentId: data.id, method: paymentMethod, note: null, actorUserId: req.auth.userId });
+    } catch (error) {
+      manualPaymentWarning = error.message || "Could not record the payment automatically.";
+    }
+  }
+
+  res.status(201).json({ data: { ...data, manualPaymentWarning, series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null } });
+}
+
+// Lets the new-appointment form preview whether this visitor still qualifies
+// for a free consultation before submitting, using the same rule the booking
+// itself applies (resolveFreeConsultationEligibility).
+export async function getFreeConsultationEligibility(req, res) {
+  const settings = await getOrCreateBookingSettings(req.auth.agencyId);
+  const clientId = String(req.query.clientId || "") || null;
+  const guestEmailNormalized = String(req.query.guestEmail || "").trim().toLowerCase() || null;
+  const eligibility = await resolveFreeConsultationEligibility(req.auth.agencyId, settings, { clientId, guestEmailNormalized });
+  res.json({ data: eligibility });
+}
+
+// Narrow, booking-form-only client lookup — deliberately returns far less
+// than GET /clients (no case/portal/notes data) since frontdesk uses this to
+// match a walk-in to their existing client record without gaining the
+// broader client-browsing access that role is otherwise kept out of.
+export async function lookupBookingClients(req, res) {
+  const clients = await prisma.client.findMany({
+    where: { agencyId: req.auth.agencyId, archivedAt: null },
+    select: { id: true, fullName: true, email: true, phone: true, clientNumber: true },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  res.json({ data: clients });
+}
+
+// Polled by the new-appointment sheet after a card-payment hold is created,
+// so staff see the reservation flip to a real appointment the moment
+// QuickBooks confirms — actively re-checks the invoice (same as the public
+// booking page's status endpoint) rather than only reading the last known
+// DB state, since the webhook can lag.
+export async function getBookingPaymentHoldById(req, res) {
+  const hold = await prisma.bookingPaymentHold.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId } });
+  if (!hold) throw createHttpError(404, "This reservation was not found.", "NOT_FOUND");
+  if (hold.qbInvoiceId && ["AwaitingPayment", "Expired"].includes(hold.status)) {
+    await reconcilePaymentHold(req.auth.agencyId, hold.id, { allowExpired: true }).catch((error) => {
+      logger.warn("booking_payment_hold.staff_status_reconcile_failed", { agencyId: req.auth.agencyId, holdId: hold.id, reason: error.message });
+    });
+  }
+  const latest = await prisma.bookingPaymentHold.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId } });
+  res.json({
+    data: {
+      id: latest.id,
+      status: latest.status,
+      amount: latest.amount,
+      payNowUrl: latest.qbInvoiceLink,
+      expiresAt: latest.expiresAt,
+      appointmentId: latest.appointmentId,
+    },
+  });
 }
 
 // Front-desk "on the spot" flow: appointment already exists (booked
@@ -752,6 +872,16 @@ export async function createWalkInPayNowLink(req, res) {
       payNowUrl: hold.status === "AwaitingPayment" ? hold.qbInvoiceLink || null : null,
     },
   });
+}
+
+// Client paid outside QuickBooks' hosted checkout entirely (cash in hand,
+// an e-transfer to the office) — records it directly rather than routing
+// through a card charge that never happened.
+export async function recordWalkInManualPayment(req, res) {
+  const method = String(req.body?.method || "");
+  const note = String(req.body?.note || "").trim().slice(0, 500) || null;
+  const hold = await recordWalkInManualPaymentService(req.auth.agencyId, { appointmentId: req.params.id, method, note, actorUserId: req.auth.userId });
+  res.status(201).json({ data: { id: hold.id, status: hold.status, amount: hold.amount, paidAt: hold.paidAt } });
 }
 
 export async function cancelBookingAppointment(req, res) {

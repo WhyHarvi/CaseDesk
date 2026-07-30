@@ -663,6 +663,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
       const created = await tx.appointment.create({
         data: {
           agencyId,
+          clientId: hold.clientId,
           sessionTypeId: hold.sessionTypeId,
           subject: sessionType?.name || "Consultation",
           location: locationLabel,
@@ -678,7 +679,8 @@ export async function confirmPaymentHold(agencyId, holdId) {
           guestPhone: hold.guestPhone,
           ...meetingFields,
           assignedToId: hold.assignedToId,
-          source: "Public",
+          createdById: hold.createdById,
+          source: hold.source || "Public",
           isFreeConsultation: false,
           reminderDueAt: new Date(hold.startsAt.getTime() - reminderMinutes * 60_000),
           referenceCode: appointmentReference(),
@@ -687,7 +689,13 @@ export async function confirmPaymentHold(agencyId, holdId) {
         include: { assignedTo: { select: { id: true, fullName: true } }, client: { select: { fullName: true, email: true, phone: true } } },
       });
       await recordAppointmentEvent(tx, { agencyId, appointmentId: created.id, type: "BOOKED", summary: "Paid consultation confirmed after payment", metadata: { holdId: hold.id, meetingMode: created.meetingMode } });
-      await createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment: created });
+      // Staff-initiated (front-desk) holds never generate a Lead — none of
+      // the other staff-booking paths do either, and a front-desk visitor
+      // is either an existing client already (clientId is set) or a
+      // walk-in staff is handling directly, not a lead to work.
+      if (hold.source !== "WalkIn") {
+        await createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment: created });
+      }
       if (hold.meetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}` });
       } else {

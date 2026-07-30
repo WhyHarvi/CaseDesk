@@ -167,7 +167,7 @@ app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const server = app.listen(port, () => {
+function onListening() {
   logger.info("server.started", { port, environment: process.env.NODE_ENV || "development" });
   if (!process.env.QBO_WEBHOOK_VERIFIER_TOKEN) {
     // Every connected agency's Intuit webhook silently rejects with 401
@@ -198,7 +198,28 @@ const server = app.listen(port, () => {
   startNotificationDeliveryWorker();
   startAutomatedReminderWorker();
   startCaseInformationDriftDetector();
-});
+}
+
+// On a nodemon restart the outgoing process's listening socket can still be
+// tearing down at the OS level for a brief moment after Node reports it has
+// exited (observed on macOS), so the incoming process's first bind attempt
+// can lose that race even though nothing is genuinely wrong. Rather than
+// crash and leave nodemon sitting there until another file save, retry the
+// bind a few times — this is almost always resolved within one tick.
+let server;
+function startServer(attemptsLeft = 10) {
+  server = app.listen(port, onListening);
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE" && attemptsLeft > 0) {
+      logger.warn("server.port_in_use_retrying", { port, attemptsLeft });
+      setTimeout(() => startServer(attemptsLeft - 1), 300);
+    } else {
+      logger.error("server.listen_failed", { port, error: error.message });
+      process.exit(1);
+    }
+  });
+}
+startServer();
 
 let shuttingDown = false;
 async function shutdown(signal) {
@@ -220,7 +241,7 @@ async function shutdown(signal) {
   stopNotificationDeliveryWorker();
   stopAutomatedReminderWorker();
   stopCaseInformationDriftDetector();
-  server.close(async () => {
+  (server || { close: (cb) => cb() }).close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);
   });
@@ -229,3 +250,8 @@ async function shutdown(signal) {
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
+// nodemon's default restart signal — without a handler here the process
+// still terminates (Node's default SIGUSR2 disposition), but skips worker
+// cleanup and the close(port) happens implicitly rather than deterministically,
+// which is what left the next restart racing the old process for the port.
+process.once("SIGUSR2", () => void shutdown("SIGUSR2"));

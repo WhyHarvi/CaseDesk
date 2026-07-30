@@ -28,8 +28,12 @@ import {
   createBookingAppointment,
   createWalkInPayNowLink,
   getAvailability,
+  getBookingPaymentHoldStatus,
   getBookingSettings,
   getCalendarAppointments,
+  getFreeConsultationEligibility,
+  lookupBookingClients,
+  recordWalkInManualPayment,
   rescheduleBookingAppointment,
   updateBookingAppointmentStatus,
 } from "../api/bookingApi";
@@ -182,6 +186,9 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [payNowBusy, setPayNowBusy] = useState(false);
   const [payNowError, setPayNowError] = useState("");
   const [payNowCopied, setPayNowCopied] = useState(false);
+  const [manualNote, setManualNote] = useState("");
+  const [manualBusy, setManualBusy] = useState("");
+  const [manualError, setManualError] = useState("");
   const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
     ? "preparing link"
     : appointment.meetingSyncStatus === "Retrying"
@@ -210,6 +217,20 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       setPayNowCopied(true);
       window.setTimeout(() => setPayNowCopied(false), 2000);
     } catch { /* clipboard access denied — link is still shown on screen */ }
+  }
+
+  async function recordManualPayment(method) {
+    setManualBusy(method);
+    setManualError("");
+    try {
+      const result = await recordWalkInManualPayment(appointment.id, { method, note: manualNote.trim() || undefined });
+      setPayNow(result);
+      setManualNote("");
+    } catch (reason) {
+      setManualError(reason.response?.data?.message || "Could not record this payment.");
+    } finally {
+      setManualBusy("");
+    }
   }
 
   useEffect(() => {
@@ -322,7 +343,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         </a>
       ) : null}
 
-      {appointment.status === "Scheduled" ? (
+      {appointment.status === "Scheduled" && appointment.isFreeConsultation ? (
+        <p className="mt-4 flex items-center gap-2 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Free consultation — no fee due</p>
+      ) : null}
+
+      {appointment.status === "Scheduled" && !appointment.isFreeConsultation ? (
         <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5">
           {payNow ? (
             payNow.status === "Paid" ? (
@@ -344,6 +369,27 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             </button>
           )}
           {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
+          {payNow?.status !== "Paid" ? (
+            <div className="mt-3 border-t border-slate-200/70 pt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Already paid another way?</p>
+              <input
+                type="text"
+                value={manualNote}
+                onChange={(event) => setManualNote(event.target.value)}
+                placeholder="Note (optional)"
+                className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+              />
+              <div className="mt-2 flex gap-2">
+                <button type="button" disabled={Boolean(manualBusy)} onClick={() => recordManualPayment("Cash")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
+                  {manualBusy === "Cash" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record cash
+                </button>
+                <button type="button" disabled={Boolean(manualBusy)} onClick={() => recordManualPayment("ETransfer")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
+                  {manualBusy === "ETransfer" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record e-transfer
+                </button>
+              </div>
+              {manualError ? <p className="mt-2 text-xs text-rose-600">{manualError}</p> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -415,25 +461,74 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate, settings }) {
+function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, settings }) {
   const [clients, setClients] = useState([]);
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2 });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "" });
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [freeEligibility, setFreeEligibility] = useState(null);
+  const [clientSearch, setClientSearch] = useState("");
+  const [pendingHold, setPendingHold] = useState(null);
+  const [bookedWarning, setBookedWarning] = useState(null);
 
   useEffect(() => {
     if (!open) return;
-    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId }));
+    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "" }));
     setError("");
-    if (role !== "frontdesk") api.get("/clients?limit=100").then((response) => setClients(response.data.data || [])).catch(() => {});
+    setClientSearch("");
+    setPendingHold(null);
+    setBookedWarning(null);
+    if (role === "frontdesk") {
+      lookupBookingClients().then(setClients).catch(() => {});
+    } else {
+      api.get("/clients?limit=100").then((response) => setClients(response.data.data || [])).catch(() => {});
+    }
   }, [open, role, userId, initialDate]);
+
+  useEffect(() => {
+    if (!open) return;
+    const clientId = form.mode === "client" ? form.clientId : "";
+    const guestEmail = form.mode === "guest" ? form.guestEmail.trim() : "";
+    if (!clientId && !guestEmail) { setFreeEligibility(null); return; }
+    const timer = setTimeout(() => {
+      getFreeConsultationEligibility({ clientId: clientId || undefined, guestEmail: guestEmail || undefined })
+        .then(setFreeEligibility)
+        .catch(() => setFreeEligibility(null));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [open, form.mode, form.clientId, form.guestEmail]);
+
+  useEffect(() => {
+    if (!pendingHold || pendingHold.status !== "AwaitingPayment") return;
+    const timer = setInterval(async () => {
+      try {
+        const latest = await getBookingPaymentHoldStatus(pendingHold.holdId);
+        if (latest.status === "Paid" && latest.appointmentId) {
+          onRefresh?.();
+          onClose();
+          return;
+        }
+        setPendingHold((current) => (current ? { ...current, ...latest } : current));
+      } catch {
+        // transient failure — keep polling rather than interrupting the wait
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [pendingHold?.holdId, pendingHold?.status, onRefresh, onClose]);
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
   const selectedClient = clients.find((client) => client.id === form.clientId) || null;
+  const clientMatchesByName = form.clientId ? clients.filter((client) => client.fullName === selectedClient?.fullName) : [];
+  const consultFeeAmount = Number(settings?.consultFeeAmount) || 0;
+  const showsPaymentStep = consultFeeAmount > 0 && freeEligibility?.eligible !== true;
+  const clientSearchNeedle = clientSearch.trim().toLowerCase();
+  const filteredClients = clientSearchNeedle
+    ? clients.filter((client) => [client.fullName, client.email, client.phone, client.clientNumber].filter(Boolean).some((field) => String(field).toLowerCase().includes(clientSearchNeedle)))
+    : clients;
   const zoomCandidateId = role === "consultant" ? userId : form.assignedToId;
   const zoomHostAvailable = zoomCandidateId
     ? staff.some((member) => member.id === zoomCandidateId && member.zoomHostMapping?.status === "active")
@@ -481,6 +576,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
   async function submit(event) {
     event.preventDefault();
     if (!form.startsAt) { setError("Pick an available time."); return; }
+    if (showsPaymentStep && !form.paymentMethod) { setError("Choose how the client will pay."); return; }
     setSaving(true);
     setError("");
     try {
@@ -498,8 +594,17 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         meetingMode: form.meetingMode || "InPerson",
         source: form.mode === "guest" ? "WalkIn" : "Internal",
         recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
+        paymentMethod: showsPaymentStep && form.paymentMethod !== "Skip" ? form.paymentMethod : undefined,
       });
+      if (created.pending) {
+        setPendingHold({ holdId: created.holdId, status: created.status, amount: created.amount, payNowUrl: created.payNowUrl, expiresAt: created.expiresAt });
+        return;
+      }
       onCreated(created);
+      if (created.manualPaymentWarning) {
+        setBookedWarning(created.manualPaymentWarning);
+        return;
+      }
       onClose();
     } catch (reason) {
       setError(reason.response?.data?.message || "The appointment could not be booked.");
@@ -521,20 +626,61 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               <h2 className="text-lg font-semibold text-slate-950">New appointment</h2>
               <button type="button" onClick={onClose} aria-label="Close" className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </header>
+            {pendingHold ? (
+              <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-center">
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-sky-600" />
+                  <p className="mt-3 text-sm font-semibold text-slate-800">Slot reserved — waiting for payment</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">The appointment will confirm automatically the moment the {Number(pendingHold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} payment goes through.</p>
+                </div>
+                {pendingHold.payNowUrl ? (
+                  <button type="button" onClick={() => navigator.clipboard.writeText(pendingHold.payNowUrl)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50">
+                    <Copy className="h-3.5 w-3.5" /> Copy pay-now link
+                  </button>
+                ) : null}
+                {pendingHold.expiresAt ? <p className="text-center text-xs text-slate-400">Reservation expires at {new Date(pendingHold.expiresAt).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })} if unpaid.</p> : null}
+                <button type="button" onClick={onClose} className="flex h-10 w-full items-center justify-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100">Close and check later</button>
+              </div>
+            ) : bookedWarning ? (
+              <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-semibold text-amber-800">Appointment booked</p>
+                  <p className="mt-1 text-xs leading-5 text-amber-700">The payment couldn't be recorded automatically: {bookedWarning}. Record it from the appointment once it's fixed.</p>
+                </div>
+                <button type="button" onClick={onClose} className="flex h-10 w-full items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800">Done</button>
+              </div>
+            ) : (
             <form onSubmit={submit} className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-              {role !== "frontdesk" ? <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
+              <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
                 {[["client", "Existing client"], ["guest", "Walk-in / guest"]].map(([mode, label]) => (
                   <button key={mode} type="button" onClick={() => setForm((c) => ({ ...c, mode }))} className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${form.mode === mode ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
                 ))}
-              </div> : null}
+              </div>
 
               {form.mode === "client" ? (
-                <label className="block text-xs font-medium text-slate-600">Client
-                  <Select value={form.clientId} onChange={(event) => setForm((c) => ({ ...c, clientId: event.target.value }))} className="mt-1.5 w-full" ariaLabel="Client">
-                    <option value="">Choose a client…</option>
-                    {clients.map((client) => <option key={client.id} value={client.id}>{client.fullName}</option>)}
-                  </Select>
-                </label>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-600">Search by name, email, phone, or client #
+                    <input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Start typing to narrow the list…" className={`mt-1.5 ${input}`} />
+                  </label>
+                  <label className="block text-xs font-medium text-slate-600">Client
+                    <Select value={form.clientId} onChange={(event) => setForm((c) => ({ ...c, clientId: event.target.value }))} className="mt-1.5 w-full" ariaLabel="Client">
+                      <option value="">Choose a client…</option>
+                      {filteredClients.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.fullName}
+                          {client.clientNumber ? ` · #${client.clientNumber}` : ""}
+                          {client.email ? ` · ${client.email}` : ""}
+                          {client.phone ? ` · ${client.phone}` : ""}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  {selectedClient && clientMatchesByName.length > 1 ? (
+                    <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      {clientMatchesByName.length} clients are named "{selectedClient.fullName}". You selected {selectedClient.email || selectedClient.phone || `client #${selectedClient.clientNumber || selectedClient.id.slice(0, 8)}`} — double-check this is the right one.
+                    </p>
+                  ) : null}
+                </div>
               ) : (
                 <div className="space-y-3">
                   <label className="block text-xs font-medium text-slate-600">Visitor name
@@ -550,6 +696,30 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
                   </div>
                 </div>
               )}
+
+              {freeEligibility?.enabled ? (
+                freeEligibility.eligible ? (
+                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free consultation available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
+                ) : (
+                  <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Free consultation limit reached — this will be booked as a paid consultation.</p>
+                )
+              ) : null}
+
+              {showsPaymentStep ? (
+                <div>
+                  <p className="text-xs font-medium text-slate-600">How will they pay? — {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
+                  <div className="mt-1.5 grid grid-cols-4 gap-1.5">
+                    {[["Card", "Card"], ["Cash", "Cash"], ["ETransfer", "E-transfer"], ["Skip", "Skip"]].map(([value, label]) => (
+                      <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {form.paymentMethod === "Card" ? (
+                    <p className="mt-1.5 text-xs leading-5 text-slate-500">The slot is held and a payment link is sent right away — the appointment is confirmed the moment they pay.</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-2 gap-2">
                 {meetingModes.map(([modeId, label, Icon]) => (
@@ -623,11 +793,14 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
 
               {error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
             </form>
+            )}
+            {!pendingHold && !bookedWarning ? (
             <footer className="border-t border-slate-100 p-4">
               <button type="button" onClick={submit} disabled={saving || !form.startsAt || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : "Book appointment"}
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : form.paymentMethod === "Card" ? "Reserve & send payment link" : "Book appointment"}
               </button>
             </footer>
+            ) : null}
           </motion.aside>
         </motion.div>
       ) : null}
@@ -974,6 +1147,7 @@ export default function CalendarPage() {
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         onCreated={(created) => { setAppointments((current) => [...current, created]); setSelected(created); }}
+        onRefresh={() => load({ fresh: true, background: true })}
         staff={staff}
         sessionTypes={sessionTypes}
         role={role}

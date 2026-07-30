@@ -109,6 +109,7 @@ const KIND_COPY = {
   confirmed: { title: "Attendance confirmed", eyebrow: "Guest response", intro: "The guest confirmed that they will attend their appointment.", accent: "#059669", tint: "#ecfdf5", symbol: "✓" },
   attended: { title: "Appointment attended", eyebrow: "Attendance updated", intro: "The appointment was marked as attended.", accent: "#059669", tint: "#ecfdf5", symbol: "✓" },
   no_show: { title: "Appointment marked no-show", eyebrow: "Attendance updated", intro: "The guest did not attend the appointment.", accent: "#d97706", tint: "#fffbeb", symbol: "!" },
+  payment_requested: { title: "Consultation payment requested", eyebrow: "Payment due", intro: "Please pay your consultation fee using the secure link below.", accent: "#0f172a", tint: "#f1f5f9", symbol: "$" },
 };
 
 function escapeHtml(value) {
@@ -169,7 +170,7 @@ function detailRow(label, value) {
   return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${escapeHtml(value)}</td></tr>`;
 }
 
-export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null }) {
+export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null, payNowUrl = null, amount = null }) {
   const template = messageTemplates?.[kind] && typeof messageTemplates[kind] === "object" ? messageTemplates[kind] : {};
   const copy = { ...(KIND_COPY[kind] || KIND_COPY.booked), ...(template.subject ? { title: String(template.subject).slice(0, 140) } : {}), ...(template.intro ? { intro: String(template.intro).slice(0, 600) } : {}) };
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
@@ -189,12 +190,15 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
   const phoneSummary = mode === MEETING_MODES.PHONE
     ? `${agencyName} will call${clientPhone ? ` ${clientPhone}` : " you"}${appointment.meetingPhoneNumber ? ` from ${appointment.meetingPhoneNumber}` : ""}.`
     : null;
-  const primaryUrl = kind === "cancelled" ? null : (meetingUrl || mapsUrl || safeManageUrl);
-  const primaryLabel = meetingUrl
-    ? `Join ${mode === MEETING_MODES.ZOOM ? "Zoom" : "Jitsi"} appointment`
-    : mapsUrl
-      ? "Open directions"
-      : "Manage appointment";
+  const safePayNowUrl = kind === "payment_requested" ? safeWebUrl(payNowUrl) : null;
+  const primaryUrl = kind === "cancelled" ? null : (safePayNowUrl || meetingUrl || mapsUrl || safeManageUrl);
+  const primaryLabel = safePayNowUrl
+    ? "Pay consultation fee"
+    : meetingUrl
+      ? `Join ${mode === MEETING_MODES.ZOOM ? "Zoom" : "Jitsi"} appointment`
+      : mapsUrl
+        ? "Open directions"
+        : "Manage appointment";
   const showManageButton = kind !== "cancelled" && safeManageUrl && safeManageUrl !== primaryUrl;
   const agencyContact = [agency?.phone, agency?.email].filter(Boolean).join(" · ");
   const agencyAddress = [agency?.address, agency?.city, agency?.province, agency?.postalCode].filter(Boolean).join(", ");
@@ -222,6 +226,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border:1px solid #e2e8f0;border-radius:20px;background:#f8fafc">
           <tr><td style="padding:23px 24px 8px"><p style="margin:0 0 20px;color:#0f172a;font-size:19px;font-weight:750;line-height:1.35">${escapeHtml(subject)}</p>
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              ${kind === "payment_requested" && amount ? detailRow("Amount due", `$${Number(amount).toFixed(2)}`) : ""}
               ${detailRow("Date", date)}
               ${detailRow("Time", `${time} (${timezoneLabel})`)}
               ${detailRow("Format", modeLabel)}
@@ -257,6 +262,8 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     copy.intro,
     "",
     subject,
+    kind === "payment_requested" && amount ? `Amount due: $${Number(amount).toFixed(2)}` : null,
+    kind === "payment_requested" && safePayNowUrl ? `Pay now: ${safePayNowUrl}` : null,
     `Date: ${date}`,
     `Time: ${time} (${timezoneLabel})`,
     `Format: ${modeLabel}`,
@@ -330,7 +337,7 @@ async function bookingDeliveryAllowed(deliveryId, appointmentId) {
   return Boolean(delivery && bookingDeliveryIsCurrent(delivery, appointment));
 }
 
-async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null }) {
+export async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null, payNowUrl = null, amount = null, includeIcs = true }) {
   const [agency, settings] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
@@ -348,7 +355,7 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
       const transport = createMailTransport(config);
       const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
       const avatarCid = avatarBuffer ? `workspace-avatar-${appointment.id}-${kind}@casedesk` : null;
-      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions });
+      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions, payNowUrl, amount });
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await transport.sendMail({
         from: config.from,
@@ -365,7 +372,7 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
             cid: avatarCid,
             contentDisposition: "inline",
           }] : []),
-          { filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: `text/calendar; method=${kind === "cancelled" ? "CANCEL" : "PUBLISH"}` },
+          ...(includeIcs ? [{ filename: "appointment.ics", content: icsForAppointment(appointment, agencyName), contentType: `text/calendar; method=${kind === "cancelled" ? "CANCEL" : "PUBLISH"}` }] : []),
         ],
       });
     } catch (error) {
@@ -386,7 +393,9 @@ async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId
             : "";
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
-        : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${smsAccess}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
+        : kind === "payment_requested"
+          ? `${agencyName}: your consultation fee${amount ? ` of $${Number(amount).toFixed(2)}` : ""} for "${appointment.subject}" (${when}) is due. Pay now: ${payNowUrl}`
+          : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${smsAccess}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${deliveryId || dedupeSuffix || appointment.startsAt}` });
     } catch (error) {
@@ -455,7 +464,7 @@ export async function cancelQueuedBookingReminders(appointmentIds, db = prisma) 
   return result.count;
 }
 
-export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma }) {
+export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma, payNowUrl = null, amount = null }) {
   if (kind === "cancelled") await cancelQueuedBookingReminders(appointment.id, db);
   const contact = recipientContact(appointment);
   const startsAtVersion = new Date(appointment.startsAt).toISOString();
@@ -474,7 +483,7 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
         channel: job.channel,
         recipient: job.recipient,
         dedupeKey: `${appointment.id}:${kind}:${job.channel}:${revision}${dedupeSuffix ? `:${dedupeSuffix}` : ""}`,
-        payload: { actorUserId, dedupeSuffix, appointmentStartsAt: startsAtVersion, appointmentRevision: revision },
+        payload: { actorUserId, dedupeSuffix, appointmentStartsAt: startsAtVersion, appointmentRevision: revision, ...(payNowUrl ? { payNowUrl } : {}), ...(amount != null ? { amount } : {}) },
       })),
       skipDuplicates: true,
     });
@@ -566,6 +575,8 @@ async function processBookingDeliveryPass() {
           channel: job.channel,
           dedupeSuffix: job.payload?.dedupeSuffix || "",
           deliveryId: job.id,
+          payNowUrl: job.payload?.payNowUrl || null,
+          amount: job.payload?.amount ?? null,
         });
         if (delivery?.suppressed) {
           await prisma.bookingMessageDelivery.updateMany({

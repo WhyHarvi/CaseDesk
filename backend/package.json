@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "prisma generate",
+    "predev": "node scripts/free-port.js && prisma generate",
     "dev": "nodemon --ignore storage/** src/server.js",
     "prestart": "prisma generate && prisma migrate deploy",
     "start": "node src/server.js",

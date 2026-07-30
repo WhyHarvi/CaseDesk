@@ -137,7 +137,7 @@ export async function listLeadStaff(req) {
       memberships: { some: { agencyId: req.auth.agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } },
     },
     orderBy: { fullName: "asc" },
-    select: { id: true, fullName: true, email: true, role: true },
+    select: { id: true, fullName: true, email: true, role: true, zoomHostMapping: { select: { status: true } } },
   });
 }
 

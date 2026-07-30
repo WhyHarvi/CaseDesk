@@ -30,6 +30,19 @@ export async function updateSchedulingStaff(userId, values) {
   return response.data.data;
 }
 
+export async function getFreeConsultationEligibility({ clientId, guestEmail } = {}) {
+  const params = new URLSearchParams();
+  if (clientId) params.set("clientId", clientId);
+  if (guestEmail) params.set("guestEmail", guestEmail);
+  const response = await api.get(`/booking/free-consultation-eligibility?${params.toString()}`);
+  return response.data.data;
+}
+
+export async function lookupBookingClients() {
+  const response = await api.get("/booking/client-lookup");
+  return response.data.data;
+}
+
 export async function getSchedulingAnalytics(params = {}) {
   const query = new URLSearchParams(params);
   const response = await api.get(`/booking/analytics${query.size ? `?${query.toString()}` : ""}`);
@@ -134,8 +147,18 @@ export async function createBookingAppointment(values) {
   return response.data.data;
 }
 
+export async function getBookingPaymentHoldStatus(id) {
+  const response = await api.get(`/booking/payment-holds/${id}`, { cache: false });
+  return response.data.data;
+}
+
 export async function createWalkInPayNowLink(id) {
   const response = await api.post(`/booking/appointments/${id}/pay-now-link`);
+  return response.data.data;
+}
+
+export async function recordWalkInManualPayment(id, { method, note }) {
+  const response = await api.post(`/booking/appointments/${id}/manual-payment`, { method, note });
   return response.data.data;
 }
 
