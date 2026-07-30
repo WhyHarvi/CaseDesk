@@ -1,4 +1,4 @@
-import { CalendarClock, Check, Copy, Eye, Loader2, MapPin, Plus, Send, Trash2, X } from "lucide-react";
+import { CalendarClock, Check, Copy, Eye, Link2, Loader2, MapPin, Phone, Plus, Send, Trash2, Video, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -6,13 +6,17 @@ import {
   createSchedulingBlock,
   deleteSessionType,
   deleteSchedulingBlock,
+  disconnectZoom,
   getBookingSettings,
   getSchedulingBlocks,
+  getZoomStatus,
   previewBookingEmail,
   sendBookingTestEmail,
+  startZoomConnect,
   updateBookingSettings,
   updateSessionType,
   updateSchedulingStaff,
+  updateZoomMappings,
 } from "../../api/bookingApi";
 import Select from "../ui/Select";
 
@@ -198,6 +202,21 @@ export default function SchedulingSettingsPanel() {
   const [emailPreviewKind, setEmailPreviewKind] = useState("booked");
   const [emailPreviewBusy, setEmailPreviewBusy] = useState(false);
   const [emailTestNotice, setEmailTestNotice] = useState("");
+  const [zoomStatus, setZoomStatus] = useState(null);
+  const [zoomMappingDraft, setZoomMappingDraft] = useState({});
+  const [zoomBusy, setZoomBusy] = useState(false);
+  const [zoomNotice, setZoomNotice] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("zoom");
+    if (!result) return null;
+    const messages = {
+      connected: { tone: "success", text: "Zoom was connected successfully. Map each participating consultant to a distinct Zoom host, then save the mappings." },
+      denied: { tone: "error", text: params.get("message") || "Zoom authorization was cancelled." },
+      invalid: { tone: "error", text: "The Zoom authorization link expired or was invalid. Start the connection again." },
+      error: { tone: "error", text: params.get("message") || "Zoom could not be connected." },
+    };
+    return messages[result] || null;
+  });
 
   useEffect(() => {
     let active = true;
@@ -214,7 +233,27 @@ export default function SchedulingSettingsPanel() {
   }, []);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("zoom")) return;
+    url.searchParams.delete("zoom");
+    url.searchParams.delete("message");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  useEffect(() => {
     getSchedulingBlocks().then(setBlocks).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    getZoomStatus()
+      .then((data) => {
+        if (!active) return;
+        setZoomStatus(data);
+        setZoomMappingDraft(Object.fromEntries((data.mappings || []).map((item) => [item.userId, item.zoomUserId])));
+      })
+      .catch(() => {});
+    return () => { active = false; };
   }, []);
 
   // Address-as-you-type search via OpenStreetMap's free Nominatim API — no
@@ -283,6 +322,10 @@ export default function SchedulingSettingsPanel() {
         waitlistEnabled: settings.waitlistEnabled,
         attendanceConfirmationEnabled: settings.attendanceConfirmationEnabled,
         onlineBookingEnabled: settings.onlineBookingEnabled,
+        phoneBookingEnabled: settings.phoneBookingEnabled,
+        phoneCallerId: settings.phoneCallerId || "",
+        phoneCallInstructions: settings.phoneCallInstructions || "",
+        zoomBookingEnabled: settings.zoomBookingEnabled,
         messageTemplates: settings.messageTemplates || {},
         publicBookingEnabled: settings.publicBookingEnabled,
         freeConsultationsEnabled: settings.freeConsultationsEnabled,
@@ -322,7 +365,11 @@ export default function SchedulingSettingsPanel() {
   }
 
   async function toggleType(type) {
-    const updated = await updateSessionType(type.id, { isActive: !type.isActive }).catch(() => null);
+    setError("");
+    const updated = await updateSessionType(type.id, { isActive: !type.isActive }).catch((reason) => {
+      setError(reason.response?.data?.message || "The session type could not be updated.");
+      return null;
+    });
     if (updated) setSessionTypes((current) => current.map((item) => (item.id === type.id ? updated : item)));
   }
 
@@ -330,21 +377,33 @@ export default function SchedulingSettingsPanel() {
     const current = type.allowedMeetingModes?.length ? type.allowedMeetingModes : ["InPerson", "Online"];
     const next = current.includes(mode) ? current.filter((item) => item !== mode) : [...current, mode];
     if (!next.length) return;
-    const updated = await updateSessionType(type.id, { allowedMeetingModes: next }).catch(() => null);
+    setError("");
+    const updated = await updateSessionType(type.id, { allowedMeetingModes: next }).catch((reason) => {
+      setError(reason.response?.data?.message || "The appointment formats could not be updated.");
+      return null;
+    });
     if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
   }
 
   async function setTypeStaff(type, userId) {
     const current = (type.eligibleStaff || []).map((item) => item.userId);
     const next = userId === null ? [] : current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId];
-    const updated = await updateSessionType(type.id, { eligibleStaffIds: next }).catch(() => null);
+    setError("");
+    const updated = await updateSessionType(type.id, { eligibleStaffIds: next }).catch((reason) => {
+      setError(reason.response?.data?.message || "The eligible team could not be updated.");
+      return null;
+    });
     if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
   }
 
   async function setTypeLocation(type, locationId) {
     const current = type.allowedLocationIds || [];
     const next = locationId === null ? [] : current.includes(locationId) ? current.filter((id) => id !== locationId) : [...current, locationId];
-    const updated = await updateSessionType(type.id, { allowedLocationIds: next }).catch(() => null);
+    setError("");
+    const updated = await updateSessionType(type.id, { allowedLocationIds: next }).catch((reason) => {
+      setError(reason.response?.data?.message || "The session locations could not be updated.");
+      return null;
+    });
     if (updated) setSessionTypes((items) => items.map((item) => item.id === type.id ? updated : item));
   }
 
@@ -406,6 +465,53 @@ export default function SchedulingSettingsPanel() {
     finally { setEmailPreviewBusy(false); }
   }
 
+  async function connectZoomAccount() {
+    setZoomBusy(true);
+    setError("");
+    try {
+      const result = await startZoomConnect();
+      window.location.assign(result.url);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Zoom connection could not be started.");
+      setZoomBusy(false);
+    }
+  }
+
+  async function saveZoomHosts() {
+    setZoomBusy(true);
+    setError("");
+    try {
+      const mappings = await updateZoomMappings(
+        Object.entries(zoomMappingDraft)
+          .filter(([, zoomUserId]) => zoomUserId)
+          .map(([userId, zoomUserId]) => ({ userId, zoomUserId })),
+      );
+      setZoomStatus((current) => ({ ...current, mappings }));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2200);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Zoom host mappings could not be saved.");
+    } finally {
+      setZoomBusy(false);
+    }
+  }
+
+  async function removeZoomAccount() {
+    if (!window.confirm("Disconnect Zoom and stop offering new Zoom appointments? CaseDesk will first verify that no future Zoom appointments remain.")) return;
+    setZoomBusy(true);
+    setError("");
+    try {
+      await disconnectZoom();
+      setZoomStatus((current) => ({ ...current, connected: false, status: "disconnected", mappings: [], hosts: [] }));
+      setZoomMappingDraft({});
+      setSettings((current) => ({ ...current, zoomBookingEnabled: false }));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Zoom could not be disconnected.");
+    } finally {
+      setZoomBusy(false);
+    }
+  }
+
 
   if (loading) {
     return <div className="space-y-5"><SchedulingHeader /><div className={`${card} flex items-center gap-2 text-sm text-slate-500`}><Loader2 className="h-4 w-4 animate-spin" /> Loading scheduling settings…</div></div>;
@@ -415,11 +521,26 @@ export default function SchedulingSettingsPanel() {
   }
 
   const bookingUrl = `${window.location.origin}/b/${settings.publicSlug || settings.publicToken}`;
+  const publicSchedulingStaff = staff.filter((member) => {
+    const preference = member.schedulingPreference || {
+      acceptsAppointments: member.role === "consultant",
+      publicBookable: member.role === "consultant",
+    };
+    return preference.acceptsAppointments && preference.publicBookable;
+  });
+  const mappedZoomStaffIds = new Set((zoomStatus?.mappings || []).map((mapping) => mapping.userId));
+  const publicZoomCapacity = publicSchedulingStaff.filter((member) => mappedZoomStaffIds.has(member.id)).length;
 
   return (
     <div className="space-y-5">
       <SchedulingHeader />
       {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+      {zoomNotice ? (
+        <div className={`flex items-start justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${zoomNotice.tone === "success" ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-700"}`}>
+          <span>{zoomNotice.text}</span>
+          <button type="button" onClick={() => setZoomNotice(null)} aria-label="Dismiss Zoom status" className="shrink-0 rounded-full p-0.5 hover:bg-black/5"><X className="h-4 w-4" /></button>
+        </div>
+      ) : null}
 
       <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">Weekly hours</h3>
@@ -446,6 +567,11 @@ export default function SchedulingSettingsPanel() {
       <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">Scheduling team</h3>
         <p className="mt-0.5 text-xs text-slate-500">Consultants participate by default. Administrators choose whether their calendar joins the assignment pool.</p>
+        <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+          Capacity is shared across every appointment format. Each available consultant contributes one seat at a time, so an in-person, phone, Jitsi, or Zoom booking at that time consumes the same seat.
+          <span className="mt-1 block font-semibold">Current public capacity: {publicSchedulingStaff.length} simultaneous appointment{publicSchedulingStaff.length === 1 ? "" : "s"}{zoomStatus?.connected ? ` · Zoom capacity: ${publicZoomCapacity}` : ""}.</span>
+          {publicSchedulingStaff.length < 2 ? <span className="mt-1 block">For two seats at the same time, <a href="/app/settings?section=users-roles" className="font-semibold underline underline-offset-2">add another consultant</a>, then enable Accepts and Public here.</span> : null}
+        </p>
         <div className="mt-3 divide-y divide-slate-100">
           {staff.map((member) => {
             const preference = member.schedulingPreference || { acceptsAppointments: member.role === "consultant", publicBookable: member.role === "consultant", maxDailyAppointments: null };
@@ -457,7 +583,21 @@ export default function SchedulingSettingsPanel() {
                 </div>
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.acceptsAppointments} onChange={(value) => changeStaff(member, { acceptsAppointments: value, publicBookable: value ? preference.publicBookable : false })} label={`${member.fullName} accepts appointments`} /> Accepts</label>
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.publicBookable} onChange={(value) => changeStaff(member, { publicBookable: value, acceptsAppointments: value ? true : preference.acceptsAppointments })} label={`${member.fullName} public bookable`} /> Public</label>
-                <input type="number" min="1" max="50" value={preference.maxDailyAppointments ?? ""} onChange={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })} placeholder="Daily max" className={`${inputClass} w-24`} />
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={preference.maxDailyAppointments ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setStaff((items) => items.map((item) => item.id === member.id
+                      ? { ...item, schedulingPreference: { ...preference, maxDailyAppointments: value } }
+                      : item));
+                  }}
+                  onBlur={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })}
+                  placeholder="Daily max"
+                  className={`${inputClass} w-24`}
+                />
                 <details className="w-full rounded-xl bg-slate-50 px-3 py-2">
                   <summary className="cursor-pointer text-xs font-semibold text-slate-600">Personal availability overrides</summary>
                   <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -471,6 +611,53 @@ export default function SchedulingSettingsPanel() {
             );
           })}
         </div>
+      </section>
+
+      <section className={card}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><Video className="h-4 w-4" /></span>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Zoom organization</h3>
+              <p className="mt-0.5 text-xs leading-5 text-slate-500">Connect one consultancy Zoom account, then map each CaseDesk consultant to a distinct Zoom host.</p>
+            </div>
+          </div>
+          {zoomStatus?.connected ? (
+            <button type="button" disabled={zoomBusy} onClick={removeZoomAccount} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Disconnect</button>
+          ) : (
+            <button type="button" disabled={zoomBusy || zoomStatus?.configured === false} onClick={connectZoomAccount} className="inline-flex items-center gap-1.5 rounded-full bg-[#2D8CFF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#237ee8] disabled:opacity-50">{zoomBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} Connect Zoom</button>
+          )}
+        </div>
+        {zoomStatus?.configured === false ? <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">The server needs ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and a valid MAIL_SETTINGS_ENCRYPTION_KEY before an administrator can connect Zoom.</p> : null}
+        {zoomStatus?.lastError ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{zoomStatus.lastError}</p> : null}
+        {zoomStatus?.connected ? (
+          <>
+            <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 px-3.5 py-3 text-xs text-emerald-800">
+              <p className="font-semibold">Connected{zoomStatus.connectedUserEmail ? ` as ${zoomStatus.connectedUserEmail}` : ""}</p>
+              <p className="mt-1 leading-5">CaseDesk creates one private meeting per appointment, keeps the join link synchronized on reschedule, and deletes the Zoom meeting on cancellation. Clients do not need a Zoom account.</p>
+            </div>
+            <div className="mt-4 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consultant host mapping</p>
+              {staff.map((member) => (
+                <label key={member.id} className="grid items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2.5 sm:grid-cols-[1fr_1.3fr]">
+                  <span><span className="block text-sm font-medium text-slate-800">{member.fullName}</span><span className="block text-[11px] text-slate-400">{member.email}</span></span>
+                  <Select value={zoomMappingDraft[member.id] || ""} onChange={(event) => setZoomMappingDraft((current) => ({ ...current, [member.id]: event.target.value }))}>
+                    <option value="">Not available for Zoom</option>
+                    {(zoomStatus.hosts || []).map((host) => {
+                      const selectedByAnother = Object.entries(zoomMappingDraft).some(([userId, zoomUserId]) => userId !== member.id && zoomUserId === host.id);
+                      return <option key={host.id} value={host.id} disabled={selectedByAnother}>{host.name || host.email} · {host.email} · {host.licenseType || "Unknown license"}</option>;
+                    })}
+                  </Select>
+                </label>
+              ))}
+              {!(zoomStatus.hosts || []).length ? <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">No active Zoom users were returned. Add users in Zoom or reconnect an account that can read organization users.</p> : null}
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-[11px] leading-5 text-slate-400">For two simultaneous Zoom appointments, map two different Zoom users. A free Basic host is suitable for a 30-minute one-to-one consultation.</p>
+              <button type="button" disabled={zoomBusy} onClick={saveZoomHosts} className="shrink-0 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{zoomBusy ? "Saving…" : "Save hosts"}</button>
+            </div>
+          </>
+        ) : null}
       </section>
 
       <section className={card}>
@@ -582,8 +769,21 @@ export default function SchedulingSettingsPanel() {
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>
           <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.attendanceConfirmationEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, attendanceConfirmationEnabled: value }))} label="Attendance confirmation enabled" /><span><span className="block text-sm font-medium text-slate-800">Attendance confirmation</span><span className="block text-xs text-slate-400">Let clients confirm before arrival.</span></span></label>
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.onlineBookingEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, onlineBookingEnabled: value }))} label="Online video call booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Online video call bookings</span><span className="block text-xs text-slate-400">Turn off to hide the video call option from the public page entirely.</span></span></label>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.onlineBookingEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, onlineBookingEnabled: value }))} label="Jitsi booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Jitsi video calls</span><span className="block text-xs text-slate-400">Create a secure Jitsi link without an external account.</span></span></label>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.phoneBookingEnabled === true} onChange={(value) => setSettings((current) => ({ ...current, phoneBookingEnabled: value }))} label="Phone booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Phone calls</span><span className="block text-xs text-slate-400">Your team calls the client at the booked time.</span></span></label>
+          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.zoomBookingEnabled === true} onChange={(value) => { if (value && (!zoomStatus?.connected || !(zoomStatus?.mappings || []).length)) setError("Connect Zoom and map at least one consultant before enabling Zoom bookings."); else setSettings((current) => ({ ...current, zoomBookingEnabled: value })); }} label="Zoom booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Zoom video calls</span><span className="block text-xs text-slate-400">Uses the connected organization and consultant host mappings.</span></span></label>
         </div>
+        {settings.phoneBookingEnabled ? (
+          <div className="mt-3 grid gap-3 rounded-2xl border border-sky-100 bg-sky-50/50 p-3.5 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-600"><span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-sky-600" /> Number clients will see</span>
+              <input value={settings.phoneCallerId || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallerId: event.target.value }))} placeholder="+1 647 555 0100" autoComplete="tel" className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
+              <span className="mt-1 block font-normal leading-4 text-slate-400">Use the number consultants will call from. It is included in email, SMS, and calendar details.</span>
+            </label>
+            <label className="text-xs font-semibold text-slate-600">Client phone instructions
+              <textarea value={settings.phoneCallInstructions || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallInstructions: event.target.value }))} placeholder="Keep your phone nearby. We will call at the scheduled time." rows={3} maxLength={500} className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
+            </label>
+          </div>
+        ) : null}
         <details className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
           <summary className="cursor-pointer text-sm font-medium text-slate-800">Email wording</summary>
           <p className="mt-1 text-xs text-slate-400">Customize the headline and opening sentence while keeping the polished appointment details and actions.</p>
@@ -597,7 +797,7 @@ export default function SchedulingSettingsPanel() {
       <section className={card}>
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-900">Office locations</h3>
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Required for public booking</span>
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">For in-person bookings</span>
         </div>
         <p className="mt-0.5 text-xs text-slate-500">Where clients meet you in person. The address is sent with every in-person confirmation; the Google Maps link is optional.</p>
         <div className="mt-3 space-y-2">
@@ -623,7 +823,7 @@ export default function SchedulingSettingsPanel() {
               />
             </div>
           ))}
-          {!(settings.locations || []).length ? <p className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/50 px-3.5 py-3 text-xs text-amber-800">No locations yet — add your office below to activate the public booking link.</p> : null}
+          {!(settings.locations || []).length ? <p className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/50 px-3.5 py-3 text-xs text-amber-800">No locations yet — in-person appointments will remain unavailable until you add an office. Phone and video formats can still be offered.</p> : null}
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.4fr]">
           <input value={newLocation.name} onChange={(event) => setNewLocation((c) => ({ ...c, name: event.target.value }))} placeholder="Office name (e.g. Main Office)" className={inputClass} />
@@ -679,7 +879,7 @@ export default function SchedulingSettingsPanel() {
                 <p className={`truncate text-sm font-medium ${type.isActive ? "text-slate-800" : "text-slate-400 line-through"}`}>{type.name}</p>
                 <p className="text-xs text-slate-400">{type.durationMinutes} minutes</p>
                 <div className="mt-1.5 flex gap-1.5">
-                  {[['InPerson', 'In person'], ['Online', 'Online']].map(([mode, label]) => <button key={mode} type="button" onClick={() => toggleTypeMode(type, mode)} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${(type.allowedMeetingModes || ['InPerson', 'Online']).includes(mode) ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-400"}`}>{label}</button>)}
+                  {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Jitsi"], ["Zoom", "Zoom"]].map(([mode, label]) => <button key={mode} type="button" onClick={() => toggleTypeMode(type, mode)} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${(type.allowedMeetingModes || ["InPerson", "Online"]).includes(mode) ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-400"}`}>{label}</button>)}
                 </div>
                 <details className="mt-2">
                   <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Eligible team · {type.eligibleStaff?.length ? type.eligibleStaff.length : "all"}</summary>

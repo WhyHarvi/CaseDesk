@@ -9,6 +9,7 @@ import {
   Copy,
   Loader2,
   MapPin,
+  Phone,
   Plus,
   RefreshCw,
   Trash2,
@@ -181,6 +182,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [payNowBusy, setPayNowBusy] = useState(false);
   const [payNowError, setPayNowError] = useState("");
   const [payNowCopied, setPayNowCopied] = useState(false);
+  const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
+    ? "preparing link"
+    : appointment.meetingSyncStatus === "Retrying"
+      ? "temporary issue · retrying automatically"
+      : appointment.meetingSyncStatus === "Failed"
+        ? "link setup failed"
+        : "";
 
   async function generatePayNowLink() {
     setPayNowBusy(true);
@@ -214,11 +222,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       to: reschedDate,
       durationMinutes: duration,
       assignedToId: role === "consultant" ? undefined : appointment.assignedTo?.id || undefined,
+      meetingMode: reschedMode,
+      locationId: reschedMode === "InPerson" ? reschedLocationId || undefined : undefined,
     })
       .then((result) => active && setReschedSlots(result.days[reschedDate] || []))
       .catch(() => active && setReschedSlots([]));
     return () => { active = false; };
-  }, [resched, reschedDate, duration, appointment.assignedTo, role]);
+  }, [resched, reschedDate, duration, appointment.assignedTo, role, reschedMode, reschedLocationId]);
 
   async function confirmReschedule() {
     if (!reschedSlot) return;
@@ -270,9 +280,18 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         <DetailRow icon={CalendarDays}>{start.toLocaleDateString("en-CA", { weekday: "long", month: "short", day: "numeric", year: "numeric" })}</DetailRow>
         <DetailRow icon={Clock3}>{formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}{appointment.sessionType ? ` · ${appointment.sessionType.name}` : ""}</DetailRow>
         {appointment.assignedTo ? <DetailRow icon={UserRound}>{appointment.assignedTo.fullName}</DetailRow> : null}
+        {appointment.meetingMode === "Phone" ? <DetailRow icon={Phone}>Phone call — the office calls the client{appointment.meetingPhoneNumber ? ` from ${appointment.meetingPhoneNumber}` : ""}</DetailRow> : null}
         {appointment.location ? <DetailRow icon={MapPin}>{appointment.location}</DetailRow> : null}
+        {["Online", "Zoom"].includes(appointment.meetingMode) ? <DetailRow icon={Video}>{appointment.meetingMode === "Zoom" ? "Zoom video call" : "Jitsi video call"}{meetingSyncLabel ? ` · ${meetingSyncLabel}` : ""}</DetailRow> : null}
         <DetailRow icon={Bell}>Reminder set from workspace scheduling rules</DetailRow>
       </div>
+
+      {appointment.meetingMode === "Zoom" && appointment.meetingSyncStatus === "Failed" ? (
+        <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs leading-5 text-rose-700">
+          The client’s Zoom link could not be prepared after automatic retries. Reconnect or correct Zoom in Scheduling, then reschedule this appointment to retry synchronization.
+          {appointment.meetingSyncError ? <span className="mt-1 block font-medium">{appointment.meetingSyncError}</span> : null}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex items-center gap-3 rounded-2xl bg-slate-50/90 px-3.5 py-3">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-950 text-xs font-semibold text-white">
@@ -299,7 +318,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           rel="noopener noreferrer"
           className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-full bg-sky-600 text-sm font-semibold text-white transition hover:bg-sky-700"
         >
-          <Video className="h-4 w-4" /> Join video call
+          <Video className="h-4 w-4" /> Join {appointment.meetingMode === "Zoom" ? "Zoom" : "Jitsi"} video call
         </a>
       ) : null}
 
@@ -339,7 +358,12 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-sky-400"
           />
           <div className="mt-2 grid grid-cols-2 gap-1.5">
-            {[['InPerson', 'In person'], ['Online', 'Online video']].map(([value, label]) => <button key={value} type="button" onClick={() => setReschedMode(value)} className={`rounded-xl border px-2 py-2 text-xs font-semibold ${reschedMode === value ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{label}</button>)}
+            {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Jitsi"], ["Zoom", "Zoom"]]
+              .filter(([value]) => (appointment.sessionType?.allowedMeetingModes || ["InPerson", "Online"]).includes(value))
+              .filter(([value]) => value !== "Phone" || settings?.phoneBookingEnabled === true)
+              .filter(([value]) => value !== "Online" || settings?.onlineBookingEnabled !== false)
+              .filter(([value]) => value !== "Zoom" || (settings?.zoomBookingEnabled === true && appointment.assignedTo?.zoomHostMapping?.status === "active"))
+              .map(([value, label]) => <button key={value} type="button" onClick={() => { setReschedMode(value); setReschedSlot(null); }} className={`rounded-xl border px-2 py-2 text-xs font-semibold ${reschedMode === value ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{label}</button>)}
           </div>
           {reschedMode === "InPerson" && locations.length ? <Select value={reschedLocationId} onChange={(event) => setReschedLocationId(event.target.value)} className="mt-2 w-full" ariaLabel="Office location"><option value="">Choose a location…</option>{locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select> : null}
           {reschedSlots === null ? (
@@ -394,7 +418,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, role, userId, initialDate, settings }) {
   const [clients, setClients] = useState([]);
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", recurrenceFrequency: "NONE", recurrenceCount: 2 });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2 });
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -409,6 +433,26 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
+  const selectedClient = clients.find((client) => client.id === form.clientId) || null;
+  const zoomCandidateId = role === "consultant" ? userId : form.assignedToId;
+  const zoomHostAvailable = zoomCandidateId
+    ? staff.some((member) => member.id === zoomCandidateId && member.zoomHostMapping?.status === "active")
+    : staff.some((member) => member.zoomHostMapping?.status === "active");
+  const meetingModes = useMemo(() => [
+    ["InPerson", "In person", MapPin],
+    ["Phone", "Phone", Phone],
+    ["Online", "Jitsi", Video],
+    ["Zoom", "Zoom", Video],
+  ]
+    .filter(([modeId]) => (selectedType?.allowedMeetingModes || ["InPerson", "Online"]).includes(modeId))
+    .filter(([modeId]) => modeId !== "Phone" || settings?.phoneBookingEnabled === true)
+    .filter(([modeId]) => modeId !== "Online" || settings?.onlineBookingEnabled !== false)
+    .filter(([modeId]) => modeId !== "Zoom" || (settings?.zoomBookingEnabled === true && zoomHostAvailable)), [selectedType, settings?.phoneBookingEnabled, settings?.onlineBookingEnabled, settings?.zoomBookingEnabled, zoomHostAvailable]);
+
+  useEffect(() => {
+    if (!selectedType || meetingModes.some(([modeId]) => modeId === form.meetingMode)) return;
+    setForm((current) => ({ ...current, meetingMode: meetingModes[0]?.[0] || "InPerson", startsAt: "" }));
+  }, [selectedType, meetingModes, form.meetingMode]);
 
   const loadSlots = useCallback(async () => {
     if (!form.date || !selectedType) return;
@@ -421,6 +465,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
         durationMinutes: selectedType.durationMinutes,
         sessionTypeId: selectedType.id,
         assignedToId: role === "consultant" ? undefined : form.assignedToId || undefined,
+        meetingMode: form.meetingMode,
+        locationId: form.meetingMode === "InPerson" ? form.locationId || undefined : undefined,
       });
       setSlots(result.days[form.date] || []);
     } catch {
@@ -428,7 +474,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
     } finally {
       setLoadingSlots(false);
     }
-  }, [form.date, form.assignedToId, selectedType, role]);
+  }, [form.date, form.assignedToId, form.meetingMode, form.locationId, selectedType, role]);
 
   useEffect(() => { if (open) loadSlots(); }, [open, loadSlots]);
 
@@ -506,8 +552,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               )}
 
               <div className="grid grid-cols-2 gap-2">
-                {[["InPerson", "In person", MapPin], ["Online", "Online video", Video]].filter(([modeId]) => (selectedType?.allowedMeetingModes || ["InPerson", "Online"]).includes(modeId)).map(([modeId, label, Icon]) => (
-                  <button key={modeId} type="button" onClick={() => setForm((c) => ({ ...c, meetingMode: modeId }))} className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${(form.meetingMode || "InPerson") === modeId ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+                {meetingModes.map(([modeId, label, Icon]) => (
+                  <button key={modeId} type="button" onClick={() => setForm((c) => ({ ...c, meetingMode: modeId, startsAt: "" }))} className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${(form.meetingMode || "InPerson") === modeId ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
                     <Icon className="h-3.5 w-3.5" /> {label}
                   </button>
                 ))}
@@ -524,7 +570,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
                   <label className="block text-xs font-medium text-slate-600">Staff
                     <Select value={form.assignedToId} onChange={(event) => setForm((c) => ({ ...c, assignedToId: event.target.value, startsAt: "" }))} className="mt-1.5 w-full" ariaLabel="Staff">
                       <option value="">Anyone / unassigned</option>
-                      {staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}
+                      {staff.map((member) => <option key={member.id} value={member.id} disabled={form.meetingMode === "Zoom" && member.zoomHostMapping?.status !== "active"}>{member.fullName}{form.meetingMode === "Zoom" && member.zoomHostMapping?.status !== "active" ? " · Zoom not mapped" : ""}</option>)}
                     </Select>
                   </label>
                 ) : null}
@@ -561,11 +607,12 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
                     {locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                   </Select>
                 </label>
-              ) : (
+              ) : (form.meetingMode || "InPerson") === "InPerson" ? (
                 <label className="block text-xs font-medium text-slate-600">Location (optional)
-                  <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office, phone, or video link" className={`mt-1.5 ${input}`} />
+                  <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office or meeting place" className={`mt-1.5 ${input}`} />
                 </label>
-              )}
+              ) : null}
+              {form.meetingMode === "Phone" ? <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {form.mode === "client" ? selectedClient?.phone || "the client’s saved number" : form.guestPhone || "the visitor’s number"}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}. A valid client phone number is required.</p> : null}
 
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
                 <label className="block text-xs font-medium text-slate-600">Repeat
@@ -577,7 +624,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, staff, sessionTypes, ro
               {error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
             </form>
             <footer className="border-t border-slate-100 p-4">
-              <button type="button" onClick={submit} disabled={saving || !form.startsAt} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+              <button type="button" onClick={submit} disabled={saving || !form.startsAt || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : "Book appointment"}
               </button>
             </footer>

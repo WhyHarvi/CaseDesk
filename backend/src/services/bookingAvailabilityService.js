@@ -117,12 +117,46 @@ function expandedSchedulingBlocks(blocks, rangeStart, rangeEnd) {
   return expanded;
 }
 
-function effectiveStaffSettings(settings, preference, sessionBufferMinutes) {
+function formatMinutes(value) {
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+}
+
+export function intersectWorkingHours(baseHours, staffHours) {
+  if (!Array.isArray(staffHours) || !staffHours.length) return baseHours;
+  const normalizedBaseHours = Array.isArray(baseHours) && baseHours.length ? baseHours : DEFAULT_WORKING_HOURS;
+  return Array.from({ length: 7 }, (_, day) => {
+    const base = normalizedBaseHours.find((rule) => Number(rule.day) === day);
+    const staff = staffHours.find((rule) => Number(rule.day) === day);
+    if (!base?.enabled || !staff?.enabled) {
+      return {
+        day,
+        enabled: false,
+        start: base?.start || staff?.start || "09:00",
+        end: base?.end || staff?.end || "17:00",
+      };
+    }
+    const start = Math.max(minutesOf(base.start), minutesOf(staff.start));
+    const end = Math.min(minutesOf(base.end), minutesOf(staff.end));
+    return {
+      day,
+      enabled: end > start,
+      start: formatMinutes(start),
+      end: formatMinutes(end),
+    };
+  });
+}
+
+function effectiveStaffSettings(settings, preference, sessionBufferMinutes, constrainWorkingHours = false) {
   const personalDaysOff = Array.isArray(preference?.daysOff) ? preference.daysOff : [];
+  const personalHours = Array.isArray(preference?.workingHours) && preference.workingHours.length
+    ? preference.workingHours
+    : null;
   return {
     ...settings,
     timezone: preference?.timezone || settings.timezone,
-    workingHours: Array.isArray(preference?.workingHours) && preference.workingHours.length ? preference.workingHours : settings.workingHours,
+    workingHours: constrainWorkingHours && personalHours
+      ? intersectWorkingHours(settings.workingHours, personalHours)
+      : personalHours || settings.workingHours,
     daysOff: [...new Set([...(Array.isArray(settings.daysOff) ? settings.daysOff : []), ...personalDaysOff])],
     bufferMinutes: sessionBufferMinutes ?? preference?.bufferMinutes ?? settings.bufferMinutes,
   };
@@ -133,9 +167,9 @@ function effectiveStaffSettings(settings, preference, sessionBufferMinutes) {
  *
  * settings: BookingSettings row. durationMinutes: session length.
  * busy: [{ startsAt, endsAt }] existing appointments for the target staff member.
- * Returns [{ startsAt, endsAt }] in UTC, stepped every 15 minutes.
+ * Returns [{ startsAt, endsAt }] in UTC, stepped every 30 minutes by default.
  */
-export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = new Date(), stepMinutes = 15 }) {
+export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = new Date(), stepMinutes = 30 }) {
   const timezone = settings.timezone || "America/Toronto";
   const workingHours = Array.isArray(settings.workingHours) && settings.workingHours.length ? settings.workingHours : DEFAULT_WORKING_HOURS;
   const daysOff = Array.isArray(settings.daysOff) ? settings.daysOff : [];
@@ -216,7 +250,18 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     where: { agencyId, assignedToId: { in: staffIds }, claimedAt: null, expiresAt: { gt: now }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}) },
     select: { assignedToId: true, startsAt: true, endsAt: true },
   }) : [], staffIds.length && prisma.bookingPaymentHold ? prisma.bookingPaymentHold.findMany({
-    where: { agencyId, assignedToId: { in: staffIds }, status: "AwaitingPayment", expiresAt: { gt: now }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) },
+    // A confirmation worker atomically moves a paid hold to Confirming
+    // before it creates the Appointment. That short-lived state must keep
+    // reserving the seat or another request can take a slot that is already
+    // paid for.
+    where: {
+      agencyId,
+      assignedToId: { in: staffIds },
+      OR: [{ status: "AwaitingPayment", expiresAt: { gt: now } }, { status: "Confirming" }],
+      startsAt: { lt: rangeEnd },
+      endsAt: { gt: rangeStart },
+      ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}),
+    },
     select: { assignedToId: true, startsAt: true, endsAt: true },
   }) : []]);
   const busy = [...busyAppointments, ...activeHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
@@ -228,16 +273,26 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     const dateKey = localDateKey(new Date(cursor + 12 * 60 * 60_000), timezone);
     if (days[dateKey]) continue;
     if (!pooled) {
-      const effective = assignedToId ? effectiveStaffSettings(baseSettings, preferenceByStaff.get(assignedToId), sessionBufferMinutes) : { ...baseSettings, bufferMinutes: sessionBufferMinutes ?? baseSettings.bufferMinutes };
+      const effective = assignedToId
+        ? effectiveStaffSettings(baseSettings, preferenceByStaff.get(assignedToId), sessionBufferMinutes, Boolean(location?.useCustomHours))
+        : { ...baseSettings, bufferMinutes: sessionBufferMinutes ?? baseSettings.bufferMinutes };
       days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy, now });
       continue;
     }
     const staffSlots = assignedToIds.map((staffId) => {
       const dailyMaximum = staffLimits.get(staffId);
-      const dailyCount = busyAppointments.filter((item) => item.assignedToId === staffId && localDateKey(new Date(item.startsAt), timezone) === dateKey).length;
+      // Active checkout and waitlist holds consume a real consultant seat,
+      // including for max-daily limits. Otherwise several simultaneous
+      // checkouts can all pass a limit of one and later become appointments.
+      const dailyCount = new Set([...busyAppointments, ...activeHolds, ...activePaymentHolds]
+        .filter((item) => item.assignedToId === staffId && localDateKey(new Date(item.startsAt), timezone) === dateKey)
+        // One waitlist checkout is represented by both its offer hold and
+        // payment hold until payment succeeds; it is still only one seat.
+        .map((item) => `${new Date(item.startsAt).toISOString()}:${new Date(item.endsAt).toISOString()}`))
+        .size;
       if (dailyMaximum != null && dailyCount >= dailyMaximum) return [];
       return slotsForDay({
-      settings: effectiveStaffSettings(baseSettings, preferenceByStaff.get(staffId), sessionBufferMinutes),
+      settings: effectiveStaffSettings(baseSettings, preferenceByStaff.get(staffId), sessionBufferMinutes, Boolean(location?.useCustomHours)),
       dateKey,
       durationMinutes,
       busy: busy.filter((item) => item.assignedToId === staffId),
@@ -271,7 +326,7 @@ export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt
     if (hold) return hold;
   }
   if (tx.bookingPaymentHold) {
-    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, status: "AwaitingPayment", expiresAt: { gt: new Date() }, startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) }, select: { id: true, startsAt: true } });
+    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }], startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) }, select: { id: true, startsAt: true } });
     if (paymentHold) return paymentHold;
   }
   if (!tx.schedulingBlock) return null;

@@ -17,7 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "react-router-dom";
-import { createPublicBooking, createPublicBookingPaymentHold, getPublicAvailability, getPublicBookingAvatarUrl, getPublicBookingInfo, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
+import { createPublicBooking, createPublicBookingPaymentHold, getPublicAvailability, getPublicBookingAvatarUrl, getPublicBookingInfo, getPublicBookingPaymentHoldStatus, joinPublicBookingWaitlist, requestPublicBookingVerification, verifyPublicBookingEmail } from "../api/bookingApi";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -26,6 +26,31 @@ const cardHover = { whileHover: { scale: 1.015, y: -1 }, whileTap: { scale: 0.98
 const stepTransition = { initial: { opacity: 0, x: 14 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -10 }, transition: { duration: 0.28, ease: [0.32, 0.72, 0, 1] } };
 const listStagger = { animate: { transition: { staggerChildren: 0.05 } } };
 const listItem = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: springy };
+
+function paymentHoldStorageKey(token) {
+  return `casedesk:booking-payment:${token}`;
+}
+
+function readPendingPayment(token) {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(paymentHoldStorageKey(token)) || "null");
+    return value?.claimToken ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingPayment(token, payment) {
+  try {
+    sessionStorage.setItem(paymentHoldStorageKey(token), JSON.stringify(payment));
+  } catch { /* The status endpoint and confirmation messages remain the fallback. */ }
+}
+
+function clearPendingPayment(token) {
+  try {
+    sessionStorage.removeItem(paymentHoldStorageKey(token));
+  } catch { /* No-op when browser storage is unavailable. */ }
+}
 
 function startOfWeek(date) {
   const copy = new Date(date);
@@ -194,9 +219,14 @@ export function BookingMonthPicker({ fetchAvailability, initialSlot, onPickSlot,
                   transition={{ delay: Math.min(index * 0.02, 0.25), type: "spring", stiffness: 380, damping: 32 }}
                   whileTap={{ scale: 0.94 }}
                   onClick={() => onPickSlot(slot)}
-                  className="rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50"
+                  className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-sky-300 hover:bg-sky-50"
                 >
-                  {formatTime(slot.startsAt, timezone)}
+                  <span>{formatTime(slot.startsAt, timezone)}</span>
+                  {Number(slot.capacity) > 1 ? (
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">
+                      {slot.capacity} available
+                    </span>
+                  ) : null}
                 </motion.button>
               ))}
               {!slots.length ? <p className="py-4 text-[12.5px] italic text-slate-400">No times left this day — try another date.</p> : null}
@@ -364,11 +394,18 @@ function CalendlyTimeStep({ fetchAvailability, initialSlot, timezone, timeFormat
                           whileHover={!isPending ? { scale: 1.015 } : undefined}
                           whileTap={{ scale: 0.97 }}
                           onClick={() => setPendingSlot(isPending ? null : slot)}
-                          className={`flex-1 rounded-md border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                          className={`flex flex-1 items-center justify-between gap-3 rounded-md border px-4 py-2.5 text-sm font-semibold transition-colors ${
                             isPending ? "border-[#E5E7EB] bg-[#F3F4F6] text-[#6B7280]" : "border-[#006BFF] text-[#006BFF] hover:bg-[#E8F1FF]"
                           }`}
                         >
-                          {formatClock(new Date(slot.startsAt), timezone, timeFormat24h)}
+                          <span>{formatClock(new Date(slot.startsAt), timezone, timeFormat24h)}</span>
+                          {Number(slot.capacity) > 1 ? (
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              isPending ? "bg-white text-[#6B7280]" : "bg-[#E8F1FF] text-[#0057CC]"
+                            }`}>
+                              {slot.capacity} available
+                            </span>
+                          ) : null}
                         </motion.button>
                         {isPending ? (
                           <motion.button initial={{ opacity: 0, scale: 0.85, width: 0 }} animate={{ opacity: 1, scale: 1, width: "auto" }} transition={springy} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.95 }} type="button" onClick={() => onConfirm(slot)} className="rounded-md bg-[#006BFF] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0057CC]">
@@ -422,9 +459,10 @@ export default function PublicBookingPage() {
   const { token } = useParams();
   const [searchParams] = useSearchParams();
   const offerToken = searchParams.get("offer") || "";
+  const pendingPaymentAtLoad = useRef(readPendingPayment(token)).current;
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState("");
-  const [step, setStep] = useState("location");
+  const [step, setStep] = useState(pendingPaymentAtLoad ? "payment" : "format");
   const [sessionTypeId, setSessionTypeId] = useState("");
   const [meetingMode, setMeetingMode] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -435,6 +473,9 @@ export default function PublicBookingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(null);
+  const [pendingPayment, setPendingPayment] = useState(pendingPaymentAtLoad);
+  const [paymentChecking, setPaymentChecking] = useState(Boolean(pendingPaymentAtLoad));
+  const [paymentError, setPaymentError] = useState("");
   const [waitlistDates, setWaitlistDates] = useState(() => ({ from: dateKey(new Date()), to: dateKey(new Date(Date.now() + 30 * DAY_MS)) }));
   const [verification, setVerification] = useState({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null });
   const [cookieInfoOpen, setCookieInfoOpen] = useState(false);
@@ -460,6 +501,7 @@ export default function PublicBookingPage() {
       .then((data) => {
         setInfo(data);
         if (data.offerExpired) setError("That reserved waitlist time has expired, but you can choose another available appointment.");
+        if (pendingPaymentAtLoad) return;
         if (data.offer) {
           setSessionTypeId(data.offer.sessionTypeId);
           setMeetingMode(data.offer.meetingMode);
@@ -474,7 +516,7 @@ export default function PublicBookingPage() {
         if (data.consultants?.length === 1) setConsultantId(data.consultants[0].id);
       })
       .catch((reason) => setLoadError(reason.response?.data?.message || "This booking page is not available."));
-  }, [token, offerToken]);
+  }, [token, offerToken, pendingPaymentAtLoad]);
 
   useEffect(() => {
     try {
@@ -483,35 +525,110 @@ export default function PublicBookingPage() {
       if (saved.sessionTypeId) setSessionTypeId(saved.sessionTypeId);
       if (saved.meetingMode) setMeetingMode(saved.meetingMode);
       if (saved.locationId) setLocationId(saved.locationId);
-      if (saved.consultantId) setConsultantId(saved.consultantId);
       if (saved.form) setForm((current) => ({ ...current, ...saved.form, website: "" }));
     } catch { /* Ignore an invalid browser draft. */ }
   }, [token, offerToken]);
 
   useEffect(() => {
-    if (step === "done") return;
-    sessionStorage.setItem(`booking-draft:${token}`, JSON.stringify({ sessionTypeId, meetingMode, locationId, consultantId, form: { name: form.name, email: form.email, phone: form.phone, notes: form.notes } }));
-  }, [token, step, sessionTypeId, meetingMode, locationId, consultantId, form]);
+    if (["done", "payment"].includes(step)) return;
+    sessionStorage.setItem(`booking-draft:${token}`, JSON.stringify({ sessionTypeId, meetingMode, locationId, form: { name: form.name, email: form.email, phone: form.phone, notes: form.notes } }));
+  }, [token, step, sessionTypeId, meetingMode, locationId, form]);
+
+  useEffect(() => {
+    const claimToken = pendingPayment?.claimToken;
+    if (!claimToken) return undefined;
+    let stopped = false;
+    let timer = null;
+
+    async function checkPayment() {
+      let keepPolling = true;
+      try {
+        const result = await getPublicBookingPaymentHoldStatus(token, claimToken);
+        if (stopped) return;
+        const next = {
+          ...pendingPayment,
+          ...result,
+          payNowUrl: result.payNowUrl || pendingPayment.payNowUrl || null,
+        };
+        setPendingPayment(next);
+        savePendingPayment(token, next);
+        setPaymentError("");
+
+        if (result.appointment) {
+          clearPendingPayment(token);
+          try {
+            sessionStorage.removeItem(`booking-draft:${token}`);
+            sessionStorage.removeItem(`casedesk:booking-key:${token}`);
+          } catch { /* No-op when browser storage is unavailable. */ }
+          setDone(result.appointment);
+          setPendingPayment(null);
+          setStep("done");
+          keepPolling = false;
+        } else if (result.requiresStaffResolution || ["Expired", "Voided", "Failed"].includes(result.status)) {
+          keepPolling = false;
+        }
+      } catch (reason) {
+        if (stopped) return;
+        setPaymentError(reason.response?.data?.message || "Payment status could not be checked. We will keep trying.");
+      } finally {
+        if (!stopped) setPaymentChecking(false);
+      }
+      if (!stopped && keepPolling) timer = window.setTimeout(checkPayment, 5_000);
+    }
+
+    checkPayment();
+    return () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [token, pendingPayment?.claimToken]);
 
   const sessionType = info?.sessionTypes.find((type) => type.id === sessionTypeId) || null;
   const selectableLocations = sessionType?.allowedLocationIds?.length ? info.locations.filter((item) => sessionType.allowedLocationIds.includes(item.id)) : info?.locations || [];
   const selectableConsultants = sessionType?.eligibleStaff?.length ? info.consultants.filter((item) => sessionType.eligibleStaff.some((eligible) => eligible.userId === item.id)) : info?.consultants || [];
   const location = selectableLocations.find((item) => item.id === locationId) || null;
+  const sessionAllowsMode = (type, mode) => Boolean(type)
+    && (!type.allowedMeetingModes?.length || type.allowedMeetingModes.includes(mode));
+  const sessionTypesForMode = (mode) => (info?.sessionTypes || []).filter((type) => sessionAllowsMode(type, mode));
+  const sessionTypeHasZoomStaff = (type) => {
+    const eligibleIds = type?.eligibleStaff?.map((item) => item.userId) || [];
+    return (info?.consultants || []).some((item) =>
+      item.zoomEnabled
+      && (!eligibleIds.length || eligibleIds.includes(item.id)));
+  };
+  const compatibleSessionTypes = meetingMode
+    ? sessionTypesForMode(meetingMode).filter((type) =>
+      meetingMode !== "Zoom" || sessionTypeHasZoomStaff(type))
+    : [];
+  const sessionTypeHasLocation = (type) => (info?.locations || []).some((item) =>
+    !type.allowedLocationIds?.length || type.allowedLocationIds.includes(item.id));
+  const meetingModeOptions = [
+    { id: "InPerson", label: "In person", sub: "Visit one of our offices.", icon: MapPin, enabled: sessionTypesForMode("InPerson").some(sessionTypeHasLocation) },
+    { id: "Phone", label: "Phone call", sub: info?.phoneCallerId ? `We will call you from ${info.phoneCallerId}.` : "We will call you at your number.", icon: Phone, enabled: info?.phoneBookingEnabled === true && sessionTypesForMode("Phone").length > 0 },
+    { id: "Online", label: "Jitsi video call", sub: "A secure Jitsi link will be emailed to you.", icon: Video, enabled: info?.onlineBookingEnabled !== false && sessionTypesForMode("Online").length > 0 },
+    { id: "Zoom", label: "Zoom video call", sub: "A Zoom join link will be emailed to you.", icon: Video, enabled: info?.zoomBookingEnabled === true && sessionTypesForMode("Zoom").some(sessionTypeHasZoomStaff) },
+  ].filter((option) => option.enabled);
 
-  // A single flattened "Location" choice — video call plus each
-  // configured office — rather than a two-step mode-then-office pick,
-  // matching the reference page's one-field "Location" step.
-  const onlineAllowed = info?.onlineBookingEnabled !== false && (!sessionType?.allowedMeetingModes?.length || sessionType.allowedMeetingModes.includes("Online"));
-  const inPersonAllowed = !sessionType?.allowedMeetingModes?.length || sessionType.allowedMeetingModes.includes("InPerson");
-  const locationOptions = [
-    ...(onlineAllowed ? [{ optionId: "__online__", mode: "Online", label: "Video call", sub: "A join link will be emailed to you.", icon: Video }] : []),
-    ...(inPersonAllowed ? selectableLocations.map((item) => ({ optionId: item.id, mode: "InPerson", label: item.name, sub: item.address, icon: MapPin })) : []),
-  ];
-  const selectedLocationOptionId = meetingMode === "Online" ? "__online__" : meetingMode === "InPerson" ? locationId : "";
+  function pickMeetingMode(mode) {
+    const matchingTypes = sessionTypesForMode(mode).filter((type) =>
+      mode !== "Zoom" || sessionTypeHasZoomStaff(type));
+    setMeetingMode(mode);
+    setSessionTypeId(matchingTypes.length === 1 ? matchingTypes[0].id : "");
+    setLocationId("");
+    setSlot(null);
+    setStep(matchingTypes.length > 1 ? "service" : mode === "InPerson" ? "location" : "time");
+  }
 
-  function pickLocationOption(option) {
-    setMeetingMode(option.mode);
-    setLocationId(option.mode === "InPerson" ? option.optionId : "");
+  function pickSessionType(type) {
+    setSessionTypeId(type.id);
+    setLocationId("");
+    setSlot(null);
+    setStep(meetingMode === "InPerson" ? "location" : "time");
+  }
+
+  function pickLocation(location) {
+    setLocationId(location.id);
+    setSlot(null);
     setStep("time");
   }
 
@@ -522,15 +639,17 @@ export default function PublicBookingPage() {
   // bounce back rather than let the calendar show real, pickable slots
   // for no chosen location/mode.
   useEffect(() => {
-    if (step === "time" && !meetingMode) setStep("location");
-  }, [step, meetingMode]);
+    if (step === "time" && (!meetingMode || (meetingMode === "InPerson" && !locationId))) {
+      setStep(meetingMode === "InPerson" ? "location" : "format");
+    }
+  }, [step, meetingMode, locationId]);
 
   useEffect(() => {
     if (consultantId && !selectableConsultants.some((item) => item.id === consultantId)) setConsultantId("");
   }, [consultantId, selectableConsultants]);
 
   const fetchAvailability = useCallback(
-    (range) => getPublicAvailability(token, { sessionTypeId, consultantId, offerToken: offerToken || undefined, locationId: meetingMode === "InPerson" ? locationId || undefined : undefined, ...range }),
+    (range) => getPublicAvailability(token, { sessionTypeId, consultantId, offerToken: offerToken || undefined, meetingMode, locationId: meetingMode === "InPerson" ? locationId || undefined : undefined, ...range }),
     [token, sessionTypeId, consultantId, offerToken, meetingMode, locationId],
   );
 
@@ -558,12 +677,19 @@ export default function PublicBookingPage() {
     try {
       if (requiresPayment) {
         const hold = await createPublicBookingPaymentHold(token, payload);
-        // The appointment itself is created server-side once QuickBooks'
-        // webhook confirms payment (see quickbooksWebhookService.js) and
-        // the confirmation email fires from that same path — none of it
-        // depends on this tab staying open, so send the client straight
-        // to checkout rather than making them click through our own page.
-        window.location.href = hold.payNowUrl;
+        // Keep the private claim token in this tab before leaving for
+        // QuickBooks. If the client returns with Back/reloads this page,
+        // the status endpoint reconciles the invoice and restores the
+        // confirmed appointment without depending on the webhook.
+        savePendingPayment(token, hold);
+        setPendingPayment(hold);
+        setPaymentChecking(true);
+        setStep("payment");
+        // An idempotent retry can briefly recover the already-created slot
+        // hold while its first request is still saving the QuickBooks link.
+        // Stay on the status screen and let the poller surface the link
+        // instead of navigating to the literal value "null".
+        if (hold.payNowUrl) window.location.assign(hold.payNowUrl);
         return;
       }
       const result = await createPublicBooking(token, payload);
@@ -584,6 +710,19 @@ export default function PublicBookingPage() {
     }
   }
 
+  function restartAfterClosedPayment() {
+    clearPendingPayment(token);
+    setPendingPayment(null);
+    setPaymentError("");
+    setSlot(null);
+    const freshKey = crypto.randomUUID();
+    bookingKey.current = freshKey;
+    try {
+      sessionStorage.setItem(`casedesk:booking-key:${token}`, freshKey);
+    } catch { /* The backend still protects slot creation transactionally. */ }
+    setStep(meetingMode && (meetingMode !== "InPerson" || locationId) ? "time" : "format");
+  }
+
   async function requestVerification() {
     setVerification((current) => ({ ...current, sending: true })); setError("");
     try { const result = await requestPublicBookingVerification(token, form.email); setVerification({ id: result.verificationId, code: "", token: "", sending: false, recognized: false, consultant: null }); }
@@ -592,7 +731,14 @@ export default function PublicBookingPage() {
 
   async function verifyEmail() {
     setVerification((current) => ({ ...current, sending: true })); setError("");
-    try { const result = await verifyPublicBookingEmail(token, verification.id, verification.code); setVerification((current) => ({ ...current, ...result, token: result.verificationToken, sending: false })); if (result.consultant && selectableConsultants.some((item) => item.id === result.consultant.id)) setConsultantId(result.consultant.id); }
+    try {
+      const result = await verifyPublicBookingEmail(token, verification.id, verification.code);
+      // The verification token lets the backend prefer the client's prior
+      // consultant while still assigning another eligible consultant when
+      // that person is busy or unavailable for Zoom. Do not turn this into a
+      // hard consultant filter in the browser.
+      setVerification((current) => ({ ...current, ...result, token: result.verificationToken, sending: false }));
+    }
     catch (reason) { setVerification((current) => ({ ...current, sending: false })); setError(reason.response?.data?.message || "Email could not be verified."); }
   }
 
@@ -601,9 +747,9 @@ export default function PublicBookingPage() {
     setSaving(true);
     setError("");
     try {
-      await joinPublicBookingWaitlist(token, { sessionTypeId, consultantId: consultantId || undefined, meetingMode, locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined, name: form.name, email: form.email, phone: form.phone, preferredFrom: `${waitlistDates.from}T00:00:00`, preferredTo: `${waitlistDates.to}T23:59:59` });
+      const result = await joinPublicBookingWaitlist(token, { sessionTypeId, consultantId: consultantId || undefined, meetingMode, locationId: meetingMode === "InPerson" ? locationId || selectableLocations[0]?.id : undefined, name: form.name, email: form.email, phone: form.phone, preferredFrom: waitlistDates.from, preferredTo: waitlistDates.to });
       sessionStorage.removeItem(`booking-draft:${token}`);
-      setDone({ waitlist: true });
+      setDone({ waitlist: true, waitlistStatus: result.status });
       setStep("done");
     } catch (reason) {
       setError(reason.response?.data?.message || "You could not be added to the waitlist.");
@@ -632,7 +778,14 @@ export default function PublicBookingPage() {
   const signOff = info.publicSignOffName || `TEAM — ${info.agencyName}`;
 
   const emailValid = EMAIL_PATTERN.test(form.email);
-  const detailsReady = Boolean(meetingMode && (meetingMode === "Online" || locationId) && form.name.trim() && emailValid && form.notes.trim());
+  const detailsReady = Boolean(
+    meetingMode
+    && (meetingMode !== "InPerson" || locationId)
+    && (meetingMode !== "Phone" || form.phone.trim())
+    && form.name.trim()
+    && emailValid
+    && form.notes.trim(),
+  );
   const ready = Boolean(sessionTypeId && slot && detailsReady);
 
   const brandLogo = (className) => bookingLogoUrl ? (
@@ -648,8 +801,18 @@ export default function PublicBookingPage() {
     </div>
   );
 
-  const twoStepFlow = step === "location" || step === "time" || step === "details";
-  const backStep = step === "details" ? "time" : step === "time" ? "location" : null;
+  const twoStepFlow = ["format", "service", "location", "time", "details"].includes(step);
+  const backStep = step === "details"
+    ? "time"
+    : step === "time"
+      ? meetingMode === "InPerson"
+        ? "location"
+        : compatibleSessionTypes.length > 1 ? "service" : "format"
+      : step === "location"
+        ? compatibleSessionTypes.length > 1 ? "service" : "format"
+        : step === "service"
+          ? "format"
+          : null;
 
   const leftPanel = (
     <motion.div initial="initial" animate="animate" variants={listStagger} className="flex w-full shrink-0 flex-col border-b border-[#E5E7EB] p-7 sm:p-9 md:w-[330px] md:border-b-0 md:border-r">
@@ -667,8 +830,8 @@ export default function PublicBookingPage() {
         <AnimatePresence>
           {(step === "time" || step === "details") && meetingMode ? (
             <motion.p key="meta-location" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-2.5">
-              {meetingMode === "Online" ? <Video className="h-4 w-4 shrink-0 text-[#6B7280]" /> : <MapPin className="h-4 w-4 shrink-0 text-[#6B7280]" />}
-              {meetingMode === "Online" ? "Video call" : location?.name || "In person"}
+              {meetingMode === "InPerson" ? <MapPin className="h-4 w-4 shrink-0 text-[#6B7280]" /> : meetingMode === "Phone" ? <Phone className="h-4 w-4 shrink-0 text-[#6B7280]" /> : <Video className="h-4 w-4 shrink-0 text-[#6B7280]" />}
+              {meetingMode === "InPerson" ? location?.name || "In person" : meetingMode === "Phone" ? "Phone call" : meetingMode === "Zoom" ? "Zoom video call" : "Jitsi video call"}
             </motion.p>
           ) : null}
           {step === "details" && slot ? (
@@ -718,38 +881,20 @@ export default function PublicBookingPage() {
         <div className={twoStepFlow ? "flex-1 p-7 sm:p-9" : "w-full p-7 sm:p-9"}>
           {error && !twoStepFlow ? <motion.p key={error} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} className="mb-4 rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</motion.p> : null}
           <AnimatePresence mode="wait">
-            {step === "location" ? (
-              <motion.div key="location" {...stepTransition}>
-                <h2 className="text-[17px] font-bold text-[#1A1F36]">Select a Location</h2>
+            {step === "format" ? (
+              <motion.div key="format" {...stepTransition}>
+                <h2 className="text-[17px] font-bold text-[#1A1F36]">How would you like to meet?</h2>
                 {error ? <motion.p key={error} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} className="mb-4 mt-3 rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</motion.p> : null}
-                {info.sessionTypes.length > 1 ? (
-                  <motion.div initial="initial" animate="animate" variants={listStagger} className="mt-5 space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">What would you like to book?</p>
-                    {info.sessionTypes.map((type) => (
-                      <motion.button
-                        key={type.id}
-                        variants={listItem}
-                        {...cardHover}
-                        type="button"
-                        onClick={() => { setSessionTypeId(type.id); setSlot(null); }}
-                        className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left transition-colors ${sessionTypeId === type.id ? "border-[#006BFF] bg-[#E8F1FF]" : "border-[#E5E7EB] bg-white hover:border-[#006BFF]"}`}
-                      >
-                        <span className="text-sm font-semibold text-[#1A1F36]">{type.name}</span>
-                        <span className="text-xs font-medium text-[#6B7280]">{type.durationMinutes} min</span>
-                      </motion.button>
-                    ))}
-                  </motion.div>
-                ) : null}
                 <motion.div initial="initial" animate="animate" variants={listStagger} className="mt-5 space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Location</p>
-                  {locationOptions.map((option) => (
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">Appointment format</p>
+                  {meetingModeOptions.map((option) => (
                     <motion.button
-                      key={option.optionId}
+                      key={option.id}
                       variants={listItem}
                       {...cardHover}
                       type="button"
-                      onClick={() => pickLocationOption(option)}
-                      className={`flex w-full items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-colors ${selectedLocationOptionId === option.optionId ? "border-[#006BFF] bg-[#E8F1FF]" : "border-[#E5E7EB] bg-white hover:border-[#006BFF]"}`}
+                      onClick={() => pickMeetingMode(option.id)}
+                      className={`flex w-full items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-colors ${meetingMode === option.id ? "border-[#006BFF] bg-[#E8F1FF]" : "border-[#E5E7EB] bg-white hover:border-[#006BFF]"}`}
                     >
                       <option.icon className="h-4 w-4 shrink-0 text-[#4D5865]" />
                       <span className="min-w-0">
@@ -758,14 +903,57 @@ export default function PublicBookingPage() {
                       </span>
                     </motion.button>
                   ))}
-                  {!locationOptions.length ? <p className="text-xs text-[#6B7280]">No meeting formats are configured for this service yet.</p> : null}
+                  {!meetingModeOptions.length ? <p className="text-xs text-[#6B7280]">No meeting formats are configured yet.</p> : null}
+                </motion.div>
+              </motion.div>
+            ) : step === "service" ? (
+              <motion.div key="service" {...stepTransition}>
+                <h2 className="text-[17px] font-bold text-[#1A1F36]">What would you like to book?</h2>
+                <p className="mt-1 text-sm text-[#6B7280]">Choose a service available for this appointment format.</p>
+                <motion.div initial="initial" animate="animate" variants={listStagger} className="mt-5 space-y-2">
+                  {compatibleSessionTypes.map((type) => (
+                    <motion.button
+                      key={type.id}
+                      variants={listItem}
+                      {...cardHover}
+                      type="button"
+                      onClick={() => pickSessionType(type)}
+                      className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left transition-colors ${sessionTypeId === type.id ? "border-[#006BFF] bg-[#E8F1FF]" : "border-[#E5E7EB] bg-white hover:border-[#006BFF]"}`}
+                    >
+                      <span className="text-sm font-semibold text-[#1A1F36]">{type.name}</span>
+                      <span className="text-xs font-medium text-[#6B7280]">{type.durationMinutes} min</span>
+                    </motion.button>
+                  ))}
+                </motion.div>
+              </motion.div>
+            ) : step === "location" ? (
+              <motion.div key="location" {...stepTransition}>
+                <h2 className="text-[17px] font-bold text-[#1A1F36]">Choose an office</h2>
+                <p className="mt-1 text-sm text-[#6B7280]">In-person appointments use the same consultant schedule as phone and video calls.</p>
+                <motion.div initial="initial" animate="animate" variants={listStagger} className="mt-5 space-y-2">
+                  {selectableLocations.map((office) => (
+                    <motion.button
+                      key={office.id}
+                      variants={listItem}
+                      {...cardHover}
+                      type="button"
+                      onClick={() => pickLocation(office)}
+                      className={`flex w-full items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-colors ${locationId === office.id ? "border-[#006BFF] bg-[#E8F1FF]" : "border-[#E5E7EB] bg-white hover:border-[#006BFF]"}`}
+                    >
+                      <MapPin className="h-4 w-4 shrink-0 text-[#4D5865]" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-[#1A1F36]">{office.name}</span>
+                        <span className="block truncate text-xs text-[#6B7280]">{office.address}</span>
+                      </span>
+                    </motion.button>
+                  ))}
                 </motion.div>
               </motion.div>
             ) : step === "time" ? (
               <motion.div key="time" {...stepTransition}>
                 {error ? <motion.p key={error} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} className="mb-4 rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</motion.p> : null}
                 <CalendlyTimeStep
-                  key={`${sessionTypeId}:${consultantId}`}
+                  key={`${sessionTypeId}:${consultantId}:${meetingMode}:${locationId}`}
                   fetchAvailability={fetchAvailability}
                   initialSlot={slot}
                   timezone={info.timezone}
@@ -791,7 +979,7 @@ export default function PublicBookingPage() {
                   </motion.label>
 
                   <motion.label variants={listItem} className="block text-xs font-semibold text-[#1A1F36]">Email<span className="text-rose-500">*</span>
-                    <input required type="email" value={form.email} onChange={(e) => { setForm((c) => ({ ...c, email: e.target.value })); setVerification({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null }); }} className={`mt-1.5 ${inputClass}`} autoComplete="email" placeholder="you@example.com" />
+                    <input required type="email" value={form.email} onChange={(e) => { setForm((c) => ({ ...c, email: e.target.value })); setVerification({ id: "", code: "", token: "", sending: false, recognized: false, consultant: null }); setConsultantId(info?.consultants?.length === 1 ? info.consultants[0].id : ""); }} className={`mt-1.5 ${inputClass}`} autoComplete="email" placeholder="you@example.com" />
                   </motion.label>
                   <AnimatePresence>
                     {emailValid ? (
@@ -815,13 +1003,15 @@ export default function PublicBookingPage() {
                     <textarea required rows={3} value={form.notes} onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} className={`mt-1.5 resize-none ${inputClass}`} />
                   </motion.label>
 
-                  <motion.label variants={listItem} className="block text-xs font-semibold text-[#1A1F36]">Send text messages to <span className="font-normal text-[#6B7280]">(optional)</span>
+                  <motion.label variants={listItem} className="block text-xs font-semibold text-[#1A1F36]">
+                    {meetingMode === "Phone" ? <>Phone number {info.agencyName} should call<span className="text-rose-500">*</span></> : <>Send text messages to <span className="font-normal text-[#6B7280]">(optional)</span></>}
                     <div className="mt-1.5 flex overflow-hidden rounded-md border border-[#E5E7EB] focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
                       <span className="flex items-center gap-1 border-r border-[#E5E7EB] bg-[#F9F9FA] px-3 text-sm text-[#4D5865]">
                         <Phone className="h-3.5 w-3.5" /> +1
                       </span>
                       <input value={form.phone} onChange={(e) => setForm((c) => ({ ...c, phone: e.target.value }))} className="flex-1 px-3 py-2.5 text-sm text-[#1A1F36] outline-none" autoComplete="tel" placeholder="(555) 123-4567" />
                     </div>
+                    {meetingMode === "Phone" ? <span className="mt-1.5 block font-normal leading-5 text-[#6B7280]">{info.agencyName} will call this number{info.phoneCallerId ? ` from ${info.phoneCallerId}` : ""}. You do not need to call the office.</span> : null}
                   </motion.label>
 
                   {requiresPayment ? (
@@ -859,6 +1049,85 @@ export default function PublicBookingPage() {
                   </motion.button>
                 </motion.div>
               </motion.div>
+            ) : step === "payment" ? (
+              <motion.div key="payment" {...stepTransition} className="mx-auto max-w-lg py-5 text-center">
+                <span className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${
+                  pendingPayment?.requiresStaffResolution
+                    ? "bg-amber-100 text-amber-700"
+                    : ["Expired", "Voided", "Failed"].includes(pendingPayment?.status)
+                      ? "bg-rose-100 text-rose-700"
+                      : "bg-[#E8F1FF] text-[#006BFF]"
+                }`}>
+                  {paymentChecking || ["AwaitingPayment", "Confirming"].includes(pendingPayment?.status)
+                    ? <Loader2 className="h-8 w-8 animate-spin" />
+                    : pendingPayment?.requiresStaffResolution
+                      ? <CheckCircle2 className="h-8 w-8" />
+                      : <Wallet className="h-8 w-8" />}
+                </span>
+
+                <h2 className="mt-5 text-[19px] font-bold text-[#1A1F36]">
+                  {pendingPayment?.requiresStaffResolution
+                    ? "Payment received"
+                    : ["Expired", "Voided", "Failed"].includes(pendingPayment?.status)
+                      ? "Payment window closed"
+                      : pendingPayment?.status === "Confirming"
+                        ? "Confirming your payment"
+                        : "Complete your payment"}
+                </h2>
+
+                {pendingPayment?.requiresStaffResolution ? (
+                  <p className="mt-2 text-sm leading-6 text-[#4D5865]">
+                    Your payment is confirmed, but the appointment could not be created automatically. The scheduling team has received an urgent alert and will contact you to arrange the time or issue a refund.
+                  </p>
+                ) : ["Expired", "Voided", "Failed"].includes(pendingPayment?.status) ? (
+                  <p className="mt-2 text-sm leading-6 text-[#4D5865]">
+                    This checkout is no longer active and the appointment was not confirmed. Choose another available time to start a new booking.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm leading-6 text-[#4D5865]">
+                    Your time is held while you pay securely through QuickBooks. After payment, return to this tab; confirmation is checked automatically and does not depend on the webhook.
+                  </p>
+                )}
+
+                {pendingPayment?.startsAt ? (
+                  <div className="mt-5 rounded-md border border-[#E5E7EB] bg-[#F9F9FA] px-4 py-3 text-sm text-[#4D5865]">
+                    <p className="font-semibold text-[#1A1F36]">
+                      {new Date(pendingPayment.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })}
+                      {" at "}
+                      {formatClock(new Date(pendingPayment.startsAt), info.timezone, timeFormat24h)}
+                    </p>
+                    {pendingPayment.amount ? <p className="mt-1">{Number(pendingPayment.amount).toLocaleString("en-CA", { style: "currency", currency })}</p> : null}
+                    {pendingPayment.status === "AwaitingPayment" && pendingPayment.expiresAt ? (
+                      <p className="mt-1 text-xs text-[#6B7280]">Checkout hold expires at {formatClock(new Date(pendingPayment.expiresAt), info.timezone, timeFormat24h)}.</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {paymentError ? <p className="mt-4 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">{paymentError}</p> : null}
+
+                {pendingPayment?.status === "AwaitingPayment" && pendingPayment.payNowUrl ? (
+                  <motion.a
+                    whileHover={{ scale: 1.01, y: -1 }}
+                    whileTap={{ scale: 0.98 }}
+                    href={pendingPayment.payNowUrl}
+                    className="mt-5 inline-flex h-12 items-center justify-center gap-2 rounded-md bg-[#006BFF] px-6 text-sm font-bold text-white transition-colors hover:bg-[#0057CC]"
+                  >
+                    <Wallet className="h-4 w-4" /> Open secure payment
+                  </motion.a>
+                ) : null}
+
+                {["Expired", "Voided", "Failed"].includes(pendingPayment?.status) ? (
+                  <motion.button
+                    whileHover={{ scale: 1.01, y: -1 }}
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={restartAfterClosedPayment}
+                    className="mt-5 h-12 rounded-md bg-[#006BFF] px-6 text-sm font-bold text-white transition-colors hover:bg-[#0057CC]"
+                  >
+                    Choose another time
+                  </motion.button>
+                ) : null}
+              </motion.div>
             ) : step === "waitlist" ? (
               <motion.div key="waitlist" {...stepTransition}>
                 <motion.button whileHover={{ x: -2 }} type="button" onClick={() => setStep("time")} className="mb-4 flex w-fit items-center gap-1.5 text-sm font-medium text-[#4D5865] transition-colors hover:text-[#1A1F36]"><ArrowLeft className="h-4 w-4" /> Back</motion.button>
@@ -871,9 +1140,9 @@ export default function PublicBookingPage() {
                 <motion.div initial="initial" animate="animate" variants={listStagger} className="mt-4 space-y-3.5">
                   <motion.label variants={listItem} className="block text-xs font-medium text-[#1A1F36]">Full name<input required value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="name" /></motion.label>
                   <motion.label variants={listItem} className="block text-xs font-medium text-[#1A1F36]">Email<input required type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="email" /></motion.label>
-                  <motion.label variants={listItem} className="block text-xs font-medium text-[#1A1F36]">Phone (optional)<input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="tel" /></motion.label>
+                  <motion.label variants={listItem} className="block text-xs font-medium text-[#1A1F36]">Phone {meetingMode === "Phone" ? <span className="text-rose-500">*</span> : "(optional)"}<input value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className={`mt-1.5 ${inputClass}`} autoComplete="tel" /></motion.label>
                 </motion.div>
-                <motion.button whileHover={!(saving || !form.name.trim() || !EMAIL_PATTERN.test(form.email)) ? { scale: 1.01, y: -1 } : undefined} whileTap={{ scale: 0.98 }} type="button" disabled={saving || !form.name.trim() || !EMAIL_PATTERN.test(form.email)} onClick={joinWaitlist} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#006BFF] text-sm font-bold text-white transition-colors hover:bg-[#0057CC] disabled:opacity-40">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Joining…" : "Join waitlist"}</motion.button>
+                <motion.button whileHover={!(saving || !form.name.trim() || !EMAIL_PATTERN.test(form.email) || (meetingMode === "Phone" && !form.phone.trim())) ? { scale: 1.01, y: -1 } : undefined} whileTap={{ scale: 0.98 }} type="button" disabled={saving || !form.name.trim() || !EMAIL_PATTERN.test(form.email) || (meetingMode === "Phone" && !form.phone.trim())} onClick={joinWaitlist} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[#006BFF] text-sm font-bold text-white transition-colors hover:bg-[#0057CC] disabled:opacity-40">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? "Joining…" : "Join waitlist"}</motion.button>
               </motion.div>
             ) : (
               <motion.div key="done" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} className="py-4 text-center">
@@ -883,8 +1152,8 @@ export default function PublicBookingPage() {
                   </span>
                 </motion.span>
                 <motion.div initial="initial" animate="animate" variants={{ animate: { transition: { staggerChildren: 0.08, delayChildren: 0.15 } } }}>
-                  <motion.h2 variants={listItem} className="mt-5 text-[19px] font-bold text-[#1A1F36]">{done?.waitlist ? "You're on the waitlist" : "Appointment confirmed"}</motion.h2>
-                  <motion.p variants={listItem} className="mt-1.5 text-sm text-[#4D5865]">{done?.waitlist ? "The office can contact you when a matching appointment opens." : <>{done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} at {formatClock(new Date(done?.startsAt), info.timezone, timeFormat24h)}</>}</motion.p>
+                  <motion.h2 variants={listItem} className="mt-5 text-[19px] font-bold text-[#1A1F36]">{done?.waitlist ? done.waitlistStatus === "Offered" ? "You already have a reserved time" : "You're on the waitlist" : "Appointment confirmed"}</motion.h2>
+                  <motion.p variants={listItem} className="mt-1.5 text-sm text-[#4D5865]">{done?.waitlist ? done.waitlistStatus === "Offered" ? "Check your email for the active reservation link before it expires." : "The office can contact you when a matching appointment opens." : <>{done?.subject} · {new Date(done?.startsAt).toLocaleDateString("en-CA", { timeZone: info.timezone, weekday: "long", month: "long", day: "numeric" })} at {formatClock(new Date(done?.startsAt), info.timezone, timeFormat24h)}</>}</motion.p>
                   {!done?.waitlist && (done?.referenceCode || done?.assignedTo?.fullName) ? <motion.div variants={listItem} className="mt-3 flex flex-wrap justify-center gap-2 text-xs">{done.referenceCode ? <span className="rounded-full bg-[#F3F4F6] px-2.5 py-1 font-mono font-semibold text-[#4D5865]">{done.referenceCode}</span> : null}{done.assignedTo?.fullName ? <span className="rounded-full bg-[#E8F1FF] px-2.5 py-1 font-semibold text-[#006BFF]">With {done.assignedTo.fullName}</span> : null}</motion.div> : null}
 
                   {done?.location ? (
@@ -899,12 +1168,18 @@ export default function PublicBookingPage() {
                   ) : null}
                   {done?.meetingUrl ? (
                     <motion.a variants={listItem} whileHover={{ scale: 1.02, y: -1 }} whileTap={{ scale: 0.98 }} href={done.meetingUrl} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex items-center gap-2 rounded-md bg-[#006BFF] px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-[#0057CC]">
-                      <Video className="h-4 w-4" /> Join link for your video call
+                      <Video className="h-4 w-4" /> Join {done.meetingMode === "Zoom" ? "Zoom" : "Jitsi"} video call
                     </motion.a>
                   ) : null}
+                  {done?.meetingMode === "Phone" ? (
+                    <motion.div variants={listItem} className="mt-5 w-full rounded-md border border-[#E5E7EB] px-4 py-3.5 text-left text-sm text-[#4D5865]">
+                      <p className="flex items-start gap-2.5"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-[#006BFF]" /><span>{info.agencyName} will call the phone number you provided{done.meetingPhoneNumber ? <> from <strong className="text-[#1A1F36]">{done.meetingPhoneNumber}</strong></> : ""}. You do not need to call us.</span></p>
+                    </motion.div>
+                  ) : null}
+                  {done?.meetingMode === "Zoom" && !done?.meetingUrl ? <motion.p variants={listItem} className="mt-5 rounded-md bg-[#E8F1FF] px-4 py-3 text-sm text-[#1A1F36]">Your secure Zoom link is being prepared and will be included in the confirmation email and text message.</motion.p> : null}
 
                   {!done?.waitlist ? <motion.p variants={listItem} className="mx-auto mt-5 max-w-[330px] text-sm leading-6 text-[#4D5865]">
-                    A confirmation with all the details is on its way to your email{done?.location ? ", including the office address" : done?.meetingUrl ? ", including your join link" : ""}. Use the link in it to reschedule or cancel anytime.
+                    A confirmation with all the details is on its way to your email{done?.location ? ", including the office address" : done?.meetingMode === "Phone" ? ", including the number your call will come from" : [done?.meetingUrl, done?.meetingMode === "Zoom"].some(Boolean) ? ", including your join link" : ""}. Use the link in it to reschedule or cancel anytime.
                   </motion.p> : null}
                   {!done?.waitlist ? <motion.a variants={listItem} href={`/book/manage/${done?.manageToken}`} className="mt-4 inline-block text-sm font-semibold text-[#006BFF] transition-colors hover:text-[#0057CC]">
                     Manage this booking →

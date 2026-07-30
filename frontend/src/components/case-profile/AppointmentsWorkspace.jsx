@@ -3,11 +3,14 @@ import {
   CalendarPlus,
   ChevronRight,
   Clock3,
+  ExternalLink,
   MapPin,
+  Phone,
   Plus,
   Save,
   Trash2,
   UserRound,
+  Video,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -16,6 +19,12 @@ import { createPortal } from "react-dom";
 import api from "../../services/api";
 
 const calendars = ["Case Calendar", "Workspace Calendar", "Personal Calendar"];
+const meetingModes = [
+  { id: "InPerson", label: "In person", description: "Meet at an office or another address", Icon: MapPin },
+  { id: "Phone", label: "Phone call", description: "Your office calls the client", Icon: Phone },
+  { id: "Online", label: "Jitsi", description: "Automatic browser meeting link", Icon: Video },
+  { id: "Zoom", label: "Zoom", description: "Automatic Zoom meeting link", Icon: Video },
+];
 const inputClass =
   "mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-normal text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100/60";
 
@@ -63,7 +72,12 @@ function initialValues(appointment, defaultAssigneeId) {
     endPeriod: end.period,
     description: appointment?.description || "",
     assignedToId: appointment?.assignedToId || defaultAssigneeId || "",
+    meetingMode: appointment?.meetingMode || "InPerson",
   };
+}
+
+function meetingModeLabel(mode) {
+  return meetingModes.find((item) => item.id === mode)?.label || "In person";
 }
 
 function toIso(dateValue, hourValue, minuteValue, period) {
@@ -148,6 +162,7 @@ function AppointmentEditorOverlay({
   appointment,
   caseItem,
   users,
+  bookingSettings,
   saving,
   error,
   onClose,
@@ -164,6 +179,26 @@ function AppointmentEditorOverlay({
     setValues((current) => ({ ...current, [key]: value }));
   const updateTime = (prefix, key, value) =>
     update(`${prefix}${key[0].toUpperCase()}${key.slice(1)}`, value);
+  const availableModes = meetingModes.filter(({ id }) =>
+    id === values.meetingMode
+    || id === "InPerson"
+    || (id === "Phone" && bookingSettings?.phoneBookingEnabled && bookingSettings?.phoneCallerId)
+    || (id === "Online" && bookingSettings?.onlineBookingEnabled !== false)
+    || (id === "Zoom" && bookingSettings?.zoomBookingEnabled),
+  );
+  const selectMeetingMode = (mode) => {
+    setValues((current) => {
+      const selected = users.find((user) => user.id === current.assignedToId);
+      const firstMapped = users.find((user) => user.zoomHostMapping?.status === "active");
+      return {
+        ...current,
+        meetingMode: mode,
+        ...(mode === "Zoom" && selected?.zoomHostMapping?.status !== "active" && firstMapped
+          ? { assignedToId: firstMapped.id }
+          : {}),
+      };
+    });
+  };
   const submit = async (event) => {
     event.preventDefault();
     await onSave({
@@ -184,6 +219,7 @@ function AppointmentEditorOverlay({
       ),
       description: values.description.trim() || null,
       assignedToId: values.assignedToId || null,
+      meetingMode: values.meetingMode,
     });
   };
   const clientName = caseItem.client?.fullName || "Client";
@@ -244,17 +280,59 @@ function AppointmentEditorOverlay({
                 className={inputClass}
               />
             </label>
+            <fieldset className="mt-4">
+              <legend className="text-sm font-semibold text-slate-800">
+                How will the client attend?
+              </legend>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {availableModes.map(({ id, label, description, Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => selectMeetingMode(id)}
+                    className={`flex items-start gap-3 rounded-2xl border p-3 text-left transition ${
+                      values.meetingMode === id
+                        ? "border-sky-400 bg-sky-50 ring-2 ring-sky-100"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                  >
+                    <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
+                      values.meetingMode === id ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                    }`}>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-900">{label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-slate-500">{description}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {values.meetingMode === "Phone" ? (
+                <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                  CHK will call {caseItem.client?.phone || "the client’s saved number"}
+                  {bookingSettings?.phoneCallerId ? ` from ${bookingSettings.phoneCallerId}` : ""}.
+                </p>
+              ) : null}
+              {values.meetingMode === "Zoom" && !users.some((user) => user.zoomHostMapping?.status === "active") ? (
+                <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  No team member has an active Zoom host mapping. Configure one under Settings → Scheduling.
+                </p>
+              ) : null}
+            </fieldset>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="block text-sm font-semibold text-slate-800">
-                Location
-                <input
-                  maxLength={300}
-                  value={values.location}
-                  onChange={(event) => update("location", event.target.value)}
-                  placeholder="Office, phone, or video link"
-                  className={inputClass}
-                />
-              </label>
+              {values.meetingMode === "InPerson" ? (
+                <label className="block text-sm font-semibold text-slate-800">
+                  Location
+                  <input
+                    maxLength={300}
+                    value={values.location}
+                    onChange={(event) => update("location", event.target.value)}
+                    placeholder="Office or meeting address"
+                    className={inputClass}
+                  />
+                </label>
+              ) : null}
               <label className="block text-sm font-semibold text-slate-800">
                 Date
                 <input
@@ -318,8 +396,13 @@ function AppointmentEditorOverlay({
               >
                 <option value="">Unassigned</option>
                 {users.map((user) => (
-                  <option key={user.id} value={user.id}>
+                  <option
+                    key={user.id}
+                    value={user.id}
+                    disabled={values.meetingMode === "Zoom" && user.zoomHostMapping?.status !== "active"}
+                  >
                     {user.fullName}
+                    {values.meetingMode === "Zoom" && user.zoomHostMapping?.status !== "active" ? " — no Zoom host" : ""}
                   </option>
                 ))}
               </select>
@@ -433,6 +516,7 @@ function DeleteAppointmentOverlay({
 export default function AppointmentsWorkspace({ caseItem }) {
   const [appointments, setAppointments] = useState([]);
   const [users, setUsers] = useState([]);
+  const [bookingSettings, setBookingSettings] = useState(null);
   const [view, setView] = useState("upcoming");
   const [editor, setEditor] = useState(undefined);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -444,12 +528,13 @@ export default function AppointmentsWorkspace({ caseItem }) {
     let active = true;
     Promise.all([
       api.get(`/appointments/case/${caseItem.id}`),
-      api.get("/users?limit=100"),
+      api.get("/booking/settings"),
     ])
-      .then(([appointmentResponse, userResponse]) => {
+      .then(([appointmentResponse, settingsResponse]) => {
         if (!active) return;
         setAppointments(appointmentResponse.data.data || []);
-        setUsers(userResponse.data.data || []);
+        setUsers(settingsResponse.data.data?.staff || []);
+        setBookingSettings(settingsResponse.data.data?.settings || null);
       })
       .catch((requestError) => {
         if (!active) return;
@@ -659,6 +744,27 @@ export default function AppointmentsWorkspace({ caseItem }) {
                       </span>
                     ) : null}
                     <span>
+                      {appointment.meetingMode === "Phone" ? (
+                        <Phone className="mr-1 inline h-3 w-3" />
+                      ) : appointment.meetingMode === "Online" || appointment.meetingMode === "Zoom" ? (
+                        <Video className="mr-1 inline h-3 w-3" />
+                      ) : (
+                        <MapPin className="mr-1 inline h-3 w-3" />
+                      )}
+                      {meetingModeLabel(appointment.meetingMode)}
+                    </span>
+                    {appointment.meetingUrl ? (
+                      <a
+                        href={appointment.meetingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(event) => event.stopPropagation()}
+                        className="font-semibold text-sky-600 hover:text-sky-700"
+                      >
+                        Join <ExternalLink className="ml-0.5 inline h-3 w-3" />
+                      </a>
+                    ) : null}
+                    <span>
                       <UserRound className="mr-1 inline h-3 w-3" />
                       {appointment.assignedTo?.fullName || "Unassigned"}
                     </span>
@@ -718,6 +824,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
             appointment={editor}
             caseItem={caseItem}
             users={users}
+            bookingSettings={bookingSettings}
             saving={saving}
             error={error}
             onClose={() => {

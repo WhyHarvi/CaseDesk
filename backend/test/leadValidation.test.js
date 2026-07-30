@@ -38,12 +38,25 @@ test("qualification validates outcome, confidence, and required explanation", ()
 });
 
 test("consultation validation enforces time ranges and completed outcomes", () => {
-  const booking = parseCreateConsultation({ consultantUserId: "user-1", startAt: "2026-08-01T14:00:00Z", endAt: "2026-08-01T15:00:00Z", appointmentType: "VIDEO", meetingUrl: "https://meet.example.ca/room" });
+  const booking = parseCreateConsultation({ consultantUserId: "user-1", startAt: "2026-08-01T14:00:00Z", endAt: "2026-08-01T14:30:00Z", appointmentType: "VIDEO", meetingUrl: "https://meet.example.ca/room" });
   assert.equal(booking.appointmentType, "VIDEO");
   assert.equal(booking.paymentStatus, "UNPAID");
   assert.throws(() => parseCreateConsultation({ consultantUserId: "user-1", startAt: "2026-08-01T15:00:00Z", endAt: "2026-08-01T14:00:00Z", appointmentType: "VIDEO" }), /endAt must be later/);
+  assert.throws(() => parseCreateConsultation({ consultantUserId: "user-1", startAt: "2026-08-01T14:00:00Z", endAt: "2026-08-01T15:00:00Z", appointmentType: "VIDEO" }), /must be 30 minutes/);
   assert.throws(() => parseUpdateConsultation({ status: "COMPLETED" }), /outcome is required/);
   assert.equal(parseUpdateConsultation({ status: "COMPLETED", outcome: "READY_TO_PROCEED" }).outcome, "READY_TO_PROCEED");
+});
+
+test("timezone-less lead consultation times use the agency timezone", () => {
+  const booking = parseCreateConsultation({
+    consultantUserId: "user-1",
+    startAt: "2026-08-03T10:00",
+    endAt: "2026-08-03T10:30",
+    timezone: "America/Toronto",
+    appointmentType: "PHONE",
+  });
+  assert.equal(booking.startAt.toISOString(), "2026-08-03T14:00:00.000Z");
+  assert.equal(booking.endAt.toISOString(), "2026-08-03T14:30:00.000Z");
 });
 
 test("commercial tracking accepts supported retainer and payment states", () => {

@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { bookingTemplatePreview, sendBookingMessages, sendBookingStaffNotification, sendBookingTemplateTest } from "../services/bookingNotificationService.js";
+import {
+  bookingTemplatePreview,
+  processBookingMessageDeliveries,
+  sendBookingMessages,
+  sendBookingStaffNotification,
+  sendBookingTemplateTest,
+} from "../services/bookingNotificationService.js";
 import { agencyMailConnectionStatus } from "../services/agencyMailService.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
@@ -23,6 +29,21 @@ import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
 import { createPaymentHoldForWalkIn } from "../services/bookingPaymentHoldService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import {
+  MEETING_MODES,
+  MEETING_MODE_VALUES,
+  appointmentMeetingFields,
+  assertMeetingModeConfigured,
+  meetingModeEnabled,
+  normalizeBookingPhone,
+  normalizeMeetingMode,
+} from "../services/bookingMeetingModeService.js";
+import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
+import { assertZoomOperational, zoomConfigured } from "../services/zoomService.js";
+import {
+  leadConsultationStatusForAppointment,
+  syncLeadConsultationFromAppointment,
+} from "../services/leadConsultationAppointmentService.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -102,9 +123,75 @@ function validFeeAmount(value) {
 
 function validMeetingModes(value, fallback = ["InPerson", "Online"]) {
   if (value === undefined) return fallback;
-  const modes = [...new Set((Array.isArray(value) ? value : []).filter((item) => ["InPerson", "Online"].includes(item)))];
+  const modes = [...new Set((Array.isArray(value) ? value : []).filter((item) => MEETING_MODE_VALUES.includes(item)))];
   if (!modes.length) throw createHttpError(400, "Each session type needs at least one appointment format.", "VALIDATION_ERROR");
   return modes;
+}
+
+function sessionLocationsForIds(locations, allowedLocationIds) {
+  return allowedLocationIds?.length
+    ? locations.filter((location) => allowedLocationIds.includes(location.id))
+    : locations;
+}
+
+function usableSessionMeetingModes(settings, modes, allowedLocationIds, locations = null) {
+  const configuredLocations = Array.isArray(locations) ? locations : (Array.isArray(settings.locations) ? settings.locations : []);
+  const sessionLocations = sessionLocationsForIds(configuredLocations, allowedLocationIds);
+  return modes.filter((mode) =>
+    (mode === MEETING_MODES.IN_PERSON && sessionLocations.length > 0)
+    || (mode === MEETING_MODES.PHONE && meetingModeEnabled(settings, mode) && Boolean(settings.phoneCallerId))
+    || (mode === MEETING_MODES.JITSI && meetingModeEnabled(settings, mode))
+    || (mode === MEETING_MODES.ZOOM && meetingModeEnabled(settings, mode)));
+}
+
+function validSessionLocationIds(value, locations) {
+  const ids = [...new Set((Array.isArray(value) ? value : []).map(String))].slice(0, 20);
+  if (ids.some((id) => !locations.some((location) => location.id === id))) {
+    throw createHttpError(400, "A session type contains an office location that is no longer available.", "VALIDATION_ERROR");
+  }
+  return ids;
+}
+
+async function assertPublicSessionTypeUsable(settings, {
+  name,
+  isActive,
+  modes,
+  allowedLocationIds,
+  sessionTypeId = null,
+  eligibleStaffIds = null,
+}) {
+  if (!settings.publicBookingEnabled || !isActive) return;
+  const usable = usableSessionMeetingModes(settings, modes, allowedLocationIds);
+  if (!usable.length) {
+    throw createHttpError(400, `"${name}" would have no available appointment format. Enable one of its formats first.`, "MEETING_MODE_REQUIRED");
+  }
+  const staff = await eligibleSchedulingStaff({
+    agencyId: settings.agencyId,
+    sessionTypeId: eligibleStaffIds === null ? sessionTypeId : null,
+    publicOnly: true,
+  });
+  const restrictedStaff = eligibleStaffIds?.length
+    ? staff.filter((member) => eligibleStaffIds.includes(member.id))
+    : staff;
+  let zoomConnected = false;
+  if (usable.includes(MEETING_MODES.ZOOM)) {
+    const connection = await prisma.agencyZoomConnection.findUnique({
+      where: { agencyId: settings.agencyId },
+      select: { status: true },
+    });
+    zoomConnected = zoomConfigured() && connection?.status === "connected";
+  }
+  const hasStaffForUsableMode = usable.some((mode) =>
+    restrictedStaff.some((member) =>
+      mode !== MEETING_MODES.ZOOM
+      || (zoomConnected && member.zoomHostMapping?.status === "active")));
+  if (!hasStaffForUsableMode) {
+    throw createHttpError(
+      400,
+      `"${name}" has no public-bookable consultant for its enabled appointment formats.`,
+      "BOOKABLE_STAFF_REQUIRED",
+    );
+  }
 }
 
 function validReminderSchedule(value) {
@@ -134,7 +221,7 @@ export async function getBookingSettings(req, res) {
     prisma.bookingSessionType.findMany({ where: { agencyId: req.auth.agencyId }, include: { eligibleStaff: { select: { userId: true } } }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
     prisma.user.findMany({
       where: { agencyId: req.auth.agencyId, status: "active", role: { in: ["admin", "consultant"] } },
-      select: { id: true, fullName: true, role: true, schedulingPreference: true },
+      select: { id: true, fullName: true, email: true, role: true, schedulingPreference: true, zoomHostMapping: { select: { status: true } } },
       orderBy: { fullName: "asc" },
     }),
   ]);
@@ -161,6 +248,10 @@ export async function updateBookingSettings(req, res) {
     ...(typeof body.waitlistEnabled === "boolean" ? { waitlistEnabled: body.waitlistEnabled } : {}),
     ...(typeof body.attendanceConfirmationEnabled === "boolean" ? { attendanceConfirmationEnabled: body.attendanceConfirmationEnabled } : {}),
     ...(typeof body.onlineBookingEnabled === "boolean" ? { onlineBookingEnabled: body.onlineBookingEnabled } : {}),
+    ...(typeof body.phoneBookingEnabled === "boolean" ? { phoneBookingEnabled: body.phoneBookingEnabled } : {}),
+    ...(body.phoneCallerId !== undefined ? { phoneCallerId: normalizeBookingPhone(body.phoneCallerId, "Outgoing caller ID") } : {}),
+    ...(body.phoneCallInstructions !== undefined ? { phoneCallInstructions: optionalPublicCopy(body.phoneCallInstructions, "Phone call instructions", 500) } : {}),
+    ...(typeof body.zoomBookingEnabled === "boolean" ? { zoomBookingEnabled: body.zoomBookingEnabled } : {}),
     ...(body.messageTemplates !== undefined && body.messageTemplates && typeof body.messageTemplates === "object" && !Array.isArray(body.messageTemplates) ? { messageTemplates: body.messageTemplates } : {}),
     ...(typeof body.freeConsultationsEnabled === "boolean" ? { freeConsultationsEnabled: body.freeConsultationsEnabled } : {}),
     ...(body.freeConsultationsPerContact !== undefined ? { freeConsultationsPerContact: boundedInt(body.freeConsultationsPerContact, "Free consultations per contact", 1, 20) } : {}),
@@ -179,8 +270,11 @@ export async function updateBookingSettings(req, res) {
   const current = await getOrCreateBookingSettings(req.auth.agencyId);
   const finalLocations = data.locations !== undefined ? data.locations : (Array.isArray(current.locations) ? current.locations : []);
   const enablingPublic = data.publicBookingEnabled === true || (data.publicBookingEnabled === undefined && current.publicBookingEnabled);
-  if (enablingPublic && finalLocations.length === 0) {
-    throw createHttpError(400, "Add at least one office location before the public booking link can be active.", "LOCATION_REQUIRED");
+  const finalPhoneEnabled = data.phoneBookingEnabled ?? current.phoneBookingEnabled;
+  const finalJitsiEnabled = data.onlineBookingEnabled ?? current.onlineBookingEnabled;
+  const finalZoomEnabled = data.zoomBookingEnabled ?? current.zoomBookingEnabled;
+  if (enablingPublic && finalLocations.length === 0 && !finalPhoneEnabled && !finalJitsiEnabled && !finalZoomEnabled) {
+    throw createHttpError(400, "Enable a remote appointment format or add an office location before activating the public booking link.", "MEETING_MODE_REQUIRED");
   }
   // Only gate the OFF -> ON transition, not every resave of an
   // already-enabled page — a live agency whose mailbox connection later
@@ -192,19 +286,110 @@ export async function updateBookingSettings(req, res) {
     if (!mailStatus.configured) {
       throw createHttpError(400, "Connect and verify a mailbox in Settings before turning on the public booking page — otherwise clients booking online won't receive a confirmation email.", "MAIL_REQUIRED");
     }
+    const bookableStaff = await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, publicOnly: true });
+    if (!bookableStaff.length) {
+      throw createHttpError(400, "Make at least one administrator or consultant public-bookable before turning on the public booking page.", "BOOKABLE_STAFF_REQUIRED");
+    }
+    if (finalZoomEnabled) await assertZoomOperational(req.auth.agencyId);
   }
   const enablingConsultFee = data.consultFeeEnabled === true || (data.consultFeeEnabled === undefined && current.consultFeeEnabled);
   const finalFeeAmount = data.consultFeeAmount !== undefined ? data.consultFeeAmount : current.consultFeeAmount;
   if (enablingConsultFee && !finalFeeAmount) {
     throw createHttpError(400, "Set a consultation fee amount before enabling paid bookings.", "VALIDATION_ERROR");
   }
-  if (data.onlineBookingEnabled === false) {
-    const onlineOnlyTypeCount = await prisma.bookingSessionType.count({
-      where: { agencyId: req.auth.agencyId, isActive: true, allowedMeetingModes: { has: "Online" }, NOT: { allowedMeetingModes: { has: "InPerson" } } },
+  const activatingPaidPublicBooking = enablingConsultFee && (
+    (data.consultFeeEnabled === true && current.consultFeeEnabled !== true)
+    || (data.publicBookingEnabled === true && current.publicBookingEnabled !== true)
+  );
+  if (activatingPaidPublicBooking) {
+    const quickBooks = await prisma.agencyQuickBooksSettings.findUnique({
+      where: { agencyId: req.auth.agencyId },
+      select: { status: true, consultFeeItemId: true },
     });
-    if (onlineOnlyTypeCount > 0) {
-      throw createHttpError(400, "One or more active session types only allow online video calls. Update those session types before turning off online bookings.", "VALIDATION_ERROR");
+    if (quickBooks?.status !== "connected") {
+      throw createHttpError(
+        409,
+        "Connect QuickBooks before enabling paid consultation bookings.",
+        "QBO_NOT_CONNECTED",
+      );
     }
+    if (!quickBooks.consultFeeItemId) {
+      throw createHttpError(
+        409,
+        "Map a QuickBooks item for consultation fees before enabling paid consultation bookings.",
+        "QBO_MAPPING_REQUIRED",
+      );
+    }
+  }
+  const availabilityConfigurationChanged = Boolean(
+    data.publicBookingEnabled === true
+    || data.locations !== undefined
+    || data.onlineBookingEnabled !== undefined
+    || data.phoneBookingEnabled !== undefined
+    || data.phoneCallerId !== undefined
+    || data.zoomBookingEnabled !== undefined
+  );
+  if (enablingPublic && availabilityConfigurationChanged) {
+    const finalSettings = { ...current, ...data, locations: finalLocations };
+    const activeTypes = await prisma.bookingSessionType.findMany({
+      where: { agencyId: req.auth.agencyId, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        allowedMeetingModes: true,
+        allowedLocationIds: true,
+        eligibleStaff: { select: { userId: true } },
+      },
+    });
+    const unavailableType = activeTypes.find((type) => {
+      const modes = type.allowedMeetingModes?.length ? type.allowedMeetingModes : [MEETING_MODES.IN_PERSON, MEETING_MODES.JITSI];
+      const availableLocations = sessionLocationsForIds(finalLocations, type.allowedLocationIds);
+      return !modes.some((mode) =>
+        (mode === MEETING_MODES.IN_PERSON && availableLocations.length > 0)
+        || (mode === MEETING_MODES.PHONE && finalPhoneEnabled)
+        || (mode === MEETING_MODES.JITSI && finalJitsiEnabled)
+        || (mode === MEETING_MODES.ZOOM && finalZoomEnabled));
+    });
+    if (unavailableType) {
+      throw createHttpError(400, `"${unavailableType.name}" would have no available appointment format. Enable one of its formats or update the session type first.`, "MEETING_MODE_REQUIRED");
+    }
+    for (const type of activeTypes) {
+      await assertPublicSessionTypeUsable(finalSettings, {
+        name: type.name,
+        isActive: true,
+        modes: type.allowedMeetingModes?.length ? type.allowedMeetingModes : [MEETING_MODES.IN_PERSON, MEETING_MODES.JITSI],
+        allowedLocationIds: type.allowedLocationIds,
+        sessionTypeId: type.id,
+        eligibleStaffIds: type.eligibleStaff.map((item) => item.userId),
+      });
+    }
+  }
+  if (finalPhoneEnabled && !(data.phoneCallerId ?? current.phoneCallerId)) {
+    throw createHttpError(400, "Set the outgoing caller ID before enabling phone appointments.", "PHONE_NOT_CONFIGURED");
+  }
+  // Verify the live OAuth connection only on the OFF -> ON transition.
+  // If Zoom later expires, administrators must still be able to save
+  // unrelated scheduling changes or turn Zoom off; public endpoints hide
+  // the format until it is reconnected.
+  const enablingZoom = data.zoomBookingEnabled === true && current.zoomBookingEnabled !== true;
+  if (enablingZoom) {
+    if (!zoomConfigured()) {
+      throw createHttpError(
+        503,
+        "Configure the Zoom OAuth credentials, redirect URI, and webhook secret on the server before enabling Zoom bookings.",
+        "ZOOM_NOT_CONFIGURED",
+      );
+    }
+    const [connection, zoomStaff] = await Promise.all([
+      prisma.agencyZoomConnection.findUnique({ where: { agencyId: req.auth.agencyId }, select: { status: true } }),
+      eligibleSchedulingStaff({
+        agencyId: req.auth.agencyId,
+        publicOnly: true,
+        meetingMode: MEETING_MODES.ZOOM,
+      }),
+    ]);
+    if (connection?.status !== "connected") throw createHttpError(409, "Connect Zoom before enabling Zoom bookings.", "ZOOM_NOT_CONNECTED");
+    if (!zoomStaff.length) throw createHttpError(409, "Map at least one public-bookable consultant to a Zoom host before enabling Zoom bookings.", "ZOOM_HOST_REQUIRED");
   }
   const settings = data.reminderMinutes === undefined
     ? await prisma.bookingSettings.update({ where: { agencyId: req.auth.agencyId }, data })
@@ -220,6 +405,14 @@ export async function createSessionType(req, res) {
   requireAdmin(req);
   const name = String(req.body?.name || "").trim();
   if (!name || name.length > 120) throw createHttpError(400, "Session name is required (120 characters max).", "VALIDATION_ERROR");
+  const settings = await getOrCreateBookingSettings(req.auth.agencyId);
+  const allowedMeetingModes = validMeetingModes(req.body?.allowedMeetingModes);
+  await assertPublicSessionTypeUsable(settings, {
+    name,
+    isActive: true,
+    modes: allowedMeetingModes,
+    allowedLocationIds: [],
+  });
   const data = await prisma.bookingSessionType.create({
     data: {
       agencyId: req.auth.agencyId,
@@ -227,7 +420,7 @@ export async function createSessionType(req, res) {
       durationMinutes: boundedInt(req.body?.durationMinutes, "Duration", 5, 480),
       description: String(req.body?.description || "").trim().slice(0, 500) || null,
       sortOrder: Number.isInteger(Number(req.body?.sortOrder)) ? Number(req.body.sortOrder) : 0,
-      allowedMeetingModes: validMeetingModes(req.body?.allowedMeetingModes),
+      allowedMeetingModes,
       bufferMinutes: req.body?.bufferMinutes == null || req.body?.bufferMinutes === "" ? null : boundedInt(req.body.bufferMinutes, "Session buffer", 0, 240),
       preparationInstructions: String(req.body?.preparationInstructions || "").trim().slice(0, 2000) || null,
       preparationChecklist: Array.isArray(req.body?.preparationChecklist) ? req.body.preparationChecklist.map((item) => String(item).trim().slice(0, 180)).filter(Boolean).slice(0, 20) : [],
@@ -239,25 +432,45 @@ export async function createSessionType(req, res) {
 
 export async function updateSessionType(req, res) {
   requireAdmin(req);
-  const existing = await prisma.bookingSessionType.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId } });
+  const [existing, settings] = await Promise.all([
+    prisma.bookingSessionType.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId } }),
+    getOrCreateBookingSettings(req.auth.agencyId),
+  ]);
   if (!existing) throw createHttpError(404, "Session type not found.", "NOT_FOUND");
   const body = req.body || {};
+  const locations = Array.isArray(settings.locations) ? settings.locations : [];
+  const allowedMeetingModes = body.allowedMeetingModes === undefined
+    ? existing.allowedMeetingModes
+    : validMeetingModes(body.allowedMeetingModes);
+  const allowedLocationIds = body.allowedLocationIds === undefined
+    ? existing.allowedLocationIds
+    : validSessionLocationIds(body.allowedLocationIds, locations);
+  const nextName = body.name === undefined ? existing.name : String(body.name).trim().slice(0, 120) || existing.name;
+  const nextActive = typeof body.isActive === "boolean" ? body.isActive : existing.isActive;
   const eligibleStaffIds = Array.isArray(body.eligibleStaffIds) ? [...new Set(body.eligibleStaffIds.map(String))] : null;
   if (eligibleStaffIds) {
     const validCount = await prisma.user.count({ where: { id: { in: eligibleStaffIds }, agencyId: req.auth.agencyId, status: "active", role: { in: ["admin", "consultant"] } } });
     if (validCount !== eligibleStaffIds.length) throw createHttpError(400, "Session eligibility contains an invalid team member.", "VALIDATION_ERROR");
   }
+  await assertPublicSessionTypeUsable(settings, {
+    name: nextName,
+    isActive: nextActive,
+    modes: allowedMeetingModes,
+    allowedLocationIds,
+    sessionTypeId: existing.id,
+    eligibleStaffIds,
+  });
   const data = await prisma.$transaction(async (tx) => {
     const updated = await tx.bookingSessionType.update({
       where: { id: existing.id },
       data: {
-      ...(body.name !== undefined ? { name: String(body.name).trim().slice(0, 120) || existing.name } : {}),
+      ...(body.name !== undefined ? { name: nextName } : {}),
       ...(body.durationMinutes !== undefined ? { durationMinutes: boundedInt(body.durationMinutes, "Duration", 5, 480) } : {}),
       ...(body.description !== undefined ? { description: String(body.description || "").trim().slice(0, 500) || null } : {}),
       ...(typeof body.isActive === "boolean" ? { isActive: body.isActive } : {}),
       ...(body.sortOrder !== undefined ? { sortOrder: Number(body.sortOrder) || 0 } : {}),
-      ...(body.allowedMeetingModes !== undefined ? { allowedMeetingModes: validMeetingModes(body.allowedMeetingModes) } : {}),
-      ...(Array.isArray(body.allowedLocationIds) ? { allowedLocationIds: body.allowedLocationIds.map(String).slice(0, 20) } : {}),
+      ...(body.allowedMeetingModes !== undefined ? { allowedMeetingModes } : {}),
+      ...(body.allowedLocationIds !== undefined ? { allowedLocationIds } : {}),
       ...(body.bufferMinutes !== undefined ? { bufferMinutes: body.bufferMinutes == null || body.bufferMinutes === "" ? null : boundedInt(body.bufferMinutes, "Session buffer", 0, 240) } : {}),
       ...(body.preparationInstructions !== undefined ? { preparationInstructions: String(body.preparationInstructions || "").trim().slice(0, 2000) || null } : {}),
       ...(body.preparationChecklist !== undefined ? { preparationChecklist: Array.isArray(body.preparationChecklist) ? body.preparationChecklist.map((item) => String(item).trim().slice(0, 180)).filter(Boolean).slice(0, 20) : [] } : {}),
@@ -296,7 +509,18 @@ export async function getAvailability(req, res) {
     throw createHttpError(400, "from/to must be YYYY-MM-DD dates.", "VALIDATION_ERROR");
   }
   const assignedToId = req.auth.role === "consultant" ? req.auth.userId : String(req.query.assignedToId || "") || null;
-  const staff = assignedToId ? [] : await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, sessionTypeId: String(req.query.sessionTypeId || "") || null });
+  const meetingMode = normalizeMeetingMode(req.query.meetingMode);
+  if (meetingMode === MEETING_MODES.ZOOM) {
+    await assertZoomOperational(req.auth.agencyId);
+  }
+  if (meetingMode === MEETING_MODES.ZOOM && assignedToId) {
+    const mapped = await prisma.zoomHostMapping.findFirst({
+      where: { agencyId: req.auth.agencyId, userId: assignedToId, status: "active" },
+      select: { id: true },
+    });
+    if (!mapped) throw createHttpError(409, "Zoom is not configured for this consultant.", "ZOOM_HOST_NOT_MAPPED");
+  }
+  const staff = assignedToId ? [] : await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, sessionTypeId: String(req.query.sessionTypeId || "") || null, meetingMode });
   const { days, settings } = await availabilityForRange({
     agencyId: req.auth.agencyId,
     assignedToId,
@@ -306,6 +530,7 @@ export async function getAvailability(req, res) {
     fromKey: from,
     toKey: to,
     minNoticeOverrideMinutes: 0,
+    locationId: meetingMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || null : null,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -313,8 +538,8 @@ export async function getAvailability(req, res) {
 const calendarInclude = {
   client: { select: { id: true, fullName: true } },
   case: { select: { id: true, caseType: true } },
-  assignedTo: { select: { id: true, fullName: true } },
-  sessionType: { select: { id: true, name: true, durationMinutes: true } },
+  assignedTo: { select: { id: true, fullName: true, zoomHostMapping: { select: { status: true } } } },
+  sessionType: { select: { id: true, name: true, durationMinutes: true, allowedMeetingModes: true } },
 };
 
 export async function listCalendarAppointments(req, res) {
@@ -333,7 +558,7 @@ export async function listCalendarAppointments(req, res) {
       endsAt: { gt: from },
       ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
-    include: calendarInclude,
+    include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     orderBy: { startsAt: "asc" },
   });
   res.json({ data });
@@ -360,29 +585,35 @@ export async function createBookingAppointment(req, res) {
   if (startDates.length > 1 && !["DAILY", "WEEKLY", "MONTHLY"].includes(String(body.recurrence?.frequency))) {
     throw createHttpError(400, "Choose a valid recurrence.", "VALIDATION_ERROR");
   }
-  const requestedMeetingMode = body.meetingMode === "Online" ? "Online" : "InPerson";
-  if (sessionType && !sessionType.allowedMeetingModes.includes(requestedMeetingMode)) throw createHttpError(400, "That appointment format is unavailable for this session type.", "VALIDATION_ERROR");
+  const requestedMeetingMode = normalizeMeetingMode(body.meetingMode);
 
   const locations = Array.isArray(settings.locations) ? settings.locations : [];
-  const selectedLocation = requestedMeetingMode === "InPerson"
+  const selectedLocation = requestedMeetingMode === MEETING_MODES.IN_PERSON
     ? locations.find((item) => item.id === String(body.locationId || "")) || (locations.length === 1 ? locations[0] : null)
     : null;
-  if (requestedMeetingMode === "InPerson" && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+  if (requestedMeetingMode === MEETING_MODES.IN_PERSON && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
 
   let assignedToId = String(body.assignedToId || "") || null;
   if (req.auth.role === "consultant") assignedToId = req.auth.userId;
 
   let client = null;
   if (body.clientId) {
-    client = await prisma.client.findFirst({ where: { id: body.clientId, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, assignedUserId: true } });
+    client = await prisma.client.findFirst({ where: { id: body.clientId, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true } });
     if (!client) throw createHttpError(400, "Client was not found.", "VALIDATION_ERROR");
   }
   const guestName = String(body.guestName || "").trim().slice(0, 160) || null;
   if (!client && !guestName) throw createHttpError(400, "Pick a client or enter the visitor’s name.", "VALIDATION_ERROR");
+  assertMeetingModeConfigured({
+    settings,
+    sessionType,
+    mode: requestedMeetingMode,
+    guestPhone: client?.phone || body.guestPhone,
+  });
+  if (requestedMeetingMode === MEETING_MODES.ZOOM) await assertZoomOperational(req.auth.agencyId);
 
   const subject = String(body.subject || "").trim().slice(0, 200) || (sessionType ? sessionType.name : "Appointment");
   const effectiveBuffer = sessionType?.bufferMinutes ?? settings.bufferMinutes;
-  const pool = assignedToId ? null : await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, sessionTypeId: sessionType?.id || null });
+  const pool = assignedToId ? null : await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, sessionTypeId: sessionType?.id || null, meetingMode: requestedMeetingMode });
   for (const occurrenceStart of startDates) {
     const dayKey = localDateKey(occurrenceStart, settings.timezone);
     const offeredAvailability = await availabilityForRange({
@@ -394,6 +625,7 @@ export async function createBookingAppointment(req, res) {
       fromKey: dayKey,
       toKey: dayKey,
       minNoticeOverrideMinutes: 0,
+      locationId: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null,
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
@@ -415,6 +647,7 @@ export async function createBookingAppointment(req, res) {
         preferredUserId: client?.assignedUserId,
         bufferMinutes: settings.bufferMinutes,
         sessionBufferMinutes: sessionType?.bufferMinutes,
+        meetingMode: requestedMeetingMode,
         timezone: settings.timezone,
         db: tx,
       });
@@ -427,6 +660,7 @@ export async function createBookingAppointment(req, res) {
         bufferMinutes: assignmentBuffer,
       });
       if (conflict) throw createHttpError(409, "One of those times was just taken. No appointments were created.", "SLOT_TAKEN");
+      const meetingFields = appointmentMeetingFields({ mode: requestedMeetingMode, settings });
       const appointment = await tx.appointment.create({
         data: {
         agencyId: req.auth.agencyId,
@@ -434,7 +668,9 @@ export async function createBookingAppointment(req, res) {
         caseId: null,
         sessionTypeId: sessionType?.id || null,
         subject,
-        location: selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : String(body.location || "").trim().slice(0, 200) || null,
+        location: requestedMeetingMode === MEETING_MODES.IN_PERSON
+          ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : String(body.location || "").trim().slice(0, 200) || null
+          : null,
         locationId: selectedLocation?.id || null,
         locationMapsUrl: selectedLocation?.mapsUrl || null,
         calendar: "Workspace Calendar",
@@ -445,8 +681,7 @@ export async function createBookingAppointment(req, res) {
         guestEmail: String(body.guestEmail || "").trim().slice(0, 254) || null,
         guestEmailNormalized: String(body.guestEmail || "").trim().toLowerCase().slice(0, 254) || null,
         guestPhone: String(body.guestPhone || "").trim().slice(0, 40) || null,
-        meetingMode: requestedMeetingMode,
-        meetingUrl: requestedMeetingMode === "Online" ? `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null,
+        ...meetingFields,
         assignedToId: assignee.id,
         createdById: req.auth.userId,
         source: body.source === "WalkIn" ? "WalkIn" : "Internal",
@@ -460,15 +695,31 @@ export async function createBookingAppointment(req, res) {
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
       });
       await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: seriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source } });
+      if (requestedMeetingMode === MEETING_MODES.ZOOM) {
+        await enqueueAppointmentMeetingJob(tx, {
+          appointment,
+          action: "SYNC",
+          notifyKind: "booked",
+          actorUserId: req.auth.userId,
+          dedupeSuffix: seriesKey ? `series-${index + 1}` : "",
+        });
+      } else {
+        await sendBookingMessages({
+          agencyId: req.auth.agencyId,
+          appointment,
+          kind: "booked",
+          actorUserId: req.auth.userId,
+          dedupeSuffix: seriesKey ? `series-${index + 1}` : "",
+          db: tx,
+        });
+      }
       created.push(appointment);
     }
     return created;
   });
   const data = createdAppointments[0];
 
-  await Promise.all(createdAppointments.map((appointment) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment, kind: "booked", actorUserId: req.auth.userId }).catch((error) => {
-    logger.warn("booking_controller.booked_message_failed", { agencyId: req.auth.agencyId, appointmentId: appointment.id, reason: error.message });
-  })));
+  if (createdAppointments.some((appointment) => appointment.meetingMode !== MEETING_MODES.ZOOM)) void processBookingMessageDeliveries();
 
   await recordActivity({
     agencyId: req.auth.agencyId,
@@ -507,7 +758,11 @@ export async function cancelBookingAppointment(req, res) {
       agencyId: req.auth.agencyId,
       ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
-    include: { sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } }, assignedTo: { select: { schedulingPreference: { select: { bufferMinutes: true } } } } },
+    include: {
+      sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } },
+      assignedTo: { select: { schedulingPreference: { select: { bufferMinutes: true } } } },
+      client: { select: { phone: true } },
+    },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
   if (existing.status !== "Scheduled") throw createHttpError(409, "Only a scheduled appointment can be cancelled.", "ALREADY_DONE");
@@ -516,24 +771,49 @@ export async function cancelBookingAppointment(req, res) {
   if (cancelSeries) {
     const series = await prisma.appointment.findMany({ where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } }, orderBy: { startsAt: "asc" } });
     const reason = String(req.body?.reason || "").trim().slice(0, 500) || null;
+    const cancelledAt = new Date();
+    const cancelled = series.map((item) => ({ ...item, status: "Cancelled", cancelledAt, cancellationReason: reason }));
     await prisma.$transaction(async (tx) => {
-      await tx.appointment.updateMany({ where: { id: { in: series.map((item) => item.id) }, status: "Scheduled" }, data: { status: "Cancelled", cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: reason } });
+      await tx.appointment.updateMany({ where: { id: { in: series.map((item) => item.id) }, status: "Scheduled" }, data: { status: "Cancelled", cancelledAt, cancelledById: req.auth.userId, cancellationReason: reason } });
+      for (const item of cancelled) {
+        await syncLeadConsultationFromAppointment(tx, item, { consultationStatus: "CANCELLED" });
+        await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
+        if (item.meetingProvider === "Zoom" && item.meetingProviderId) {
+          await enqueueAppointmentMeetingJob(tx, {
+            appointment: item,
+            action: "DELETE",
+            providerMeetingId: item.meetingProviderId,
+            dedupeSuffix: "series-cancelled",
+          });
+        }
+      }
       if (tx.appointmentEvent && series.length) await tx.appointmentEvent.createMany({ data: series.map((item) => ({ agencyId: req.auth.agencyId, appointmentId: item.id, actorUserId: req.auth.userId, type: "SERIES_CANCELLED", summary: "Appointment cancelled with recurring series", metadata: { seriesKey: existing.seriesKey } })) });
     });
-    const cancelled = series.map((item) => ({ ...item, status: "Cancelled", cancelledAt: new Date(), cancellationReason: reason }));
-    await Promise.all(cancelled.flatMap((item) => [sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId }).catch((error) => {
-      logger.warn("booking_controller.series_cancelled_message_failed", { agencyId: req.auth.agencyId, appointmentId: item.id, reason: error.message });
-    }), offerWaitlistOpening(item).catch(() => {})]));
+    void processBookingMessageDeliveries();
+    await Promise.all(cancelled.map((item) => offerWaitlistOpening(item).catch(() => {})));
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_cancelled", details: `${series.length} recurring appointments cancelled` });
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...cancelled.find((item) => item.id === existing.id), seriesAffected: series.length } });
   }
-  const data = await prisma.appointment.update({
-    where: { id: existing.id },
-    data: { status: "Cancelled", cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: String(req.body?.reason || "").trim().slice(0, 500) || null },
-    include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+  const data = await prisma.$transaction(async (tx) => {
+    const result = await tx.appointment.update({
+      where: { id: existing.id },
+      data: { status: "Cancelled", cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: String(req.body?.reason || "").trim().slice(0, 500) || null },
+      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+    });
+    await syncLeadConsultationFromAppointment(tx, result, { consultationStatus: "CANCELLED" });
+    await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "CANCELLED", summary: "Appointment cancelled", metadata: { reason: result.cancellationReason } });
+    await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
+    if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
+      await enqueueAppointmentMeetingJob(tx, {
+        appointment: result,
+        action: "DELETE",
+        providerMeetingId: result.meetingProviderId,
+        dedupeSuffix: "cancelled",
+      });
+    }
+    return result;
   });
-  await recordAppointmentEvent(prisma, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "CANCELLED", summary: "Appointment cancelled", metadata: { reason: data.cancellationReason } });
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
@@ -543,9 +823,7 @@ export async function cancelBookingAppointment(req, res) {
     details: `${existing.subject} cancelled`,
   });
   invalidateDashboardCache(req.auth.agencyId);
-  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "cancelled", actorUserId: req.auth.userId }).catch((error) => {
-    logger.warn("booking_controller.cancelled_message_failed", { agencyId: req.auth.agencyId, appointmentId: data.id, reason: error.message });
-  });
+  void processBookingMessageDeliveries();
   await offerWaitlistOpening(data).catch(() => {});
   res.json({ data });
 }
@@ -558,7 +836,11 @@ export async function rescheduleBookingAppointment(req, res) {
       status: "Scheduled",
       ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
-    include: { sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } }, assignedTo: { select: { schedulingPreference: { select: { bufferMinutes: true } } } } },
+    include: {
+      sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } },
+      assignedTo: { select: { schedulingPreference: { select: { bufferMinutes: true } } } },
+      client: { select: { phone: true } },
+    },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
   if (new Date(existing.startsAt) <= new Date()) throw createHttpError(409, "Past appointments cannot be rescheduled.", "TOO_LATE");
@@ -568,13 +850,24 @@ export async function rescheduleBookingAppointment(req, res) {
   const endsAt = new Date(startsAt.getTime() + duration * 60_000);
   const settings = await getOrCreateBookingSettings(req.auth.agencyId);
   const requestedMode = req.body?.meetingMode;
-  const meetingMode = requestedMode === "Online" || requestedMode === "InPerson" ? requestedMode : existing.meetingMode;
-  if (existing.sessionType?.allowedMeetingModes?.length && !existing.sessionType.allowedMeetingModes.includes(meetingMode)) throw createHttpError(400, "That appointment format is unavailable for this session.", "VALIDATION_ERROR");
+  const meetingMode = requestedMode ? normalizeMeetingMode(requestedMode, existing.meetingMode) : existing.meetingMode;
+  const timeChanged = startsAt.getTime() !== new Date(existing.startsAt).getTime();
+  const modeChanged = meetingMode !== existing.meetingMode;
+  const notificationKind = timeChanged ? "rescheduled" : modeChanged ? "format_updated" : "rescheduled";
+  assertMeetingModeConfigured({ settings, sessionType: existing.sessionType, mode: meetingMode, guestPhone: existing.client?.phone || existing.guestPhone });
+  if (meetingMode === MEETING_MODES.ZOOM) {
+    await assertZoomOperational(req.auth.agencyId);
+    const mapped = await prisma.zoomHostMapping.findFirst({
+      where: { agencyId: req.auth.agencyId, userId: existing.assignedToId, status: "active" },
+      select: { id: true },
+    });
+    if (!mapped) throw createHttpError(409, "Zoom is not configured for this consultant.", "ZOOM_HOST_NOT_MAPPED");
+  }
   const locations = Array.isArray(settings.locations) ? settings.locations : [];
-  const selectedLocation = meetingMode === "InPerson"
+  const selectedLocation = meetingMode === MEETING_MODES.IN_PERSON
     ? locations.find((item) => item.id === String(req.body?.locationId || "")) || (locations.length === 1 ? locations[0] : null)
     : null;
-  if (meetingMode === "InPerson" && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
+  if (meetingMode === MEETING_MODES.IN_PERSON && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
   const dayKey = localDateKey(startsAt, settings.timezone);
   const effectiveBuffer = existing.sessionType?.bufferMinutes ?? existing.assignedTo?.schedulingPreference?.bufferMinutes ?? settings.bufferMinutes;
   const rescheduleSeries = req.body?.scope === "series" && existing.seriesKey;
@@ -585,6 +878,15 @@ export async function rescheduleBookingAppointment(req, res) {
       orderBy: { startsAt: "asc" },
     });
     const seriesIds = series.map((item) => item.id);
+    if (meetingMode === MEETING_MODES.ZOOM) {
+      const assigneeIds = [...new Set(series.map((item) => item.assignedToId).filter(Boolean))];
+      const mappedCount = await prisma.zoomHostMapping.count({
+        where: { agencyId: req.auth.agencyId, userId: { in: assigneeIds }, status: "active" },
+      });
+      if (mappedCount !== assigneeIds.length) {
+        throw createHttpError(409, "Zoom is not configured for every consultant in this recurring series.", "ZOOM_HOST_NOT_MAPPED");
+      }
+    }
     const delta = startsAt.getTime() - new Date(existing.startsAt).getTime();
     const moves = series.map((item) => {
       const nextStart = new Date(new Date(item.startsAt).getTime() + delta);
@@ -593,33 +895,60 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === "InPerson" ? selectedLocation?.id || null : null });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
       const results = [];
+      if (meetingMode === MEETING_MODES.ZOOM) {
+        await lockSchedulingTransaction(tx, req.auth.agencyId, moves[0]?.startsAt || startsAt);
+        await assertZoomOperational(req.auth.agencyId, tx);
+        const assigneeIds = [...new Set(moves.map((move) => move.item.assignedToId).filter(Boolean))];
+        const mappedCount = await tx.zoomHostMapping.count({
+          where: { agencyId: req.auth.agencyId, userId: { in: assigneeIds }, status: "active" },
+        });
+        if (mappedCount !== assigneeIds.length) {
+          throw createHttpError(409, "Zoom is no longer configured for every consultant in this recurring series.", "ZOOM_HOST_NOT_MAPPED");
+        }
+      }
       for (const move of moves) {
         await lockSchedulingTransaction(tx, req.auth.agencyId, move.startsAt);
         const conflict = await assertSlotAvailable(tx, { agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds });
         if (conflict) throw createHttpError(409, "A recurring time was just taken. The series was not changed.", "SLOT_TAKEN");
-        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, meetingMode, meetingUrl: meetingMode === "Online" ? move.item.meetingUrl || `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null, location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === "InPerson" ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000), reminderQueuedAt: null }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } } });
+        const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing: move.item });
+        const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, ...meetingFields, location: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000), reminderQueuedAt: null }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } } });
+        await syncLeadConsultationFromAppointment(tx, result, { consultationStatus: "RESCHEDULED" });
         await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: move.item.id, actorUserId: req.auth.userId, type: "SERIES_RESCHEDULED", summary: "Appointment moved with recurring series", metadata: { from: move.item.startsAt, to: move.startsAt, seriesKey: existing.seriesKey } });
+        if (move.item.meetingProvider === "Zoom" && move.item.meetingProviderId && meetingMode !== MEETING_MODES.ZOOM) {
+          await enqueueAppointmentMeetingJob(tx, { appointment: result, action: "DELETE", providerMeetingId: move.item.meetingProviderId, dedupeSuffix: "series-mode-changed" });
+        }
+        if (meetingMode === MEETING_MODES.ZOOM) {
+          await enqueueAppointmentMeetingJob(tx, { appointment: result, action: "SYNC", notifyKind: notificationKind, actorUserId: req.auth.userId, dedupeSuffix: "series-rescheduled" });
+        } else {
+          await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: notificationKind, actorUserId: req.auth.userId, db: tx });
+        }
         results.push(result);
       }
       return results;
     });
-    await Promise.all(updated.map((item) => sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "rescheduled", actorUserId: req.auth.userId }).catch((error) => {
-      logger.warn("booking_controller.series_rescheduled_message_failed", { agencyId: req.auth.agencyId, appointmentId: item.id, reason: error.message });
-    })));
+    if (updated.some((item) => item.meetingMode !== MEETING_MODES.ZOOM)) void processBookingMessageDeliveries();
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_rescheduled", details: `${updated.length} recurring appointments rescheduled` });
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === "InPerson" ? selectedLocation?.id || existing.locationId || null : null });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {
     await lockSchedulingTransaction(tx, req.auth.agencyId, startsAt);
+    if (meetingMode === MEETING_MODES.ZOOM) {
+      await assertZoomOperational(req.auth.agencyId, tx);
+      const mapped = await tx.zoomHostMapping.findFirst({
+        where: { agencyId: req.auth.agencyId, userId: existing.assignedToId, status: "active" },
+        select: { id: true },
+      });
+      if (!mapped) throw createHttpError(409, "Zoom is no longer configured for this consultant.", "ZOOM_HOST_NOT_MAPPED");
+    }
     const conflict = await assertSlotAvailable(tx, {
       agencyId: req.auth.agencyId,
       assignedToId: existing.assignedToId,
@@ -629,23 +958,32 @@ export async function rescheduleBookingAppointment(req, res) {
       excludeAppointmentId: existing.id,
     });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
+    const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing });
     const updated = await tx.appointment.update({
       where: { id: existing.id },
       data: {
         startsAt,
         endsAt,
-        meetingMode,
-        meetingUrl: meetingMode === "Online" ? existing.meetingUrl || `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}` : null,
-        location: meetingMode === "InPerson" ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : existing.location : null,
-        locationId: meetingMode === "InPerson" ? selectedLocation?.id || existing.locationId : null,
-        locationMapsUrl: meetingMode === "InPerson" ? selectedLocation?.mapsUrl || existing.locationMapsUrl : null,
+        ...meetingFields,
+        location: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : existing.location : null,
+        locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId : null,
+        locationMapsUrl: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.mapsUrl || existing.locationMapsUrl : null,
         reminderSentAt: null,
         reminderDueAt: new Date(startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),
         reminderQueuedAt: null,
       },
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     });
+    await syncLeadConsultationFromAppointment(tx, updated, { consultationStatus: "RESCHEDULED" });
     await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "RESCHEDULED", summary: "Appointment date or format changed", metadata: { from: existing.startsAt, to: startsAt, meetingMode } });
+    if (existing.meetingProvider === "Zoom" && existing.meetingProviderId && meetingMode !== MEETING_MODES.ZOOM) {
+      await enqueueAppointmentMeetingJob(tx, { appointment: updated, action: "DELETE", providerMeetingId: existing.meetingProviderId, dedupeSuffix: "mode-changed" });
+    }
+    if (meetingMode === MEETING_MODES.ZOOM) {
+      await enqueueAppointmentMeetingJob(tx, { appointment: updated, action: "SYNC", notifyKind: notificationKind, actorUserId: req.auth.userId });
+    } else {
+      await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: updated, kind: notificationKind, actorUserId: req.auth.userId, db: tx });
+    }
     return updated;
   });
 
@@ -658,9 +996,7 @@ export async function rescheduleBookingAppointment(req, res) {
     details: `${existing.subject} rescheduled`,
   });
   invalidateDashboardCache(req.auth.agencyId);
-  await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: data, kind: "rescheduled", actorUserId: req.auth.userId }).catch((error) => {
-    logger.warn("booking_controller.rescheduled_message_failed", { agencyId: req.auth.agencyId, appointmentId: data.id, reason: error.message });
-  });
+  if (data.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
   res.json({ data });
 }
 
@@ -756,27 +1092,50 @@ export async function convertAppointmentToClient(req, res) {
 
 export async function updateBookingAppointmentStatus(req, res) {
   const status = String(req.body?.status || "");
-  if (!["Scheduled", "Completed", "Cancelled", "NoShow"].includes(status)) throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
+  if (!["Completed", "Cancelled", "NoShow"].includes(status)) throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
   const existing = await prisma.appointment.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+  if (existing.status !== "Scheduled") {
+    throw createHttpError(409, "Only a scheduled appointment can be completed, cancelled, or marked no-show.", "ALREADY_DONE");
+  }
   if (["Completed", "NoShow"].includes(status) && new Date(existing.startsAt) > new Date()) {
     throw createHttpError(409, "An appointment cannot be marked attended or no-show before it starts.", "TOO_EARLY");
   }
-  const data = await prisma.appointment.update({
-    where: { id: existing.id },
-    data: {
-      status,
-      ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: String(req.body?.reason || "").trim().slice(0, 500) || null } : {}),
-    },
-    include: calendarInclude,
+  const data = await prisma.$transaction(async (tx) => {
+    const result = await tx.appointment.update({
+      where: { id: existing.id },
+      data: {
+        status,
+        ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: String(req.body?.reason || "").trim().slice(0, 500) || null } : {}),
+      },
+      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+    });
+    await syncLeadConsultationFromAppointment(tx, result, {
+      consultationStatus: leadConsultationStatusForAppointment(status),
+    });
+    await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
+    if (["Completed", "NoShow"].includes(status)) {
+      await sendBookingStaffNotification({ agencyId: req.auth.agencyId, appointment: result, kind: status === "Completed" ? "attended" : "no_show", actorUserId: req.auth.userId, db: tx });
+    } else {
+      await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
+      if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
+        await enqueueAppointmentMeetingJob(tx, {
+          appointment: result,
+          action: "DELETE",
+          providerMeetingId: result.meetingProviderId,
+          dedupeSuffix: "status-cancelled",
+        });
+      }
+    }
+    return result;
   });
-  await recordAppointmentEvent(prisma, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
   invalidateDashboardCache(req.auth.agencyId);
-  if (["Completed", "NoShow"].includes(status)) {
-    await sendBookingStaffNotification({ agencyId: req.auth.agencyId, appointment: data, kind: status === "Completed" ? "attended" : "no_show", actorUserId: req.auth.userId }).catch(() => {});
+  void processBookingMessageDeliveries();
+  if (status === "Cancelled") {
+    await offerWaitlistOpening(data).catch(() => {});
   }
   res.json({ data });
 }

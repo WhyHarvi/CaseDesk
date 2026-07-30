@@ -120,7 +120,7 @@ test("booking a consultation updates the lead work queue in the same transaction
   };
   let options;
   const db = { $transaction: async (operation, transactionOptions) => { options = transactionOptions; return operation(tx); } };
-  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { consultantUserId: "consultant-1", startAt: "2026-08-01T14:00:00Z", endAt: "2026-08-01T15:00:00Z", appointmentType: "VIDEO" } };
+  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { consultantUserId: "consultant-1", startAt: "2026-08-01T14:00:00Z", endAt: "2026-08-01T14:30:00Z", appointmentType: "VIDEO" } };
 
   const result = await createConsultation(req, db);
 

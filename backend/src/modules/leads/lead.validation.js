@@ -1,5 +1,6 @@
 import { createHttpError } from "../../utils/http.js";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { localDateTimeToUtc } from "../../services/bookingAvailabilityService.js";
 import { LEAD_CONSULTATION_OUTCOMES, LEAD_CONSULTATION_STATUSES, LEAD_INITIAL_PAYMENT_STATUSES, LEAD_PRIORITIES, LEAD_QUALIFICATION_OUTCOMES, LEAD_RETAINER_STATUSES, LEAD_STAGES, LEAD_STATUSES, LEAD_TEMPERATURES } from "./lead.constants.js";
 
 const text = (value, field, { required = false, max = 500 } = {}) => {
@@ -140,9 +141,23 @@ export function parseLeadQualification(body = {}) {
 }
 
 export function parseCreateConsultation(body = {}) {
-  const startAt = dateValue(body.startAt, "startAt", { required: true });
-  const endAt = dateValue(body.endAt, "endAt", { required: true });
+  const timezone = text(body.timezone, "timezone", { max: 100 }) || "America/Toronto";
+  try { new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date()); }
+  catch { throw createHttpError(400, "timezone is invalid.", "VALIDATION_ERROR"); }
+  const consultationDate = (value, field) => {
+    const raw = String(value || "");
+    const local = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+    if (local) {
+      return localDateTimeToUtc(local[1], Number(local[2]) * 60 + Number(local[3]), timezone);
+    }
+    return dateValue(value, field, { required: true });
+  };
+  const startAt = consultationDate(body.startAt, "startAt");
+  const endAt = consultationDate(body.endAt, "endAt");
   if (endAt <= startAt) throw createHttpError(400, "endAt must be later than startAt.", "VALIDATION_ERROR");
+  if (endAt.getTime() - startAt.getTime() !== 30 * 60_000) {
+    throw createHttpError(400, "Consultation appointments must be 30 minutes.", "VALIDATION_ERROR");
+  }
   const meetingUrl = text(body.meetingUrl, "meetingUrl", { max: 1000 });
   if (meetingUrl) {
     try { new URL(meetingUrl); } catch { throw createHttpError(400, "meetingUrl is invalid.", "VALIDATION_ERROR"); }
@@ -151,10 +166,11 @@ export function parseCreateConsultation(body = {}) {
     consultantUserId: text(body.consultantUserId, "consultantUserId", { required: true, max: 100 }),
     startAt,
     endAt,
-    timezone: text(body.timezone, "timezone", { max: 100 }) || "America/Toronto",
-    appointmentType: text(body.appointmentType, "appointmentType", { required: true, max: 100 }),
+    timezone,
+    appointmentType: enumValue(body.appointmentType, "appointmentType", ["IN_PERSON", "PHONE", "VIDEO", "JITSI", "ZOOM"]),
     fee: optionalNumber(body.fee, "fee", { min: 0, max: 1000000 }),
     paymentStatus: enumValue(body.paymentStatus, "paymentStatus", ["UNPAID", "PAID", "WAIVED", "REFUNDED"], "UNPAID"),
+    locationId: text(body.locationId, "locationId", { max: 100 }),
     location: text(body.location, "location", { max: 500 }),
     meetingUrl,
     notes: text(body.notes, "notes", { max: 5000 }),

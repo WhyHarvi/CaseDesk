@@ -76,7 +76,7 @@ test("online and cancelled emails show only relevant actions", () => {
     contactName: "Jordan Lee",
     manageUrl: "https://case-desk.example/book/manage/token-1",
   });
-  assert.match(online.html, /Join online appointment/);
+  assert.match(online.html, /Join Jitsi appointment/);
   assert.doesNotMatch(online.html, /Open directions/);
 
   const cancelled = bookingEmailContent({
@@ -90,4 +90,114 @@ test("online and cancelled emails show only relevant actions", () => {
   assert.doesNotMatch(cancelled.html, /Reschedule or cancel|Open directions/);
   assert.match(cancelled.html, /No action is required/);
   assert.doesNotMatch(cancelled.text, /Manage appointment/);
+});
+
+test("phone emails say that CHK calls the client and never ask the client to dial", () => {
+  const email = bookingEmailContent({
+    appointment: {
+      ...baseAppointment,
+      meetingMode: "Phone",
+      meetingPhoneNumber: "+16475550100",
+      guestPhone: "+14165550199",
+      location: null,
+      locationMapsUrl: null,
+    },
+    kind: "booked",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+    phoneCallInstructions: "Keep your phone nearby at the scheduled time.",
+  });
+
+  assert.match(email.html, /North Star Immigration will call \+14165550199 from \+16475550100/);
+  assert.match(email.html, /Keep your phone nearby/);
+  assert.match(email.html, /Manage appointment/);
+  assert.doesNotMatch(email.html, /href="tel:/);
+  assert.match(email.text, /Format: Phone call/);
+});
+
+test("Zoom emails identify Zoom separately from Jitsi", () => {
+  const email = bookingEmailContent({
+    appointment: {
+      ...baseAppointment,
+      meetingMode: "Zoom",
+      meetingUrl: "https://zoom.us/j/123456789",
+      location: null,
+      locationMapsUrl: null,
+    },
+    kind: "booked",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+
+  assert.match(email.html, /Zoom video call/);
+  assert.match(email.html, /Join Zoom appointment/);
+  assert.doesNotMatch(email.html, /Jitsi/);
+});
+
+test("a remapped Zoom host sends an updated link without claiming the time changed", () => {
+  const email = bookingEmailContent({
+    appointment: {
+      ...baseAppointment,
+      meetingMode: "Zoom",
+      meetingUrl: "https://zoom.us/j/987654321",
+      location: null,
+      locationMapsUrl: null,
+    },
+    kind: "meeting_updated",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+
+  assert.match(email.subject, /Zoom link updated/);
+  assert.match(email.text, /time has not changed/i);
+  assert.match(email.html, /Join Zoom appointment/);
+});
+
+test("a format-only change does not tell the client their appointment time moved", () => {
+  const email = bookingEmailContent({
+    appointment: {
+      ...baseAppointment,
+      meetingMode: "Phone",
+      meetingPhoneNumber: "+16475550100",
+      guestPhone: "+14165550199",
+      location: null,
+      locationMapsUrl: null,
+    },
+    kind: "format_updated",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+
+  assert.match(email.subject, /Appointment format updated/);
+  assert.match(email.text, /date and time remain the same/i);
+  assert.doesNotMatch(email.text, /moved to the new date/i);
+  assert.match(email.text, /Format: Phone call/);
+});
+
+test("a consultant-only change explains that the appointment time and format stay the same", () => {
+  const email = bookingEmailContent({
+    appointment: {
+      ...baseAppointment,
+      assignedTo: { fullName: "New Consultant" },
+    },
+    kind: "assignment_updated",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+
+  assert.match(email.subject, /Appointment consultant updated/);
+  assert.match(email.text, /consultant for your appointment has changed/i);
+  assert.match(email.text, /date, time, and format remain the same/i);
+  assert.match(email.text, /With: New Consultant/);
+  assert.doesNotMatch(email.text, /appointment has been moved/i);
 });

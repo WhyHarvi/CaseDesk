@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -9,12 +8,15 @@ import {
   listQuickBooksRefundReceiptsSince,
 } from "./quickbooksService.js";
 import { assertSlotAvailable } from "./bookingAvailabilityService.js";
-import { sendBookingMessages } from "./bookingNotificationService.js";
+import { lockSchedulingTransaction } from "./schedulingAssignmentService.js";
+import { processBookingMessageDeliveries, sendBookingMessages } from "./bookingNotificationService.js";
 import { appointmentReference, recordAppointmentEvent } from "./appointmentOperationsService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booking.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
+import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
 
 // Deliberately not as fast as it could be: the frontend polls the hold's
 // own status endpoint independently every few seconds regardless, so this
@@ -32,10 +34,6 @@ const reconciliationChecks = new Map();
 const reconciliationInFlight = new Map();
 const refundReconciliationChecks = new Map();
 const refundReconciliationInFlight = new Map();
-
-function meetingLink() {
-  return `https://meet.jit.si/CaseDesk-${randomUUID().replace(/-/g, "").slice(0, 14)}`;
-}
 
 // A client paid, but by the time we could confirm it the slot they paid
 // for was gone (hold expired and someone else booked it, or a genuine
@@ -156,6 +154,72 @@ async function notifyAmbiguousRefund(agencyId, refund, candidates) {
   });
 }
 
+async function notifyUnmatchedRefund(agencyId, refund) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  if (!recipientIds.length) return;
+  await notifyUsers({
+    agencyId,
+    recipientIds,
+    type: "booking_payment.refund_unmatched",
+    category: "appointments",
+    title: "A consultation refund needs review",
+    body: `A $${Number(refund.totalAmount).toFixed(2)} consultation-item refund in QuickBooks could not be matched exactly to a paid booking. It may be partial, older than the automatic matching window, or already resolved; review it in QuickBooks and CaseDesk.`,
+    severity: "warning",
+    entityType: "quickBooksRefundReceipt",
+    entityId: refund.id,
+    actionUrl: "/app/payments",
+    metadata: {
+      refundReceiptId: refund.id,
+      customerId: refund.customerId,
+      amount: Number(refund.totalAmount),
+    },
+    dedupeKey: `refund_receipt:${refund.id}:unmatched`,
+    channels: ["in_app"],
+  });
+}
+
+async function notifyMatchedRefund(agencyId, refund, hold) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  if (!recipientIds.length) return;
+  const appointment = hold.appointmentId
+    ? await prisma.appointment.findFirst({
+      where: { id: hold.appointmentId, agencyId },
+      select: { id: true, subject: true, status: true, startsAt: true },
+    })
+    : null;
+  const stillScheduled = appointment?.status === "Scheduled";
+  const appointmentSummary = appointment
+    ? `${appointment.subject} on ${new Date(appointment.startsAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}`
+    : "No appointment is attached to this payment";
+  await notifyUsers({
+    agencyId,
+    recipientIds,
+    type: stillScheduled
+      ? "booking_payment.refunded_appointment_scheduled"
+      : "booking_payment.refunded",
+    category: "appointments",
+    title: stillScheduled
+      ? "Refunded consultation is still scheduled"
+      : "Consultation refund recorded",
+    body: stillScheduled
+      ? `${hold.guestName}'s $${Number(refund.totalAmount).toFixed(2)} consultation payment was refunded in QuickBooks, but ${appointmentSummary} remains scheduled. Decide whether to cancel it or document why it should remain active.`
+      : `${hold.guestName}'s $${Number(refund.totalAmount).toFixed(2)} consultation refund was synchronized from QuickBooks. ${appointmentSummary}.`,
+    severity: stillScheduled ? "critical" : "info",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: "/app/payments",
+    metadata: {
+      refundReceiptId: refund.id,
+      paymentHoldId: hold.id,
+      appointmentId: appointment?.id || null,
+      appointmentStatus: appointment?.status || null,
+      amount: Number(refund.totalAmount),
+    },
+    dedupeKey: `refund_receipt:${refund.id}:booking_payment_hold:${hold.id}:matched`,
+    channels: ["in_app"],
+  });
+}
+
 async function applyBookingRefundReceipt(agencyId, refund) {
   if (!refund?.customerId || !(refund.totalAmount > 0)) return null;
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
@@ -163,6 +227,24 @@ async function applyBookingRefundReceipt(agencyId, refund) {
     select: { consultFeeItemId: true },
   });
   if (!settings?.consultFeeItemId || !refund.itemIds.includes(settings.consultFeeItemId)) return null;
+
+  const alreadyApplied = await prisma.bookingPaymentHold.findFirst({
+    where: { agencyId, qbRefundReceiptId: refund.id, status: "Refunded" },
+  });
+  if (alreadyApplied) {
+    // The state transition may have committed just before a process crash
+    // or notification outage. Retry the deduplicated staff alert whenever
+    // the same receipt is seen so the durable refund is never silent.
+    await notifyMatchedRefund(agencyId, refund, alreadyApplied).catch((notifyError) => {
+      logger.warn("booking_payment_hold.refund_notify_retry_failed", {
+        agencyId,
+        refundReceiptId: refund.id,
+        holdId: alreadyApplied.id,
+        reason: notifyError.message,
+      });
+    });
+    return alreadyApplied;
+  }
 
   const refundAt = new Date(refund.createdAt || refund.transactionDate || Date.now());
   const candidates = await prisma.bookingPaymentHold.findMany({
@@ -193,11 +275,20 @@ async function applyBookingRefundReceipt(agencyId, refund) {
     throw new Error(`RefundReceipt ${refund.id} matches multiple paid consultation bookings`);
   }
   const hold = candidates[0];
-  if (!hold) return null;
+  if (!hold) {
+    await notifyUnmatchedRefund(agencyId, refund).catch((notifyError) => {
+      logger.warn("booking_payment_hold.unmatched_refund_notify_failed", {
+        agencyId,
+        refundReceiptId: refund.id,
+        reason: notifyError.message,
+      });
+    });
+    return null;
+  }
 
   const updated = await prisma.bookingPaymentHold.updateMany({
     where: { id: hold.id, agencyId, status: "Paid" },
-    data: { status: "Refunded" },
+    data: { status: "Refunded", qbRefundReceiptId: refund.id },
   });
   if (updated.count !== 1) return null;
 
@@ -212,6 +303,14 @@ async function applyBookingRefundReceipt(agencyId, refund) {
     entityId: hold.id,
     metadata: { refundReceiptId: refund.id, appointmentId: hold.appointmentId },
   }).catch(() => {});
+  await notifyMatchedRefund(agencyId, refund, hold).catch((notifyError) => {
+    logger.warn("booking_payment_hold.refund_notify_failed", {
+      agencyId,
+      refundReceiptId: refund.id,
+      holdId: hold.id,
+      reason: notifyError.message,
+    });
+  });
   invalidateDashboardCache(agencyId);
   return prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
 }
@@ -275,7 +374,7 @@ async function processEvent(event) {
     // Never trust the notification's own fields — re-fetch the invoice
     // directly from QuickBooks and decide off its live balance.
     const invoice = await getQuickBooksInvoice(event.agencyId, invoiceId);
-    if (!invoice) {
+    if (!invoice || invoice.isVoided) {
       await prisma.bookingPaymentHold.updateMany({ where: { id: hold.id, status: "AwaitingPayment" }, data: { status: "Voided", voidedAt: new Date() } });
       continue;
     }
@@ -440,7 +539,18 @@ export async function reconcilePaymentHold(agencyId, holdId, { allowExpired = fa
     if (!eligible || !hold.qbInvoiceId) return hold;
 
     const invoice = await getQuickBooksInvoice(agencyId, hold.qbInvoiceId);
-    if (!invoice || invoice.balance > 0) return hold;
+    // A voided invoice also has a zero balance. Treating every zero balance
+    // as money collected would create an appointment for a payment that was
+    // explicitly cancelled in QuickBooks.
+    if (!invoice || invoice.isVoided) {
+      await prisma.bookingPaymentHold.updateMany({
+        where: { id: hold.id, agencyId, status: hold.status },
+        data: { status: "Voided", voidedAt: new Date() },
+      });
+      reconciliationChecks.delete(key);
+      return prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+    }
+    if (invoice.balance > 0) return hold;
 
     if (hold.status === "Expired") {
       const revived = await prisma.bookingPaymentHold.updateMany({
@@ -477,10 +587,14 @@ export async function reconcilePaymentHold(agencyId, holdId, { allowExpired = fa
  * other, finds no "AwaitingPayment" row left to claim and is a no-op.
  */
 export async function confirmPaymentHold(agencyId, holdId) {
-  const claimed = await prisma.bookingPaymentHold.updateMany({ where: { id: holdId, status: "AwaitingPayment" }, data: { status: "Confirming" } });
+  const claimed = await prisma.bookingPaymentHold.updateMany({
+    where: { id: holdId, agencyId, status: "AwaitingPayment" },
+    data: { status: "Confirming" },
+  });
   if (claimed.count !== 1) return null;
 
-  const hold = await prisma.bookingPaymentHold.findUnique({ where: { id: holdId } });
+  const hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  if (!hold) return null;
   try {
     // Walk-in (front-desk) holds already have their Appointment — it was
     // created immediately through the normal staff booking flow, with no
@@ -503,34 +617,56 @@ export async function confirmPaymentHold(agencyId, holdId) {
     }
 
     const [sessionType, settings, offerHold] = await Promise.all([
-      hold.sessionTypeId ? prisma.bookingSessionType.findUnique({ where: { id: hold.sessionTypeId } }) : null,
+      hold.sessionTypeId
+        ? prisma.bookingSessionType.findFirst({ where: { id: hold.sessionTypeId, agencyId } })
+        : null,
       prisma.bookingSettings.findUnique({ where: { agencyId } }),
-      hold.offerHoldId ? prisma.bookingSlotHold.findUnique({ where: { id: hold.offerHoldId } }) : null,
+      hold.offerHoldId
+        ? prisma.bookingSlotHold.findFirst({ where: { id: hold.offerHoldId, agencyId } })
+        : null,
     ]);
-    const online = hold.meetingMode === "Online";
     const locations = Array.isArray(settings?.locations) ? settings.locations : [];
     const location = hold.locationId ? locations.find((item) => item.id === hold.locationId) : null;
+    const locationLabel = hold.location || (location ? `${location.name} — ${location.address}` : null);
+    const locationMapsUrl = hold.locationMapsUrl || location?.mapsUrl || null;
     const reminderMinutes = Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440]));
 
     const appointment = await prisma.$transaction(async (tx) => {
+      // The normal free/internal booking paths use the same agency
+      // scheduling lock. Confirmation must participate too: the hold is
+      // already paid, so it gets first-class protection from a concurrent
+      // booking request while the Appointment row is being created.
+      await lockSchedulingTransaction(tx, agencyId, hold.startsAt);
       // Same exclusion the hold's own creation used — without it, a client
       // fulfilling their own waitlist offer collides with their own
       // still-unclaimed BookingSlotHold right here at confirmation time too.
-      const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: hold.assignedToId, startsAt: hold.startsAt, endsAt: hold.endsAt, excludePaymentHoldId: hold.id, excludeHoldToken: offerHold?.claimToken || null });
+      const conflict = await assertSlotAvailable(tx, {
+        agencyId,
+        assignedToId: hold.assignedToId,
+        startsAt: hold.startsAt,
+        endsAt: hold.endsAt,
+        bufferMinutes: sessionType?.bufferMinutes ?? settings?.bufferMinutes ?? 0,
+        excludePaymentHoldId: hold.id,
+        excludeHoldToken: offerHold?.claimToken || null,
+      });
       if (conflict) {
         const error = new Error("Slot conflict detected at payment confirmation time");
         error.code = "SLOT_CONFLICT_AT_CONFIRMATION";
         throw error;
       }
 
+      const meetingFields = appointmentMeetingFields({
+        mode: hold.meetingMode,
+        settings: { ...settings, phoneCallerId: hold.meetingPhoneNumber || settings?.phoneCallerId },
+      });
       const created = await tx.appointment.create({
         data: {
           agencyId,
           sessionTypeId: hold.sessionTypeId,
           subject: sessionType?.name || "Consultation",
-          location: location ? `${location.name} — ${location.address}` : null,
+          location: locationLabel,
           locationId: hold.locationId,
-          locationMapsUrl: location?.mapsUrl || null,
+          locationMapsUrl,
           calendar: "Workspace Calendar",
           startsAt: hold.startsAt,
           endsAt: hold.endsAt,
@@ -539,8 +675,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
           guestEmail: hold.guestEmail,
           guestEmailNormalized: hold.guestEmailNormalized,
           guestPhone: hold.guestPhone,
-          meetingMode: hold.meetingMode,
-          meetingUrl: online ? meetingLink() : null,
+          ...meetingFields,
           assignedToId: hold.assignedToId,
           source: "Public",
           isFreeConsultation: false,
@@ -552,6 +687,11 @@ export async function confirmPaymentHold(agencyId, holdId) {
       });
       await recordAppointmentEvent(tx, { agencyId, appointmentId: created.id, type: "BOOKED", summary: "Paid consultation confirmed after payment", metadata: { holdId: hold.id, meetingMode: created.meetingMode } });
       await createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment: created });
+      if (hold.meetingMode === MEETING_MODES.ZOOM) {
+        await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}` });
+      } else {
+        await sendBookingMessages({ agencyId, appointment: created, kind: "booked", db: tx });
+      }
       await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id } });
       if (offerHold) {
         // Only now — payment genuinely confirmed and the appointment
@@ -572,9 +712,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
       action: "appointment.booked",
       details: `${sessionType?.name || "Consultation"} confirmed after payment for ${hold.guestName}`,
     }).catch(() => {});
-    await sendBookingMessages({ agencyId, appointment, kind: "booked" }).catch((error) => {
-      logger.warn("booking_payment_hold.confirmation_message_failed", { agencyId, holdId, reason: error.message });
-    });
+    if (appointment.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
     invalidateDashboardCache(agencyId);
     return appointment;
   } catch (error) {

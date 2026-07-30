@@ -14,6 +14,7 @@ export async function eligibleSchedulingStaff({
   sessionTypeId = null,
   publicOnly = false,
   requestedUserId = null,
+  meetingMode = null,
   db = prisma,
 }) {
   const sessionEligibility = sessionTypeId
@@ -39,11 +40,15 @@ export async function eligibleSchedulingStaff({
       schedulingPreference: {
         select: { acceptsAppointments: true, publicBookable: true, maxDailyAppointments: true, bufferMinutes: true },
       },
+      zoomHostMapping: {
+        select: { zoomUserId: true, zoomEmail: true, displayName: true, licenseType: true, status: true },
+      },
     },
     orderBy: [{ fullName: "asc" }, { id: "asc" }],
   });
   return users.filter((user) => preferenceAllows(user, publicOnly)
-    && (!restrictedIds.size || restrictedIds.has(user.id)));
+    && (!restrictedIds.size || restrictedIds.has(user.id))
+    && (meetingMode !== "Zoom" || user.zoomHostMapping?.status === "active"));
 }
 
 export async function chooseAppointmentAssignee({
@@ -58,10 +63,11 @@ export async function chooseAppointmentAssignee({
   bufferMinutes = 0,
   sessionBufferMinutes = null,
   excludeHoldToken = null,
+  meetingMode = null,
   timezone = "America/Toronto",
   db = prisma,
 }) {
-  const staff = await eligibleSchedulingStaff({ agencyId, sessionTypeId, publicOnly, db });
+  const staff = await eligibleSchedulingStaff({ agencyId, sessionTypeId, publicOnly, meetingMode, db });
   if (!staff.length) {
     throw createHttpError(409, "No scheduling staff are available for this appointment type.", "NO_BOOKABLE_STAFF");
   }
@@ -71,26 +77,29 @@ export async function chooseAppointmentAssignee({
 
   const start = new Date(startsAt);
   const end = new Date(endsAt);
-  const buffer = bufferMinutes * 60_000;
   const dayKey = localDateKey(start, timezone);
   const dayStart = localDateTimeToUtc(dayKey, 0, timezone);
   const dayEnd = localDateTimeToUtc(dayKey, 24 * 60, timezone);
   const ids = staff.map((user) => user.id);
-  const [conflicts, dailyCounts, futureCounts] = await Promise.all([
+  const [conflicts, dailyCounts, futureCounts, activeWaitlistHolds, activePaymentHolds] = await Promise.all([
     db.appointment.findMany({
       where: {
         agencyId,
         assignedToId: { in: ids },
         status: "Scheduled",
         ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
-        startsAt: { lt: new Date(end.getTime() + buffer) },
-        endsAt: { gt: new Date(start.getTime() - buffer) },
+        // This is only a coarse overlap prefilter. The exact check below
+        // applies the session or consultant-specific buffer for each user.
+        // Applying the workspace buffer here incorrectly rejected staff
+        // whose session type explicitly overrides that buffer to zero.
+        startsAt: { lt: end },
+        endsAt: { gt: start },
       },
-      select: { assignedToId: true },
+      select: { assignedToId: true, startsAt: true, endsAt: true },
     }),
     db.appointment.groupBy({
       by: ["assignedToId"],
-      where: { agencyId, assignedToId: { in: ids }, status: "Scheduled", startsAt: { gte: dayStart, lt: dayEnd } },
+      where: { agencyId, assignedToId: { in: ids }, status: "Scheduled", startsAt: { gte: dayStart, lt: dayEnd }, ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}) },
       _count: { _all: true },
     }),
     db.appointment.groupBy({
@@ -98,9 +107,38 @@ export async function chooseAppointmentAssignee({
       where: { agencyId, assignedToId: { in: ids }, status: "Scheduled", startsAt: { gte: new Date() } },
       _count: { _all: true },
     }),
+    typeof db.bookingSlotHold?.findMany === "function" ? db.bookingSlotHold.findMany({
+      where: {
+        agencyId,
+        assignedToId: { in: ids },
+        claimedAt: null,
+        expiresAt: { gt: new Date() },
+        startsAt: { gte: dayStart, lt: dayEnd },
+        ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}),
+      },
+      select: { assignedToId: true, startsAt: true, endsAt: true },
+    }) : [],
+    typeof db.bookingPaymentHold?.findMany === "function" ? db.bookingPaymentHold.findMany({
+      where: {
+        agencyId,
+        assignedToId: { in: ids },
+        OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }],
+        startsAt: { gte: dayStart, lt: dayEnd },
+      },
+      select: { assignedToId: true, startsAt: true, endsAt: true },
+    }) : [],
   ]);
   const blocked = new Set(conflicts.map((item) => item.assignedToId));
   const dayCount = new Map(dailyCounts.map((item) => [item.assignedToId, item._count._all]));
+  const holdSeatsByStaff = new Map();
+  for (const item of [...activeWaitlistHolds, ...activePaymentHolds]) {
+    const seats = holdSeatsByStaff.get(item.assignedToId) || new Set();
+    seats.add(`${new Date(item.startsAt).toISOString()}:${new Date(item.endsAt).toISOString()}`);
+    holdSeatsByStaff.set(item.assignedToId, seats);
+  }
+  for (const [staffId, seats] of holdSeatsByStaff) {
+    dayCount.set(staffId, (dayCount.get(staffId) || 0) + seats.size);
+  }
   const workload = new Map(futureCounts.map((item) => [item.assignedToId, item._count._all]));
   const appointmentAvailable = staff.filter((user) => {
     if (blocked.has(user.id)) return false;

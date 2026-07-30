@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, CalendarClock, CalendarDays, CheckCircle2, Clock3, Loader2, MapPin, Video, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarDays, CheckCircle2, Clock3, Loader2, MapPin, Phone, Video, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -41,8 +41,12 @@ export default function ManageBookingPage() {
   }, [manageToken]);
 
   const fetchAvailability = useCallback(
-    (range) => getManagedAvailability(manageToken, range),
-    [manageToken],
+    (range) => getManagedAvailability(manageToken, {
+      ...range,
+      meetingMode,
+      locationId: meetingMode === "InPerson" ? locationId || undefined : undefined,
+    }),
+    [manageToken, meetingMode, locationId],
   );
 
   async function confirmCancel() {
@@ -119,8 +123,18 @@ export default function ManageBookingPage() {
     );
   }
 
-  const cancelled = booking.status !== "Scheduled";
+  const active = booking.status === "Scheduled";
+  const cancelled = booking.status === "Cancelled";
   const past = new Date(booking.startsAt) <= new Date();
+  const statusLabel = cancelled
+    ? "Cancelled"
+    : booking.status === "Completed"
+      ? "Completed"
+      : booking.status === "NoShow"
+        ? "No-show"
+        : past
+          ? "Completed"
+          : "Confirmed";
   const locations = booking.locations || [];
   const needsLocation = meetingMode === "InPerson" && locations.length > 1;
 
@@ -143,7 +157,9 @@ export default function ManageBookingPage() {
               <div className="mt-2 grid grid-cols-2 gap-2">
                 {[
                   { id: "InPerson", label: "In person", icon: MapPin, disabled: (!locations.length && booking.meetingMode !== "InPerson") || !booking.allowedMeetingModes?.includes("InPerson") },
-                  { id: "Online", label: "Video call", icon: Video, disabled: !booking.allowedMeetingModes?.includes("Online") },
+                  { id: "Phone", label: "Phone call", icon: Phone, disabled: !booking.allowedMeetingModes?.includes("Phone") },
+                  { id: "Online", label: "Jitsi", icon: Video, disabled: !booking.allowedMeetingModes?.includes("Online") },
+                  { id: "Zoom", label: "Zoom", icon: Video, disabled: !booking.allowedMeetingModes?.includes("Zoom") },
                 ].map(({ id, label, icon: Icon, disabled }) => (
                   <motion.button
                     key={id}
@@ -183,9 +199,10 @@ export default function ManageBookingPage() {
             ) : meetingMode === "InPerson" && locations.length === 1 ? (
               <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /><span><span className="font-semibold">{locations[0].name}</span><span className="block text-xs text-slate-500">{locations[0].address}</span></span></p>
             ) : null}
+            {meetingMode === "Phone" ? <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" /><span>{booking.agencyName} will call your saved phone number{booking.phoneCallerId ? ` from ${booking.phoneCallerId}` : ""}. You do not need to call the office.</span></p> : null}
 
             <p className="mb-3 text-sm font-semibold text-slate-900">Pick a new date and time</p>
-            <BookingMonthPicker fetchAvailability={fetchAvailability} onPickSlot={setSlot} timezone={booking.timezone} />
+            <BookingMonthPicker key={`${meetingMode}:${locationId}`} fetchAvailability={fetchAvailability} onPickSlot={setSlot} timezone={booking.timezone} />
             <button
               type="button"
               disabled={!slot || busy || (meetingMode === "InPerson" && locations.length > 1 && !locationId)}
@@ -222,13 +239,13 @@ export default function ManageBookingPage() {
             ) : null}
 
             <div className="flex items-center gap-3">
-              <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${cancelled ? "bg-slate-100 text-slate-400" : "bg-sky-50 text-sky-600"}`}>
+              <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${!active ? "bg-slate-100 text-slate-400" : "bg-sky-50 text-sky-600"}`}>
                 <CalendarClock className="h-5 w-5" />
               </span>
               <div>
                 <h2 className="text-lg font-semibold text-slate-950">{booking.subject}</h2>
-                <p className={`text-sm ${cancelled ? "font-medium text-rose-600" : "text-slate-500"}`}>
-                  {cancelled ? "Cancelled" : past ? "Completed" : "Confirmed"}
+                <p className={`text-sm ${cancelled ? "font-medium text-rose-600" : booking.status === "NoShow" ? "font-medium text-amber-700" : "text-slate-500"}`}>
+                  {statusLabel}
                 </p>
               </div>
             </div>
@@ -237,24 +254,26 @@ export default function ManageBookingPage() {
             <div className="mt-5 space-y-3 rounded-2xl bg-slate-50 px-4 py-4 text-sm text-slate-700">
               <p className="flex items-center gap-2.5"><CalendarDays className="h-4 w-4 shrink-0 text-slate-400" />{formatWhen(booking.startsAt, booking.timezone)}</p>
               <p className="flex items-center gap-2.5"><Clock3 className="h-4 w-4 shrink-0 text-slate-400" />{booking.sessionType?.durationMinutes || Math.round((new Date(booking.endsAt) - new Date(booking.startsAt)) / 60000)} minutes · {booking.timezone}</p>
-              {booking.meetingMode === "Online" ? (
-                <p className="flex items-center gap-2.5"><Video className="h-4 w-4 shrink-0 text-slate-400" />Online video call</p>
+              {booking.meetingMode === "Phone" ? (
+                <p className="flex items-start gap-2.5"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>Phone call — {booking.agencyName} will call you{booking.meetingPhoneNumber ? ` from ${booking.meetingPhoneNumber}` : ""}.</span></p>
+              ) : ["Online", "Zoom"].includes(booking.meetingMode) ? (
+                <p className="flex items-center gap-2.5"><Video className="h-4 w-4 shrink-0 text-slate-400" />{booking.meetingMode === "Zoom" ? "Zoom video call" : "Jitsi video call"}</p>
               ) : (
                 <p className="flex items-start gap-2.5"><MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /><span>{booking.location || "In person"}{booking.locationMapsUrl ? <a href={booking.locationMapsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 block text-xs font-semibold text-sky-600 hover:text-sky-700">Open in Maps ↗</a> : null}</span></p>
               )}
             </div>
 
-            {!cancelled && !past && (booking.preparationInstructions || booking.preparationChecklist?.length || booking.parkingInstructions) ? <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/60 px-4 py-4 text-sm text-slate-700"><p className="font-semibold text-slate-900">Before your appointment</p>{booking.preparationInstructions ? <p className="mt-1.5 leading-6">{booking.preparationInstructions}</p> : null}{booking.preparationChecklist?.length ? <ul className="mt-2 space-y-1">{booking.preparationChecklist.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</li>)}</ul> : null}{booking.parkingInstructions && booking.meetingMode === "InPerson" ? <p className="mt-2 border-t border-amber-100 pt-2 text-xs text-slate-500">Arrival: {booking.parkingInstructions}</p> : null}{!booking.preparationCompletedAt ? <button type="button" disabled={busy} onClick={completePreparation} className="mt-3 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm disabled:opacity-50">I’m prepared</button> : <p className="mt-3 text-xs font-semibold text-emerald-700">Preparation complete ✓</p>}</div> : null}
+            {active && !past && (booking.preparationInstructions || booking.preparationChecklist?.length || booking.parkingInstructions) ? <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/60 px-4 py-4 text-sm text-slate-700"><p className="font-semibold text-slate-900">Before your appointment</p>{booking.preparationInstructions ? <p className="mt-1.5 leading-6">{booking.preparationInstructions}</p> : null}{booking.preparationChecklist?.length ? <ul className="mt-2 space-y-1">{booking.preparationChecklist.map((item) => <li key={item} className="flex gap-2"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />{item}</li>)}</ul> : null}{booking.parkingInstructions && booking.meetingMode === "InPerson" ? <p className="mt-2 border-t border-amber-100 pt-2 text-xs text-slate-500">Arrival: {booking.parkingInstructions}</p> : null}{!booking.preparationCompletedAt ? <button type="button" disabled={busy} onClick={completePreparation} className="mt-3 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm disabled:opacity-50">I’m prepared</button> : <p className="mt-3 text-xs font-semibold text-emerald-700">Preparation complete ✓</p>}</div> : null}
 
-            {!cancelled && !past && booking.canConfirm ? <button type="button" disabled={busy} onClick={confirmAttendance} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-emerald-600 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Confirm I’ll attend</button> : null}
+            {active && !past && booking.canConfirm ? <button type="button" disabled={busy} onClick={confirmAttendance} className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-emerald-600 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"><CheckCircle2 className="h-4 w-4" /> Confirm I’ll attend</button> : null}
 
-            {!cancelled && !past && booking.meetingUrl ? (
+            {active && !past && booking.meetingUrl ? (
               <a href={booking.meetingUrl} target="_blank" rel="noopener noreferrer" className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-sky-600 text-sm font-semibold text-white transition hover:bg-sky-700">
-                <Video className="h-4 w-4" /> Join video call
+                <Video className="h-4 w-4" /> Join {booking.meetingMode === "Zoom" ? "Zoom" : "Jitsi"} video call
               </a>
             ) : null}
 
-            {!cancelled && !past && (booking.canReschedule || booking.canCancel) ? (
+            {active && !past && (booking.canReschedule || booking.canCancel) ? (
               <div className={`mt-3 grid gap-2 ${booking.canReschedule && booking.canCancel ? "grid-cols-2" : "grid-cols-1"}`}>
                 {booking.canReschedule ? <button type="button" onClick={() => { setMode("reschedule"); setNotice(""); setMeetingMode(booking.meetingMode || "InPerson"); setLocationId(booking.locationId || (booking.locations?.length === 1 ? booking.locations[0].id : "")); }} className="h-12 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
                   Reschedule
@@ -265,7 +284,7 @@ export default function ManageBookingPage() {
               </div>
             ) : null}
 
-            {!cancelled && !past && !booking.canReschedule && !booking.canCancel ? <p className="mt-4 text-center text-xs text-slate-500">This appointment is inside the office change cutoff. Contact {booking.agencyName} if you need help.</p> : null}
+            {active && !past && !booking.canReschedule && !booking.canCancel ? <p className="mt-4 text-center text-xs text-slate-500">This appointment is inside the office change cutoff. Contact {booking.agencyName} if you need help.</p> : null}
 
             {cancelled ? (
               <p className="mt-4 text-center text-sm text-slate-500">Need a new time? Ask {booking.agencyName} for their booking link.</p>

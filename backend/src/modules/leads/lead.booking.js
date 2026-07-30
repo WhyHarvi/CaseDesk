@@ -117,7 +117,11 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
       appointmentId: appointment.id,
       startAt: appointment.startsAt,
       endAt: appointment.endsAt,
-      appointmentType: appointment.meetingMode === "Online" ? "VIDEO" : "IN_PERSON",
+      appointmentType: ["Online", "Zoom"].includes(appointment.meetingMode)
+        ? "VIDEO"
+        : appointment.meetingMode === "Phone"
+          ? "PHONE"
+          : "IN_PERSON",
       status: "SCHEDULED",
       fee: hold.amount,
       paymentStatus: "PAID",

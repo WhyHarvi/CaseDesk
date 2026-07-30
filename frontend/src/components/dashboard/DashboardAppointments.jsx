@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronRight, MapPin, Video } from "lucide-react";
+import { CalendarDays, ChevronRight, MapPin, Phone, Video } from "lucide-react";
 import { Link } from "react-router-dom";
 
 function formatTime(value) {
@@ -45,9 +45,13 @@ export default function DashboardAppointments({ items = null, loading = false })
                   <p className="truncate text-xs text-slate-400">{item.sessionType?.name || item.subject}{item.assignedTo ? ` · ${item.assignedTo.fullName}` : ""}</p>
                   {item.description ? <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.description}</p> : null}
                 </div>
-                {item.meetingMode === "Online" ? (
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600" title="Online video call">
+                {["Online", "Zoom"].includes(item.meetingMode) ? (
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600" title={item.meetingMode === "Zoom" ? "Zoom video call" : "Jitsi video call"}>
                     <Video className="h-3.5 w-3.5" />
+                  </span>
+                ) : item.meetingMode === "Phone" ? (
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600" title="Phone call">
+                    <Phone className="h-3.5 w-3.5" />
                   </span>
                 ) : (
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400" title="In person">

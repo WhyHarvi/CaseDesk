@@ -92,17 +92,40 @@ test("paid booking holds have a missed-webhook reconciliation path before expiry
     readFile(new URL("../src/services/quickbooksService.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
   ]);
+  const refundMigration = await readFile(
+    new URL("../prisma/migrations/20260730194500_booking_refund_receipt_tracking/migration.sql", import.meta.url),
+    "utf8",
+  );
 
   assert.match(publicController, /reconcilePaymentHold\(settings\.agencyId, hold\.id, \{ allowExpired: true \}\)/);
   assert.match(holdService, /pre_expiry_reconcile_failed/);
   assert.match(holdService, /pre_void_reconcile_failed/);
   assert.match(webhookService, /invoice\.balance > 0/);
+  assert.match(webhookService, /if \(!invoice \|\| invoice\.isVoided\)/);
+  assert.match(webhookService, /zero balance[\s\S]*money collected/);
   assert.match(webhookService, /status: "AwaitingPayment", nextVoidAttemptAt: null/);
   assert.match(quickBooksService, /path: "\/invoice\?operation=void"/);
   assert.doesNotMatch(quickBooksService, /path: "\/invoice\?operation=delete"/);
   assert.match(webhookService, /event\.entityName === "RefundReceipt"/);
+  assert.match(webhookService, /Refunded consultation is still scheduled/);
+  assert.match(webhookService, /booking_payment\.refunded_appointment_scheduled/);
+  assert.match(webhookService, /booking_payment\.refund_unmatched/);
+  assert.match(webhookService, /consultation-item refund in QuickBooks could not be matched exactly/);
+  assert.match(webhookService, /qbRefundReceiptId: refund\.id, status: "Refunded"/);
+  assert.match(webhookService, /refund_notify_retry_failed/);
+  assert.match(webhookService, /data: \{ status: "Refunded", qbRefundReceiptId: refund\.id \}/);
+  assert.match(refundMigration, /ADD COLUMN "qb_refund_receipt_id" TEXT/);
+  assert.match(refundMigration, /appointment\.payment_refunded[\s\S]*metadata"->>'refundReceiptId'/);
+  assert.match(refundMigration, /CREATE UNIQUE INDEX "booking_payment_holds_agency_id_qb_refund_receipt_id_key"/);
+  assert.match(webhookService, /refund_receipt:\$\{refund\.id\}:booking_payment_hold:\$\{hold\.id\}:matched/);
   assert.match(webhookService, /Acknowledge this alert within 10 minutes/);
   assert.match(webhookService, /responseDeadlineMinutes: 10/);
+  assert.match(webhookService, /lockSchedulingTransaction\(tx, agencyId, hold\.startsAt\)/);
+  assert.match(webhookService, /where: \{ id: holdId, agencyId, status: "AwaitingPayment" \}/);
+  assert.match(webhookService, /bookingSessionType\.findFirst\(\{ where: \{ id: hold\.sessionTypeId, agencyId \} \}\)/);
+  assert.match(holdService, /status: "Confirming"/);
+  assert.match(holdService, /void_after_persist_failure_failed/);
+  assert.match(holdService, /data: \{ expiresAt \}/);
   assert.match(paymentsPage, /row\.status === "Voided"[\s\S]*Not collected/);
   assert.match(paymentsPage, /row\.status === "Refunded"[\s\S]*Refunded/);
   assert.match(paymentsPage, /ORPHANED_PAYMENT_RUNBOOK/);

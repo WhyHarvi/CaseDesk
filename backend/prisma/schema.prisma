@@ -527,6 +527,9 @@ model Agency {
   correspondenceTemplateVersions CorrespondenceTemplateVersion[]
   appointments                   Appointment[]
   bookingSettings                BookingSettings?
+  zoomConnection                 AgencyZoomConnection?
+  zoomHostMappings               ZoomHostMapping[]
+  appointmentMeetingJobs         AppointmentMeetingJob[]
   caseInvoices                   CaseInvoice[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
@@ -655,22 +658,22 @@ model AutomatedReminderDelivery {
 }
 
 model ExpiringDocumentReminderPolicy {
-  id              String                            @id @default(uuid())
-  agencyId        String                            @map("agency_id")
-  documentKey     String                            @map("document_key")
-  enabled         Boolean                           @default(false)
-  notifyClient    Boolean                           @default(true) @map("notify_client")
-  leadDays        Int                               @default(183) @map("lead_days")
-  cadenceDays     Int                               @default(30) @map("cadence_days")
-  maxReminders    Int                               @default(1) @map("max_reminders")
-  emailEnabled    Boolean                           @default(true) @map("email_enabled")
-  smsEnabled      Boolean                           @default(false) @map("sms_enabled")
-  subjectTemplate String                            @map("subject_template")
-  messageTemplate String                            @map("message_template")
-  smsTemplate     String                            @map("sms_template")
-  createdAt       DateTime                          @default(now()) @map("created_at")
-  updatedAt       DateTime                          @updatedAt @map("updated_at")
-  agency          Agency                            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  id              String                             @id @default(uuid())
+  agencyId        String                             @map("agency_id")
+  documentKey     String                             @map("document_key")
+  enabled         Boolean                            @default(false)
+  notifyClient    Boolean                            @default(true) @map("notify_client")
+  leadDays        Int                                @default(183) @map("lead_days")
+  cadenceDays     Int                                @default(30) @map("cadence_days")
+  maxReminders    Int                                @default(1) @map("max_reminders")
+  emailEnabled    Boolean                            @default(true) @map("email_enabled")
+  smsEnabled      Boolean                            @default(false) @map("sms_enabled")
+  subjectTemplate String                             @map("subject_template")
+  messageTemplate String                             @map("message_template")
+  smsTemplate     String                             @map("sms_template")
+  createdAt       DateTime                           @default(now()) @map("created_at")
+  updatedAt       DateTime                           @updatedAt @map("updated_at")
+  agency          Agency                             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   deliveries      ExpiringDocumentReminderDelivery[]
 
   @@unique([agencyId, documentKey])
@@ -679,27 +682,27 @@ model ExpiringDocumentReminderPolicy {
 }
 
 model ExpiringDocumentReminderDelivery {
-  id             String                         @id @default(uuid())
-  agencyId       String                         @map("agency_id")
-  policyId       String                         @map("policy_id")
-  targetKey      String                         @map("target_key")
-  clientId       String                         @map("client_id")
-  caseId         String?                        @map("case_id")
-  sequence       Int
-  status         String                         @default("processing")
-  attempts       Int                            @default(0)
-  expiresAt      DateTime                       @map("expires_at")
-  emailSentAt    DateTime?                      @map("email_sent_at")
-  smsSentAt      DateTime?                      @map("sms_sent_at")
-  portalSentAt   DateTime?                      @map("portal_sent_at")
-  staffSentAt    DateTime?                      @map("staff_sent_at")
-  sentAt         DateTime?                      @map("sent_at")
-  nextAttemptAt  DateTime?                      @map("next_attempt_at")
-  lastError      String?                        @map("last_error")
-  createdAt      DateTime                       @default(now()) @map("created_at")
-  updatedAt      DateTime                       @updatedAt @map("updated_at")
-  agency         Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  policy         ExpiringDocumentReminderPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  id            String                         @id @default(uuid())
+  agencyId      String                         @map("agency_id")
+  policyId      String                         @map("policy_id")
+  targetKey     String                         @map("target_key")
+  clientId      String                         @map("client_id")
+  caseId        String?                        @map("case_id")
+  sequence      Int
+  status        String                         @default("processing")
+  attempts      Int                            @default(0)
+  expiresAt     DateTime                       @map("expires_at")
+  emailSentAt   DateTime?                      @map("email_sent_at")
+  smsSentAt     DateTime?                      @map("sms_sent_at")
+  portalSentAt  DateTime?                      @map("portal_sent_at")
+  staffSentAt   DateTime?                      @map("staff_sent_at")
+  sentAt        DateTime?                      @map("sent_at")
+  nextAttemptAt DateTime?                      @map("next_attempt_at")
+  lastError     String?                        @map("last_error")
+  createdAt     DateTime                       @default(now()) @map("created_at")
+  updatedAt     DateTime                       @updatedAt @map("updated_at")
+  agency        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  policy        ExpiringDocumentReminderPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
 
   @@unique([policyId, targetKey, sequence])
   @@index([agencyId, status, nextAttemptAt])
@@ -1046,6 +1049,7 @@ model User {
   assignedBookingPaymentHolds          BookingPaymentHold[]            @relation("AssignedBookingPaymentHoldUser")
   createdBookingPaymentHolds           BookingPaymentHold[]            @relation("CreatedBookingPaymentHoldUser")
   schedulingPreference                 SchedulingStaffPreference?
+  zoomHostMapping                      ZoomHostMapping?
   eligibleBookingSessionTypes          BookingSessionTypeStaff[]
   createdCommunicationConversations    CommunicationConversation[]     @relation("CreatedCommunicationConversationUser")
   assignedCommunicationConversations   CommunicationConversation[]     @relation("AssignedCommunicationConversationUser")
@@ -1395,6 +1399,12 @@ model Appointment {
   guestPhone             String?                  @map("guest_phone")
   meetingMode            String                   @default("InPerson") @map("meeting_mode")
   meetingUrl             String?                  @map("meeting_url")
+  meetingPhoneNumber     String?                  @map("meeting_phone_number")
+  meetingProvider        String?                  @map("meeting_provider")
+  meetingProviderId      String?                  @map("meeting_provider_id")
+  meetingProviderHostId  String?                  @map("meeting_provider_host_id")
+  meetingSyncStatus      String                   @default("NotRequired") @map("meeting_sync_status")
+  meetingSyncError       String?                  @map("meeting_sync_error")
   manageToken            String?                  @unique @default(uuid()) @map("manage_token")
   reminderSentAt         DateTime?                @map("reminder_sent_at")
   reminderDueAt          DateTime?                @map("reminder_due_at")
@@ -1429,6 +1439,7 @@ model Appointment {
   messageDeliveries      BookingMessageDelivery[]
   events                 AppointmentEvent[]
   paymentHold            BookingPaymentHold?
+  meetingJobs            AppointmentMeetingJob[]
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId])
@@ -1441,6 +1452,7 @@ model Appointment {
   @@index([leadId])
   @@index([agencyId, seriesKey, recurrenceIndex])
   @@index([agencyId, confirmationStatus, startsAt])
+  @@index([agencyId, meetingProvider, meetingProviderId])
   @@map("appointments")
 }
 
@@ -1467,6 +1479,10 @@ model BookingSettings {
   waitlistEnabled               Boolean  @default(true) @map("waitlist_enabled")
   attendanceConfirmationEnabled Boolean  @default(true) @map("attendance_confirmation_enabled")
   onlineBookingEnabled          Boolean  @default(true) @map("online_booking_enabled")
+  phoneBookingEnabled           Boolean  @default(false) @map("phone_booking_enabled")
+  phoneCallerId                 String?  @map("phone_caller_id")
+  phoneCallInstructions         String?  @map("phone_call_instructions")
+  zoomBookingEnabled            Boolean  @default(false) @map("zoom_booking_enabled")
   consultFeeEnabled             Boolean  @default(false) @map("consult_fee_enabled")
   consultFeeAmount              Decimal? @map("consult_fee_amount") @db.Decimal(10, 2)
   consultFeeHoldMinutes         Int      @default(20) @map("consult_fee_hold_minutes")
@@ -1647,7 +1663,11 @@ model BookingPaymentHold {
   guestEmailNormalized String              @map("guest_email_normalized")
   guestPhone           String?             @map("guest_phone")
   meetingMode          String              @map("meeting_mode")
+  meetingPhoneNumber   String?             @map("meeting_phone_number")
+  meetingProvider      String?             @map("meeting_provider")
   locationId           String?             @map("location_id")
+  location             String?
+  locationMapsUrl      String?             @map("location_maps_url")
   notes                String?
   amount               Decimal             @db.Decimal(10, 2)
   // Nullable: unset for the brief window between the slot lock committing
@@ -1658,6 +1678,7 @@ model BookingPaymentHold {
   qbInvoiceId          String?             @map("qb_invoice_id")
   qbInvoiceLink        String?             @map("qb_invoice_link")
   qbSyncToken          String?             @map("qb_sync_token")
+  qbRefundReceiptId    String?             @map("qb_refund_receipt_id")
   status               String              @default("AwaitingPayment")
   source               String              @default("Public")
   expiresAt            DateTime?           @map("expires_at")
@@ -1684,9 +1705,76 @@ model BookingPaymentHold {
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
+  @@unique([agencyId, qbRefundReceiptId])
   @@index([agencyId, assignedToId, startsAt, endsAt, status, expiresAt])
   @@index([agencyId, status, expiresAt])
   @@map("booking_payment_holds")
+}
+
+model AgencyZoomConnection {
+  id                    String   @id @default(uuid())
+  agencyId              String   @unique @map("agency_id")
+  providerAccountId     String   @unique @map("provider_account_id")
+  accountName           String?  @map("account_name")
+  connectedUserId       String?  @map("connected_user_id")
+  connectedUserEmail    String?  @map("connected_user_email")
+  accessTokenEncrypted  String   @map("access_token_encrypted")
+  refreshTokenEncrypted String   @map("refresh_token_encrypted")
+  accessTokenExpiresAt  DateTime @map("access_token_expires_at")
+  grantedScopes         String   @default("") @map("granted_scopes")
+  status                String   @default("connected")
+  lastError             String?  @map("last_error")
+  connectedById         String?  @map("connected_by_id")
+  connectedAt           DateTime @default(now()) @map("connected_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("agency_zoom_connections")
+}
+
+model ZoomHostMapping {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  userId      String   @unique @map("user_id")
+  zoomUserId  String   @map("zoom_user_id")
+  zoomEmail   String   @map("zoom_email")
+  displayName String?  @map("display_name")
+  licenseType String?  @map("license_type")
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, zoomUserId])
+  @@index([agencyId, status])
+  @@map("zoom_host_mappings")
+}
+
+model AppointmentMeetingJob {
+  id            String      @id @default(uuid())
+  agencyId      String      @map("agency_id")
+  appointmentId String      @map("appointment_id")
+  action        String
+  status        String      @default("pending")
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(8) @map("max_attempts")
+  availableAt   DateTime    @default(now()) @map("available_at")
+  lockedAt      DateTime?   @map("locked_at")
+  processedAt   DateTime?   @map("processed_at")
+  lastError     String?     @map("last_error")
+  dedupeKey     String      @unique @map("dedupe_key")
+  payload       Json        @default("{}")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  agency        Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([agencyId, appointmentId])
+  @@map("appointment_meeting_jobs")
 }
 
 model QuickBooksWebhookEvent {

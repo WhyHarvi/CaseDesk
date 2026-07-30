@@ -1,6 +1,7 @@
 import { CalendarPlus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../../auth/AuthContext";
+import { getBookingSettings } from "../../../api/bookingApi";
 import api from "../../../services/api";
 
 function localInput(date) {
@@ -11,8 +12,8 @@ function localInput(date) {
 function initialForm(ownerId, timezone) {
   const start = new Date(Date.now() + 24 * 60 * 60_000);
   start.setHours(10, 0, 0, 0);
-  const end = new Date(start.getTime() + 60 * 60_000);
-  return { consultantUserId: ownerId || "", startAt: localInput(start), endAt: localInput(end), timezone: timezone || "America/Toronto", appointmentType: "VIDEO", location: "", meetingUrl: "", fee: "", paymentStatus: "UNPAID", notes: "" };
+  const end = new Date(start.getTime() + 30 * 60_000);
+  return { consultantUserId: ownerId || "", startAt: localInput(start), endAt: localInput(end), timezone: timezone || "America/Toronto", appointmentType: "JITSI", locationId: "", fee: "", paymentStatus: "UNPAID", notes: "" };
 }
 
 const fieldClass = "mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-brand-300 focus:ring-4 focus:ring-brand-100";
@@ -24,7 +25,27 @@ export default function BookConsultationSheet({ lead, staff, onClose, onCreated 
   const [form, setForm] = useState(() => initialForm(preferredConsultant, agency?.timezone));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const [scheduling, setScheduling] = useState(null);
+  useEffect(() => { getBookingSettings().then(setScheduling).catch(() => {}); }, []);
+  const zoomMappedIds = useMemo(() => new Set((scheduling?.staff || []).filter((member) => member.zoomHostMapping?.status === "active").map((member) => member.id)), [scheduling]);
+  const appointmentTypes = useMemo(() => [
+    ["IN_PERSON", "In person", true],
+    ["PHONE", "Phone call", scheduling?.settings?.phoneBookingEnabled === true],
+    ["JITSI", "Jitsi video", scheduling?.settings?.onlineBookingEnabled !== false],
+    ["ZOOM", "Zoom video", scheduling?.settings?.zoomBookingEnabled === true && zoomMappedIds.size > 0],
+  ].filter(([, , enabled]) => enabled), [scheduling, zoomMappedIds]);
+  useEffect(() => {
+    if (appointmentTypes.some(([value]) => value === form.appointmentType)) return;
+    setForm((current) => ({ ...current, appointmentType: appointmentTypes[0]?.[0] || "IN_PERSON" }));
+  }, [appointmentTypes, form.appointmentType]);
+  const update = (event) => {
+    const { name, value } = event.target;
+    setForm((current) => {
+      if (name !== "startAt") return { ...current, [name]: value };
+      const start = new Date(value);
+      return { ...current, startAt: value, endAt: Number.isNaN(start.getTime()) ? current.endAt : localInput(new Date(start.getTime() + 30 * 60_000)) };
+    });
+  };
 
   async function submit(event) {
     event.preventDefault();
@@ -50,18 +71,18 @@ export default function BookConsultationSheet({ lead, staff, onClose, onCreated 
         </header>
         <div className="grid gap-4 overflow-y-auto p-6 sm:grid-cols-2">
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:col-span-2">{error}</div> : null}
-          <label className="text-sm font-medium text-slate-700 sm:col-span-2">Consultant<select required name="consultantUserId" value={form.consultantUserId} onChange={update} className={fieldClass}><option value="">Select consultant</option>{consultants.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select></label>
+          <label className="text-sm font-medium text-slate-700 sm:col-span-2">Consultant<select required name="consultantUserId" value={form.consultantUserId} onChange={update} className={fieldClass}><option value="">Select consultant</option>{consultants.map((person) => <option key={person.id} value={person.id} disabled={form.appointmentType === "ZOOM" && !zoomMappedIds.has(person.id)}>{person.fullName}{form.appointmentType === "ZOOM" && !zoomMappedIds.has(person.id) ? " · Zoom not mapped" : ""}</option>)}</select></label>
           <label className="text-sm font-medium text-slate-700">Starts<input required type="datetime-local" name="startAt" value={form.startAt} onChange={update} className={fieldClass} /></label>
-          <label className="text-sm font-medium text-slate-700">Ends<input required type="datetime-local" name="endAt" value={form.endAt} onChange={update} className={fieldClass} /></label>
-          <label className="text-sm font-medium text-slate-700">Type<select name="appointmentType" value={form.appointmentType} onChange={update} className={fieldClass}><option value="VIDEO">Video</option><option value="PHONE">Phone</option><option value="IN_PERSON">In person</option></select></label>
+          <label className="text-sm font-medium text-slate-700">Ends · 30 minutes<input readOnly type="datetime-local" name="endAt" value={form.endAt} className={`${fieldClass} bg-slate-50 text-slate-500`} /></label>
+          <label className="text-sm font-medium text-slate-700">Type<select name="appointmentType" value={form.appointmentType} onChange={update} className={fieldClass}>{appointmentTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label className="text-sm font-medium text-slate-700">Timezone<input required name="timezone" value={form.timezone} onChange={update} className={fieldClass} /></label>
-          <label className="text-sm font-medium text-slate-700">Location<input name="location" value={form.location} onChange={update} className={fieldClass} placeholder="Office or room" /></label>
-          <label className="text-sm font-medium text-slate-700">Meeting URL<input type="url" name="meetingUrl" value={form.meetingUrl} onChange={update} className={fieldClass} placeholder="https://…" /></label>
+          {form.appointmentType === "IN_PERSON" ? <label className="text-sm font-medium text-slate-700 sm:col-span-2">Location<select required name="locationId" value={form.locationId} onChange={update} className={fieldClass}><option value="">Choose an office</option>{(scheduling?.settings?.locations || []).map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label> : null}
+          {form.appointmentType === "PHONE" ? <p className="rounded-xl bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-800 sm:col-span-2">{agency?.name || "Your team"} will call {lead.phone || "the lead’s saved phone number"}{scheduling?.settings?.phoneCallerId ? ` from ${scheduling.settings.phoneCallerId}` : ""}. The lead must have a valid phone number.</p> : null}
           <label className="text-sm font-medium text-slate-700">Fee (CAD)<input type="number" min="0" step="0.01" name="fee" value={form.fee} onChange={update} className={fieldClass} placeholder="0.00" /></label>
           <label className="text-sm font-medium text-slate-700">Payment<select name="paymentStatus" value={form.paymentStatus} onChange={update} className={fieldClass}><option value="UNPAID">Unpaid</option><option value="PAID">Paid</option><option value="WAIVED">Waived</option><option value="REFUNDED">Refunded</option></select></label>
           <label className="text-sm font-medium text-slate-700 sm:col-span-2">Notes<textarea name="notes" value={form.notes} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} /></label>
         </div>
-        <footer className="flex justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4"><button type="button" onClick={onClose} className="h-10 rounded-full px-5 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancel</button><button disabled={saving || !consultants.length} className="h-10 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50">{saving ? "Scheduling…" : "Schedule consultation"}</button></footer>
+        <footer className="flex justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4"><button type="button" onClick={onClose} className="h-10 rounded-full px-5 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancel</button><button disabled={saving || !consultants.length || (form.appointmentType === "PHONE" && !lead.phone) || (form.appointmentType === "ZOOM" && !zoomMappedIds.has(form.consultantUserId))} className="h-10 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:opacity-50">{saving ? "Scheduling…" : "Schedule consultation"}</button></footer>
       </form>
     </div>
   );

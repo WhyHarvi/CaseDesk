@@ -29,6 +29,7 @@ import bookingRoutes from "./routes/bookingRoutes.js";
 import publicBookingRoutes from "./routes/publicBookingRoutes.js";
 import quickbooksRoutes from "./routes/quickbooksRoutes.js";
 import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
+import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
 import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
@@ -75,6 +76,12 @@ import {
 import prisma from "./services/prisma/client.js";
 import { requestContext, secureHeaders } from "./middleware/productionSecurity.js";
 import { logger } from "./services/logger.js";
+import { startAppointmentMeetingWorker, stopAppointmentMeetingWorker } from "./services/appointmentMeetingService.js";
+import {
+  startZoomConnectionMaintenance,
+  stopZoomConnectionMaintenance,
+  zoomConfigured,
+} from "./services/zoomService.js";
 
 dotenv.config();
 
@@ -118,6 +125,7 @@ app.use("/api/public/lead-intake", leadPublicRoutes);
 app.use("/api/public/booking", publicBookingRoutes);
 app.use("/api/quickbooks", quickbooksRoutes);
 app.use("/api/quickbooks/webhook", quickbooksWebhookRoutes);
+app.use("/api/zoom", zoomRoutes);
 app.use("/api/mailboxes", personalMailboxRoutes);
 app.use("/api/lead-connectors/website", leadWebsiteRoutes);
 app.use("/api/lead-connectors", leadProviderRoutes);
@@ -170,6 +178,11 @@ const server = app.listen(port, () => {
       detail: "QBO_WEBHOOK_VERIFIER_TOKEN is not set — all QuickBooks webhook deliveries will be rejected with 401 until it matches the token registered in the Intuit developer dashboard.",
     });
   }
+  if (!zoomConfigured()) {
+    logger.warn("server.zoom_not_configured", {
+      detail: "Zoom booking is unavailable until ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and MAIL_SETTINGS_ENCRYPTION_KEY are all configured.",
+    });
+  }
   startFormRevisionMonitor();
   startCommunicationOutboxWorker();
   startInboundMailSync();
@@ -179,6 +192,8 @@ const server = app.listen(port, () => {
   startPaymentScheduleWorker();
   startPaymentHoldExpiryWorker();
   startQuickBooksWebhookWorker();
+  startAppointmentMeetingWorker();
+  startZoomConnectionMaintenance();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
   startAutomatedReminderWorker();
@@ -199,6 +214,8 @@ async function shutdown(signal) {
   stopPaymentScheduleWorker();
   stopPaymentHoldExpiryWorker();
   stopQuickBooksWebhookWorker();
+  stopAppointmentMeetingWorker();
+  stopZoomConnectionMaintenance();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();
   stopAutomatedReminderWorker();

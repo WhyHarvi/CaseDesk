@@ -83,6 +83,26 @@ export async function sendBookingTestEmail(kind, messageTemplates) {
   return response.data.data;
 }
 
+export async function getZoomStatus() {
+  const response = await api.get("/zoom/status", { cache: false });
+  return response.data.data;
+}
+
+export async function startZoomConnect() {
+  const response = await api.post("/zoom/connect");
+  return response.data.data;
+}
+
+export async function updateZoomMappings(mappings) {
+  const response = await api.put("/zoom/mappings", { mappings });
+  return response.data.data;
+}
+
+export async function disconnectZoom() {
+  const response = await api.post("/zoom/disconnect");
+  return response.data.data;
+}
+
 export async function convertAppointmentToClient(id) {
   const response = await api.post(`/booking/appointments/${id}/convert-client`);
   return response.data.data;
@@ -93,10 +113,12 @@ export async function updateBookingAppointmentStatus(id, status, reason) {
   return response.data.data;
 }
 
-export async function getAvailability({ from, to, durationMinutes, assignedToId, sessionTypeId }) {
+export async function getAvailability({ from, to, durationMinutes, assignedToId, sessionTypeId, meetingMode, locationId }) {
   const params = new URLSearchParams({ from, to, durationMinutes: String(durationMinutes) });
   if (assignedToId) params.set("assignedToId", assignedToId);
   if (sessionTypeId) params.set("sessionTypeId", sessionTypeId);
+  if (meetingMode) params.set("meetingMode", meetingMode);
+  if (locationId) params.set("locationId", locationId);
   const response = await api.get(`/booking/availability?${params.toString()}`);
   return response.data.data;
 }
@@ -137,11 +159,12 @@ export function getPublicBookingAvatarUrl(token) {
   return `${base}/public/booking/${encodeURIComponent(token)}/avatar`;
 }
 
-export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken, locationId }) {
+export async function getPublicAvailability(token, { sessionTypeId, consultantId, from, to, offerToken, locationId, meetingMode }) {
   const params = new URLSearchParams({ sessionTypeId, from, to });
   if (consultantId) params.set("consultantId", consultantId);
   if (offerToken) params.set("offerToken", offerToken);
   if (locationId) params.set("locationId", locationId);
+  if (meetingMode) params.set("meetingMode", meetingMode);
   const response = await api.get(`/public/booking/${token}/availability?${params.toString()}`);
   return response.data.data;
 }
@@ -181,8 +204,10 @@ export async function getManagedBooking(manageToken) {
   return response.data.data;
 }
 
-export async function getManagedAvailability(manageToken, { from, to }) {
+export async function getManagedAvailability(manageToken, { from, to, meetingMode, locationId }) {
   const params = new URLSearchParams({ from, to });
+  if (meetingMode) params.set("meetingMode", meetingMode);
+  if (locationId) params.set("locationId", locationId);
   const response = await api.get(`/public/booking/manage/${manageToken}/availability?${params.toString()}`);
   return response.data.data;
 }
