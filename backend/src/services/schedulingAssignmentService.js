@@ -1,6 +1,7 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { assertSlotAvailable, localDateKey, localDateTimeToUtc } from "./bookingAvailabilityService.js";
+import { meetingModesInSameCapacityGroup } from "./bookingMeetingModeService.js";
 
 function preferenceAllows(user, publicOnly) {
   const preference = user.schedulingPreference;
@@ -94,6 +95,12 @@ export async function chooseAppointmentAssignee({
         // whose session type explicitly overrides that buffer to zero.
         startsAt: { lt: end },
         endsAt: { gt: start },
+        // Without this, a coarse hit here excludes a staff member from
+        // appointmentAvailable below before the meetingMode-aware
+        // assertSlotAvailable check ever runs on them — silently
+        // reinstating "every mode blocks every mode" regardless of that
+        // later check being correct.
+        ...(meetingMode ? { meetingMode: { in: meetingModesInSameCapacityGroup(meetingMode) } } : {}),
       },
       select: { assignedToId: true, startsAt: true, endsAt: true },
     }),

@@ -2,6 +2,8 @@ import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from
 import {
   Banknote,
   CalendarClock,
+  Check,
+  ChevronDown,
   ExternalLink,
   HandCoins,
   Landmark,
@@ -11,7 +13,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { getPaymentsOverview, getPaymentsOverviewSummary } from "../api/paymentsOverviewApi";
 
@@ -361,6 +363,67 @@ function ChartCard({ title, subtitle, children, className, delay = 0 }) {
 
 const filterControl = "rounded-2xl border border-slate-200/80 bg-white/80 px-3.5 py-2.5 text-sm font-medium text-slate-700 shadow-sm outline-none backdrop-blur transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
 
+// A native <select>'s open dropdown is rendered by the OS, not the page —
+// most browsers (Safari in particular) ignore background/text-color CSS on
+// <option> entirely, so it can never actually match the glass styling
+// everything else on this page uses. This renders the whole list ourselves.
+function FilterDropdown({ value, onChange, options, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleClickOutside(event) {
+      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const selected = options.find((option) => option.value === value);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={cx(filterControl, "flex min-w-[150px] items-center gap-2 pr-9 text-left")}
+      >
+        <span className="truncate">{selected ? selected.label : placeholder}</span>
+        <ChevronDown className={cx("pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 transition-transform", open && "rotate-180")} />
+      </button>
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15 }}
+            className="absolute left-0 top-[calc(100%+6px)] z-20 min-w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.14)]"
+          >
+            <div className="max-h-64 overflow-y-auto p-1.5">
+              {options.map((option) => (
+                <button
+                  key={option.value || "all"}
+                  type="button"
+                  onClick={() => { onChange(option.value); setOpen(false); }}
+                  className={cx(
+                    "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium whitespace-nowrap transition-colors",
+                    option.value === value ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {option.value === value ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export default function Payments() {
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
@@ -477,14 +540,18 @@ export default function Payments() {
                 className={cx(filterControl, "w-full pl-10")}
               />
             </div>
-            <select value={status} onChange={(event) => setStatus(event.target.value)} className={filterControl}>
-              <option value="" className="bg-white text-slate-700">All statuses</option>
-              {Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value} className="bg-white text-slate-700">{label}</option>)}
-            </select>
-            <select value={source} onChange={(event) => setSource(event.target.value)} className={filterControl}>
-              <option value="" className="bg-white text-slate-700">All types</option>
-              {Object.entries(SOURCE_ROW_LABEL).map(([value, label]) => <option key={value} value={value} className="bg-white text-slate-700">{label}</option>)}
-            </select>
+            <FilterDropdown
+              value={status}
+              onChange={setStatus}
+              placeholder="All statuses"
+              options={[{ value: "", label: "All statuses" }, ...Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))]}
+            />
+            <FilterDropdown
+              value={source}
+              onChange={setSource}
+              placeholder="All types"
+              options={[{ value: "", label: "All types" }, ...Object.entries(SOURCE_ROW_LABEL).map(([value, label]) => ({ value, label }))]}
+            />
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className={filterControl} />
             <span className="text-xs text-slate-400">to</span>
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className={filterControl} />
