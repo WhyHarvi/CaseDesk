@@ -18,26 +18,31 @@ const CONNECTION_MAINTENANCE_INTERVAL_MS = 24 * 60 * 60_000;
 const CONNECTION_REFRESH_AFTER_MS = 30 * 24 * 60 * 60_000;
 let connectionMaintenanceTimer = null;
 
+// Org-wide ":admin" scopes (list every user in the account, act as host on
+// their behalf) only exist for Zoom accounts with an actual organization —
+// Zoom won't even offer them to a single-user account, since there's no one
+// else to administer. This app connects one Zoom user at a time (the
+// connecting admin acts as their own meeting host — see listZoomUsers/
+// createZoomMeeting), so the self-scoped, non-admin names are the real
+// requirement. The admin variants are kept as alternatives so a future
+// Business/Enterprise upgrade with multiple licensed users keeps working
+// without another code change.
 const REQUIRED_ZOOM_SCOPE_GROUPS = [
   {
-    capability: "read the connected Zoom administrator",
-    scopes: ["user:read:user:admin", "user:read:admin"],
-  },
-  {
-    capability: "list organization Zoom users",
-    scopes: ["user:read:list_users:admin", "user:read:admin"],
+    capability: "read the connected Zoom user",
+    scopes: ["user:read:user", "user:read:user:admin", "user:read:admin"],
   },
   {
     capability: "create Zoom meetings",
-    scopes: ["meeting:write:meeting:admin", "meeting:write:admin"],
+    scopes: ["meeting:write:meeting", "meeting:write:meeting:admin", "meeting:write:admin"],
   },
   {
     capability: "update Zoom meetings",
-    scopes: ["meeting:update:meeting:admin", "meeting:write:admin"],
+    scopes: ["meeting:update:meeting", "meeting:update:meeting:admin", "meeting:write:admin"],
   },
   {
     capability: "delete Zoom meetings",
-    scopes: ["meeting:delete:meeting:admin", "meeting:write:admin"],
+    scopes: ["meeting:delete:meeting", "meeting:delete:meeting:admin", "meeting:write:admin"],
   },
 ];
 
@@ -402,23 +407,24 @@ export async function zoomRequest(agencyId, { method = "GET", path, body = null,
   return result.payload;
 }
 
+// GET /users (list every user in the account) requires an org-admin scope
+// that a single-user Zoom account is never offered — see
+// REQUIRED_ZOOM_SCOPE_GROUPS. With only the self-scoped user:read:user
+// grant, /users/me is the only user this token can ever read, so that's the
+// entire "host list" for this connection. Kept as an array (same shape the
+// admin-list version returned) so autoMapZoomUsers/updateZoomMappings/
+// getZoomStatus don't need to know which mode is active — they just see a
+// one-item list instead of an org-wide one.
 export async function listZoomUsers(agencyId) {
-  const users = [];
-  let nextPageToken = "";
-  do {
-    const params = new URLSearchParams({ status: "active", page_size: "300" });
-    if (nextPageToken) params.set("next_page_token", nextPageToken);
-    const payload = await zoomRequest(agencyId, { path: `/users?${params.toString()}` });
-    users.push(...(Array.isArray(payload?.users) ? payload.users : []));
-    nextPageToken = String(payload?.next_page_token || "");
-  } while (nextPageToken && users.length < 3000);
-  return users.map((user) => ({
+  const user = await zoomRequest(agencyId, { path: "/users/me" });
+  if (!user?.id) return [];
+  return [{
     id: String(user.id),
     email: user.email || "",
     name: user.display_name || [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email || "Zoom user",
     status: user.status || "active",
     licenseType: Number(user.type) === 2 ? "Licensed" : Number(user.type) === 1 ? "Basic" : "Unknown",
-  }));
+  }];
 }
 
 export async function activeZoomCommitments(agencyId, db = prisma) {
@@ -559,12 +565,18 @@ export function zoomEndpointValidationResponse(plainToken) {
   };
 }
 
-export async function createZoomMeeting(agencyId, { hostUserId, appointment, timezone }) {
+// hostUserId is accepted (and still stored on ZoomHostMapping) for when
+// this eventually supports a multi-user Business/Enterprise connection, but
+// a self-scoped token can only ever act on the literal alias "me" — even
+// its own real user ID in that path segment gets rejected. Since
+// listZoomUsers only ever returns the connected user themselves right now,
+// "me" and hostUserId always refer to the same account anyway.
+export async function createZoomMeeting(agencyId, { appointment, timezone }) {
   const duration = Math.max(1, Math.round((new Date(appointment.endsAt) - new Date(appointment.startsAt)) / 60_000));
   const agencyName = appointment.agency?.legalName || appointment.agency?.name || "CaseDesk";
   return zoomRequest(agencyId, {
     method: "POST",
-    path: `/users/${encodeURIComponent(hostUserId)}/meetings`,
+    path: "/users/me/meetings",
     body: {
       topic: `${agencyName} — ${appointment.subject || "Consultation"}`,
       type: 2,

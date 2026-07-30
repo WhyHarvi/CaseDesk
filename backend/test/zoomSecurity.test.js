@@ -67,20 +67,24 @@ test("Zoom OAuth state is signed and rejects tampering", () => {
 });
 
 test("Zoom OAuth rejects incomplete scopes before accepting bookings", () => {
+  // Self-scoped (non-admin) names are the primary requirement — a
+  // single-user Zoom account is never offered the ":admin" scopes at all,
+  // since there's no organization for them to administer.
   assert.throws(
-    () => assertZoomGrantedScopes("user:read:user:admin user:read:list_users:admin meeting:write:meeting:admin"),
+    () => assertZoomGrantedScopes("user:read:user meeting:write:meeting"),
     (error) => error.code === "ZOOM_SCOPES_MISSING" && /update Zoom meetings/.test(error.message) && /delete Zoom meetings/.test(error.message),
   );
   assert.equal(
     assertZoomGrantedScopes([
-      "user:read:user:admin",
-      "user:read:list_users:admin",
-      "meeting:write:meeting:admin",
-      "meeting:update:meeting:admin",
-      "meeting:delete:meeting:admin",
+      "user:read:user",
+      "meeting:write:meeting",
+      "meeting:update:meeting",
+      "meeting:delete:meeting",
     ].join(" ")),
-    "meeting:delete:meeting:admin meeting:update:meeting:admin meeting:write:meeting:admin user:read:list_users:admin user:read:user:admin",
+    "meeting:delete:meeting meeting:update:meeting meeting:write:meeting user:read:user",
   );
+  // The ":admin" scopes remain accepted as an alternative for a future
+  // Business/Enterprise, multi-user Zoom connection.
   assert.equal(
     assertZoomGrantedScopes("user:read:admin meeting:write:admin"),
     "meeting:write:admin user:read:admin",

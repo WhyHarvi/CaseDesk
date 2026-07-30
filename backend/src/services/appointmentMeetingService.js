@@ -175,7 +175,6 @@ async function processSync(job, appointment) {
   }
   if (!meetingId) {
     const meeting = await createZoomMeeting(job.agencyId, {
-      hostUserId: mapping.zoomUserId,
       appointment,
       timezone: settings?.timezone,
     });
