@@ -59,6 +59,14 @@ export async function listLeadStaff(req, res) {
   res.json({ data: await service.listLeadStaff(req) });
 }
 
+export async function getLeadSettings(req, res) {
+  res.json({ data: await service.getLeadSettings(req) });
+}
+
+export async function updateLeadSettings(req, res) {
+  res.json({ data: await service.updateLeadSettings(req) });
+}
+
 export async function qualifyLead(req, res) {
   res.json({ data: await service.qualifyLead(req) });
 }

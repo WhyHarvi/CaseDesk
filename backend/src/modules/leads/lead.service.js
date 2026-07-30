@@ -141,6 +141,25 @@ export async function listLeadStaff(req) {
   });
 }
 
+export async function getLeadSettings(req) {
+  return prisma.leadSettings.upsert({
+    where: { agencyId: req.auth.agencyId },
+    create: { agencyId: req.auth.agencyId },
+    update: {},
+  });
+}
+
+export async function updateLeadSettings(req) {
+  if (typeof req.body?.welcomeEmailEnabled !== "boolean") {
+    throw createHttpError(400, "welcomeEmailEnabled must be true or false.", "VALIDATION_ERROR");
+  }
+  return prisma.leadSettings.upsert({
+    where: { agencyId: req.auth.agencyId },
+    create: { agencyId: req.auth.agencyId, welcomeEmailEnabled: req.body.welcomeEmailEnabled },
+    update: { welcomeEmailEnabled: req.body.welcomeEmailEnabled },
+  });
+}
+
 async function requireLeadStaff(tx, agencyId, userId) {
   const user = await tx.user.findFirst({
     where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } },

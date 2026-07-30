@@ -52,6 +52,40 @@ export function adaptProviderPayload(provider, rawPayload = {}) {
     const source = direct(payload);
     return { fullName: text(source.fullName || source.callerName || source.name), phone: text(source.phone || source.from || source.callerNumber || source.senderAddress), email: text(source.email), immigrationInterest: text(source.immigrationInterest), initialMessage: text(source.body || source.text || source.message || source.notes) };
   }
+  if (provider === "WEBSITE") {
+    const body = direct(payload);
+    // Shaped for CHK's site chatbot ("Aria"): { type, id, ref, status, heat,
+    // ts, ip, source, campaign, service, name, pref, contact, page, answers,
+    // utm }. contact is a single field (email or phone) — detected by
+    // content, not by trusting pref, which is the preferred contact METHOD
+    // (e.g. "WhatsApp"/"Phone call"), not a time — there's no Lead field
+    // for that, so it's folded into the attribution note below instead.
+    const contact = text(body.contact);
+    const isEmail = Boolean(contact?.includes("@"));
+    const answers = Array.isArray(body.answers) ? body.answers : [];
+    const transcript = answers.length
+      ? answers.map((item) => `Q: ${text(item.q || item.k) || "—"}\nA: ${text(item.a) || "—"}`).join("\n\n")
+      : null;
+    const attribution = [
+      body.ref ? `Reference: ${body.ref}` : null,
+      body.source ? `Source: ${body.source}` : null,
+      body.campaign ? `Campaign: ${body.campaign}` : null,
+      body.pref ? `Preferred contact method: ${body.pref}` : null,
+      body.page ? `Page: ${body.page}` : null,
+      body.utm ? `UTM: ${typeof body.utm === "string" ? body.utm : JSON.stringify(body.utm)}` : null,
+    ].filter(Boolean).join("\n");
+    const heat = String(body.heat || "").toUpperCase();
+    return {
+      fullName: text(body.name),
+      phone: !isEmail ? contact : null,
+      email: isEmail ? contact : null,
+      immigrationInterest: text(body.service),
+      initialMessage: text([attribution, transcript].filter(Boolean).join("\n\n")),
+      // Not part of normalizeIncomingLead's fixed field set — read directly
+      // by the intake worker, since LeadTemperature has no home there.
+      temperature: ["COLD", "WARM", "HOT"].includes(heat) ? heat : null,
+    };
+  }
   return direct(payload);
 }
 

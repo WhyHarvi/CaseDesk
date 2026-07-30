@@ -19,10 +19,14 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
-import { getCaseInformationWorkspace, setCaseInformationSectionEnabled } from "../../api/caseInformationApi";
+import { lazyWithRetry } from "../../services/lazyWithRetry";
+import {
+  getCaseInformationWorkspace,
+  setCaseInformationSectionEnabled,
+} from "../../api/caseInformationApi";
 import {
   formatCurrency,
   formatDate,
@@ -43,7 +47,10 @@ import AgreementsLettersWorkspace from "./AgreementsLettersWorkspace";
 import AppointmentsWorkspace from "./AppointmentsWorkspace";
 import CaseBillingWorkspace from "./CaseBillingWorkspace";
 import CasePaymentScheduleWorkspace from "./CasePaymentScheduleWorkspace";
-const CommunicationWorkspace = lazy(() => import("./CommunicationWorkspace"));
+const CommunicationWorkspace = lazyWithRetry(
+  () => import("./CommunicationWorkspace"),
+  "case-communication-workspace",
+);
 
 const caseWorkspaceTabs = [
   "PROFILE",
@@ -81,8 +88,16 @@ const workspaceTabFromSlug = (slug) =>
 // without duplicating any of the completion logic on the frontend (that
 // comes from GET /cases/:id/information-workspace, Phase 3's API).
 const profileDetailTabs = [
-  { label: "APPLICANT DETAILS", icon: UserRound, sectionKey: "applicantDetails" },
-  { label: "SPOUSE DETAILS", icon: HeartHandshake, sectionKey: "spouseDetails" },
+  {
+    label: "APPLICANT DETAILS",
+    icon: UserRound,
+    sectionKey: "applicantDetails",
+  },
+  {
+    label: "SPOUSE DETAILS",
+    icon: HeartHandshake,
+    sectionKey: "spouseDetails",
+  },
   { label: "CHILDREN", icon: Baby, sectionKey: "children" },
   { label: "SIBLING DETAILS", icon: UserPlus, sectionKey: "siblingDetails" },
   { label: "PARENT DETAILS", icon: Users, sectionKey: "parentDetails" },
@@ -91,12 +106,28 @@ const profileDetailTabs = [
   { label: "TRAVEL HISTORY", icon: Plane, sectionKey: "travelHistory" },
   { label: "IDENTITY & PERMITS", icon: IdCard, sectionKey: "identityPermits" },
   { label: "CANADIAN STATUS", icon: IdCard, sectionKey: "canadianStatus" },
-  { label: "BACKGROUND & ADMISSIBILITY", icon: FileText, sectionKey: "backgroundAdmissibility" },
-  { label: "RELATIONSHIP & SPONSORSHIP", icon: HeartHandshake, sectionKey: "relationshipSponsorship" },
+  {
+    label: "BACKGROUND & ADMISSIBILITY",
+    icon: FileText,
+    sectionKey: "backgroundAdmissibility",
+  },
+  {
+    label: "RELATIONSHIP & SPONSORSHIP",
+    icon: HeartHandshake,
+    sectionKey: "relationshipSponsorship",
+  },
   { label: "PROGRAM DETAILS", icon: FileText, sectionKey: "programDetails" },
-  { label: "HUMANITARIAN & CITIZENSHIP", icon: Users, sectionKey: "humanitarianCitizenship" },
+  {
+    label: "HUMANITARIAN & CITIZENSHIP",
+    icon: Users,
+    sectionKey: "humanitarianCitizenship",
+  },
   { label: "REHABILITATION", icon: History, sectionKey: "rehabilitation" },
-  { label: "REFUGEE & PROTECTION", icon: FileText, sectionKey: "refugeeProtection" },
+  {
+    label: "REFUGEE & PROTECTION",
+    icon: FileText,
+    sectionKey: "refugeeProtection",
+  },
 ];
 
 const SECTION_STATUS_DOT_CLASS = {
@@ -1670,9 +1701,12 @@ function ProfileDetailsGrid({
   const [addSectionMenuOpen, setAddSectionMenuOpen] = useState(false);
   const [addingSectionKey, setAddingSectionKey] = useState(null);
   const mountedRef = useRef(true);
-  useEffect(() => () => {
-    mountedRef.current = false;
-  }, []);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
 
   const reloadSectionStatus = () => {
     setSectionStatusLoaded(false);
@@ -1706,12 +1740,16 @@ function ProfileDetailsGrid({
     const status = sectionStatusByKey[tab.sectionKey];
     return !status || status.isVisible !== false;
   });
-  const hiddenDetailTabs = profileDetailTabs.filter((tab) => !visibleDetailTabs.includes(tab));
+  const hiddenDetailTabs = profileDetailTabs.filter(
+    (tab) => !visibleDetailTabs.includes(tab),
+  );
 
   useEffect(() => {
     if (!sectionStatusLoaded) return;
     if (visibleDetailTabs.some((tab) => tab.label === activeDetailTab)) return;
-    setActiveDetailTab(visibleDetailTabs[0]?.label || profileDetailTabs[0].label);
+    setActiveDetailTab(
+      visibleDetailTabs[0]?.label || profileDetailTabs[0].label,
+    );
   }, [sectionStatusLoaded, activeDetailTab]);
 
   async function addSection(tab) {
@@ -2978,7 +3016,12 @@ function ProfileDetailsGrid({
             <div className="mb-2 flex items-center gap-2 rounded-[0.85rem] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
               <span className="flex-1">Section status unavailable</span>
-              <button type="button" onClick={reloadSectionStatus} className="shrink-0 rounded-full p-1 hover:bg-amber-100" aria-label="Retry">
+              <button
+                type="button"
+                onClick={reloadSectionStatus}
+                className="shrink-0 rounded-full p-1 hover:bg-amber-100"
+                aria-label="Retry"
+              >
                 <RefreshCw className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -2989,7 +3032,9 @@ function ProfileDetailsGrid({
               const isActive = activeDetailTab === tab.label;
               const sectionStatus = sectionStatusByKey[tab.sectionKey]?.status;
               const dotClass = SECTION_STATUS_DOT_CLASS[sectionStatus];
-              const isRequiredSection = sectionStatusByKey[tab.sectionKey]?.requirementLevel === "required";
+              const isRequiredSection =
+                sectionStatusByKey[tab.sectionKey]?.requirementLevel ===
+                "required";
               const isApplicantTab = tab.label === "APPLICANT DETAILS";
               const isSpouseTab = tab.label === "SPOUSE DETAILS";
               const isApplicantMenuOpen =
@@ -3044,7 +3089,10 @@ function ProfileDetailsGrid({
                       </span>
                     ) : null}
                     {dotClass ? (
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} title={sectionStatus.replace("_", " ")} />
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
+                        title={sectionStatus.replace("_", " ")}
+                      />
                     ) : null}
                     {isApplicantTab || isSpouseTab ? (
                       <ChevronDown
@@ -3176,8 +3224,12 @@ function ProfileDetailsGrid({
                             className="flex w-full items-center gap-2 rounded-[0.75rem] px-3 py-2 text-left text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-900 disabled:opacity-60"
                           >
                             <Icon className="h-3.5 w-3.5 shrink-0" />
-                            <span className="flex-1 whitespace-nowrap">{tab.label}</span>
-                            {isAdding ? <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" /> : null}
+                            <span className="flex-1 whitespace-nowrap">
+                              {tab.label}
+                            </span>
+                            {isAdding ? (
+                              <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
+                            ) : null}
                           </button>
                         );
                       })}

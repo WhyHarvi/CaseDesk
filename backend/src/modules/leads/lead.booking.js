@@ -3,7 +3,6 @@ import { nextLeadNumber } from "./lead.repository.js";
 import { nextConsultationAction } from "./lead.service.js";
 
 const STAGE_ORDER = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
-const BOOKING_SOURCE_NAME = "Online Booking (Paid Consultation)";
 
 function normalizePhoneSafe(phone) {
   if (!phone) return null;
@@ -15,32 +14,46 @@ function normalizePhoneSafe(phone) {
   }
 }
 
-async function ensureBookingLeadSource(tx, agencyId) {
+async function ensureBookingLeadSource(tx, agencyId, name) {
   return tx.leadSource.upsert({
-    where: { agencyId_name: { agencyId, name: BOOKING_SOURCE_NAME } },
-    create: { agencyId, name: BOOKING_SOURCE_NAME, type: "WEBSITE" },
+    where: { agencyId_name: { agencyId, name } },
+    create: { agencyId, name, type: "WEBSITE" },
     update: {},
   });
 }
 
 /**
- * Called once a BookingPaymentHold's payment is confirmed and its
- * Appointment has been created. Not modeled on createLead(req) — that
- * function needs req.body-shaped input and throws on contact duplicates,
- * both wrong for a system-triggered creation firing after money has
- * already changed hands. Modeled instead on lead.intake.worker.js's
- * processClaimed(): build the Lead/activity rows directly, with
- * non-throwing duplicate detection — link to an existing open lead or
- * attach an already-converted client instead of ever failing here.
+ * Called once a booked consultation is real and confirmed — either a paid
+ * BookingPaymentHold clearing (quickbooksWebhookService.js's
+ * confirmPaymentHold) or a free public booking completing outright
+ * (publicBookingController.js's createPublicBooking). Not modeled on
+ * createLead(req) — that function needs req.body-shaped input and throws
+ * on contact duplicates, both wrong for a system-triggered creation firing
+ * after a booking already exists. Modeled instead on
+ * lead.intake.worker.js's processClaimed(): build the Lead/activity rows
+ * directly, with non-throwing duplicate detection — link to an existing
+ * open lead or attach an already-converted client instead of ever failing
+ * here.
  */
-export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment }) {
-  const phoneNormalized = normalizePhoneSafe(hold.guestPhone);
-  const emailNormalized = hold.guestEmailNormalized;
+export async function createOrLinkLeadForConsultation(tx, {
+  agencyId,
+  appointment,
+  guestName,
+  guestEmail,
+  guestPhone,
+  paymentStatus = "UNPAID",
+  fee = null,
+  holdId = null,
+}) {
+  const phoneNormalized = normalizePhoneSafe(guestPhone);
+  const emailNormalized = guestEmail ? guestEmail.toLowerCase() : null;
+  const paid = paymentStatus === "PAID";
+  const sourceName = paid ? "Online Booking (Paid Consultation)" : "Online Booking (Free Consultation)";
 
-  const existingClient = await tx.client.findFirst({
-    where: { agencyId, email: { equals: hold.guestEmail, mode: "insensitive" } },
+  const existingClient = guestEmail ? await tx.client.findFirst({
+    where: { agencyId, email: { equals: guestEmail, mode: "insensitive" } },
     select: { id: true },
-  });
+  }) : null;
   if (existingClient) {
     await tx.appointment.update({ where: { id: appointment.id }, data: { clientId: existingClient.id } });
     return { clientId: existingClient.id, leadId: null };
@@ -65,30 +78,29 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
 
   let lead = existingLead;
   if (!lead) {
-    const source = await ensureBookingLeadSource(tx, agencyId);
+    const source = await ensureBookingLeadSource(tx, agencyId, sourceName);
     const leadNumber = await nextLeadNumber(tx, agencyId);
-    const nameParts = String(hold.guestName || "").trim().split(/\s+/);
+    const nameParts = String(guestName || "").trim().split(/\s+/);
     lead = await tx.lead.create({
       data: {
         agencyId,
         leadNumber,
-        firstName: nameParts[0] || hold.guestName,
+        firstName: nameParts[0] || guestName,
         lastName: nameParts.slice(1).join(" ") || null,
-        phone: hold.guestPhone,
+        phone: guestPhone,
         phoneNormalized,
-        email: hold.guestEmail,
+        email: guestEmail,
         emailNormalized,
-        ownerUserId: hold.assignedToId,
+        ownerUserId: appointment.assignedToId,
         originalSourceId: source.id,
         status: "OPEN",
         stage: "NEW",
         priority: "NORMAL",
         temperature: "WARM",
-        initialMessage: hold.notes || null,
         nextActionType: next.type,
         nextActionDescription: next.description,
         nextActionAt: next.at,
-        nextActionOwnerId: hold.assignedToId,
+        nextActionOwnerId: appointment.assignedToId,
       },
     });
     await tx.leadActivity.create({
@@ -98,13 +110,13 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
         activityType: "LEAD_CREATED",
         direction: "INTERNAL",
         channel: "WEBSITE",
-        title: "Lead created from a paid consultation booking",
-        metadata: { holdId: hold.id },
+        title: `Lead created from a ${paid ? "paid" : "free"} consultation booking`,
+        metadata: { holdId, appointmentId: appointment.id },
       },
     });
-    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, newStage: "NEW", reason: "Created from a paid consultation booking" } });
-    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, newOwnerId: hold.assignedToId, assignmentType: "SYSTEM", reason: "Assigned to the booked consultant" } });
-    await tx.activityLog.create({ data: { agencyId, action: "lead.created_from_paid_booking", details: `Created ${leadNumber} from a paid consultation booking`, entityType: "lead", entityId: lead.id, metadata: { holdId: hold.id } } });
+    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, newStage: "NEW", reason: `Created from a ${paid ? "paid" : "free"} consultation booking` } });
+    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, newOwnerId: appointment.assignedToId, assignmentType: "SYSTEM", reason: "Assigned to the booked consultant" } });
+    await tx.activityLog.create({ data: { agencyId, action: "lead.created_from_booking", details: `Created ${leadNumber} from a ${paid ? "paid" : "free"} consultation booking`, entityType: "lead", entityId: lead.id, metadata: { holdId, appointmentId: appointment.id } } });
   }
 
   await tx.appointment.update({ where: { id: appointment.id }, data: { leadId: lead.id } });
@@ -112,8 +124,8 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
     data: {
       agencyId,
       leadId: lead.id,
-      consultantUserId: hold.assignedToId,
-      createdById: hold.assignedToId,
+      consultantUserId: appointment.assignedToId,
+      createdById: appointment.assignedToId,
       appointmentId: appointment.id,
       startAt: appointment.startsAt,
       endAt: appointment.endsAt,
@@ -123,8 +135,8 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
           ? "PHONE"
           : "IN_PERSON",
       status: "SCHEDULED",
-      fee: hold.amount,
-      paymentStatus: "PAID",
+      fee,
+      paymentStatus,
     },
   });
 
@@ -136,14 +148,14 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
       nextActionType: next.type,
       nextActionDescription: next.description,
       nextActionAt: next.at,
-      nextActionOwnerId: hold.assignedToId,
+      nextActionOwnerId: appointment.assignedToId,
       version: { increment: 1 },
     },
   });
   if (advanceStage) {
-    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "CONSULTATION_BOOKED", reason: "Paid consultation booked and confirmed" } });
+    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "CONSULTATION_BOOKED", reason: `${paid ? "Paid" : "Free"} consultation booked and confirmed` } });
   }
-  await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: hold.assignedToId, type: next.type, description: next.description, dueAt: next.at } });
+  await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: appointment.assignedToId, type: next.type, description: next.description, dueAt: next.at } });
   await tx.leadActivity.create({
     data: {
       agencyId,
@@ -151,8 +163,8 @@ export async function createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, 
       activityType: "CONSULTATION_BOOKED",
       direction: "INTERNAL",
       channel: "SYSTEM",
-      title: "Paid consultation confirmed",
-      metadata: { consultationId: consultation.id, holdId: hold.id },
+      title: `${paid ? "Paid" : "Free"} consultation confirmed`,
+      metadata: { consultationId: consultation.id, holdId, appointmentId: appointment.id },
     },
   });
 

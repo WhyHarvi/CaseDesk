@@ -527,6 +527,7 @@ model Agency {
   correspondenceTemplateVersions CorrespondenceTemplateVersion[]
   appointments                   Appointment[]
   bookingSettings                BookingSettings?
+  leadSettings                   LeadSettings?
   zoomConnection                 AgencyZoomConnection?
   zoomHostMappings               ZoomHostMapping[]
   appointmentMeetingJobs         AppointmentMeetingJob[]
@@ -2882,6 +2883,20 @@ model AgencyClientSequence {
   agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("agency_client_sequences")
+}
+
+model LeadSettings {
+  id                  String   @id @default(uuid())
+  agencyId            String   @unique @map("agency_id")
+  // Sent once, right after a genuinely fresh inbound lead is created
+  // (website chat widget, connectors, public forms) — not for CSV
+  // imports or leads created from a booking that already happened.
+  welcomeEmailEnabled Boolean  @default(true) @map("welcome_email_enabled")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  agency              Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("lead_settings")
 }
 
 model LeadSource {

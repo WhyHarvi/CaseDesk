@@ -6,6 +6,7 @@ import { enrichProviderPayload } from "./lead.provider.enrichment.js";
 import { logger } from "../../services/logger.js";
 import { adminRecipientIds, notifyUsers } from "../../services/notificationService.js";
 import { invalidateDashboardCache } from "../../services/dashboardCache.js";
+import { leadWelcomeEmailEligible, sendLeadWelcomeEmail } from "./lead.welcomeEmail.service.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_INTAKE_POLL_MS) || 2000, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.LEAD_INTAKE_BATCH_SIZE) || 10, 1), 50);
@@ -48,7 +49,11 @@ async function processClaimed(eventId) {
     const mapping = event.channel === "CSV_IMPORT" ? settings.mapping : null;
     const enrichedPayload = event.sourceConnection ? await enrichProviderPayload(event.sourceConnection, event.rawPayload) : event.rawPayload;
     const rawPayload = event.sourceConnection ? adaptProviderPayload(event.sourceConnection.provider, enrichedPayload) : event.rawPayload;
-    const normalized = normalizeIncomingLead(rawPayload, mapping, { allowEmailOnly: event.sourceConnection?.provider === "EMAIL" });
+    // Website contact forms commonly collect only an email (or only a
+    // phone) — requiring both, the way most other providers' structured
+    // lead-form data allows us to, would silently reject valid leads.
+    const allowEmailOnly = ["EMAIL", "WEBSITE"].includes(event.sourceConnection?.provider);
+    const normalized = normalizeIncomingLead(rawPayload, mapping, { allowEmailOnly });
     if (normalized.errors.length) throw new Error(normalized.errors.join(" "));
     const duplicates = await findDuplicates(tx, event, normalized.data);
     if (duplicates.length) {
@@ -77,7 +82,12 @@ async function processClaimed(eventId) {
       country: normalized.data.country, province: normalized.data.province, preferredLanguage: normalized.data.preferredLanguage,
       currentImmigrationStatus: normalized.data.currentImmigrationStatus, immigrationInterest: normalized.data.immigrationInterest,
       ownerUserId, originalSourceId: event.sourceId, campaignId: event.campaignId, initialMessage: normalized.data.initialMessage,
-      status: "OPEN", stage: "NEW", priority: "NORMAL", temperature: "COLD",
+      // Every adapter output flows through normalizeIncomingLead, which has
+      // no concept of temperature — a provider adapter (currently only
+      // WEBSITE) can still set it by attaching a `temperature` field to its
+      // output; every other provider's adapted payload never has that key,
+      // so this stays "COLD" for them exactly as before.
+      status: "OPEN", stage: "NEW", priority: "NORMAL", temperature: rawPayload.temperature || "COLD",
       nextActionType: "CALL", nextActionDescription: "Contact the new lead", nextActionAt, nextActionOwnerId: ownerUserId, firstContactDueAt: nextActionAt,
     } });
     const activityChannel = event.channel === "WHATSAPP_BUSINESS" ? "WHATSAPP" : event.channel === "EMAIL_INTAKE" ? "EMAIL" : event.channel === "PHONE_PROVIDER" ? "PHONE" : ["PUBLIC_FORM", "WEBSITE_CONNECTOR", "META_LEAD_FORM", "GOOGLE_ADS_LEAD_FORM"].includes(event.channel) ? "WEBSITE" : "OTHER";
@@ -89,11 +99,14 @@ async function processClaimed(eventId) {
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });
     if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "PROCESSED", normalizedData: normalized.data, createdLeadId: lead.id } });
     await refreshBatch(tx, event.importBatchId);
-    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt };
+    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, firstName: lead.firstName };
   }, { maxWait: 10_000, timeout: 30_000 });
   if (result?.agencyId) invalidateDashboardCache(result.agencyId);
   if (result?.ownerUserId) {
     await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
+  }
+  if (result?.leadId && leadWelcomeEmailEligible(result.channel)) {
+    void sendLeadWelcomeEmail(result.agencyId, { id: result.leadId, email: result.email, firstName: result.firstName });
   }
 }
 

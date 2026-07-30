@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, useLocation } from "react-router-dom";
 import AppRoutes from "./routes/AppRoutes";
 import "./index.css";
 import faviconPng from "./assets/favicon_logo.png";
@@ -9,6 +9,17 @@ import { AuthProvider } from "./auth/AuthContext";
 import { NotificationProvider } from "./components/notifications/NotificationProvider";
 import NotificationPanel from "./components/notifications/NotificationPanel";
 import { queryClient } from "./services/queryClient";
+import RouteRecoveryBoundary from "./components/routing/RouteRecoveryBoundary";
+
+function RoutedApplication() {
+  const location = useLocation();
+
+  return (
+    <RouteRecoveryBoundary key={location.pathname}>
+      <AppRoutes />
+    </RouteRecoveryBoundary>
+  );
+}
 
 function AppShell() {
   useEffect(() => {
@@ -20,7 +31,9 @@ function AppShell() {
     ];
 
     document
-      .querySelectorAll("link[rel='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']")
+      .querySelectorAll(
+        "link[rel='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']",
+      )
       .forEach((node) => node.remove());
 
     iconLinks.forEach(({ rel, type, href }) => {
@@ -39,7 +52,7 @@ function AppShell() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <NotificationProvider>
-            <AppRoutes />
+            <RoutedApplication />
             <NotificationPanel />
           </NotificationProvider>
         </AuthProvider>
@@ -51,5 +64,5 @@ function AppShell() {
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <AppShell />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

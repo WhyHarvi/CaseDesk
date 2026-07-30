@@ -131,6 +131,14 @@ export async function receiveWebsiteEvent(req) {
   if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) throw createHttpError(403, "This website origin is not allowed.", "ORIGIN_NOT_ALLOWED");
   const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
   verifyWebsiteSignature({ rawBody, timestamp: req.get("x-casedesk-timestamp"), signature: req.get("x-casedesk-signature"), secret: decryptSecret(connection.signingSecretEncrypted) });
+  // Honeypot: a hidden form field a real visitor never fills in, only a
+  // bot filling every field would. Silently accept-but-discard rather than
+  // reject, mirroring parsePublicSubmission's bot handling — a 4xx here
+  // would just teach the bot which field to leave blank next time.
+  if (clean(req.body?.hp, 200) || clean(req.body?.website, 200)) {
+    await prisma.leadSourceConnection.update({ where: { id: connection.id }, data: { lastEventAt: new Date() } });
+    return { accepted: true, duplicate: false, reference: null };
+  }
   const externalId = clean(req.get("x-casedesk-event-id") || req.body?.externalId || req.body?.providerRecordId || req.body?.id, 300) || createHash("sha256").update(rawBody).digest("hex");
   const idempotencyKey = `website:${connection.id}:${externalId}`;
   try {

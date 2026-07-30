@@ -20,7 +20,12 @@ const fieldClass = "mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white
 
 export default function BookConsultationSheet({ lead, staff, onClose, onCreated }) {
   const { agency } = useAuth();
-  const consultants = staff.filter((person) => person.role === "consultant");
+  // Mirrors the backend's own acceptance rule for consultantUserId
+  // (lead.service.js's createConsultation) — admin or consultant, not
+  // consultant-only. An agency where the person taking consultations is
+  // an admin (e.g. a solo/owner-operator setup) would otherwise see an
+  // empty dropdown here even though the booking itself would succeed.
+  const consultants = staff.filter((person) => person.role === "consultant" || person.role === "admin");
   const preferredConsultant = consultants.some((person) => person.id === lead.ownerUserId) ? lead.ownerUserId : consultants[0]?.id;
   const [form, setForm] = useState(() => initialForm(preferredConsultant, agency?.timezone));
   const [saving, setSaving] = useState(false);

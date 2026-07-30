@@ -551,6 +551,26 @@ export async function recordWalkInManualPayment(agencyId, { appointmentId, metho
   return hold;
 }
 
+// Cancelling or no-showing an appointment that still has a pending
+// (unpaid) payment hold previously left that hold and its QuickBooks
+// invoice open forever — nothing ever revisited it once the appointment
+// itself was closed out. Called from the appointment cancel/status-update
+// paths for exactly those two outcomes; deliberately NOT called for
+// "Completed" — if the consultation actually happened, the fee is still
+// owed and the invoice should stay open for staff to collect or record.
+// Best-effort by design: a QuickBooks hiccup here must never block the
+// appointment status change itself.
+export async function voidOpenPaymentHoldForAppointment(agencyId, appointmentId) {
+  const hold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
+  if (!hold || hold.status !== "AwaitingPayment") return null;
+  if (hold.qbInvoiceId) {
+    await voidQuickBooksInvoice(agencyId, { id: hold.qbInvoiceId, syncToken: hold.qbSyncToken }).catch((error) => {
+      logger.warn("booking_payment_hold.void_on_appointment_closed_failed", { agencyId, holdId: hold.id, reason: error.message });
+    });
+  }
+  return prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Voided", voidedAt: new Date() } });
+}
+
 // ---------- Active-hold reconciliation ----------
 //
 // QuickBooks webhooks are the intended fast path for noticing a payment the

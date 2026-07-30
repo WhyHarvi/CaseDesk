@@ -12,7 +12,7 @@ import { lockSchedulingTransaction } from "./schedulingAssignmentService.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "./bookingNotificationService.js";
 import { appointmentReference, recordAppointmentEvent } from "./appointmentOperationsService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
-import { createOrLinkLeadForPaidConsultation } from "../modules/leads/lead.booking.js";
+import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
@@ -694,7 +694,16 @@ export async function confirmPaymentHold(agencyId, holdId) {
       // is either an existing client already (clientId is set) or a
       // walk-in staff is handling directly, not a lead to work.
       if (hold.source !== "WalkIn") {
-        await createOrLinkLeadForPaidConsultation(tx, { agencyId, hold, appointment: created });
+        await createOrLinkLeadForConsultation(tx, {
+          agencyId,
+          appointment: created,
+          guestName: hold.guestName,
+          guestEmail: hold.guestEmail,
+          guestPhone: hold.guestPhone,
+          paymentStatus: "PAID",
+          fee: hold.amount,
+          holdId: hold.id,
+        });
       }
       if (hold.meetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}` });

@@ -27,7 +27,7 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService } from "../services/bookingPaymentHoldService.js";
+import { createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -924,6 +924,7 @@ export async function cancelBookingAppointment(req, res) {
     });
     void processBookingMessageDeliveries();
     await Promise.all(cancelled.map((item) => offerWaitlistOpening(item).catch(() => {})));
+    await Promise.all(cancelled.map((item) => voidOpenPaymentHoldForAppointment(req.auth.agencyId, item.id)));
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_cancelled", details: `${series.length} recurring appointments cancelled` });
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...cancelled.find((item) => item.id === existing.id), seriesAffected: series.length } });
@@ -958,6 +959,7 @@ export async function cancelBookingAppointment(req, res) {
   invalidateDashboardCache(req.auth.agencyId);
   void processBookingMessageDeliveries();
   await offerWaitlistOpening(data).catch(() => {});
+  await voidOpenPaymentHoldForAppointment(req.auth.agencyId, existing.id);
   res.json({ data });
 }
 
@@ -1270,6 +1272,9 @@ export async function updateBookingAppointmentStatus(req, res) {
   void processBookingMessageDeliveries();
   if (status === "Cancelled") {
     await offerWaitlistOpening(data).catch(() => {});
+  }
+  if (["Cancelled", "NoShow"].includes(status)) {
+    await voidOpenPaymentHoldForAppointment(req.auth.agencyId, existing.id);
   }
   res.json({ data });
 }

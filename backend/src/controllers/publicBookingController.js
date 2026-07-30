@@ -19,8 +19,9 @@ import { appointmentReference, recordAppointmentEvent } from "../services/appoin
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../services/agencyMailService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
-import { createPaymentHoldForPublicBooking, getPaymentHoldStatus } from "../services/bookingPaymentHoldService.js";
+import { createPaymentHoldForPublicBooking, getPaymentHoldStatus, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
+import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 import {
@@ -353,6 +354,11 @@ export async function createPublicBooking(req, res) {
       if (!claimed.count) throw createHttpError(409, "This reserved waitlist time has expired.", "OFFER_EXPIRED");
       await tx.bookingWaitlistEntry.update({ where: { id: offerHold.waitlistEntryId }, data: { status: "Booked" } });
     }
+    // If this booking matches an existing open Lead (by email/phone) or an
+    // already-converted Client, link it and advance the lead's funnel
+    // stage automatically — mirrors what already happens for paid public
+    // bookings once payment confirms (quickbooksWebhookService.js).
+    await createOrLinkLeadForConsultation(tx, { agencyId: settings.agencyId, appointment: created, guestName: name, guestEmail: email, guestPhone: phone, paymentStatus: "UNPAID" });
     return created;
   });
 
@@ -722,6 +728,7 @@ export async function cancelManagedBooking(req, res) {
     });
     void processBookingMessageDeliveries();
     await Promise.all(cancelled.map((item) => offerWaitlistOpening(item).catch(() => {})));
+    await Promise.all(cancelled.map((item) => voidOpenPaymentHoldForAppointment(appointment.agencyId, item.id)));
     invalidateDashboardCache(appointment.agencyId);
     return res.json({ data: { ...publicView(cancelled.find((item) => item.id === appointment.id), settings), seriesAffected: series.length } });
   }
@@ -749,6 +756,7 @@ export async function cancelManagedBooking(req, res) {
   }).catch(() => {});
   void processBookingMessageDeliveries();
   await offerWaitlistOpening(updated).catch(() => {});
+  await voidOpenPaymentHoldForAppointment(appointment.agencyId, appointment.id);
   invalidateDashboardCache(appointment.agencyId);
   res.json({ data: publicView(updated, settings) });
 }

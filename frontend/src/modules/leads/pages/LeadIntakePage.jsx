@@ -20,6 +20,7 @@ export default function LeadIntakePage() {
   const [sources, setSources] = useState([]), [staff, setStaff] = useState([]);
   const [websiteConnections, setWebsiteConnections] = useState([]), [websiteOpen, setWebsiteOpen] = useState(false), [credentials, setCredentials] = useState(null), [secureStorageReady, setSecureStorageReady] = useState(true);
   const [operations, setOperations] = useState(null);
+  const [leadSettings, setLeadSettings] = useState(null);
   const [connectorProvider, setConnectorProvider] = useState("WEBSITE");
   const [loading, setLoading] = useState(true), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [formOpen, setFormOpen] = useState(false), [preview, setPreview] = useState(null), [copied, setCopied] = useState("");
@@ -31,11 +32,12 @@ export default function LeadIntakePage() {
     try {
       setLoading(true);
       const get = fresh ? api.getFresh : api.get;
-      const [formResult, importResult, eventResult, sourceResult, staffResult, websiteResult, operationsResult] = await Promise.all([get("/leads/intake/forms"), ["admin", "consultant"].includes(role) ? get("/leads/imports?limit=50") : Promise.resolve({ data: { data: [] } }), role === "admin" ? get("/leads/intake/events?limit=100") : Promise.resolve({ data: { data: [] } }), get("/leads/sources"), get("/leads/staff"), role === "admin" ? get("/leads/intake/connections") : Promise.resolve({ data: { data: { connections: [] } } }), role === "admin" ? get("/leads/intake/operations") : Promise.resolve({ data: { data: null } })]);
+      const [formResult, importResult, eventResult, sourceResult, staffResult, websiteResult, operationsResult, leadSettingsResult] = await Promise.all([get("/leads/intake/forms"), ["admin", "consultant"].includes(role) ? get("/leads/imports?limit=50") : Promise.resolve({ data: { data: [] } }), role === "admin" ? get("/leads/intake/events?limit=100") : Promise.resolve({ data: { data: [] } }), get("/leads/sources"), get("/leads/staff"), role === "admin" ? get("/leads/intake/connections") : Promise.resolve({ data: { data: { connections: [] } } }), role === "admin" ? get("/leads/intake/operations") : Promise.resolve({ data: { data: null } }), role === "admin" ? get("/leads/settings") : Promise.resolve({ data: { data: null } })]);
       setForms(formResult.data.data); setImports(importResult.data.data); setEvents(eventResult.data.data); setSources(sourceResult.data.data); setStaff(staffResult.data.data);
       setWebsiteConnections(websiteResult.data.data.connections || []);
       setSecureStorageReady(websiteResult.data.data.secureStorageReady ?? true);
       setOperations(operationsResult.data.data);
+      setLeadSettings(leadSettingsResult.data.data);
       setImportSource((value) => value || sourceResult.data.data.find((item) => item.type === "CSV_IMPORT")?.id || sourceResult.data.data[0]?.id || "");
       setImportOwner((value) => value || staffResult.data.data[0]?.id || ""); setError("");
     } catch (requestError) { setError(requestError.response?.data?.message || "Lead intake could not be loaded."); }
@@ -59,6 +61,15 @@ export default function LeadIntakePage() {
       const response = await api.post("/leads/intake/connections", data);
       setWebsiteOpen(false); setCredentials({ name: response.data.data.name, provider: response.data.data.provider, webhookUrl: response.data.data.webhookUrl, signingSecret: response.data.data.signingSecret, verificationToken: response.data.data.verificationToken }); await load();
     } catch (requestError) { setError(requestError.response?.data?.message || "The website connector could not be created."); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleWelcomeEmail() {
+    setBusy(true); setError("");
+    try {
+      const response = await api.patch("/leads/settings", { welcomeEmailEnabled: !leadSettings?.welcomeEmailEnabled });
+      setLeadSettings(response.data.data);
+    } catch (requestError) { setError(requestError.response?.data?.message || "The setting could not be updated."); }
     finally { setBusy(false); }
   }
 
@@ -134,6 +145,7 @@ export default function LeadIntakePage() {
     </div> : null}
 
     {tab === "website" && role === "admin" ? <div className="space-y-4">
+      <section className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-brand-700"><Waypoints className="h-5 w-5" /></div><div><h2 className="font-semibold text-slate-950">Automatic welcome email</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">The moment a fresh inbound lead lands (website chat, connectors, or a public form) they get a friendly email with a link to book a consultation. Skipped for CSV imports and leads created from a booking that already happened.</p></div></div><button disabled={busy || !leadSettings} onClick={toggleWelcomeEmail} className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-4 text-sm font-semibold transition disabled:opacity-50 ${leadSettings?.welcomeEmailEnabled ? "bg-emerald-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{leadSettings?.welcomeEmailEnabled ? <Check className="h-4 w-4" /> : null}{leadSettings?.welcomeEmailEnabled ? "On" : "Off"}</button></section>
       <section className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><ShieldCheck className="h-5 w-5" /></div><div><h2 className="font-semibold text-slate-950">External lead connections</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">Connect Meta, WhatsApp, Google Ads, email, phone providers, or a custom website backend to universal intake.</p>{!secureStorageReady ? <p className="mt-2 text-xs font-semibold text-rose-600">Secure credential storage must be configured before creating a connector.</p> : null}</div></div><button disabled={!secureStorageReady} onClick={() => setWebsiteOpen(true)} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Plus className="h-4 w-4" />New connector</button></section>
       {!websiteConnections.length ? <Empty icon={Code2} title="No external connections" copy="Create a connection for the first external lead stream." /> : <div className="grid gap-3 xl:grid-cols-2">{websiteConnections.map((connection) => <article key={connection.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_14px_40px_rgba(28,45,74,0.05)]"><div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-950">{connection.name}</h3><span className="rounded-full bg-brand-50 px-2.5 py-1 text-[10px] font-semibold text-brand-700">{providerLabels[connection.provider] || connection.provider}</span><Pill value={connection.isActive ? "ACTIVE" : "PAUSED"} /></div><p className="mt-1 text-xs text-slate-500">{connection.source.name} · {connection.owner.fullName} · {connection.firstResponseMinutes} min target</p></div><Code2 className="h-5 w-5 text-brand-500" /></div><div className="mt-4 flex min-w-0 items-center gap-2 rounded-2xl bg-slate-50 p-2 pl-3"><p className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-500">{connection.webhookUrl}</p><button onClick={() => copyText(connection.webhookUrl, `url-${connection.id}`)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm">{copied === `url-${connection.id}` ? <Check className="h-4 w-4 text-emerald-600" /> : <Clipboard className="h-4 w-4" />}</button></div><div className="mt-4 flex flex-wrap items-center gap-2"><button onClick={() => rotateWebsiteSecret(connection)} disabled={busy} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"><KeyRound className="h-3.5 w-3.5" />Update secret</button><button onClick={() => toggleWebsiteConnection(connection)} disabled={busy} className="h-9 rounded-full border border-slate-200 px-3.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">{connection.isActive ? "Pause" : "Activate"}</button><span className="ml-auto text-[11px] text-slate-400">{connection.lastEventAt ? `Last event ${new Date(connection.lastEventAt).toLocaleString()}` : "No events received"}</span></div></article>)}</div>}
     </div> : null}
