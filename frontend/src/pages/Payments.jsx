@@ -478,12 +478,12 @@ export default function Payments() {
               />
             </div>
             <select value={status} onChange={(event) => setStatus(event.target.value)} className={filterControl}>
-              <option value="">All statuses</option>
-              {Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <option value="" className="bg-white text-slate-700">All statuses</option>
+              {Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value} className="bg-white text-slate-700">{label}</option>)}
             </select>
             <select value={source} onChange={(event) => setSource(event.target.value)} className={filterControl}>
-              <option value="">All types</option>
-              {Object.entries(SOURCE_ROW_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <option value="" className="bg-white text-slate-700">All types</option>
+              {Object.entries(SOURCE_ROW_LABEL).map(([value, label]) => <option key={value} value={value} className="bg-white text-slate-700">{label}</option>)}
             </select>
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className={filterControl} />
             <span className="text-xs text-slate-400">to</span>

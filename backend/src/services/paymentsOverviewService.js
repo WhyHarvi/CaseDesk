@@ -160,7 +160,11 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
   ]);
 
   let combined = [...caseInvoices, ...bookingPayments, ...legacyPayments];
-  if (status) combined = combined.filter((row) => row.status === status);
+  // Voided rows are clutter in the default view (an abandoned checkout, a
+  // cancelled invoice draft) — real information, but not something staff
+  // need to see mixed into "all payments" by default. Still fully visible
+  // by explicitly filtering to it.
+  combined = status ? combined.filter((row) => row.status === status) : combined.filter((row) => row.status !== "Voided");
   if (source) combined = combined.filter((row) => row.source === source);
   if (query) {
     const needle = query.trim().toLowerCase();
