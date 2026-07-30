@@ -1,5 +1,6 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { logger } from "../services/logger.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { enqueueAppointmentMeetingJob, processAppointmentMeetingJobs } from "../services/appointmentMeetingService.js";
 import {
@@ -146,6 +147,12 @@ export async function zoomOAuthCallback(req, res) {
     });
     if (!administrator) return res.redirect(schedulingUrl("invalid", "Your administrator access is no longer active."));
     const tokens = await exchangeZoomAuthorizationCode(String(code));
+    // The scope-mismatch error a failed connect shows in the browser has
+    // no server-side trail otherwise (the catch below only redirects) —
+    // logging the raw grant here is the only way to tell "app config is
+    // missing a scope" apart from "code has the wrong scope string" without
+    // guessing. Not sensitive: scope names, not tokens.
+    logger.info("zoom.oauth_scope_granted", { agencyId: parsed.agencyId, scope: tokens.scope || null });
     await saveZoomConnection({ agencyId: parsed.agencyId, userId: parsed.userId, tokens });
     const mapped = await autoMapZoomUsers(parsed.agencyId).catch(() => 0);
     await recordActivity({
@@ -156,6 +163,7 @@ export async function zoomOAuthCallback(req, res) {
     }).catch(() => {});
     return res.redirect(schedulingUrl("connected"));
   } catch (errorValue) {
+    logger.warn("zoom.oauth_callback_failed", { agencyId: parsed?.agencyId, code: errorValue.code, reason: errorValue.message });
     return res.redirect(schedulingUrl("error", String(errorValue.message || "Connection failed")));
   }
 }
