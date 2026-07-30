@@ -26,6 +26,19 @@ function formatDate(value, timezone, options) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, ...options }).format(new Date(value));
 }
 
+function calendarAppointmentPath(appointment, timezone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(new Date(appointment.startsAt))
+    .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  const date = `${parts.year}-${parts.month}-${parts.day}`;
+  return `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${date}`;
+}
+
 function initials(name) {
   return String(name || "Case")
     .split(/\s+/)
@@ -165,7 +178,7 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
         />
         <div className="flex-1 space-y-3">
           {appointments.length ? appointments.map((item) => (
-            <Link key={item.id} to="/app/calendar" className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-sky-200 hover:bg-sky-50/60">
+            <Link key={item.id} to={calendarAppointmentPath(item, timezone)} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-sky-200 hover:bg-sky-50/60">
               <div className="w-16 shrink-0 pt-0.5 text-xs font-semibold text-slate-950">
                 {formatDate(item.startsAt, timezone, { month: "short", day: "numeric" })}
                 <span className="mt-0.5 block font-normal text-slate-500">{formatDate(item.startsAt, timezone, { hour: "numeric", minute: "2-digit" })}</span>

@@ -543,6 +543,16 @@ const calendarInclude = {
   case: { select: { id: true, caseType: true } },
   assignedTo: { select: { id: true, fullName: true, zoomHostMapping: { select: { status: true } } } },
   sessionType: { select: { id: true, name: true, durationMinutes: true, allowedMeetingModes: true } },
+  paymentHold: {
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      qbInvoiceLink: true,
+      paidAt: true,
+      expiresAt: true,
+    },
+  },
 };
 
 export async function listCalendarAppointments(req, res) {
@@ -850,7 +860,7 @@ export async function getBookingPaymentHoldById(req, res) {
       id: latest.id,
       status: latest.status,
       amount: latest.amount,
-      payNowUrl: latest.qbInvoiceLink,
+      payNowUrl: latest.status === "AwaitingPayment" ? latest.qbInvoiceLink : null,
       expiresAt: latest.expiresAt,
       appointmentId: latest.appointmentId,
     },

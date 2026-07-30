@@ -1,12 +1,13 @@
 import prisma from "../../services/prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../../services/agencyMailService.js";
+import { sendAgencyOomaSms } from "../../services/agencyOomaService.js";
 import { publicBookingPageUrl } from "../../services/bookingPublicLinkService.js";
 import { logger } from "../../services/logger.js";
 
 // Only genuinely fresh inbound inquiries — a bulk CSV import or a lead
 // created because someone already booked+paid a consultation shouldn't
-// get a "thanks for reaching out, let's talk" email.
-const WELCOME_EMAIL_CHANNELS = new Set([
+// get a "thanks for reaching out, let's talk" message.
+const WELCOME_MESSAGE_CHANNELS = new Set([
   "WEBSITE_CONNECTOR",
   "META_LEAD_FORM",
   "GOOGLE_ADS_LEAD_FORM",
@@ -16,18 +17,18 @@ const WELCOME_EMAIL_CHANNELS = new Set([
 ]);
 
 export function leadWelcomeEmailEligible(channel) {
-  return WELCOME_EMAIL_CHANNELS.has(channel);
+  return WELCOME_MESSAGE_CHANNELS.has(channel);
 }
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 }
 
-// Best-effort and fire-and-forget by design: a failed welcome email should
-// never block or fail lead intake itself, so every error here is caught
-// and logged, never thrown back to the caller.
+// Best-effort and fire-and-forget by design: a failed welcome message
+// should never block or fail lead intake itself, so every error here is
+// caught and logged, never thrown back to the caller.
 export async function sendLeadWelcomeEmail(agencyId, lead) {
-  if (!lead?.email) return;
+  if (!lead?.email && !lead?.phone) return;
   try {
     const [leadSettings, agency, bookingSettings] = await Promise.all([
       prisma.leadSettings.findUnique({ where: { agencyId } }),
@@ -40,6 +41,16 @@ export async function sendLeadWelcomeEmail(agencyId, lead) {
     const agencyName = agency?.legalName || agency?.name || "our team";
     const firstName = lead.firstName || "there";
     const bookingUrl = publicBookingPageUrl(bookingSettings);
+
+    // No email on file — fall back to a text through the agency's Ooma
+    // line rather than sending the lead nothing at all.
+    if (!lead.email) {
+      const smsBody = `${agencyName}: Hi ${firstName}, thanks for reaching out — we've read what you shared and would love to help. Book a time here: ${bookingUrl}`;
+      await sendAgencyOomaSms({ agencyId, to: lead.phone, body: smsBody, idempotencyKey: `lead-welcome:${lead.id}` });
+      logger.info("lead.welcome_sms_sent", { agencyId, leadId: lead.id });
+      return;
+    }
+
     const subject = `Thanks for reaching out to ${agencyName}`;
     const text = [
       `Hi ${firstName},`,
@@ -74,6 +85,6 @@ export async function sendLeadWelcomeEmail(agencyId, lead) {
     await transport.sendMail({ from: config.from, to: lead.email, subject, text, html });
     logger.info("lead.welcome_email_sent", { agencyId, leadId: lead.id });
   } catch (error) {
-    logger.warn("lead.welcome_email_failed", { agencyId, leadId: lead.id, reason: error.message });
+    logger.warn("lead.welcome_message_failed", { agencyId, leadId: lead.id, reason: error.message });
   }
 }

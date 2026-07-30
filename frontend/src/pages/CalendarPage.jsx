@@ -77,6 +77,52 @@ function formatTime(value) {
   return new Date(value).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
 }
 
+function layoutOverlappingAppointments(items) {
+  const sorted = [...items]
+    .map((item) => ({
+      item,
+      start: new Date(item.startsAt).getTime(),
+      end: new Date(item.endsAt).getTime(),
+    }))
+    .sort((first, second) => first.start - second.start || first.end - second.end);
+
+  const groups = [];
+  let group = [];
+  let groupEnd = -Infinity;
+
+  sorted.forEach((entry) => {
+    if (group.length && entry.start >= groupEnd) {
+      groups.push(group);
+      group = [];
+      groupEnd = -Infinity;
+    }
+
+    group.push(entry);
+    groupEnd = Math.max(groupEnd, entry.end);
+  });
+
+  if (group.length) groups.push(group);
+
+  return groups.flatMap((entries) => {
+    const columnEnds = [];
+    const positioned = entries.map((entry) => {
+      let column = columnEnds.findIndex((end) => end <= entry.start);
+
+      if (column === -1) {
+        column = columnEnds.length;
+        columnEnds.push(entry.end);
+      } else {
+        columnEnds[column] = entry.end;
+      }
+
+      return { ...entry, column };
+    });
+    const columns = Math.max(columnEnds.length, 1);
+
+    return positioned.map(({ item, column }) => ({ item, column, columns }));
+  });
+}
+
 function useNow() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -182,7 +228,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [converting, setConverting] = useState(false);
   const [seriesScope, setSeriesScope] = useState("single");
   const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
-  const [payNow, setPayNow] = useState(null);
+  const [payNow, setPayNow] = useState(() => appointment.paymentHold ? {
+    id: appointment.paymentHold.id,
+    status: appointment.paymentHold.status,
+    amount: appointment.paymentHold.amount,
+    payNowUrl: appointment.paymentHold.status === "AwaitingPayment" ? appointment.paymentHold.qbInvoiceLink : null,
+    paidAt: appointment.paymentHold.paidAt,
+  } : null);
   const [payNowBusy, setPayNowBusy] = useState(false);
   const [payNowError, setPayNowError] = useState("");
   const [payNowCopied, setPayNowCopied] = useState(false);
@@ -232,6 +284,51 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       setManualBusy("");
     }
   }
+
+  useEffect(() => {
+    const paymentHold = appointment.paymentHold;
+    if (!paymentHold?.id) {
+      setPayNow(null);
+      return;
+    }
+
+    setPayNow({
+      id: paymentHold.id,
+      status: paymentHold.status,
+      amount: paymentHold.amount,
+      payNowUrl: paymentHold.status === "AwaitingPayment" ? paymentHold.qbInvoiceLink : null,
+      paidAt: paymentHold.paidAt,
+    });
+  }, [appointment.id, appointment.paymentHold]);
+
+  useEffect(() => {
+    if (!payNow?.id || !["AwaitingPayment", "Confirming", "Expired"].includes(payNow.status)) return undefined;
+
+    let active = true;
+    let timer = null;
+
+    async function refreshPayment() {
+      try {
+        const result = await getBookingPaymentHoldStatus(payNow.id);
+        if (!active) return;
+        setPayNow(result);
+        setPayNowError("");
+        if (["AwaitingPayment", "Confirming"].includes(result.status)) {
+          timer = window.setTimeout(refreshPayment, 5_000);
+        }
+      } catch (reason) {
+        if (!active) return;
+        setPayNowError(reason.response?.data?.message || "Payment status could not be refreshed.");
+      }
+    }
+
+    refreshPayment();
+
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [payNow?.id, payNow?.status]);
 
   useEffect(() => {
     if (!resched) return;
@@ -352,7 +449,9 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           {payNow ? (
             payNow.status === "Paid" ? (
               <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Consultation fee paid</p>
-            ) : payNow.payNowUrl ? (
+            ) : payNow.status === "Confirming" ? (
+              <p className="flex items-center gap-2 text-sm font-semibold text-sky-700"><Loader2 className="h-4 w-4 animate-spin" /> Confirming card payment…</p>
+            ) : payNow.status === "AwaitingPayment" && payNow.payNowUrl ? (
               <>
                 <p className="text-xs font-semibold text-slate-700">Consultation fee — {Number(payNow.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
                 <p className="mt-1 text-xs text-slate-400">Share this link so the client can pay by card on the spot.</p>
@@ -360,6 +459,8 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                   {payNowCopied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />} {payNowCopied ? "Link copied" : "Copy pay-now link"}
                 </button>
               </>
+            ) : ["Expired", "Voided", "Failed"].includes(payNow.status) ? (
+              <p className="text-xs leading-5 text-amber-700">The previous payment request is no longer active. The client will not be asked to use that checkout again.</p>
             ) : (
               <p className="text-xs leading-5 text-amber-700">Invoice created in QuickBooks, but online card payment isn't available on this company yet. Collect payment via cash or e-transfer instead.</p>
             )
@@ -369,7 +470,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             </button>
           )}
           {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
-          {payNow?.status !== "Paid" ? (
+          {!["Paid", "Confirming"].includes(payNow?.status) ? (
             <div className="mt-3 border-t border-slate-200/70 pt-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Already paid another way?</p>
               <input
@@ -1034,6 +1135,7 @@ export default function CalendarPage() {
                 {days.map((day) => {
                   const key = dateKey(day);
                   const dayItems = visible.filter((item) => dateKey(new Date(item.startsAt)) === key);
+                  const positionedDayItems = layoutOverlappingAppointments(dayItems);
                   const isToday = key === todayKey;
                   return (
                     <div key={key} className={`relative border-l border-slate-100 ${isToday ? "bg-sky-50/30" : ""}`} style={{ height: gridHours * HOUR_PX }}>
@@ -1047,23 +1149,43 @@ export default function CalendarPage() {
                           </div>
                         </div>
                       ) : null}
-                      {dayItems.map((item) => {
+                      {positionedDayItems.map(({ item, column, columns }) => {
                         const start = new Date(item.startsAt);
                         const end = new Date(item.endsAt);
                         const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
                         const height = Math.max(30, ((end - start) / 3600000) * HOUR_PX - 3);
+                        const isCompact = height < 44;
+                        const isNarrowWeekPill = view === "week" && columns > 1;
                         const tone = toneFor(item);
                         const isSelected = selected?.id === item.id;
+                        const displayName = item.client?.fullName || item.guestName || item.subject;
+                        const outerGutter = 5;
+                        const columnGap = 4;
+                        const horizontalStyle = columns === 1
+                          ? { left: 6, right: 6 }
+                          : {
+                              left: `calc(${(column * 100) / columns}% + ${outerGutter + columnGap * column - (column * (outerGutter * 2 + columnGap * (columns - 1))) / columns}px)`,
+                              width: `calc(${100 / columns}% - ${(outerGutter * 2 + columnGap * (columns - 1)) / columns}px)`,
+                            };
                         return (
                           <button
                             key={item.id}
                             type="button"
                             onClick={() => setSelected(item)}
-                            className={`absolute inset-x-1.5 overflow-hidden rounded-xl border-l-[3px] px-2 py-1.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition ${tone.block} ${isSelected ? "ring-2 ring-slate-950/70" : ""}`}
-                            style={{ top: Math.max(0, top), height }}
+                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}`}
+                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}`}
+                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isSelected ? "ring-2 ring-slate-950/70" : ""}`}
+                            style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
-                            <p className={`truncate text-[12px] font-semibold leading-tight ${tone.title}`}>{item.client?.fullName || item.guestName || item.subject}</p>
-                            <p className={`truncate text-[11px] ${tone.meta}`}>{formatTime(item.startsAt)}{item.sessionType ? ` · ${item.sessionType.name}` : ""}</p>
+                            <p className={`w-full overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
+                              {displayName}
+                            </p>
+                            {!isCompact && !isNarrowWeekPill ? (
+                              <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
+                                {formatTime(item.startsAt)}
+                                {item.sessionType ? ` · ${item.sessionType.name}` : ""}
+                              </p>
+                            ) : null}
                           </button>
                         );
                       })}

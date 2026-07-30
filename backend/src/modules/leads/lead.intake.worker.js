@@ -99,14 +99,14 @@ async function processClaimed(eventId) {
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });
     if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "PROCESSED", normalizedData: normalized.data, createdLeadId: lead.id } });
     await refreshBatch(tx, event.importBatchId);
-    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, firstName: lead.firstName };
+    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, phone: lead.phone, firstName: lead.firstName };
   }, { maxWait: 10_000, timeout: 30_000 });
   if (result?.agencyId) invalidateDashboardCache(result.agencyId);
   if (result?.ownerUserId) {
     await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
   }
   if (result?.leadId && leadWelcomeEmailEligible(result.channel)) {
-    void sendLeadWelcomeEmail(result.agencyId, { id: result.leadId, email: result.email, firstName: result.firstName });
+    void sendLeadWelcomeEmail(result.agencyId, { id: result.leadId, email: result.email, phone: result.phone, firstName: result.firstName });
   }
 }
 
