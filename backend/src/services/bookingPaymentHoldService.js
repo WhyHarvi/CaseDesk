@@ -112,7 +112,7 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
       meetingMode,
       db: tx,
     });
-    const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes, excludeHoldToken: offerHold?.claimToken || null });
+    const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes, excludeHoldToken: offerHold?.claimToken || null, meetingMode });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
 
     const hold = await tx.bookingPaymentHold.create({

@@ -5,6 +5,19 @@ import { intersectWorkingHours, localDateTimeToUtc, mergeStaffAvailability, slot
 import { chooseAppointmentAssignee } from "../src/services/schedulingAssignmentService.js";
 import { bookingDeliveryIsCurrent, bookingMessageRevision, icsForAppointment } from "../src/services/bookingNotificationService.js";
 import { delayedZoomNotificationKind } from "../src/services/appointmentMeetingService.js";
+import { MEETING_MODES, meetingModesInSameCapacityGroup } from "../src/services/bookingMeetingModeService.js";
+
+test("phone bookings run on a separate capacity track from in-person/video", () => {
+  assert.deepEqual(meetingModesInSameCapacityGroup(MEETING_MODES.PHONE), [MEETING_MODES.PHONE]);
+  const attended = meetingModesInSameCapacityGroup(MEETING_MODES.IN_PERSON);
+  assert.ok(attended.includes(MEETING_MODES.IN_PERSON));
+  assert.ok(attended.includes(MEETING_MODES.JITSI));
+  assert.ok(attended.includes(MEETING_MODES.ZOOM));
+  assert.ok(!attended.includes(MEETING_MODES.PHONE));
+  // Jitsi and Zoom both still fully block each other and in-person — only
+  // phone is split out.
+  assert.deepEqual(meetingModesInSameCapacityGroup(MEETING_MODES.JITSI), meetingModesInSameCapacityGroup(MEETING_MODES.ZOOM));
+});
 
 test("pooled availability preserves one seat per free consultant", () => {
   const slot = { startsAt: "2026-08-03T13:00:00.000Z", endsAt: "2026-08-03T13:30:00.000Z" };

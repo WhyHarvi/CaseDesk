@@ -105,7 +105,7 @@ export async function createAppointment(req, res) {
     await lockSchedulingTransaction(tx, req.user.agencyId, startsAt);
     if (meetingMode === MEETING_MODES.ZOOM) await assertZoomOperational(req.user.agencyId, tx);
     const assignee = await chooseAppointmentAssignee({ agencyId: req.user.agencyId, startsAt, endsAt, requestedUserId: requestedAssigneeId, preferredUserId: client?.assignedUserId, bufferMinutes: settings.bufferMinutes, timezone: settings.timezone, meetingMode, db: tx });
-    const conflict = await assertSlotAvailable(tx, { agencyId: req.user.agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes: settings.bufferMinutes });
+    const conflict = await assertSlotAvailable(tx, { agencyId: req.user.agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes: settings.bufferMinutes, meetingMode });
     if (conflict) throw createHttpError(409, "That time was just taken.", "SLOT_TAKEN");
     const created = await tx.appointment.create({ data: {
       agencyId: req.user.agencyId,
@@ -191,7 +191,7 @@ export async function updateAppointment(req, res) {
   const data = await prisma.$transaction(async (tx) => {
     await lockSchedulingTransaction(tx, req.user.agencyId, startsAt);
     if (status === "Scheduled") {
-      const conflict = await assertSlotAvailable(tx, { agencyId: req.user.agencyId, assignedToId, startsAt, endsAt, bufferMinutes: settings.bufferMinutes, excludeAppointmentId: existing.id });
+      const conflict = await assertSlotAvailable(tx, { agencyId: req.user.agencyId, assignedToId, startsAt, endsAt, bufferMinutes: settings.bufferMinutes, excludeAppointmentId: existing.id, meetingMode });
       if (conflict) throw createHttpError(409, "That time was just taken.", "SLOT_TAKEN");
     }
     if (meetingMode === MEETING_MODES.ZOOM && status === "Scheduled" && meetingChanged) {

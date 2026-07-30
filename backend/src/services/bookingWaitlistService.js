@@ -131,6 +131,7 @@ export async function offerWaitlistOpening(appointment) {
         fromKey: dayKey,
         toKey: dayKey,
         locationId: candidateMode === MEETING_MODES.IN_PERSON ? resolvedLocationId : null,
+        meetingMode: candidateMode,
       });
       if (!(days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) continue;
       eligibleCandidateIds.push(candidate.id);

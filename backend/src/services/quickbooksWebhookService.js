@@ -648,6 +648,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
         bufferMinutes: sessionType?.bufferMinutes ?? settings?.bufferMinutes ?? 0,
         excludePaymentHoldId: hold.id,
         excludeHoldToken: offerHold?.claimToken || null,
+        meetingMode: hold.meetingMode,
       });
       if (conflict) {
         const error = new Error("Slot conflict detected at payment confirmation time");

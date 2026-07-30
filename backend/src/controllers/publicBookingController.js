@@ -187,6 +187,7 @@ export async function getPublicAvailability(req, res) {
     toKey: to,
     excludeHoldToken: offerHold?.claimToken || null,
     locationId: location?.id || null,
+    meetingMode,
   });
   const publicDays = Object.fromEntries(Object.entries(days).map(([key, slots]) => [key, slots.map(({ staffIds, ...slot }) => slot)]));
   res.json({ data: { days: publicDays, timezone: settings.timezone } });
@@ -268,6 +269,7 @@ export async function createPublicBooking(req, res) {
     toKey: dayKey,
     excludeHoldToken: offerHold?.claimToken || null,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? location?.id || null : null,
+    meetingMode,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is no longer available. Pick another slot.", "SLOT_TAKEN");
@@ -317,6 +319,7 @@ export async function createPublicBooking(req, res) {
       endsAt,
       bufferMinutes: assignmentBuffer,
       excludeHoldToken: offerHold?.claimToken || null,
+      meetingMode,
     });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
     const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings });
@@ -504,6 +507,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     toKey: dayKey,
     excludeHoldToken: offerHold?.claimToken || null,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? location?.id || null : null,
+    meetingMode,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is no longer available. Pick another slot.", "SLOT_TAKEN");
@@ -698,6 +702,7 @@ export async function getManagedAvailability(req, res) {
     toKey: to,
     excludeAppointmentId: appointment.id,
     locationId: requestedMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || appointment.locationId : null,
+    meetingMode: requestedMode,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -817,7 +822,7 @@ export async function rescheduleManagedBooking(req, res) {
     const moves = series.map((item) => ({ item, startsAt: new Date(new Date(item.startsAt).getTime() + delta), endsAt: new Date(new Date(item.endsAt).getTime() + delta), buffer: item.sessionType?.bufferMinutes ?? item.assignedTo?.schedulingPreference?.bufferMinutes ?? settings?.bufferMinutes ?? 0 }));
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings?.timezone || "America/Toronto");
-      const offered = await availabilityForRange({ agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: move.item.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || move.item.locationId || null : null });
+      const offered = await availabilityForRange({ agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: move.item.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || move.item.locationId || null : null, meetingMode });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updatedSeries = await prisma.$transaction(async (tx) => {
@@ -835,7 +840,7 @@ export async function rescheduleManagedBooking(req, res) {
       }
       for (const move of moves) {
         await lockSchedulingTransaction(tx, appointment.agencyId, move.startsAt);
-        const conflict = await assertSlotAvailable(tx, { agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds });
+        const conflict = await assertSlotAvailable(tx, { agencyId: appointment.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds, meetingMode });
         if (conflict) throw createHttpError(409, "A recurring time was just taken. The series was not changed.", "SLOT_TAKEN");
         const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing: move.item });
         const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, ...meetingFields, location: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440])) * 60_000), reminderQueuedAt: null }, include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: true, agency: { select: { name: true, legalName: true } } } });
@@ -868,6 +873,7 @@ export async function rescheduleManagedBooking(req, res) {
     toKey: dayKey,
     excludeAppointmentId: appointment.id,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || appointment.locationId || null : null,
+    meetingMode,
   });
   const offered = (days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString());
   if (!offered) throw createHttpError(409, "That time is not available. Pick another slot.", "SLOT_TAKEN");
@@ -889,6 +895,7 @@ export async function rescheduleManagedBooking(req, res) {
       endsAt,
       bufferMinutes: appointment.sessionType?.bufferMinutes ?? appointment.assignedTo?.schedulingPreference?.bufferMinutes ?? settings?.bufferMinutes ?? 0,
       excludeAppointmentId: appointment.id,
+      meetingMode,
     });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
     const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing: appointment });

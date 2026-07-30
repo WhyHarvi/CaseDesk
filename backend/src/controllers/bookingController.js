@@ -531,6 +531,7 @@ export async function getAvailability(req, res) {
     toKey: to,
     minNoticeOverrideMinutes: 0,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || null : null,
+    meetingMode,
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -626,6 +627,7 @@ export async function createBookingAppointment(req, res) {
       toKey: dayKey,
       minNoticeOverrideMinutes: 0,
       locationId: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null,
+      meetingMode: requestedMeetingMode,
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
@@ -658,6 +660,7 @@ export async function createBookingAppointment(req, res) {
         startsAt: occurrenceStart,
         endsAt: occurrenceEnd,
         bufferMinutes: assignmentBuffer,
+        meetingMode: requestedMeetingMode,
       });
       if (conflict) throw createHttpError(409, "One of those times was just taken. No appointments were created.", "SLOT_TAKEN");
       const meetingFields = appointmentMeetingFields({ mode: requestedMeetingMode, settings });
@@ -895,7 +898,7 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null, meetingMode });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
@@ -913,7 +916,7 @@ export async function rescheduleBookingAppointment(req, res) {
       }
       for (const move of moves) {
         await lockSchedulingTransaction(tx, req.auth.agencyId, move.startsAt);
-        const conflict = await assertSlotAvailable(tx, { agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds });
+        const conflict = await assertSlotAvailable(tx, { agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, startsAt: move.startsAt, endsAt: move.endsAt, bufferMinutes: move.buffer, excludeAppointmentIds: seriesIds, meetingMode });
         if (conflict) throw createHttpError(409, "A recurring time was just taken. The series was not changed.", "SLOT_TAKEN");
         const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing: move.item });
         const result = await tx.appointment.update({ where: { id: move.item.id }, data: { startsAt: move.startsAt, endsAt: move.endsAt, ...meetingFields, location: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation ? `${selectedLocation.name} — ${selectedLocation.address}` : move.item.location : null, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || move.item.locationId : null, locationMapsUrl: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.mapsUrl || move.item.locationMapsUrl : null, reminderSentAt: null, reminderDueAt: new Date(move.startsAt.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000), reminderQueuedAt: null }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } } });
@@ -936,7 +939,7 @@ export async function rescheduleBookingAppointment(req, res) {
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null, meetingMode });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {
@@ -956,6 +959,7 @@ export async function rescheduleBookingAppointment(req, res) {
       endsAt,
       bufferMinutes: effectiveBuffer,
       excludeAppointmentId: existing.id,
+      meetingMode,
     });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
     const meetingFields = appointmentMeetingFields({ mode: meetingMode, settings, existing });

@@ -1,6 +1,7 @@
 import prisma from "./prisma/client.js";
 import { generatePublicBookingSlug } from "./bookingPublicLinkService.js";
 import { createHttpError } from "../utils/http.js";
+import { meetingModesInSameCapacityGroup } from "./bookingMeetingModeService.js";
 
 export const DEFAULT_WORKING_HOURS = [
   { day: 1, enabled: true, start: "09:00", end: "17:00" },
@@ -204,7 +205,7 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null, locationId = null }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null, locationId = null, meetingMode = null }) {
   validateAvailabilityRange(fromKey, toKey);
   const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
@@ -239,7 +240,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       ...(assignedToId ? { assignedToId } : pooled ? { assignedToId: { in: assignedToIds } } : {}),
       ...(excludeAppointmentIds?.length ? { id: { notIn: excludeAppointmentIds } } : excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
     },
-    select: { startsAt: true, endsAt: true, assignedToId: true },
+    select: { startsAt: true, endsAt: true, assignedToId: true, meetingMode: true },
   }), staffIds.length ? prisma.schedulingStaffPreference.findMany({
     where: { agencyId, userId: { in: staffIds } },
     select: { userId: true, maxDailyAppointments: true, timezone: true, workingHours: true, daysOff: true, bufferMinutes: true },
@@ -248,7 +249,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     select: { userId: true, startsAt: true, endsAt: true, recurrence: true, recurrenceUntil: true },
   }) : [], staffIds.length && prisma.bookingSlotHold ? prisma.bookingSlotHold.findMany({
     where: { agencyId, assignedToId: { in: staffIds }, claimedAt: null, expiresAt: { gt: now }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}) },
-    select: { assignedToId: true, startsAt: true, endsAt: true },
+    select: { assignedToId: true, startsAt: true, endsAt: true, waitlistEntry: { select: { meetingMode: true } } },
   }) : [], staffIds.length && prisma.bookingPaymentHold ? prisma.bookingPaymentHold.findMany({
     // A confirmation worker atomically moves a paid hold to Confirming
     // before it creates the Appointment. That short-lived state must keep
@@ -262,9 +263,19 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       endsAt: { gt: rangeStart },
       ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}),
     },
-    select: { assignedToId: true, startsAt: true, endsAt: true },
+    select: { assignedToId: true, startsAt: true, endsAt: true, meetingMode: true },
   }) : []]);
-  const busy = [...busyAppointments, ...activeHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
+  // BookingSlotHold has no meetingMode column of its own — it comes from
+  // the waitlist entry it's offering. Flattened here so every busy entry
+  // exposes the same shape regardless of source.
+  const flattenedHolds = activeHolds.map((hold) => ({ ...hold, meetingMode: hold.waitlistEntry?.meetingMode || null }));
+  const busy = [...busyAppointments, ...flattenedHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
+  // Phone runs on its own capacity track (see meetingModesInSameCapacityGroup)
+  // — entries with no meetingMode at all (scheduling blocks) still block
+  // every mode, same as before this existed.
+  const relevantBusy = meetingMode
+    ? busy.filter((item) => !item.meetingMode || meetingModesInSameCapacityGroup(meetingMode).includes(item.meetingMode))
+    : busy;
   const preferenceByStaff = new Map(preferences.map((item) => [item.userId, item]));
   const staffLimits = new Map(preferences.map((item) => [item.userId, item.maxDailyAppointments]));
 
@@ -276,7 +287,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       const effective = assignedToId
         ? effectiveStaffSettings(baseSettings, preferenceByStaff.get(assignedToId), sessionBufferMinutes, Boolean(location?.useCustomHours))
         : { ...baseSettings, bufferMinutes: sessionBufferMinutes ?? baseSettings.bufferMinutes };
-      days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy, now });
+      days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy: relevantBusy, now });
       continue;
     }
     const staffSlots = assignedToIds.map((staffId) => {
@@ -295,7 +306,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       settings: effectiveStaffSettings(baseSettings, preferenceByStaff.get(staffId), sessionBufferMinutes, Boolean(location?.useCustomHours)),
       dateKey,
       durationMinutes,
-      busy: busy.filter((item) => item.assignedToId === staffId),
+      busy: relevantBusy.filter((item) => item.assignedToId === staffId),
       now,
       });
     });
@@ -307,8 +318,13 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
 /**
  * Validate that a concrete start/end is still open (used at create time inside a transaction).
  */
-export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt, endsAt, bufferMinutes = 0, excludeAppointmentId = null, excludeAppointmentIds = null, excludeHoldToken = null, excludePaymentHoldId = null }) {
+export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt, endsAt, bufferMinutes = 0, excludeAppointmentId = null, excludeAppointmentIds = null, excludeHoldToken = null, excludePaymentHoldId = null, meetingMode = null }) {
   const buffer = bufferMinutes * 60_000;
+  // Phone runs on its own capacity track — see meetingModesInSameCapacityGroup.
+  // meetingMode is optional (null) for callers that don't know/care about
+  // it (e.g. a generic block check), which preserves the old
+  // blocks-everything behavior rather than silently narrowing it.
+  const sameGroup = meetingMode ? { meetingMode: { in: meetingModesInSameCapacityGroup(meetingMode) } } : {};
   const conflict = await tx.appointment.findFirst({
     where: {
       agencyId,
@@ -317,16 +333,17 @@ export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt
       ...(excludeAppointmentIds?.length ? { id: { notIn: excludeAppointmentIds } } : excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
       startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) },
       endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) },
+      ...sameGroup,
     },
     select: { id: true, startsAt: true },
   });
   if (conflict || !assignedToId) return conflict;
   if (tx.bookingSlotHold) {
-    const hold = await tx.bookingSlotHold.findFirst({ where: { agencyId, assignedToId, claimedAt: null, expiresAt: { gt: new Date() }, startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}) }, select: { id: true, startsAt: true } });
+    const hold = await tx.bookingSlotHold.findFirst({ where: { agencyId, assignedToId, claimedAt: null, expiresAt: { gt: new Date() }, startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludeHoldToken ? { claimToken: { not: excludeHoldToken } } : {}), ...(meetingMode ? { waitlistEntry: { meetingMode: { in: meetingModesInSameCapacityGroup(meetingMode) } } } : {}) }, select: { id: true, startsAt: true } });
     if (hold) return hold;
   }
   if (tx.bookingPaymentHold) {
-    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }], startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}) }, select: { id: true, startsAt: true } });
+    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }], startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}), ...sameGroup }, select: { id: true, startsAt: true } });
     if (paymentHold) return paymentHold;
   }
   if (!tx.schedulingBlock) return null;

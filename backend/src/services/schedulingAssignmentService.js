@@ -149,7 +149,7 @@ export async function chooseAppointmentAssignee({
   for (const user of appointmentAvailable) {
     const effectiveBuffer = sessionBufferMinutes ?? user.schedulingPreference?.bufferMinutes ?? bufferMinutes;
     const conflict = typeof db.appointment?.findFirst === "function"
-      ? await assertSlotAvailable(db, { agencyId, assignedToId: user.id, startsAt, endsAt, bufferMinutes: effectiveBuffer, excludeAppointmentId, excludeHoldToken })
+      ? await assertSlotAvailable(db, { agencyId, assignedToId: user.id, startsAt, endsAt, bufferMinutes: effectiveBuffer, excludeAppointmentId, excludeHoldToken, meetingMode })
       : null;
     if (!conflict) available.push(user);
   }
