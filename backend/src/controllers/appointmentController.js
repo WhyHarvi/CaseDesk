@@ -20,6 +20,8 @@ import {
   assertMeetingModeConfigured,
   normalizeMeetingMode,
 } from "../services/bookingMeetingModeService.js";
+import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
+import { ensureAppointmentCompletionFollowUp } from "../services/appointmentProfileService.js";
 
 const statuses = new Set(["Scheduled", "Completed", "Cancelled", "NoShow"]);
 const include = {
@@ -118,12 +120,23 @@ export async function createAppointment(req, res) {
       startsAt,
       endsAt,
       description: clean(req.body.description, 5000) || null,
+      purpose: clean(req.body.purpose ?? req.body.description, 5000) || null,
+      internalNotes: clean(req.body.internalNotes, 10000) || null,
       assignedToId: assignee.id,
       createdById: req.user.id,
       source: "Case",
       reminderDueAt: new Date(startsAt.getTime() - settings.reminderMinutes * 60_000),
       status: statuses.has(req.body.status) ? req.body.status : "Scheduled",
     }, include });
+    await recordAppointmentEvent(tx, {
+      agencyId: req.user.agencyId,
+      appointmentId: created.id,
+      actorUserId: req.user.id,
+      type: "BOOKED",
+      summary: "Case appointment created",
+      metadata: { caseId: caseItem.id, source: "Case" },
+    });
+    if (created.status === "Completed") await ensureAppointmentCompletionFollowUp(tx, created);
     if (meetingMode === MEETING_MODES.ZOOM && created.status === "Scheduled") {
       await enqueueAppointmentMeetingJob(tx, {
         appointment: created,
@@ -177,6 +190,12 @@ export async function updateAppointment(req, res) {
     : normalizeMeetingMode(req.body.meetingMode, existing.meetingMode);
   const modeChanged = meetingMode !== existing.meetingMode;
   const meetingChanged = timeChanged || assigneeChanged || modeChanged;
+  const detailsChanged = subject !== existing.subject
+    || req.body.location !== undefined
+    || req.body.calendar !== undefined
+    || req.body.description !== undefined
+    || req.body.purpose !== undefined
+    || req.body.internalNotes !== undefined;
   if (modeChanged) {
     assertMeetingModeConfigured({ settings, mode: meetingMode, guestPhone: existing.client?.phone });
   }
@@ -221,8 +240,19 @@ export async function updateAppointment(req, res) {
           : null,
       } : {}),
       ...(req.body.calendar !== undefined ? { calendar: clean(req.body.calendar, 80, "Case Calendar") || "Case Calendar" } : {}),
-      ...(req.body.description !== undefined ? { description: clean(req.body.description, 5000) || null } : {}),
+      ...(req.body.description !== undefined ? {
+        description: clean(req.body.description, 5000) || null,
+        purpose: clean(req.body.description, 5000) || null,
+      } : {}),
+      ...(req.body.purpose !== undefined ? { purpose: clean(req.body.purpose, 5000) || null, description: clean(req.body.purpose, 5000) || null } : {}),
+      ...(req.body.internalNotes !== undefined ? { internalNotes: clean(req.body.internalNotes, 10000) || null } : {}),
     }, include });
+    if (timeChanged) await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: updated.id, actorUserId: req.user.id, type: "RESCHEDULED", summary: "Appointment date or time changed", metadata: { from: existing.startsAt, to: startsAt } });
+    if (modeChanged) await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: updated.id, actorUserId: req.user.id, type: "FORMAT_UPDATED", summary: "Appointment format changed", metadata: { from: existing.meetingMode, to: meetingMode } });
+    if (assigneeChanged) await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: updated.id, actorUserId: req.user.id, type: "ASSIGNMENT_UPDATED", summary: "Appointment consultant changed", metadata: { from: existing.assignedToId, to: assignedToId } });
+    if (detailsChanged) await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: updated.id, actorUserId: req.user.id, type: "DETAILS_UPDATED", summary: "Appointment details updated" });
+    if (status !== existing.status) await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: updated.id, actorUserId: req.user.id, type: status === "Cancelled" ? "CANCELLED" : "STATUS_CHANGED", summary: status === "Cancelled" ? "Appointment cancelled" : `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
+    if (status === "Completed" && existing.status !== "Completed") await ensureAppointmentCompletionFollowUp(tx, updated);
     await syncLeadConsultationFromAppointment(tx, updated, {
       consultationStatus: status === "Completed" ? "COMPLETED"
         : status === "Cancelled" ? "CANCELLED"
@@ -295,6 +325,7 @@ export async function deleteAppointment(req, res) {
   if (!existing) throw createHttpError(404, "Appointment not found");
   const data = await prisma.$transaction(async (tx) => {
     const cancelled = await tx.appointment.update({ where: { id: existing.id }, data: { status: "Cancelled", cancelledAt: new Date(), cancelledById: req.user.id, cancellationReason: "Cancelled from case" }, include });
+    await recordAppointmentEvent(tx, { agencyId: req.user.agencyId, appointmentId: cancelled.id, actorUserId: req.user.id, type: "CANCELLED", summary: "Appointment cancelled from case", metadata: { reason: "Cancelled from case" } });
     await syncLeadConsultationFromAppointment(tx, cancelled, { consultationStatus: "CANCELLED" });
     if (existing.meetingProvider === "Zoom" && existing.meetingProviderId) {
       await enqueueAppointmentMeetingJob(tx, {

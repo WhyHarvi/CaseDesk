@@ -22,10 +22,10 @@ function addTableHeader(doc, y) {
   doc.fillColor("#f1f5f9").rect(PAGE.left, y, PAGE.right - PAGE.left, 24).fill();
   doc.fillColor("#475569").font("Helvetica-Bold").fontSize(7.2);
   const headers = [
-    ["DATE", 46, 56], ["REFERENCE", 102, 64], ["TYPE / DESCRIPTION", 170, 158],
-    ["CASE", 332, 76], ["CHARGE", 412, 50], ["PAYMENT", 466, 50], ["BALANCE", 520, 46],
+    ["DATE", 46, 50], ["REFERENCE", 98, 56], ["TYPE / DESCRIPTION", 156, 132],
+    ["FILE", 292, 70], ["CHARGE", 366, 48], ["PAYMENT", 416, 48], ["REFUND", 466, 48], ["BALANCE", 518, 48],
   ];
-  headers.forEach(([label, x, width]) => doc.text(label, x, y + 8, { width, align: x >= 412 ? "right" : "left" }));
+  headers.forEach(([label, x, width]) => doc.text(label, x, y + 8, { width, align: x >= 366 ? "right" : "left" }));
   return y + 30;
 }
 
@@ -89,22 +89,23 @@ export function generateAccountStatementPdf(statement) {
     doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(11).text(statement.client.fullName, PAGE.left, 240);
     const clientDetails = optionalLines([statement.client.address, statement.client.email, statement.client.phone, `Client ID: ${statement.client.id}`]);
     doc.fillColor("#64748b").font("Helvetica").fontSize(8.5).text(clientDetails, PAGE.left, 257, { width: 245, lineGap: 2 });
-    doc.fillColor("#94a3b8").font("Helvetica-Bold").fontSize(7).text("CASE", 332, 225);
-    doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(10).text(statement.case?.caseType || "All Cases", 332, 240, { width: 238 });
+    doc.fillColor("#94a3b8").font("Helvetica-Bold").fontSize(7).text("BILLING SOURCE", 332, 225);
+    doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(10).text(statement.case?.caseType || "All billing, including appointments", 332, 240, { width: 238 });
     if (statement.case?.stage) doc.fillColor("#64748b").font("Helvetica").fontSize(8.5).text(`Current stage: ${statement.case.stage}`, 332, 257);
 
     const summaryY = 316;
     const summaryItems = [
       ["Opening", statement.summary.openingBalance], ["Charges", statement.summary.totalCharges],
-      ["Payments", -statement.summary.totalPayments], ["Refunds", statement.summary.totalRefunds],
+      ["Payments", -statement.summary.totalPayments], ["Credits", -statement.summary.totalCredits], ["Refunds", statement.summary.totalRefunds],
       ["Adjustments", statement.summary.totalAdjustments], ["Closing", statement.summary.closingBalance],
     ];
     summaryItems.forEach(([label, value], index) => {
-      const width = 88;
+      const width = (PAGE.right - PAGE.left) / summaryItems.length;
       const x = PAGE.left + index * width;
-      doc.fillColor(index === 5 ? "#0f172a" : "#f8fafc").roundedRect(x, summaryY, width - 4, 54, 5).fill();
-      doc.fillColor(index === 5 ? "#cbd5e1" : "#64748b").font("Helvetica-Bold").fontSize(6.7).text(label.toUpperCase(), x + 9, summaryY + 10, { width: width - 22 });
-      doc.fillColor(index === 5 ? "#ffffff" : "#0f172a").font("Helvetica-Bold").fontSize(9).text(money.format(value), x + 7, summaryY + 29, { width: width - 18, align: "right" });
+      const isClosing = index === summaryItems.length - 1;
+      doc.fillColor(isClosing ? "#0f172a" : "#f8fafc").roundedRect(x, summaryY, width - 4, 54, 5).fill();
+      doc.fillColor(isClosing ? "#cbd5e1" : "#64748b").font("Helvetica-Bold").fontSize(6.7).text(label.toUpperCase(), x + 9, summaryY + 10, { width: width - 22 });
+      doc.fillColor(isClosing ? "#ffffff" : "#0f172a").font("Helvetica-Bold").fontSize(9).text(money.format(value), x + 7, summaryY + 29, { width: width - 18, align: "right" });
     });
 
     doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(11).text("Transactions", PAGE.left, 395);
@@ -121,14 +122,15 @@ export function generateAccountStatementPdf(statement) {
           y = addPageHeader(doc, statement);
         }
         doc.fillColor("#334155").font("Helvetica").fontSize(7.6);
-        doc.text(dates.format(new Date(transaction.date)), 46, y + 6, { width: 54 });
-        doc.text(transaction.reference, 102, y + 6, { width: 64 });
-        doc.font("Helvetica-Bold").text(transaction.type, 170, y + 5, { width: 158 });
-        doc.font("Helvetica").fillColor("#64748b").text(transaction.description, 170, y + 16, { width: 150 });
-        doc.fillColor("#334155").text(transaction.caseReference || "", 332, y + 6, { width: 76 });
-        doc.text(transaction.charge ? money.format(transaction.charge) : "", 412, y + 6, { width: 50, align: "right" });
-        doc.text(transaction.paymentOrCredit ? money.format(transaction.paymentOrCredit) : "", 466, y + 6, { width: 50, align: "right" });
-        doc.font("Helvetica-Bold").text(money.format(transaction.runningBalance), 520, y + 6, { width: 46, align: "right" });
+        doc.text(dates.format(new Date(transaction.date)), 46, y + 6, { width: 50 });
+        doc.text(transaction.reference, 98, y + 6, { width: 56 });
+        doc.font("Helvetica-Bold").text(transaction.type, 156, y + 5, { width: 132 });
+        doc.font("Helvetica").fillColor("#64748b").text(transaction.description, 156, y + 16, { width: 128 });
+        doc.fillColor("#334155").text(transaction.caseReference || "", 292, y + 6, { width: 70 });
+        doc.text(transaction.charge ? money.format(transaction.charge) : "", 366, y + 6, { width: 48, align: "right" });
+        doc.text(transaction.paymentOrCredit ? money.format(transaction.paymentOrCredit) : "", 416, y + 6, { width: 48, align: "right" });
+        doc.text(transaction.refund ? money.format(transaction.refund) : "", 466, y + 6, { width: 48, align: "right" });
+        doc.font("Helvetica-Bold").text(money.format(transaction.runningBalance), 518, y + 6, { width: 48, align: "right" });
         drawRule(doc, y + rowHeight - 2, "#edf1f5");
         y += rowHeight;
       }

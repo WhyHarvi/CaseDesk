@@ -9,6 +9,7 @@ import {
   Copy,
   Loader2,
   MapPin,
+  NotebookPen,
   Phone,
   Plus,
   RefreshCw,
@@ -38,6 +39,7 @@ import {
   updateBookingAppointmentStatus,
 } from "../api/bookingApi";
 import PageContainer from "../components/layout/PageContainer";
+import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import Select from "../components/ui/Select";
 import api from "../services/api";
 
@@ -55,6 +57,12 @@ const EVENT_TONES = [
   { chip: "bg-indigo-500", block: "border-indigo-400 bg-indigo-50/90 hover:bg-indigo-100/90", title: "text-indigo-900", meta: "text-indigo-600" },
 ];
 const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-50/90 hover:bg-slate-100/90", title: "text-slate-800", meta: "text-slate-500" };
+const APPOINTMENT_STATUS_TONE = {
+  Scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
+  Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  Cancelled: "bg-rose-50 text-rose-700 ring-rose-200",
+  NoShow: "bg-amber-50 text-amber-700 ring-amber-200",
+};
 
 function startOfWeek(date) {
   const copy = new Date(date);
@@ -211,9 +219,10 @@ function DetailRow({ icon: Icon, children }) {
   );
 }
 
-function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onStatus, role, settings }) {
+function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onOpenNotes, onStatus, role, settings }) {
   const start = new Date(appointment.startsAt);
-  const person = appointment.client?.fullName || appointment.guestName || "No contact";
+  const effectiveClient = appointment.client || appointment.matchedClient || null;
+  const person = effectiveClient?.fullName || appointment.guestName || "No contact";
   const initials = person.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const [resched, setResched] = useState(false);
   const [reschedDate, setReschedDate] = useState(dateKey(start));
@@ -363,11 +372,24 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     }
   }
 
-  async function convertGuest() {
+  async function linkGuestToClient() {
     setConverting(true);
-    try { const result = await convertAppointmentToClient(appointment.id); onConverted(result.clientId); }
+    try {
+      const result = await convertAppointmentToClient(appointment.id);
+      onConverted(result.clientId, result.existing);
+      return true;
+    }
     catch (reason) { setReschedError(reason.response?.data?.message || "Could not convert this visitor."); }
     finally { setConverting(false); }
+    return false;
+  }
+
+  async function openAppointmentNotes() {
+    if (!appointment.client && appointment.matchedClient) {
+      const linked = await linkGuestToClient();
+      if (!linked) return;
+    }
+    onOpenNotes();
   }
 
   return (
@@ -380,9 +402,12 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       className="rounded-[1.4rem] border border-white/70 bg-white/85 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl"
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.chip}`} />
           <h3 className="truncate text-base font-semibold text-slate-950">{appointment.subject}</h3>
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${APPOINTMENT_STATUS_TONE[appointment.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+            {appointment.status === "NoShow" ? "No-show" : appointment.status}
+          </span>
         </div>
         <button
           type="button"
@@ -417,9 +442,17 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">{person}</p>
-          <p className="text-xs text-slate-400">{appointment.client ? "Client" : "Walk-in guest"}{appointment.case ? ` · ${appointment.case.caseType}` : ""}</p>
+          <p className="text-xs text-slate-400">{effectiveClient ? "Client" : "Walk-in guest"}{appointment.case ? ` · ${appointment.case.caseType}` : ""}</p>
+          {!effectiveClient ? (
+            <button type="button" disabled={converting} onClick={linkGuestToClient} className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-sky-300 disabled:opacity-50">
+              {converting ? "Saving…" : "Save as client"}
+            </button>
+          ) : ["admin", "consultant"].includes(role) ? (
+            <button type="button" disabled={converting} onClick={openAppointmentNotes} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50">
+              {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <NotebookPen className="h-3.5 w-3.5" />} {converting ? "Linking…" : "Appointment notes"}
+            </button>
+          ) : null}
         </div>
-        {!appointment.client ? <button type="button" disabled={converting} onClick={convertGuest} className="ml-auto shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-sky-300 disabled:opacity-50">{converting ? "Saving…" : "Save as client"}</button> : null}
       </div>
 
       {appointment.description ? (
@@ -536,7 +569,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         </div>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-2">
-          {start > new Date() ? <><button
+          {appointment.status === "Scheduled" && start > new Date() ? <><button
             type="button"
             onClick={() => setResched(true)}
             className="flex h-11 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
@@ -551,11 +584,16 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           >
             {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
           </button></> : null}
-          {start > new Date() && appointment.seriesKey ? <div className="col-span-2 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future appointments"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
-          {start <= new Date() ? <>
+          {appointment.status === "Scheduled" && start > new Date() && appointment.seriesKey ? <div className="col-span-2 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future appointments"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
+          {appointment.status === "Scheduled" && start <= new Date() ? <>
             <button type="button" onClick={() => onStatus("Completed")} className="h-10 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">Mark attended</button>
             <button type="button" onClick={() => onStatus("NoShow")} className="h-10 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700 transition hover:bg-amber-100">Mark no-show</button>
           </> : null}
+          {appointment.status !== "Scheduled" ? (
+            <div className={`col-span-2 rounded-2xl px-4 py-3 text-center text-xs font-semibold ${appointment.status === "Completed" ? "bg-emerald-50 text-emerald-700" : appointment.status === "Cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+              {appointment.status === "Completed" ? "This appointment was marked attended." : appointment.status === "Cancelled" ? "This appointment was cancelled." : "This appointment was marked no-show."}
+            </div>
+          ) : null}
         </div>
       )}
     </motion.div>
@@ -927,6 +965,7 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [notesAppointmentId, setNotesAppointmentId] = useState(null);
   const [cancelling, setCancelling] = useState(false);
 
   const monthCursor = useMemo(() => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1), [selectedDate]);
@@ -1216,7 +1255,23 @@ export default function CalendarPage() {
                 cancelling={cancelling}
                 role={role}
                 settings={bookingSettings}
-                onConverted={() => { closeSelected(); load({ fresh: true }); }}
+                onConverted={(clientId) => {
+                  const clientMatch = selected.client || selected.matchedClient;
+                  const linked = {
+                    ...selected,
+                    client: {
+                      id: clientId,
+                      fullName: clientMatch?.fullName || selected.guestName || "Client",
+                      email: clientMatch?.email || selected.guestEmail || null,
+                      phone: clientMatch?.phone || selected.guestPhone || null,
+                    },
+                    matchedClient: undefined,
+                  };
+                  setSelected(linked);
+                  setAppointments((current) => current.map((item) => item.id === linked.id ? linked : item));
+                  load({ fresh: true, background: true });
+                }}
+                onOpenNotes={() => setNotesAppointmentId(selected.id)}
                 onStatus={async (status) => {
                   try {
                     const updated = await updateBookingAppointmentStatus(selected.id, status);
@@ -1277,6 +1332,14 @@ export default function CalendarPage() {
         initialDate={dateKey(selectedDate)}
         settings={bookingSettings}
       />
+      {notesAppointmentId ? (
+        <AppointmentProfileOverlay
+          appointmentId={notesAppointmentId}
+          initialTab="notes"
+          onClose={() => setNotesAppointmentId(null)}
+          onChanged={() => load({ fresh: true, background: true })}
+        />
+      ) : null}
     </PageContainer>
   );
 }

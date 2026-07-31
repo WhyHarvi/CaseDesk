@@ -1,8 +1,9 @@
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
-import { caseAccessWhere, clientAccessWhere, relatedRecordAccessWhere } from "../middleware/authorization.js";
+import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { notifyUsers } from "../services/notificationService.js";
+import { appointmentProfileAccessWhere } from "../services/appointmentProfileService.js";
 
 const include = {
   client: {
@@ -20,6 +21,9 @@ const include = {
       stage: true,
     },
   },
+  appointment: {
+    select: { id: true, subject: true, startsAt: true, status: true },
+  },
   assignedUser: {
     select: {
       id: true,
@@ -29,9 +33,19 @@ const include = {
   },
 };
 
+function followUpAccessWhere(req) {
+  if (req.auth.role === "admin") return {};
+  return { OR: [
+    { client: clientAccessWhere(req) },
+    { case: caseAccessWhere(req) },
+    { appointment: appointmentProfileAccessWhere(req) },
+  ] };
+}
+
 const fields = {
   clientId: fieldParsers.relationField,
   caseId: fieldParsers.relationField,
+  appointmentId: fieldParsers.relationField,
   assignedUserId: fieldParsers.relationField,
   title: fieldParsers.stringField,
   description: fieldParsers.stringField,
@@ -51,10 +65,11 @@ const controller = createCrudController({
   createFields: fields,
   updateFields: fields,
   include,
-  buildAccessWhere: relatedRecordAccessWhere,
+  buildAccessWhere: followUpAccessWhere,
   buildListWhere: (req) => ({
     ...(req.query.clientId ? { clientId: req.query.clientId } : {}),
     ...(req.query.caseId ? { caseId: req.query.caseId } : {}),
+    ...(req.query.appointmentId ? { appointmentId: req.query.appointmentId } : {}),
     ...(req.query.assignedUserId ? { assignedUserId: req.query.assignedUserId } : {}),
     ...(req.query.status ? { status: req.query.status } : {}),
   }),
@@ -105,15 +120,16 @@ async function validateRelationships(req, existing = null) {
   const body = req.body || {};
   const clientId = Object.hasOwn(body, "clientId") ? relationValue(body.clientId) : existing?.clientId || null;
   const caseId = Object.hasOwn(body, "caseId") ? relationValue(body.caseId) : existing?.caseId || null;
+  const appointmentId = Object.hasOwn(body, "appointmentId") ? relationValue(body.appointmentId) : existing?.appointmentId || null;
   const assignedUserId = Object.hasOwn(body, "assignedUserId")
     ? relationValue(body.assignedUserId)
     : existing?.assignedUserId || null;
 
-  if (!clientId && !caseId) {
-    throw createHttpError(400, "Select an accessible client or case for this follow-up.", "VALIDATION_ERROR");
+  if (!clientId && !caseId && !appointmentId) {
+    throw createHttpError(400, "Select an accessible client, case, or appointment for this follow-up.", "VALIDATION_ERROR");
   }
 
-  const [client, caseItem, assignee] = await Promise.all([
+  const [client, caseItem, appointment, assignee] = await Promise.all([
     clientId
       ? prisma.client.findFirst({
           where: { id: clientId, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
@@ -124,6 +140,12 @@ async function validateRelationships(req, existing = null) {
       ? prisma.case.findFirst({
           where: { id: caseId, agencyId: req.auth.agencyId, ...caseAccessWhere(req) },
           select: { id: true, clientId: true },
+      })
+      : null,
+    appointmentId
+      ? prisma.appointment.findFirst({
+          where: { id: appointmentId, agencyId: req.auth.agencyId, ...appointmentProfileAccessWhere(req) },
+          select: { id: true, clientId: true, caseId: true },
         })
       : null,
     assignedUserId
@@ -147,10 +169,14 @@ async function validateRelationships(req, existing = null) {
 
   if (clientId && !client) throw createHttpError(403, "You do not have access to the selected client.", "FORBIDDEN");
   if (caseId && !caseItem) throw createHttpError(403, "You do not have access to the selected case.", "FORBIDDEN");
+  if (appointmentId && !appointment) throw createHttpError(403, "You do not have access to the selected appointment.", "FORBIDDEN");
   if (assignedUserId && !assignee) throw createHttpError(400, "Assigned staff member was not found or is inactive.", "VALIDATION_ERROR");
   if (clientId && caseItem && caseItem.clientId !== clientId) {
     throw createHttpError(400, "The selected case does not belong to the selected client.", "VALIDATION_ERROR");
   }
+  if (clientId && appointment?.clientId && appointment.clientId !== clientId) throw createHttpError(400, "The selected appointment does not belong to the selected client.", "VALIDATION_ERROR");
+  if (caseId && appointment?.caseId && appointment.caseId !== caseId) throw createHttpError(400, "The selected appointment does not belong to the selected case.", "VALIDATION_ERROR");
+  return { clientId: clientId || appointment?.clientId || null, caseId: caseId || appointment?.caseId || null, appointmentId };
 }
 
 export async function createFollowUp(req, res) {
@@ -168,7 +194,8 @@ export async function createFollowUp(req, res) {
   if (req.auth.role === "consultant" && !Object.hasOwn(req.body, "assignedUserId")) {
     req.body.assignedUserId = req.auth.userId;
   }
-  await validateRelationships(req);
+  const relationships = await validateRelationships(req);
+  req.body = { ...req.body, ...relationships };
   return controller.create(req, res);
 }
 
@@ -177,9 +204,9 @@ export async function updateFollowUp(req, res) {
     where: {
       id: req.params.id,
       agencyId: req.auth.agencyId,
-      ...relatedRecordAccessWhere(req),
+      ...followUpAccessWhere(req),
     },
-    select: { id: true, clientId: true, caseId: true, assignedUserId: true },
+    select: { id: true, clientId: true, caseId: true, appointmentId: true, assignedUserId: true },
   });
   if (!existing) throw createHttpError(404, "Follow-up not found.", "NOT_FOUND");
   await validateRelationships(req, existing);
@@ -187,7 +214,7 @@ export async function updateFollowUp(req, res) {
 }
 export async function cancelFollowUp(req, res) {
   const existing = await prisma.followUp.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...relatedRecordAccessWhere(req) },
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...followUpAccessWhere(req) },
     include,
   });
   if (!existing) throw createHttpError(404, "Follow-up not found.", "NOT_FOUND");

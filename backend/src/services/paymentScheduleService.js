@@ -2,7 +2,8 @@ import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { CASE_STAGES } from "../constants/caseStages.js";
-import { PAYMENT_TYPES, createInvoiceRecord } from "./caseInvoiceService.js";
+import { createInvoiceRecord } from "./caseInvoiceService.js";
+import { requireFeeCategory } from "./feeCategoryService.js";
 import { notifyInstallmentInvoiced, notifyStaffInstallmentVoided } from "./paymentNotificationService.js";
 import { voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
@@ -12,7 +13,8 @@ const TRIGGER_TYPES = new Set(["Date", "Stage"]);
 function validateInstallmentInput(item) {
   const label = String(item?.label || "").trim().slice(0, 200);
   if (!label) throw createHttpError(400, "Every installment needs a label.", "VALIDATION_ERROR");
-  if (!PAYMENT_TYPES[item?.paymentType]) throw createHttpError(400, "Choose a valid payment type for every installment.", "VALIDATION_ERROR");
+  const paymentType = String(item?.paymentType || "").trim();
+  if (!paymentType) throw createHttpError(400, "Choose a valid payment type for every installment.", "VALIDATION_ERROR");
   const amount = Number(item?.amount);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
     throw createHttpError(400, `Enter a valid amount for "${label}".`, "VALIDATION_ERROR");
@@ -30,12 +32,18 @@ function validateInstallmentInput(item) {
   }
   return {
     label,
-    paymentType: item.paymentType,
+    paymentType,
     amount,
     triggerType,
     triggerStage: triggerType === "Stage" ? item.triggerStage : null,
     triggerDaysAfterSigning: triggerType === "Date" ? Number(item.triggerDaysAfterSigning) : null,
   };
+}
+
+async function validateInstallmentsInput(agencyId, installments) {
+  const validated = installments.map(validateInstallmentInput);
+  await Promise.all([...new Set(validated.map((item) => item.paymentType))].map((code) => requireFeeCategory(agencyId, code)));
+  return validated;
 }
 
 // ---------- Templates ----------
@@ -54,7 +62,7 @@ export async function createScheduleTemplate(agencyId, { caseType, name, install
   if (!trimmedName) throw createHttpError(400, "Name the template.", "VALIDATION_ERROR");
   if (!trimmedCaseType) throw createHttpError(400, "Choose which case type this template applies to.", "VALIDATION_ERROR");
   if (!Array.isArray(installments) || !installments.length) throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
-  const validated = installments.map(validateInstallmentInput);
+  const validated = await validateInstallmentsInput(agencyId, installments);
 
   return prisma.paymentScheduleTemplate.create({
     data: {
@@ -80,7 +88,7 @@ export async function updateScheduleTemplate(agencyId, templateId, { name, isAct
 
   if (installments !== undefined) {
     if (!Array.isArray(installments) || !installments.length) throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
-    const validated = installments.map(validateInstallmentInput);
+    const validated = await validateInstallmentsInput(agencyId, installments);
     await prisma.$transaction([
       prisma.paymentScheduleTemplateInstallment.deleteMany({ where: { templateId } }),
       prisma.paymentScheduleTemplateInstallment.createMany({
@@ -130,7 +138,7 @@ export async function createCaseSchedule(agencyId, { caseId, signingDate, instal
   const resolvedSigningDate = signingDate ? new Date(signingDate) : new Date();
   if (Number.isNaN(resolvedSigningDate.getTime())) throw createHttpError(400, "Enter a valid signing date.", "VALIDATION_ERROR");
   if (!Array.isArray(installments) || !installments.length) throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
-  const validated = installments.map(validateInstallmentInput);
+  const validated = await validateInstallmentsInput(agencyId, installments);
 
   const schedule = await prisma.casePaymentSchedule.create({
     data: {
@@ -199,7 +207,7 @@ export async function updateCaseInstallments(agencyId, caseId, { installments, a
     if (!incomingIds.has(firedId)) throw createHttpError(400, "Invoiced or voided installments cannot be removed from the schedule.", "VALIDATION_ERROR");
   }
 
-  const validated = installments.map((item) => ({ id: item.id || null, ...validateInstallmentInput(item) }));
+  const validated = (await validateInstallmentsInput(agencyId, installments)).map((item, index) => ({ id: installments[index].id || null, ...item }));
 
   await prisma.$transaction(async (tx) => {
     await tx.casePaymentInstallment.deleteMany({ where: { scheduleId: schedule.id, id: { notIn: [...incomingIds] }, status: "Scheduled" } });
@@ -294,7 +302,9 @@ export async function voidRemainingInstallments(agencyId, caseId, { reason, acto
 // amounts (what was agreed to be charged, invoiced or not yet); paid =
 // sum of (invoice.amount - invoice.balance) across the installments that
 // have actually been invoiced; balance = the rest still owed.
-function summarizeInstallments(installments, invoiceById) {
+function summarizeCaseBilling(installments, invoices, legacyPayments = []) {
+  const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
+  const linkedInvoiceIds = new Set(installments.map((item) => item.caseInvoiceId).filter(Boolean));
   let totalFee = 0;
   let paidAmount = 0;
   for (const installment of installments) {
@@ -304,30 +314,33 @@ function summarizeInstallments(installments, invoiceById) {
       if (invoice) paidAmount += Number(invoice.amount) - Number(invoice.balance);
     }
   }
+  for (const invoice of invoices) {
+    if (linkedInvoiceIds.has(invoice.id) || ["Void", "Voided"].includes(invoice.status)) continue;
+    totalFee += Number(invoice.amount);
+    paidAmount += Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+  }
+  for (const payment of legacyPayments) {
+    totalFee += Number(payment.totalFee);
+    paidAmount += Number(payment.paidAmount);
+  }
   const balance = Math.max(totalFee - paidAmount, 0);
   const status = totalFee === 0 ? "Unpaid" : balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
   return { totalFee, paidAmount, balance, status };
 }
 
-async function loadInvoicesById(invoiceIds) {
-  if (!invoiceIds.length) return new Map();
-  const invoices = await prisma.caseInvoice.findMany({
-    where: { id: { in: invoiceIds } },
-    select: { id: true, amount: true, balance: true },
-  });
-  return new Map(invoices.map((invoice) => [invoice.id, invoice]));
-}
-
 const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" };
 
 export async function getCasePaymentSummary(agencyId, caseId) {
-  const installments = await prisma.casePaymentInstallment.findMany({
-    where: { agencyId, caseId, status: { not: "Void" } },
-    select: { amount: true, caseInvoiceId: true },
-  });
-  if (!installments.length) return { ...EMPTY_SUMMARY };
-  const invoiceById = await loadInvoicesById(installments.map((item) => item.caseInvoiceId).filter(Boolean));
-  return summarizeInstallments(installments, invoiceById);
+  const [installments, invoices, legacyPayments] = await Promise.all([
+    prisma.casePaymentInstallment.findMany({
+      where: { agencyId, caseId, status: { not: "Void" } },
+      select: { amount: true, caseInvoiceId: true },
+    }),
+    prisma.caseInvoice.findMany({ where: { agencyId, caseId }, select: { id: true, caseId: true, amount: true, balance: true, status: true } }),
+    prisma.payment.findMany({ where: { agencyId, caseId }, select: { totalFee: true, paidAmount: true } }),
+  ]);
+  if (!installments.length && !invoices.length && !legacyPayments.length) return { ...EMPTY_SUMMARY };
+  return summarizeCaseBilling(installments, invoices, legacyPayments);
 }
 
 /**
@@ -336,11 +349,14 @@ export async function getCasePaymentSummary(agencyId, caseId) {
  * for list views like the case dashboard.
  */
 export async function getCasePaymentSummariesByCase(agencyId) {
-  const installments = await prisma.casePaymentInstallment.findMany({
+  const [installments, invoices, legacyPayments] = await Promise.all([prisma.casePaymentInstallment.findMany({
     where: { agencyId, status: { not: "Void" } },
     select: { caseId: true, amount: true, caseInvoiceId: true },
-  });
-  const invoiceById = await loadInvoicesById(installments.map((item) => item.caseInvoiceId).filter(Boolean));
+  }), prisma.caseInvoice.findMany({
+    where: { agencyId }, select: { id: true, caseId: true, amount: true, balance: true, status: true },
+  }), prisma.payment.findMany({
+    where: { agencyId }, select: { caseId: true, totalFee: true, paidAmount: true },
+  })]);
 
   const byCaseId = new Map();
   for (const installment of installments) {
@@ -349,9 +365,14 @@ export async function getCasePaymentSummariesByCase(agencyId) {
     byCaseId.set(installment.caseId, list);
   }
 
+  const invoicesByCase = new Map();
+  for (const invoice of invoices) invoicesByCase.set(invoice.caseId, [...(invoicesByCase.get(invoice.caseId) || []), invoice]);
+  const legacyByCase = new Map();
+  for (const payment of legacyPayments) legacyByCase.set(payment.caseId, [...(legacyByCase.get(payment.caseId) || []), payment]);
   const summaries = new Map();
-  for (const [caseId, items] of byCaseId) {
-    summaries.set(caseId, summarizeInstallments(items, invoiceById));
+  const caseIds = new Set([...byCaseId.keys(), ...invoicesByCase.keys(), ...legacyByCase.keys()]);
+  for (const caseId of caseIds) {
+    summaries.set(caseId, summarizeCaseBilling(byCaseId.get(caseId) || [], invoicesByCase.get(caseId) || [], legacyByCase.get(caseId) || []));
   }
   return summaries;
 }

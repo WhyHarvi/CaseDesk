@@ -96,6 +96,17 @@ const WORK_TONE_RANK = { urgent: 0, info: 1, warning: 2 };
 // can show "N clients with M things to do" instead of a flat agency-wide
 // list where one client's backlog can crowd every other client out of the
 // visible slots entirely.
+// Standalone tasks (added via the case Tasks tab's "+ Task" button) render
+// as individual, highlightable rows there — the case's template/checklist
+// workflow steps don't have a per-item destination anywhere in the case
+// workspace yet, so those just link to the case itself. Mirrors the same
+// distinction in DashboardListDrawer.jsx's taskLink() on the frontend.
+function taskLink(task) {
+  return task.isStandaloneTask
+    ? `/app/cases/${task.case.id}?tab=tasks&highlight=${task.id}`
+    : `/app/cases/${task.case.id}`;
+}
+
 function groupWorkByClient({ overdueTasksByClient, todayTasksByClient, documentActionsByClient, casesWaitingUpdateByClient }) {
   const byClient = new Map();
   function bucket(client) {
@@ -110,7 +121,7 @@ function groupWorkByClient({ overdueTasksByClient, todayTasksByClient, documentA
     b.overdueCount += 1;
     b.items.push({
       id: `task-${task.id}`,
-      to: `/app/cases/${task.case.id}`,
+      to: taskLink(task),
       caseType: task.case.caseType,
       title: task.title,
       detail: task.description || `${task.priority} priority task`,
@@ -125,7 +136,7 @@ function groupWorkByClient({ overdueTasksByClient, todayTasksByClient, documentA
     b.currentCount += 1;
     b.items.push({
       id: `task-${task.id}`,
-      to: `/app/cases/${task.case.id}`,
+      to: taskLink(task),
       caseType: task.case.caseType,
       title: task.title,
       detail: task.description || `${task.priority} priority task`,
@@ -140,7 +151,7 @@ function groupWorkByClient({ overdueTasksByClient, todayTasksByClient, documentA
     b.currentCount += 1;
     b.items.push({
       id: `document-${document.id}`,
-      to: document.case ? `/app/cases/${document.case.id}` : `/app/clients/${document.client.id}`,
+      to: document.case ? `/app/cases/${document.case.id}?tab=documents&highlight=${document.id}` : `/app/documents?highlight=${document.id}`,
       caseType: document.case?.caseType || "Client document",
       title: document.documentName,
       detail: `Document status: ${document.status.replace(/([a-z])([A-Z])/g, "$1 $2")}`,
@@ -238,10 +249,8 @@ export async function getDashboardSummary(req, res) {
     pendingBookingHoldTotals,
     casePipelineRaw,
     upcomingAppointments,
-    todayTasks,
-    overdueTasks,
-    documentActions,
     upcomingFollowUps,
+    followUpsDueTodayList,
     casesWaitingUpdateCount,
     casesWaitingUpdate,
     recentActivity,
@@ -324,52 +333,24 @@ export async function getDashboardSummary(req, res) {
         sessionType: { select: { name: true } },
       },
     }),
-    prisma.caseWorkflowStep.findMany({
-      where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
-      orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
-      take: 5,
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        priority: true,
-        dueAt: true,
-        case: { select: caseSummarySelect },
-      },
-    }),
-    prisma.caseWorkflowStep.findMany({
-      where: { ...pendingTaskWhere, dueAt: { lt: todayStart } },
-      orderBy: { dueAt: "asc" },
-      take: 5,
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        priority: true,
-        dueAt: true,
-        case: { select: caseSummarySelect },
-      },
-    }),
-    prisma.clientDocument.findMany({
-      where: {
-        ...documentWhere,
-        status: { in: ["Requested", "Uploaded", "UnderReview", "ChangesRequested"] },
-      },
-      orderBy: { updatedAt: "asc" },
-      take: 5,
-      select: {
-        id: true,
-        documentName: true,
-        status: true,
-        updatedAt: true,
-        client: { select: { id: true, fullName: true } },
-        case: { select: { id: true, caseType: true } },
-      },
-    }),
     prisma.followUp.findMany({
       where: openFollowUpWhere,
       orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
       take: 6,
+      select: {
+        id: true,
+        title: true,
+        dueDate: true,
+        status: true,
+        client: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true } },
+        assignedUser: { select: { id: true, fullName: true } },
+      },
+    }),
+    prisma.followUp.findMany({
+      where: { ...openFollowUpWhere, dueDate: { gte: todayStart, lt: tomorrowStart } },
+      orderBy: { dueDate: "asc" },
+      take: 300,
       select: {
         id: true,
         title: true,
@@ -406,24 +387,25 @@ export async function getDashboardSummary(req, res) {
         case: { select: { id: true, caseType: true } },
       },
     }),
-    // Kept separate from the take:5 queries above, which other dashboard
-    // cards (e.g. "Cases Waiting for Update") rely on staying capped for
-    // their own layout — these feed the Priority Work widget's per-client
-    // grouping instead, so a client with a lot of open work can't crowd
-    // every other client out of the visible slots. Bounded generously
-    // rather than left uncapped, as a defensive limit against a pathological
-    // agency-wide backlog, not a designed UX cap.
+    // Kept separate from the take:5 "Cases Waiting for Update" query below,
+    // which relies on staying capped for its own card layout — these feed
+    // the Priority Work widget's per-client grouping, and are also exposed
+    // flat as data.todayTasks/overdueTasks/documentActions for the dashboard
+    // drawers, so a client with a lot of open work can't crowd every other
+    // client out of the visible slots. Bounded generously rather than left
+    // uncapped, as a defensive limit against a pathological agency-wide
+    // backlog, not a designed UX cap.
     prisma.caseWorkflowStep.findMany({
       where: { ...pendingTaskWhere, dueAt: { lt: todayStart } },
       orderBy: { dueAt: "asc" },
       take: 300,
-      select: { id: true, title: true, description: true, priority: true, dueAt: true, case: { select: caseSummarySelect } },
+      select: { id: true, title: true, description: true, priority: true, dueAt: true, isStandaloneTask: true, case: { select: caseSummarySelect } },
     }),
     prisma.caseWorkflowStep.findMany({
       where: { ...pendingTaskWhere, dueAt: { gte: todayStart, lt: tomorrowStart } },
       orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
       take: 300,
-      select: { id: true, title: true, description: true, priority: true, dueAt: true, case: { select: caseSummarySelect } },
+      select: { id: true, title: true, description: true, priority: true, dueAt: true, isStandaloneTask: true, case: { select: caseSummarySelect } },
     }),
     prisma.clientDocument.findMany({
       where: { ...documentWhere, status: { in: ["Requested", "Uploaded", "UnderReview", "ChangesRequested"] } },
@@ -477,11 +459,16 @@ export async function getDashboardSummary(req, res) {
         ...appointment,
         isMine: appointment.assignedTo?.id === req.auth.userId,
       })),
-      todayTasks,
-      overdueTasks,
-      documentActions,
+      // Reuses the take:300 *ByClient lists already fetched for the Priority
+      // Work grouping above — these are the same underlying data, just also
+      // exposed flat for the dashboard drawers (Pending Documents / Tasks
+      // Due Today / Overdue Tasks) to drill into without a second fetch.
+      todayTasks: todayTasksByClient,
+      overdueTasks: overdueTasksByClient,
+      documentActions: documentActionsByClient,
       priorityWork,
       upcomingFollowUps,
+      followUpsDueTodayList,
       casesWaitingUpdate,
       recentActivity,
   };

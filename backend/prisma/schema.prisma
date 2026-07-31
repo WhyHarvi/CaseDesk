@@ -532,6 +532,7 @@ model Agency {
   zoomHostMappings               ZoomHostMapping[]
   appointmentMeetingJobs         AppointmentMeetingJob[]
   caseInvoices                   CaseInvoice[]
+  feeCategories                  AgencyFeeCategory[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
   casePaymentInstallments        CasePaymentInstallment[]
@@ -868,6 +869,27 @@ model AgencyQuickBooksSettings {
   agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("agency_quickbooks_settings")
+}
+
+model AgencyFeeCategory {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  code        String
+  name        String
+  description String?
+  kind        String   @default("Other")
+  qboItemId   String?  @map("qbo_item_id")
+  qboItemName String?  @map("qbo_item_name")
+  isActive    Boolean  @default(true) @map("is_active")
+  isSystem    Boolean  @default(false) @map("is_system")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, code])
+  @@index([agencyId, isActive, sortOrder])
+  @@map("agency_fee_categories")
 }
 
 model AgencyMailSettings {
@@ -1395,6 +1417,8 @@ model Appointment {
   startsAt               DateTime                 @map("starts_at")
   endsAt                 DateTime                 @map("ends_at")
   description            String?
+  purpose                String?
+  internalNotes          String?                  @map("internal_notes")
   guestName              String?                  @map("guest_name")
   guestEmail             String?                  @map("guest_email")
   guestEmailNormalized   String?                  @map("guest_email_normalized")
@@ -1440,6 +1464,8 @@ model Appointment {
   leadConsultation       LeadConsultation?
   messageDeliveries      BookingMessageDelivery[]
   events                 AppointmentEvent[]
+  notes                  Note[]
+  followUps              FollowUp[]
   paymentHold            BookingPaymentHold?
   meetingJobs            AppointmentMeetingJob[]
 
@@ -1678,9 +1704,16 @@ model BookingPaymentHold {
   // concurrent holds mid-creation never collide on qbInvoiceId.
   qbCustomerId         String?             @map("qb_customer_id")
   qbInvoiceId          String?             @map("qb_invoice_id")
+  // Human-facing QuickBooks document number (for example, 1006). The QBO
+  // entity id above is an internal identifier and should never be shown to
+  // staff as the invoice number.
+  qbInvoiceNumber      String?             @map("qb_invoice_number")
   qbInvoiceLink        String?             @map("qb_invoice_link")
   qbSyncToken          String?             @map("qb_sync_token")
   qbRefundReceiptId    String?             @map("qb_refund_receipt_id")
+  qbPaymentId          String?             @map("qb_payment_id")
+  paymentMethod        String?             @map("payment_method")
+  manualPaymentNote    String?             @map("manual_payment_note")
   status               String              @default("AwaitingPayment")
   source               String              @default("Public")
   expiresAt            DateTime?           @map("expires_at")
@@ -1723,6 +1756,7 @@ model BookingPaymentHold {
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
   @@unique([agencyId, qbRefundReceiptId])
+  @@unique([agencyId, qbPaymentId])
   @@index([agencyId, assignedToId, startsAt, endsAt, status, expiresAt])
   @@index([agencyId, status, expiresAt])
   @@index([clientId])
@@ -2747,23 +2781,26 @@ model SharedLibraryDocument {
 }
 
 model Note {
-  id            String   @id @default(uuid())
-  agencyId      String   @map("agency_id")
-  clientId      String?  @map("client_id")
-  caseId        String?  @map("case_id")
-  userId        String?  @map("user_id")
+  id            String       @id @default(uuid())
+  agencyId      String       @map("agency_id")
+  clientId      String?      @map("client_id")
+  caseId        String?      @map("case_id")
+  appointmentId String?      @map("appointment_id")
+  userId        String?      @map("user_id")
   content       String
-  clientVisible Boolean  @default(false) @map("client_visible")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  agency        Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client        Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case          Case?    @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clientVisible Boolean      @default(false) @map("client_visible")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  agency        Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client        Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case          Case?        @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([clientId])
   @@index([caseId])
+  @@index([appointmentId])
   @@index([userId])
   @@map("notes")
 }
@@ -2773,6 +2810,7 @@ model FollowUp {
   agencyId             String         @map("agency_id")
   clientId             String?        @map("client_id")
   caseId               String?        @map("case_id")
+  appointmentId        String?        @map("appointment_id")
   assignedUserId       String?        @map("assigned_user_id")
   title                String
   description          String?
@@ -2787,11 +2825,13 @@ model FollowUp {
   agency               Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   client               Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
   case                 Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment          Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   assignedUser         User?          @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([clientId])
   @@index([caseId])
+  @@index([appointmentId])
   @@index([assignedUserId])
   @@index([agencyId, status, reminderAt])
   @@map("follow_ups")

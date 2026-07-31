@@ -131,3 +131,30 @@ test("paid booking holds have a missed-webhook reconciliation path before expiry
   assert.match(paymentsPage, /ORPHANED_PAYMENT_RUNBOOK/);
   assert.match(paymentsPage, /summary\?\.manualBookingCount > 0/);
 });
+
+test("QuickBooks customer repair and booking invoice metadata are durable", async () => {
+  const [quickBooksService, clientSync, holdService, webhookService, paymentsOverview, paymentsPage, schema, migration] = await Promise.all([
+    readFile(new URL("../src/services/quickbooksService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/clientQuickBooksSyncService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/quickbooksWebhookService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/paymentsOverviewService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260731120000_booking_payment_invoice_number/migration.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(quickBooksService, /Customer WHERE Id =/);
+  assert.match(quickBooksService, /fault 2010/);
+  assert.doesNotMatch(quickBooksService, /error\.statusCode === 502 \|\| error\.code === "QBO_REQUEST_FAILED"/);
+  assert.match(quickBooksService, /QBO_CUSTOMER_AMBIGUOUS/);
+  assert.match(clientSync, /displayName: collisionSafeDisplayName\(client\)/);
+  assert.match(clientSync, /client_link_email_mismatch/);
+  assert.match(holdService, /qbInvoiceNumber: invoice\.docNumber/g);
+  assert.match(webhookService, /qbInvoiceNumber: invoice\.docNumber/);
+  assert.match(paymentsOverview, /qbInvoiceNumber: row\.qbInvoiceNumber/);
+  assert.match(paymentsOverview, /row\.clientId \|\| row\.appointment\?\.clientId/);
+  assert.match(paymentsPage, /Invoice #\{row\.qbInvoiceNumber\}/);
+  assert.match(schema, /qbInvoiceNumber\s+String\?\s+@map\("qb_invoice_number"\)/);
+  assert.match(migration, /ADD COLUMN "qb_invoice_number" TEXT/);
+});

@@ -385,12 +385,12 @@ export function BookingMonthPicker({
   );
 }
 
-export function PublicShell({ children, agencyName, fullWidth = false }) {
+export function PublicShell({ children, agencyName, wide = false }) {
   return (
     <main className="flex min-h-[100dvh] w-full flex-col items-center justify-center bg-slate-50 px-4 py-6 sm:px-6">
       <div
         className={`w-full transition-[max-width] duration-500 ease-out ${
-          fullWidth ? "max-w-none" : "max-w-xl"
+          wide ? "max-w-4xl" : "max-w-xl"
         }`}
       >
         {agencyName ? (

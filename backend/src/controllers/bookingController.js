@@ -31,6 +31,7 @@ import { createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWal
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import {
   MEETING_MODES,
   MEETING_MODE_VALUES,
@@ -46,6 +47,7 @@ import {
   leadConsultationStatusForAppointment,
   syncLeadConsultationFromAppointment,
 } from "../services/leadConsultationAppointmentService.js";
+import { ensureAppointmentCompletionFollowUp, requireAppointmentProfile } from "../services/appointmentProfileService.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -548,6 +550,7 @@ const calendarInclude = {
       id: true,
       status: true,
       amount: true,
+      qbInvoiceNumber: true,
       qbInvoiceLink: true,
       paidAt: true,
       expiresAt: true,
@@ -574,7 +577,33 @@ export async function listCalendarAppointments(req, res) {
     include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     orderBy: { startsAt: "asc" },
   });
-  res.json({ data });
+  const unlinkedContacts = data
+    .filter((item) => !item.clientId && (item.guestEmail || item.guestPhone))
+    .map((item) => ({ appointmentId: item.id, ...normalizeContact({ email: item.guestEmail, phone: item.guestPhone }) }));
+  const contactWhere = [
+    ...new Set(unlinkedContacts.map((item) => item.emailNormalized).filter(Boolean)),
+  ].map((emailNormalized) => ({ emailNormalized }));
+  contactWhere.push(...[
+    ...new Set(unlinkedContacts.map((item) => item.phoneNormalized).filter(Boolean)),
+  ].map((phoneNormalized) => ({ phoneNormalized })));
+  const matchingClients = contactWhere.length ? await prisma.client.findMany({
+    where: { agencyId: req.auth.agencyId, OR: contactWhere },
+    select: { id: true, fullName: true, email: true, phone: true, emailNormalized: true, phoneNormalized: true },
+  }) : [];
+  const contactByAppointment = new Map(unlinkedContacts.map((item) => [item.appointmentId, item]));
+  res.json({
+    data: data.map((item) => {
+      if (item.clientId) return item;
+      const contact = contactByAppointment.get(item.id);
+      const candidates = matchingClients.filter((client) =>
+        (contact?.emailNormalized && client.emailNormalized === contact.emailNormalized)
+        || (contact?.phoneNormalized && client.phoneNormalized === contact.phoneNormalized));
+      const matchedClient = candidates.length === 1 ? candidates[0] : null;
+      if (!matchedClient) return item;
+      const { emailNormalized: _emailNormalized, phoneNormalized: _phoneNormalized, ...safeClient } = matchedClient;
+      return { ...item, matchedClient: safeClient };
+    }),
+  });
 }
 
 export async function createBookingAppointment(req, res) {
@@ -693,6 +722,7 @@ export async function createBookingAppointment(req, res) {
         holdId: hold.id,
         status: hold.status,
         amount: hold.amount,
+        invoiceNumber: hold.qbInvoiceNumber,
         payNowUrl: hold.qbInvoiceLink,
         expiresAt: hold.expiresAt,
       },
@@ -746,6 +776,7 @@ export async function createBookingAppointment(req, res) {
         startsAt: occurrenceStart,
         endsAt: occurrenceEnd,
         description: String(body.description || "").trim().slice(0, 2000) || null,
+        purpose: String(body.description || "").trim().slice(0, 2000) || null,
         guestName,
         guestEmail: String(body.guestEmail || "").trim().slice(0, 254) || null,
         guestEmailNormalized,
@@ -860,6 +891,7 @@ export async function getBookingPaymentHoldById(req, res) {
       id: latest.id,
       status: latest.status,
       amount: latest.amount,
+      invoiceNumber: latest.qbInvoiceNumber,
       payNowUrl: latest.status === "AwaitingPayment" ? latest.qbInvoiceLink : null,
       expiresAt: latest.expiresAt,
       appointmentId: latest.appointmentId,
@@ -879,6 +911,7 @@ export async function createWalkInPayNowLink(req, res) {
       id: hold.id,
       status: hold.status,
       amount: hold.amount,
+      invoiceNumber: hold.qbInvoiceNumber,
       payNowUrl: hold.status === "AwaitingPayment" ? hold.qbInvoiceLink || null : null,
     },
   });
@@ -1216,11 +1249,15 @@ export async function convertAppointmentToClient(req, res) {
   if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
   if (appointment.clientId) return res.json({ data: { clientId: appointment.clientId, existing: true } });
   if (!appointment.guestName) throw createHttpError(400, "This appointment has no visitor name.", "VALIDATION_ERROR");
-  const client = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await lockAgencyContactIntake(tx, req.auth.agencyId);
     const contact = normalizeContact({ phone: appointment.guestPhone, email: appointment.guestEmail });
     const contactOr = [contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null, contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null].filter(Boolean);
-    const existing = contactOr.length ? await tx.client.findFirst({ where: { agencyId: req.auth.agencyId, OR: contactOr } }) : null;
+    const existingMatches = contactOr.length ? await tx.client.findMany({ where: { agencyId: req.auth.agencyId, OR: contactOr }, take: 3 }) : [];
+    if (existingMatches.length > 1) {
+      throw createHttpError(409, "More than one client matches this visitor. Open the client list and link the correct record before continuing.", "AMBIGUOUS_CLIENT_MATCH");
+    }
+    const existing = existingMatches[0] || null;
     const created = existing || await tx.client.create({ data: {
       agencyId: req.auth.agencyId,
       clientNumber: await nextClientNumber(tx, req.auth.agencyId),
@@ -1230,10 +1267,68 @@ export async function convertAppointmentToClient(req, res) {
       assignedUserId: appointment.assignedToId,
     } });
     await tx.appointment.update({ where: { id: appointment.id }, data: { clientId: created.id } });
+    await tx.note.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });
+    await tx.followUp.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });
+    await tx.bookingPaymentHold.updateMany({
+      where: { appointmentId: appointment.id, clientId: null },
+      data: { clientId: created.id },
+    });
     await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "CLIENT_LINKED", summary: existing ? "Linked to an existing client" : "Visitor converted to a client", metadata: { clientId: created.id } });
-    return created;
+    return { client: created, existing: Boolean(existing) };
   });
-  res.status(201).json({ data: { clientId: client.id, existing: false } });
+  res.status(result.existing ? 200 : 201).json({ data: { clientId: result.client.id, existing: result.existing } });
+}
+
+// Shared by the manual "mark attended/cancelled/no-show" HTTP endpoint below
+// and appointmentNoShowService.js's automatic end-of-day poller, so both
+// paths get identical side effects (lead-consultation sync, event log,
+// completion follow-up, staff/client notifications, waitlist offer, and —
+// importantly — voiding any open payment hold) with nothing to drift out of
+// sync between a human-triggered and a system-triggered status change.
+// actorUserId is null for the automatic path; every downstream call here
+// already treats a null actor as "system-triggered" (recordAppointmentEvent
+// defaults actorUserId to null, and both notification helpers accept a null
+// actorUserId as just metadata on the delivery record).
+export async function applyAppointmentStatusChange({ agencyId, existing, status, actorUserId = null, reason = null }) {
+  const data = await prisma.$transaction(async (tx) => {
+    const result = await tx.appointment.update({
+      where: { id: existing.id },
+      data: {
+        status,
+        ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorUserId, cancellationReason: reason } : {}),
+      },
+      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+    });
+    await syncLeadConsultationFromAppointment(tx, result, {
+      consultationStatus: leadConsultationStatusForAppointment(status),
+    });
+    await recordAppointmentEvent(tx, { agencyId, appointmentId: existing.id, actorUserId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
+    if (status === "Completed") await ensureAppointmentCompletionFollowUp(tx, result);
+    if (["Completed", "NoShow"].includes(status)) {
+      await sendBookingStaffNotification({ agencyId, appointment: result, kind: status === "Completed" ? "attended" : "no_show", actorUserId, db: tx });
+    } else {
+      await sendBookingMessages({ agencyId, appointment: result, kind: "cancelled", actorUserId, db: tx });
+      if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
+        await enqueueAppointmentMeetingJob(tx, {
+          appointment: result,
+          action: "DELETE",
+          providerMeetingId: result.meetingProviderId,
+          dedupeSuffix: "status-cancelled",
+        });
+      }
+    }
+    return result;
+  });
+  await recordActivity({ agencyId, userId: actorUserId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
+  invalidateDashboardCache(agencyId);
+  void processBookingMessageDeliveries();
+  if (status === "Cancelled") {
+    await offerWaitlistOpening(data).catch(() => {});
+  }
+  if (["Cancelled", "NoShow"].includes(status)) {
+    await voidOpenPaymentHoldForAppointment(agencyId, existing.id);
+  }
+  return data;
 }
 
 export async function updateBookingAppointmentStatus(req, res) {
@@ -1249,43 +1344,13 @@ export async function updateBookingAppointmentStatus(req, res) {
   if (["Completed", "NoShow"].includes(status) && new Date(existing.startsAt) > new Date()) {
     throw createHttpError(409, "An appointment cannot be marked attended or no-show before it starts.", "TOO_EARLY");
   }
-  const data = await prisma.$transaction(async (tx) => {
-    const result = await tx.appointment.update({
-      where: { id: existing.id },
-      data: {
-        status,
-        ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: req.auth.userId, cancellationReason: String(req.body?.reason || "").trim().slice(0, 500) || null } : {}),
-      },
-      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
-    });
-    await syncLeadConsultationFromAppointment(tx, result, {
-      consultationStatus: leadConsultationStatusForAppointment(status),
-    });
-    await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
-    if (["Completed", "NoShow"].includes(status)) {
-      await sendBookingStaffNotification({ agencyId: req.auth.agencyId, appointment: result, kind: status === "Completed" ? "attended" : "no_show", actorUserId: req.auth.userId, db: tx });
-    } else {
-      await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
-      if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
-        await enqueueAppointmentMeetingJob(tx, {
-          appointment: result,
-          action: "DELETE",
-          providerMeetingId: result.meetingProviderId,
-          dedupeSuffix: "status-cancelled",
-        });
-      }
-    }
-    return result;
+  const data = await applyAppointmentStatusChange({
+    agencyId: req.auth.agencyId,
+    existing,
+    status,
+    actorUserId: req.auth.userId,
+    reason: status === "Cancelled" ? (String(req.body?.reason || "").trim().slice(0, 500) || null) : null,
   });
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
-  invalidateDashboardCache(req.auth.agencyId);
-  void processBookingMessageDeliveries();
-  if (status === "Cancelled") {
-    await offerWaitlistOpening(data).catch(() => {});
-  }
-  if (["Cancelled", "NoShow"].includes(status)) {
-    await voidOpenPaymentHoldForAppointment(req.auth.agencyId, existing.id);
-  }
   res.json({ data });
 }
 
@@ -1295,11 +1360,17 @@ export async function buildAppointmentRegistry(req, query) {
   if (!["all", "attended", "not_attended", "no_show", "cancelled", "upcoming"].includes(attendance)) {
     throw createHttpError(400, "Choose a valid attendance filter.", "VALIDATION_ERROR");
   }
-  if (!["7", "30", "all"].includes(range)) throw createHttpError(400, "Choose a valid date range.", "VALIDATION_ERROR");
+  if (!["7", "30", "all", "today"].includes(range)) throw createHttpError(400, "Choose a valid date range.", "VALIDATION_ERROR");
   const page = boundedInt(query.page || 1, "Page", 1, 100000);
   const limit = boundedInt(query.limit || 25, "Page size", 1, 100);
   const now = new Date();
-  const from = range === "all" ? null : new Date(now.getTime() - Number(range) * 86_400_000);
+  let todayStart = null;
+  let tomorrowStart = null;
+  if (range === "today") {
+    const agency = await prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: { timezone: true } });
+    ({ todayStart, tomorrowStart } = reportingBounds(now, agency?.timezone || "America/Toronto"));
+  }
+  const from = range === "all" || range === "today" ? null : new Date(now.getTime() - Number(range) * 86_400_000);
   const search = String(query.search || "").trim().slice(0, 120);
   const statusWhere = attendance === "attended" ? { status: "Completed" }
     : attendance === "no_show" ? { status: "NoShow" }
@@ -1314,6 +1385,7 @@ export async function buildAppointmentRegistry(req, query) {
     AND: [
       statusWhere,
       ...(from && attendance !== "upcoming" ? [{ startsAt: { gte: from } }] : []),
+      ...(range === "today" && attendance !== "upcoming" ? [{ startsAt: { gte: todayStart, lt: tomorrowStart } }] : []),
       ...(search ? [{ OR: [
       { guestName: { contains: search, mode: "insensitive" } },
       { guestEmail: { contains: search, mode: "insensitive" } },
@@ -1331,7 +1403,7 @@ export async function buildAppointmentRegistry(req, query) {
         assignedTo: { select: { id: true, fullName: true } },
         sessionType: { select: { id: true, name: true } },
       },
-      orderBy: { startsAt: attendance === "upcoming" ? "asc" : "desc" },
+      orderBy: { startsAt: attendance === "upcoming" || range === "today" ? "asc" : "desc" },
       skip: (page - 1) * limit,
       take: limit,
     }),
@@ -1345,18 +1417,7 @@ export async function listAppointmentRegistry(req, res) {
 }
 
 export async function getAppointmentRegistryDetail(req, res) {
-  const data = await prisma.appointment.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
-    include: {
-      client: { select: { id: true, fullName: true, email: true, phone: true } },
-      assignedTo: { select: { id: true, fullName: true } },
-      sessionType: true,
-      events: { orderBy: { createdAt: "desc" }, take: 100, include: { actor: { select: { id: true, fullName: true } } } },
-      messageDeliveries: { select: { id: true, channel: true, kind: true, status: true, sentAt: true, failedAt: true }, orderBy: { createdAt: "desc" }, take: 30 },
-    },
-  });
-  if (!data) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  res.json({ data });
+  res.json({ data: await requireAppointmentProfile(req, req.params.id) });
 }
 
 export async function listSchedulingBlocks(req, res) {

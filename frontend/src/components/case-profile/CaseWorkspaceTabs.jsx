@@ -3276,6 +3276,7 @@ function ProfileDetailsGrid({
 function CaseWorkspacePanel({
   activeTab,
   caseItem,
+  highlightId,
   documents,
   followUps,
   notes,
@@ -3417,6 +3418,7 @@ function CaseWorkspacePanel({
         reminders={followUps}
         saving={savingReminder}
         error={reminderError}
+        highlightId={highlightId}
         onCreate={onCreateReminder}
       />
     );
@@ -3448,6 +3450,7 @@ function CaseWorkspacePanel({
         assignments={assessment?.formData?.questionnaireAssignments || []}
         saving={savingCaseDocuments}
         error={caseDocumentsError}
+        highlightId={highlightId}
         onCreateDocuments={onCreateCaseDocuments}
         onMarkReceived={onMarkCaseDocumentReceived}
         onUpdateAssignment={onUpdateCaseDocumentAssignment}
@@ -3493,6 +3496,7 @@ function CaseWorkspacePanel({
       <TasksWorkspace
         tasks={activeWorkflowSteps.filter((step) => step.isStandaloneTask)}
         caseItem={caseItem}
+        highlightId={highlightId}
         onCreate={onCreateTask}
         onUpdate={onUpdateTask}
         onDelete={onDeleteTask}
@@ -3661,6 +3665,7 @@ export default function CaseWorkspaceTabs({
   const [activeTab, setActiveTab] = useState(() =>
     workspaceTabFromSlug(searchParams.get("tab")),
   );
+  const highlightId = searchParams.get("highlight") || "";
   const [profileSectionRequest, setProfileSectionRequest] = useState(null);
   const workspaceContentRef = useRef(null);
 
@@ -3736,6 +3741,7 @@ export default function CaseWorkspaceTabs({
               activeTab={activeTab}
               caseItem={caseItem}
               profileSectionRequest={profileSectionRequest}
+              highlightId={highlightId}
               documents={documents}
               followUps={followUps}
               notes={notes}

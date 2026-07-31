@@ -7,9 +7,11 @@ import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import {
   createQuickBooksInvoice,
   createQuickBooksReceivePayment,
+  findOrCreateQuickBooksPaymentMethod,
   getQuickBooksInvoicePdf,
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
+import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
@@ -27,11 +29,8 @@ export async function requireMappedItem(agencyId, paymentType) {
   if (!settings || settings.status !== "connected") {
     throw createHttpError(409, "Connect QuickBooks in Settings before creating invoices.", "QBO_NOT_CONNECTED");
   }
-  const itemId = paymentType === "fees" ? settings.feeItemId : settings.disbursementItemId;
-  if (!itemId) {
-    throw createHttpError(409, `Map a QuickBooks item for ${PAYMENT_TYPES[paymentType]} in Settings before invoicing.`, "QBO_MAPPING_REQUIRED");
-  }
-  return itemId;
+  const category = await requireFeeCategory(agencyId, paymentType, { requireMapping: true });
+  return category.qboItemId;
 }
 
 /**
@@ -43,12 +42,13 @@ export async function requireMappedItem(agencyId, paymentType) {
 export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentType, description, amount, dueDate, actorUserId }) {
   const itemId = await requireMappedItem(agencyId, paymentType);
 
-  let client = await prisma.client.findUnique({ where: { id: clientId } });
-  if (!client.qbCustomerId) {
-    client = await syncClientToQuickBooks(agencyId, client.id);
-    if (!client?.qbCustomerId) {
-      throw createHttpError(409, client?.qbSyncError || "This client could not be linked to QuickBooks yet.", "QBO_CLIENT_NOT_LINKED");
-    }
+  // Validate the cached customer link before every new invoice. A numeric
+  // QBO id can become stale or resolve to a different contact after a
+  // company reconnect/import; merely checking that the column is non-null
+  // can therefore send an invoice to the wrong customer.
+  let client = await syncClientToQuickBooks(agencyId, clientId);
+  if (!client?.qbCustomerId) {
+    throw createHttpError(409, client?.qbSyncError || "This client could not be linked to QuickBooks yet.", "QBO_CLIENT_NOT_LINKED");
   }
 
   let invoice;
@@ -107,7 +107,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
 }
 
 export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId }) {
-  if (!PAYMENT_TYPES[paymentType]) throw createHttpError(400, "Choose a valid payment type.", "VALIDATION_ERROR");
+  const category = await requireFeeCategory(agencyId, paymentType);
   const trimmedDescription = String(description || "").trim().slice(0, 500);
   if (!trimmedDescription) throw createHttpError(400, "A description is required.", "VALIDATION_ERROR");
   const numericAmount = Number(amount);
@@ -134,7 +134,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     clientId: row.clientId,
     caseId,
     action: "invoice.created",
-    details: `${PAYMENT_TYPES[paymentType]} invoice for $${numericAmount.toFixed(2)} created — ${trimmedDescription}`,
+    details: `${category.name} invoice for $${numericAmount.toFixed(2)} created — ${trimmedDescription}`,
     entityType: "caseInvoice",
     entityId: row.id,
   });
@@ -182,7 +182,9 @@ export async function listCaseInvoices(agencyId, caseId) {
   const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { id: true } });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
   const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, orderBy: { createdAt: "desc" } });
-  return refreshInvoiceRows(agencyId, rows);
+  const [refreshed, categories] = await Promise.all([refreshInvoiceRows(agencyId, rows), listFeeCategories(agencyId, { includeInactive: true })]);
+  const names = new Map(categories.map((category) => [category.code, category.name]));
+  return refreshed.map((row) => ({ ...row, paymentTypeLabel: names.get(row.paymentType) || PAYMENT_TYPES[row.paymentType] || row.paymentType }));
 }
 
 // Client-portal reader: scoped by clientId (resolved server-side from the
@@ -209,7 +211,9 @@ export async function getClientInvoicePdf(agencyId, { clientId, invoiceId }) {
   return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
 }
 
-export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, note, actorUserId }) {
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", note, idempotencyKey, actorUserId }) {
+  const methodName = method === "ETransfer" ? "E-transfer" : method === "Cash" ? "Cash" : null;
+  if (!methodName) throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     throw createHttpError(400, "Enter a payment amount greater than $0.", "VALIDATION_ERROR");
@@ -222,7 +226,15 @@ export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, n
   const client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { qbCustomerId: true } });
   if (!client?.qbCustomerId) throw createHttpError(409, "This client is not linked to QuickBooks.", "QBO_CLIENT_NOT_LINKED");
 
-  await createQuickBooksReceivePayment(agencyId, { customerId: client.qbCustomerId, invoiceId: row.qbInvoiceId, amount: numericAmount });
+  const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
+  await createQuickBooksReceivePayment(agencyId, {
+    customerId: client.qbCustomerId,
+    invoiceId: row.qbInvoiceId,
+    amount: numericAmount,
+    paymentMethodId: qboMethod.id,
+    privateNote: `CaseDesk ${methodName} payment${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
+    requestId: `case-pay-${row.id.slice(0, 8)}-${String(idempotencyKey || Date.now()).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 24)}`,
+  });
 
   const [refreshed] = await getQuickBooksInvoicesByIds(agencyId, [row.qbInvoiceId]);
   const newBalance = refreshed ? refreshed.balance : Math.max(0, Number(row.balance) - numericAmount);
@@ -241,11 +253,15 @@ export async function recordCashPayment(agencyId, { caseId, invoiceId, amount, n
     userId: actorUserId,
     clientId: row.clientId,
     caseId,
-    action: "invoice.cash_payment_recorded",
-    details: `Cash payment of $${numericAmount.toFixed(2)} recorded against ${row.description}${note ? ` — ${note}` : ""}`,
+    action: "invoice.manual_payment_recorded",
+    details: `${methodName} payment of $${numericAmount.toFixed(2)} recorded against ${row.description}${note ? ` — ${note}` : ""}`,
     entityType: "caseInvoice",
     entityId: row.id,
   });
 
   return updated;
+}
+
+export async function recordCashPayment(agencyId, values) {
+  return recordManualPayment(agencyId, { ...values, method: "Cash" });
 }

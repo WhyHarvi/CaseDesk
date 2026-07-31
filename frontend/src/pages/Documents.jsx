@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
 
 const defaultFormState = {
@@ -375,12 +376,12 @@ function SummaryCard({ icon, iconClassName, label, value, delta }) {
   );
 }
 
-function DocumentRow({ item, onEdit, onDelete, deletingId }) {
+function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
   const typeMeta = getTypeMeta(item.documentName);
   const fileMeta = getFileMeta(item.documentName);
 
   return (
-    <tr className="border-t border-slate-100 text-sm text-slate-700">
+    <tr id={`document-row-${item.id}`} className={`border-t border-slate-100 text-sm text-slate-700 ${highlighted ? "ring-4 ring-inset ring-sky-200/80" : ""}`}>
       <td className="px-4 py-5 align-top">
         <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300" />
       </td>
@@ -437,12 +438,12 @@ function DocumentRow({ item, onEdit, onDelete, deletingId }) {
   );
 }
 
-function DocumentGridCard({ item, onEdit, onDelete, deletingId }) {
+function DocumentGridCard({ item, highlighted, onEdit, onDelete, deletingId }) {
   const typeMeta = getTypeMeta(item.documentName);
   const fileMeta = getFileMeta(item.documentName);
 
   return (
-    <div className={`${cardClassName} p-5`}>
+    <div id={`document-row-${item.id}`} className={`${cardClassName} p-5 ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${fileMeta.iconWrap}`}>
           <FileBadge2 className="h-5 w-5" />
@@ -481,6 +482,8 @@ function DocumentGridCard({ item, onEdit, onDelete, deletingId }) {
 }
 
 export default function Documents() {
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get("highlight") || "";
   const [documents, setDocuments] = useState([]);
   const [clients, setClients] = useState([]);
   const [cases, setCases] = useState([]);
@@ -596,6 +599,22 @@ export default function Documents() {
   }, [activeTab, documentRows]);
 
   const totalPages = Math.max(1, Math.ceil(filteredDocuments.length / pageSize));
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const index = filteredDocuments.findIndex((item) => item.id === highlightId);
+    if (index === -1) return;
+    const targetPage = Math.floor(index / pageSize) + 1;
+    setPage((current) => (current === targetPage ? current : targetPage));
+  }, [highlightId, filteredDocuments]);
+
+  useEffect(() => {
+    if (!highlightId || loading) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`document-row-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlightId, loading, page]);
 
   const paginatedDocuments = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -886,6 +905,7 @@ export default function Documents() {
                             <DocumentRow
                               key={item.id}
                               item={item}
+                              highlighted={item.id === highlightId}
                               onEdit={openEditForm}
                               onDelete={handleDelete}
                               deletingId={deletingId}
@@ -900,6 +920,7 @@ export default function Documents() {
                         <DocumentGridCard
                           key={item.id}
                           item={item}
+                          highlighted={item.id === highlightId}
                           onEdit={openEditForm}
                           onDelete={handleDelete}
                           deletingId={deletingId}

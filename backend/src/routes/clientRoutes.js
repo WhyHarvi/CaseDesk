@@ -5,6 +5,7 @@ import {
   closeClient,
   getClientArchiveImpact,
   getClientById,
+  listClientAppointments,
   listClients,
   syncClientQuickBooks,
   updateClient,
@@ -16,6 +17,7 @@ import rateLimit from "../middleware/rateLimit.js";
 import {
   generateAccountStatement,
   getAccountStatementOptions,
+  getClientBillingOverview,
   getGeneratedAccountStatement,
 } from "../controllers/accountStatementController.js";
 
@@ -27,6 +29,8 @@ router.get("/:clientId/portal-account", requireRole("admin", "consultant"), asyn
 router.post("/:clientId/portal-account/access", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 15 }), asyncHandler(setPortalAccountAccess));
 router.use("/:id", requireClientAccess());
 router.get("/:id/statements/account/options", asyncHandler(getAccountStatementOptions));
+router.get("/:id/billing", asyncHandler(getClientBillingOverview));
+router.get("/:id/appointments", asyncHandler(listClientAppointments));
 router.post("/:id/statements/account", asyncHandler(generateAccountStatement));
 router.get("/:id/statements/account/:statementId", asyncHandler(getGeneratedAccountStatement));
 router.get("/:id", asyncHandler(getClientById));

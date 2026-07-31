@@ -157,11 +157,13 @@ function buildClientViewModel(client) {
   const stage = currentCase?.stage || client.status || "Lead";
   const nextAction = currentCase?.nextAction || "No next action";
   const missingDocs = (currentCase?.clientDocuments || []).filter((document) => ["Requested", "ChangesRequested"].includes(document.status)).length;
-  const paymentTotals = (currentCase?.payments || []).reduce((summary, paymentItem) => ({
+  const legacyPaymentTotals = (currentCase?.payments || []).reduce((summary, paymentItem) => ({
     balance: summary.balance + Number(paymentItem.balance || 0),
     paid: summary.paid + Number(paymentItem.paidAmount || 0),
   }), { balance: 0, paid: 0 });
-  const payment = currentCase?.payments?.length ? (paymentTotals.balance > 0 ? `${new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(paymentTotals.balance)} due` : "Paid") : "No payment record";
+  const paymentTotals = client.billingSummary || legacyPaymentTotals;
+  const hasBilling = client.billingSummary ? Number(client.billingSummary.totalCharges) > 0 : Boolean(currentCase?.payments?.length);
+  const payment = hasBilling ? (Number(paymentTotals.balance) > 0 ? `${new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(paymentTotals.balance)} due` : Number(paymentTotals.totalRefunds || 0) > 0 && Number(paymentTotals.netCollected || 0) <= 0 ? "Refunded" : "Paid") : "No payment record";
   const now = Date.now();
   const followUpsDue = (currentCase?.followUps || []).filter((followUp) => !["Completed", "Cancelled"].includes(followUp.status) && followUp.dueDate && new Date(followUp.dueDate).getTime() <= now).length;
   const updatedAt = currentCase?.updatedAt || client.updatedAt || client.createdAt;

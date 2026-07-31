@@ -38,7 +38,7 @@ import {
   updateCaseApplicant,
 } from "../controllers/caseApplicantController.js";
 import { requireCaseAccess, requireRole } from "../middleware/authorization.js";
-import { createCashPayment, createInvoice, downloadInvoicePdf, listInvoices } from "../controllers/caseInvoiceController.js";
+import { createCashPayment, createInvoice, createManualPayment, downloadInvoicePdf, listInvoices } from "../controllers/caseInvoiceController.js";
 import { createSchedule, getPaymentSummaries, getPaymentSummary, getSchedule, updateSchedule, voidInstallmentInvoice, voidSchedule } from "../controllers/paymentScheduleController.js";
 import rateLimit from "../middleware/rateLimit.js";
 
@@ -80,6 +80,7 @@ router.patch("/:id/restore", asyncHandler(restoreCase));
 router.get("/:id/invoices", asyncHandler(listInvoices));
 router.post("/:id/invoices", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createInvoice));
 router.post("/:id/invoices/:invoiceId/cash-payment", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createCashPayment));
+router.post("/:id/invoices/:invoiceId/manual-payment", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createManualPayment));
 router.get("/:id/invoices/:invoiceId/pdf", asyncHandler(downloadInvoicePdf));
 router.get("/:id/payment-summary", asyncHandler(getPaymentSummary));
 router.get("/:id/payment-schedule", asyncHandler(getSchedule));

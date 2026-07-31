@@ -60,6 +60,21 @@ export async function getAppointmentRegistryDetail(id) {
   return response.data.data;
 }
 
+export async function updateAppointmentProfileContext(id, values) {
+  const response = await api.patch(`/appointments/${id}/profile`, values);
+  return response.data.data;
+}
+
+export async function createAppointmentNote(id, content) {
+  const response = await api.post(`/appointments/${id}/notes`, { content });
+  return response.data.data;
+}
+
+export async function createAppointmentFollowUp(id, values) {
+  const response = await api.post(`/appointments/${id}/follow-ups`, values);
+  return response.data.data;
+}
+
 export async function getSchedulingBlocks(params = {}) {
   const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
   const response = await api.get(`/booking/blocks${query.size ? `?${query.toString()}` : ""}`);

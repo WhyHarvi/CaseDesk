@@ -54,9 +54,13 @@ function EmptyState({ loading, children }) {
   return <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-sm text-slate-500">{loading ? "Loading…" : children}</div>;
 }
 
+function followUpLink(item) {
+  return item.case ? `/app/cases/${item.case.id}?tab=reminders&highlight=${item.id}` : `/app/follow-ups?highlight=${item.id}`;
+}
+
 function FollowUpRow({ item, timezone, overdue }) {
   return (
-    <Link to="/app/follow-ups" className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-white/70 p-3 transition hover:border-sky-200 hover:bg-slate-50/80 md:grid-cols-12 md:items-center">
+    <Link to={followUpLink(item)} className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-white/70 p-3 transition hover:border-sky-200 hover:bg-slate-50/80 md:grid-cols-12 md:items-center">
       <div className="md:col-span-3"><p className="text-xs font-semibold text-slate-800">{formatDate(item.dueDate, timezone, true)}</p><p className="text-[11px] text-slate-400">{item.status}</p></div>
       <div className="min-w-0 md:col-span-6"><p className="truncate text-sm font-semibold text-slate-900">{item.client?.fullName || item.case?.caseType || "General follow-up"}</p><p className="mt-0.5 truncate text-xs text-slate-500">{item.title}</p></div>
       <div className="md:col-span-3 md:text-right"><span className={["rounded-full border px-2.5 py-1 text-[11px] font-semibold", followUpTone(item.dueDate, timezone)].join(" ")}>{overdue ? "Overdue" : "Upcoming"}</span></div>

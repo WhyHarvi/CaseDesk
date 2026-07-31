@@ -343,6 +343,7 @@ function DeleteTaskOverlay({ task, saving, error, onClose, onConfirm }) {
 export default function TasksWorkspace({
   tasks,
   caseItem,
+  highlightId,
   onCreate,
   onUpdate,
   onDelete,
@@ -393,6 +394,13 @@ export default function TasksWorkspace({
         }),
     [tasks, view],
   );
+  useEffect(() => {
+    if (!highlightId) return undefined;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`case-task-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightId, visible]);
   const save = async (values) => {
     try {
       setSaving(true);
@@ -530,7 +538,8 @@ export default function TasksWorkspace({
           return (
             <article
               key={task.id}
-              className="group flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50/70"
+              id={`case-task-${task.id}`}
+              className={`group flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50/70 ${task.id === highlightId ? "ring-4 ring-sky-200/80" : ""}`}
             >
               <button
                 type="button"

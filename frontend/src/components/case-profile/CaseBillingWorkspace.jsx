@@ -14,7 +14,8 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceCashPayment } from "../../api/caseInvoiceApi";
+import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment } from "../../api/caseInvoiceApi";
+import { getFeeCategories } from "../../api/feeCategoryApi";
 
 const PAYMENT_TYPE_META = {
   fees: { label: "Professional fees", icon: Banknote, tint: "bg-emerald-50 text-emerald-700" },
@@ -48,6 +49,8 @@ function CashPaymentRow({ invoice, onPaid }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(String(Number(invoice.balance)));
   const [note, setNote] = useState("");
+  const [method, setMethod] = useState("Cash");
+  const [idempotencyKey, setIdempotencyKey] = useState(() => globalThis.crypto?.randomUUID?.() || String(Date.now()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -56,10 +59,11 @@ function CashPaymentRow({ invoice, onPaid }) {
     setBusy(true);
     setError("");
     try {
-      const updated = await recordCaseInvoiceCashPayment(invoice.caseId, invoice.id, { amount: Number(amount), note: note.trim() || undefined });
+      const updated = await recordCaseInvoiceManualPayment(invoice.caseId, invoice.id, { amount: Number(amount), method, note: note.trim() || undefined, idempotencyKey });
       onPaid(updated);
       setOpen(false);
       setNote("");
+      setIdempotencyKey(globalThis.crypto?.randomUUID?.() || String(Date.now()));
     } catch (reason) {
       setError(reason.response?.data?.message || "That payment could not be recorded.");
     } finally {
@@ -71,10 +75,10 @@ function CashPaymentRow({ invoice, onPaid }) {
     return (
       <button
         type="button"
-        onClick={() => { setOpen(true); setAmount(String(Number(invoice.balance))); }}
+        onClick={() => { setOpen(true); setAmount(String(Number(invoice.balance))); setIdempotencyKey(globalThis.crypto?.randomUUID?.() || String(Date.now())); }}
         className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
       >
-        <Banknote className="h-3.5 w-3.5" /> Record cash payment
+        <Banknote className="h-3.5 w-3.5" /> Record payment
       </button>
     );
   }
@@ -87,6 +91,11 @@ function CashPaymentRow({ invoice, onPaid }) {
       onSubmit={submit}
       className="mt-3 overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5"
     >
+      <div className="mb-3 grid grid-cols-2 gap-2 rounded-xl bg-white p-1 ring-1 ring-slate-200/80">
+        {[["Cash", "Cash"], ["ETransfer", "E-transfer"]].map(([value, label]) => (
+          <button key={value} type="button" onClick={() => setMethod(value)} className={`h-8 rounded-lg text-xs font-semibold transition ${method === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>
+        ))}
+      </div>
       <div className="grid grid-cols-2 gap-2.5">
         <label className="block text-xs font-medium text-slate-600">Amount received
           <input
@@ -115,8 +124,10 @@ function CashPaymentRow({ invoice, onPaid }) {
   );
 }
 
-function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
-  const meta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
+function InvoiceCard({ invoice, onPaid, canRecordPayment, categories }) {
+  const category = categories.find((item) => item.code === invoice.paymentType);
+  const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
+  const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
   const Icon = meta.icon;
   const payable = canRecordPayment && Number(invoice.balance) > 0;
   const [downloading, setDownloading] = useState(false);
@@ -203,8 +214,8 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment }) {
   );
 }
 
-function NewInvoiceSheet({ open, caseId, onClose, onCreated }) {
-  const [paymentType, setPaymentType] = useState("fees");
+function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
+  const [paymentType, setPaymentType] = useState(categories[0]?.code || "fees");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -214,7 +225,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated }) {
 
   useEffect(() => {
     if (open) {
-      setPaymentType("fees");
+      setPaymentType(categories[0]?.code || "fees");
       setDescription("");
       setAmount("");
       setDueDate("");
@@ -257,11 +268,13 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated }) {
               <div>
                 <p className="text-xs font-medium text-slate-600">Payment type</p>
                 <div className="mt-1.5 grid grid-cols-2 gap-2">
-                  {Object.entries(PAYMENT_TYPE_META).map(([key, meta]) => {
+                  {categories.map((category) => {
+                    const key = category.code;
+                    const meta = PAYMENT_TYPE_META[key] || PAYMENT_TYPE_META.fees;
                     const Icon = meta.icon;
                     return (
                       <button key={key} type="button" onClick={() => setPaymentType(key)} className={`flex items-center justify-center gap-2 rounded-2xl border px-3 py-2.5 text-xs font-semibold transition ${paymentType === key ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
-                        <Icon className="h-3.5 w-3.5" /> {meta.label}
+                        <Icon className="h-3.5 w-3.5" /> {category.name}
                       </button>
                     );
                   })}
@@ -307,6 +320,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated }) {
 export default function CaseBillingWorkspace({ caseItem }) {
   const { role } = useAuth();
   const [invoices, setInvoices] = useState(null);
+  const [categories, setCategories] = useState([]);
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const canManage = ["admin", "consultant"].includes(role);
@@ -314,7 +328,9 @@ export default function CaseBillingWorkspace({ caseItem }) {
   async function load() {
     setError("");
     try {
-      setInvoices(await getCaseInvoices(caseItem.id));
+      const [invoiceRows, categoryRows] = await Promise.all([getCaseInvoices(caseItem.id), getFeeCategories()]);
+      setInvoices(invoiceRows);
+      setCategories(categoryRows);
     } catch (reason) {
       setError(reason.response?.data?.message || "Invoices could not be loaded.");
     }
@@ -335,7 +351,7 @@ export default function CaseBillingWorkspace({ caseItem }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Invoices</h3>
-          <p className="text-xs text-slate-400">Synced live with QuickBooks — CaseDesk keeps no ledger of its own.</p>
+          <p className="text-xs text-slate-400">One billing trail across CaseDesk and QuickBooks, including cash and e-transfer receipts.</p>
         </div>
         {canManage ? (
           <button type="button" onClick={() => setSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800">
@@ -357,19 +373,19 @@ export default function CaseBillingWorkspace({ caseItem }) {
         <div className="mt-6 flex flex-col items-center rounded-[1.4rem] bg-slate-50/80 px-5 py-10 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm"><Receipt className="h-5 w-5" /></span>
           <p className="mt-3 text-sm font-semibold text-slate-700">No invoices yet</p>
-          <p className="mt-1 max-w-sm text-sm text-slate-500">{canManage ? "Create the first invoice for this case to bill professional fees or a government fee disbursement." : "Nothing has been invoiced on this case yet."}</p>
+          <p className="mt-1 max-w-sm text-sm text-slate-500">{canManage ? "Create the first invoice using any active agency fee category." : "Nothing has been invoiced on this case yet."}</p>
         </div>
       ) : (
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {invoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} />
             ))}
           </AnimatePresence>
         </div>
       )}
 
-      {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={patchInvoice} /> : null}
+      {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={patchInvoice} categories={categories} /> : null}
     </div>
   );
 }

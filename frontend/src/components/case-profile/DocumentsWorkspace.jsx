@@ -584,7 +584,7 @@ function SharedLibraryAddDialog({ item, saving, error, onClose, onAdd }) {
   return createPortal(<div className="fixed inset-0 z-[390] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0" aria-label="Cancel" /><motion.div initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="relative w-full max-w-lg overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)]"><div className="flex items-start justify-between px-6 pb-4 pt-6"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">Add to this case</p><h3 className="mt-1 text-lg font-semibold">{item.title}</h3><p className="mt-1 text-sm text-slate-500">Choose how this workspace resource should be used.</p></div><button type="button" onClick={onClose}><X className="h-4 w-4" /></button></div><div className="space-y-2 px-6 pb-6">{options.map((option) => <button key={option.id} type="button" onClick={() => setMode(option.id)} className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition ${mode === option.id ? "border-sky-200 bg-sky-50/70 ring-1 ring-sky-100" : "border-slate-200 hover:bg-slate-50"}`}><span className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full ${mode === option.id ? "bg-sky-500 text-white" : "border border-slate-300"}`}>{mode === option.id ? <Check className="h-3.5 w-3.5" /> : null}</span><span><span className="block text-sm font-semibold text-slate-900">{option.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span></span></button>)}{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold">Cancel</button><button type="button" onClick={() => onAdd(mode)} disabled={saving} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Adding…" : "Add to Case"}</button></div></motion.div></div>, document.body);
 }
 
-function DocumentRow({ document, uploading, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete }) {
+function DocumentRow({ document, uploading, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, highlighted, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete }) {
   const fileInput = useRef(null);
   const [dragging, setDragging] = useState(false);
   const received = Boolean(document.storageKey);
@@ -601,6 +601,7 @@ function DocumentRow({ document, uploading, updating, selectable, selected, inte
 
   return (
     <div
+      id={`case-document-${document.id}`}
       role={hasFile ? "button" : undefined}
       tabIndex={hasFile ? 0 : undefined}
       onClick={hasFile ? () => onView(document) : undefined}
@@ -609,7 +610,7 @@ function DocumentRow({ document, uploading, updating, selectable, selected, inte
       onDragOver={acceptsDrop ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDragging(true); } : undefined}
       onDragLeave={acceptsDrop ? (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); } : undefined}
       onDrop={acceptsDrop ? (event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files?.[0]; if (file) onUpload(document, file); } : undefined}
-      className={`relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-slate-100 px-4 py-3 transition last:border-b-0 ${hasFile ? "cursor-pointer hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400" : ""} ${dragging ? "bg-sky-50 ring-2 ring-inset ring-sky-300" : ""}`}
+      className={`relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-slate-100 px-4 py-3 transition last:border-b-0 ${hasFile ? "cursor-pointer hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400" : ""} ${dragging ? "bg-sky-50 ring-2 ring-inset ring-sky-300" : ""} ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
     >
       <div className="min-w-0">
         <div className="flex items-center gap-2">
@@ -655,9 +656,15 @@ function DocumentPagination({ page, pageCount, total, onChange }) {
   );
 }
 
-export default function DocumentsWorkspace({ caseId, caseType, documents, assignments, saving, error, onCreateDocuments, onMarkReceived, onUpdateAssignment, onUploadMyDocument, onRefreshDocuments, onDeleteDocument, onChangeDocumentStatus }) {
+export default function DocumentsWorkspace({ caseId, caseType, documents, assignments, saving, error, highlightId, onCreateDocuments, onMarkReceived, onUpdateAssignment, onUploadMyDocument, onRefreshDocuments, onDeleteDocument, onChangeDocumentStatus }) {
   const [requestOpen, setRequestOpen] = useState(false);
   const [openFolder, setOpenFolder] = useState(() => {
+    // A highlighted document always lands in the "client" folder — the
+    // dashboard's Pending Documents drawer only ever links to documents in
+    // Requested/Uploaded/UnderReview/ChangesRequested, which is exactly
+    // that folder's membership (see clientDocs below), so this never needs
+    // to guess across "mine"/"shared"/"finalized"/"unassigned".
+    if (highlightId) return "client";
     const stored = localStorage.getItem(`casedesk:documents-folder:${caseId}`);
     return ["client", "mine", "shared", "finalized", "unassigned"].includes(stored) ? stored : "client";
   });
@@ -720,6 +727,14 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
     () => deduplicateDocuments(documents.filter((item) => !isMyDocument(item) && item.status === "Finalized")),
     [documents],
   );
+  useEffect(() => {
+    if (!highlightId || openFolder !== "client") return undefined;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`case-document-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightId, openFolder, clientDocs]);
+
   const receivedCount = clientDocs.filter((item) => item.storageKey).length;
   const folders = [
     { id: "client", title: "Client Documents", subtitle: `${clientDocs.length} requested files`, detail: `${receivedCount} of ${clientDocs.length} received`, count: clientDocs.length },
@@ -1087,6 +1102,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             updating={bulkUpdating || assignmentUpdatingId === document.id}
             selectable
             selected={selectedDocumentIds.has(document.id)}
+            highlighted={document.id === highlightId}
             onToggleSelected={toggleSelected}
             onUpload={upload}
             onView={viewDocument}

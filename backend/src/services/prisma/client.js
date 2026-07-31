@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { clearDashboardCache } from "../dashboardCache.js";
 
 const globalForPrisma = globalThis;
 
@@ -119,6 +120,33 @@ const hideDeleted = ({ args, query }) => {
   return query(args);
 };
 
+// dashboardController.js's Priority Work / stats queries read cases,
+// client documents, workflow steps, follow-ups, and clients — and rely on
+// every mutation of those models to invalidate the 5-minute dashboard
+// cache. Relying on each controller to remember that call is exactly how
+// this went stale before (caseController.js and clientDocumentController.js
+// both mutated data feeding the dashboard without ever invalidating it).
+// Hooking writes here instead means new mutation code paths stay correct
+// automatically. This clears every agency's cached dashboard rather than
+// just the affected one — reliably extracting the right agencyId from an
+// arbitrary update/delete `where` isn't possible, and the cache is a
+// 5-minute read optimization, not a correctness guarantee, so the extra
+// cache misses this causes elsewhere are cheap.
+const invalidateDashboardCacheOnWrite = async ({ args, query }) => {
+  const result = await query(args);
+  clearDashboardCache();
+  return result;
+};
+
+const dashboardCacheWriteHooks = {
+  create: invalidateDashboardCacheOnWrite,
+  update: invalidateDashboardCacheOnWrite,
+  updateMany: invalidateDashboardCacheOnWrite,
+  upsert: invalidateDashboardCacheOnWrite,
+  delete: invalidateDashboardCacheOnWrite,
+  deleteMany: invalidateDashboardCacheOnWrite,
+};
+
 const prisma = basePrisma.$extends({
   query: {
     case: {
@@ -128,7 +156,12 @@ const prisma = basePrisma.$extends({
       count: hideDeleted,
       aggregate: hideDeleted,
       groupBy: hideDeleted,
+      ...dashboardCacheWriteHooks,
     },
+    clientDocument: dashboardCacheWriteHooks,
+    caseWorkflowStep: dashboardCacheWriteHooks,
+    followUp: dashboardCacheWriteHooks,
+    client: dashboardCacheWriteHooks,
   },
 });
 

@@ -308,7 +308,11 @@ async function loadAgencyWorkloads(agencyId) {
       },
     }),
     prisma.clientDocument.findMany({
-      where: { agencyId, status: { in: ACTION_DOCUMENT_STATUSES }, OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
+      // Internal-visibility documents are staff-only working files (e.g. the
+      // source copy behind an issued agreement/letter) — counting them here
+      // alongside their client-visible counterpart double-counts the same
+      // requirement. Mirrors dashboardController.js's documentWhere.
+      where: { agencyId, status: { in: ACTION_DOCUMENT_STATUSES }, visibility: "Client", OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
       select: {
         id: true, documentName: true, status: true, updatedAt: true,
         case: { select: workloadCaseSelect },

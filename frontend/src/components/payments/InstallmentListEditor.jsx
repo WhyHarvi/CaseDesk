@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 import { Banknote, Calendar, Landmark, Lock, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { CASE_STAGES } from "../../constants/caseStages";
+import { getFeeCategories } from "../../api/feeCategoryApi";
 import Select from "../ui/Select";
 
 // Labels matched to CaseBillingWorkspace.jsx's PAYMENT_TYPE_META — the
@@ -34,6 +36,13 @@ const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2
  * a lock badge instead of being removable.
  */
 export default function InstallmentListEditor({ installments, onChange, lockedIds = new Set() }) {
+  const [paymentTypes, setPaymentTypes] = useState(PAYMENT_TYPES);
+
+  useEffect(() => {
+    getFeeCategories({ includeInactive: true })
+      .then((rows) => setPaymentTypes(rows.map((category) => ({ value: category.code, label: category.name, active: category.isActive }))))
+      .catch(() => {});
+  }, []);
   function updateRow(index, patch) {
     onChange(installments.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
@@ -67,7 +76,7 @@ export default function InstallmentListEditor({ installments, onChange, lockedId
                 </label>
                 <label className="block text-[11px] font-medium text-slate-500">Payment type
                   <Select disabled={locked} value={row.paymentType} onChange={(event) => updateRow(index, { paymentType: event.target.value })} className="mt-1 w-full">
-                    {PAYMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                    {paymentTypes.filter((type) => type.active !== false || type.value === row.paymentType).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                   </Select>
                 </label>
                 <label className="block text-[11px] font-medium text-slate-500">Amount (CAD)

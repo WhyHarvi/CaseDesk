@@ -24,6 +24,7 @@ import { enqueueAppointmentMeetingJob } from "../../services/appointmentMeetingS
 import { syncLeadConsultationFromAppointment } from "../../services/leadConsultationAppointmentService.js";
 import { offerWaitlistOpening } from "../../services/bookingWaitlistService.js";
 import { assertZoomOperational } from "../../services/zoomService.js";
+import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -113,7 +114,31 @@ export async function listLeads(req) {
 export async function getLead(req) {
   const data = await prisma.lead.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, deletedAt: null, ...leadAccessWhere(req) },
-    include: { ...leadInclude, activities: { orderBy: { occurredAt: "desc" }, take: 100 }, stageHistory: { orderBy: { createdAt: "desc" } }, assignmentHistory: { orderBy: { createdAt: "desc" } }, followUps: { orderBy: { dueAt: "asc" } }, lostDetail: true, conversion: true },
+    include: {
+      ...leadInclude,
+      activities: { orderBy: { occurredAt: "desc" }, take: 100 },
+      stageHistory: { orderBy: { createdAt: "desc" } },
+      assignmentHistory: { orderBy: { createdAt: "desc" } },
+      followUps: { orderBy: { dueAt: "asc" } },
+      appointments: {
+        orderBy: { startsAt: "desc" },
+        select: {
+          id: true,
+          subject: true,
+          purpose: true,
+          description: true,
+          startsAt: true,
+          endsAt: true,
+          status: true,
+          meetingMode: true,
+          referenceCode: true,
+          assignedTo: { select: { id: true, fullName: true } },
+          _count: { select: { notes: true, followUps: true } },
+        },
+      },
+      lostDetail: true,
+      conversion: true,
+    },
   });
   if (!data) throw createHttpError(404, "Lead not found.", "LEAD_NOT_FOUND");
   return data;
@@ -437,6 +462,7 @@ export async function createConsultation(req, db = prisma) {
       startsAt: values.startAt,
       endsAt: values.endAt,
       description: values.notes,
+      purpose: values.notes,
       guestName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || null,
       guestEmail: lead.email,
       guestEmailNormalized: lead.emailNormalized,
@@ -448,6 +474,14 @@ export async function createConsultation(req, db = prisma) {
       source: "Lead",
       status: "Scheduled",
     } });
+    await recordAppointmentEvent(tx, {
+      agencyId,
+      appointmentId: appointment.id,
+      actorUserId: actorId,
+      type: "BOOKED",
+      summary: "Lead consultation booked",
+      metadata: { leadId: lead.id },
+    });
     if (meetingMode === MEETING_MODES.ZOOM) {
       await enqueueAppointmentMeetingJob(tx, { appointment, action: "SYNC", notifyKind: "booked", actorUserId: actorId });
     } else if (db === prisma) {
@@ -491,7 +525,19 @@ export async function updateConsultation(req, db = prisma) {
           ...(appointmentStatus === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorId, cancellationReason: values.notes || null } : {}),
         },
       });
-      await syncLeadConsultationFromAppointment(tx, appointment, { consultationStatus: values.status });
+      await syncLeadConsultationFromAppointment(tx, appointment, {
+        consultationStatus: values.status,
+        // This workflow records a richer activity below with outcome and actor.
+        recordLeadActivity: false,
+      });
+      await recordAppointmentEvent(tx, {
+        agencyId,
+        appointmentId: appointment.id,
+        actorUserId: actorId,
+        type: appointmentStatus === "Cancelled" ? "CANCELLED" : "STATUS_CHANGED",
+        summary: appointmentStatus === "Cancelled" ? "Lead consultation cancelled" : `Appointment marked ${appointmentStatus}`,
+        metadata: { from: existing.status, to: values.status, consultationId: existing.id },
+      });
       if (db === prisma && appointmentStatus === "Cancelled") {
         await sendBookingMessages({ agencyId, appointment, kind: "cancelled", actorUserId: actorId, db: tx });
         if (appointment.meetingProvider === "Zoom" && appointment.meetingProviderId) {
@@ -625,6 +671,14 @@ export async function convertLead(req, db = prisma) {
     const caseItem = await tx.case.create({
       data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction },
     });
+
+    const leadAppointments = await tx.appointment.findMany({ where: { agencyId, leadId: lead.id }, select: { id: true } });
+    const leadAppointmentIds = leadAppointments.map((item) => item.id);
+    if (leadAppointmentIds.length) {
+      await tx.appointment.updateMany({ where: { id: { in: leadAppointmentIds } }, data: { clientId: client.id } });
+      await tx.note.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
+      await tx.followUp.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
+    }
 
     const summary = qualificationSummary(qualification);
     if (summary || values.notes) {

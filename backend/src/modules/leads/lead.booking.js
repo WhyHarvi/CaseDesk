@@ -1,6 +1,7 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { nextLeadNumber } from "./lead.repository.js";
 import { nextConsultationAction } from "./lead.service.js";
+import { leadConsultationAppointmentType, leadConsultationStatusForAppointment } from "../../services/leadConsultationAppointmentService.js";
 
 const STAGE_ORDER = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
 
@@ -49,6 +50,24 @@ export async function createOrLinkLeadForConsultation(tx, {
   const emailNormalized = guestEmail ? guestEmail.toLowerCase() : null;
   const paid = paymentStatus === "PAID";
   const sourceName = paid ? "Online Booking (Paid Consultation)" : "Online Booking (Free Consultation)";
+  // This function can also run later as a repair/reconciliation operation.
+  // Timeline records must reflect when the appointment was actually booked,
+  // not when the lead link happened to be created.
+  const bookingOccurredAt = appointment.createdAt ? new Date(appointment.createdAt) : new Date();
+
+  // Email is more specific than phone (families may share a phone number),
+  // so only fall back to phone when the exact normalized email has no open
+  // lead. This also makes website-lead → booking linkage deterministic.
+  let existingLead = emailNormalized ? await tx.lead.findFirst({
+    where: { agencyId, deletedAt: null, status: "OPEN", emailNormalized },
+    orderBy: { createdAt: "desc" },
+  }) : null;
+  if (!existingLead && phoneNormalized) {
+    existingLead = await tx.lead.findFirst({
+      where: { agencyId, deletedAt: null, status: "OPEN", phoneNormalized },
+      orderBy: { createdAt: "desc" },
+    });
+  }
 
   const existingClient = guestEmail ? await tx.client.findFirst({
     where: { agencyId, email: { equals: guestEmail, mode: "insensitive" } },
@@ -56,25 +75,23 @@ export async function createOrLinkLeadForConsultation(tx, {
   }) : null;
   if (existingClient) {
     await tx.appointment.update({ where: { id: appointment.id }, data: { clientId: existingClient.id } });
-    return { clientId: existingClient.id, leadId: null };
+    if (holdId) {
+      await tx.bookingPaymentHold.updateMany({
+        where: { id: holdId, agencyId, clientId: null },
+        data: { clientId: existingClient.id },
+      });
+    }
+    // An existing Client and an open pre-conversion Lead may legitimately
+    // coexist (for example, a returning client submits a new website lead).
+    // Link the appointment to both; only stop here when no open lead exists.
+    if (!existingLead) return { clientId: existingClient.id, leadId: null };
   }
-
-  const existingLead = await tx.lead.findFirst({
-    where: {
-      agencyId,
-      deletedAt: null,
-      status: "OPEN",
-      OR: [
-        ...(phoneNormalized ? [{ phoneNormalized }] : []),
-        ...(emailNormalized ? [{ emailNormalized }] : []),
-      ],
-    },
-  });
 
   // OPEN leads carry a DB check constraint requiring the next-action fields
   // to be set — compute this before creating the lead, not only in the
   // stage-advance update below, or the insert itself is rejected.
-  const next = nextConsultationAction("SCHEDULED", null, appointment.startsAt);
+  const consultationStatus = leadConsultationStatusForAppointment(appointment.status);
+  const next = nextConsultationAction(consultationStatus, null, appointment.startsAt);
 
   let lead = existingLead;
   if (!lead) {
@@ -129,14 +146,11 @@ export async function createOrLinkLeadForConsultation(tx, {
       appointmentId: appointment.id,
       startAt: appointment.startsAt,
       endAt: appointment.endsAt,
-      appointmentType: ["Online", "Zoom"].includes(appointment.meetingMode)
-        ? "VIDEO"
-        : appointment.meetingMode === "Phone"
-          ? "PHONE"
-          : "IN_PERSON",
-      status: "SCHEDULED",
+      appointmentType: leadConsultationAppointmentType(appointment.meetingMode),
+      status: consultationStatus,
       fee,
       paymentStatus,
+      createdAt: bookingOccurredAt,
     },
   });
 
@@ -149,12 +163,19 @@ export async function createOrLinkLeadForConsultation(tx, {
       nextActionDescription: next.description,
       nextActionAt: next.at,
       nextActionOwnerId: appointment.assignedToId,
+      firstContactAt: lead.firstContactAt || bookingOccurredAt,
+      firstConnectedAt: lead.firstConnectedAt || bookingOccurredAt,
+      lastContactAt: bookingOccurredAt,
       version: { increment: 1 },
     },
   });
   if (advanceStage) {
-    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "CONSULTATION_BOOKED", reason: `${paid ? "Paid" : "Free"} consultation booked and confirmed` } });
+    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "CONSULTATION_BOOKED", reason: `${paid ? "Paid" : "Free"} consultation booked and confirmed`, createdAt: bookingOccurredAt } });
   }
+  await tx.leadFollowUp.updateMany({
+    where: { leadId: lead.id, status: "PENDING", type: "CALL", description: "Contact the new lead" },
+    data: { status: "COMPLETED", completedAt: bookingOccurredAt, completionOutcome: "Consultation booked" },
+  });
   await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: appointment.assignedToId, type: next.type, description: next.description, dueAt: next.at } });
   await tx.leadActivity.create({
     data: {
@@ -164,9 +185,10 @@ export async function createOrLinkLeadForConsultation(tx, {
       direction: "INTERNAL",
       channel: "SYSTEM",
       title: `${paid ? "Paid" : "Free"} consultation confirmed`,
+      occurredAt: bookingOccurredAt,
       metadata: { consultationId: consultation.id, holdId, appointmentId: appointment.id },
     },
   });
 
-  return { clientId: null, leadId: lead.id };
+  return { clientId: existingClient?.id || null, leadId: lead.id };
 }

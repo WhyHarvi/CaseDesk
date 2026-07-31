@@ -11,6 +11,7 @@ import { appointmentFieldsAfterZoomDeletion } from "../src/services/appointmentM
 import {
   leadConsultationAppointmentType,
   leadConsultationStatusForAppointment,
+  syncLeadConsultationFromAppointment,
 } from "../src/services/leadConsultationAppointmentService.js";
 
 test("phone bookings snapshot the CHK caller ID for later notifications", () => {
@@ -86,4 +87,44 @@ test("linked lead consultations mirror appointment format and status", () => {
   assert.equal(leadConsultationStatusForAppointment("Cancelled"), "CANCELLED");
   assert.equal(leadConsultationStatusForAppointment("NoShow"), "NO_SHOW");
   assert.equal(leadConsultationStatusForAppointment("Scheduled"), "SCHEDULED");
+});
+
+test("appointment cancellation is added to lead history once", async () => {
+  const activities = [];
+  const db = {
+    leadConsultation: {
+      findFirst: async () => ({ id: "consultation-1", agencyId: "agency-1", leadId: "lead-1" }),
+      updateMany: async () => ({ count: 1 }),
+    },
+    leadActivity: {
+      findFirst: async ({ where }) => activities.find((item) => item.externalId === where.externalId) || null,
+      create: async ({ data }) => {
+        activities.push(data);
+        return data;
+      },
+    },
+  };
+  const appointment = {
+    id: "appointment-1",
+    agencyId: "agency-1",
+    leadId: "lead-1",
+    startsAt: new Date("2026-07-30T15:00:00.000Z"),
+    endsAt: new Date("2026-07-30T16:00:00.000Z"),
+    updatedAt: new Date("2026-07-29T14:00:00.000Z"),
+    cancelledAt: new Date("2026-07-29T13:55:00.000Z"),
+    cancelledById: "user-1",
+    cancellationReason: "Client requested a different date.",
+    meetingMode: "Online",
+    meetingUrl: "https://meet.jit.si/example",
+  };
+
+  await syncLeadConsultationFromAppointment(db, appointment, { consultationStatus: "CANCELLED" });
+  await syncLeadConsultationFromAppointment(db, appointment, { consultationStatus: "CANCELLED" });
+
+  assert.equal(activities.length, 1);
+  assert.equal(activities[0].activityType, "CONSULTATION_CANCELLED");
+  assert.equal(activities[0].title, "Consultation cancelled");
+  assert.equal(activities[0].performedById, "user-1");
+  assert.equal(activities[0].occurredAt.toISOString(), "2026-07-29T13:55:00.000Z");
+  assert.match(activities[0].externalId, /^appointment:appointment-1:consultation:cancelled:/);
 });

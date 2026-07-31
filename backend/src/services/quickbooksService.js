@@ -180,7 +180,7 @@ function faultMessage(payload) {
  * normalization, and JSON parsing so callers never touch fetch() directly —
  * one place to get retries/auth right instead of N places to get it wrong.
  */
-export async function qboRequest(agencyId, { method = "GET", path, query, body } = {}) {
+export async function qboRequest(agencyId, { method = "GET", path, query, body, requestId } = {}) {
   const { realmId, accessToken, apiBase } = await getQuickBooksClient(agencyId);
   const url = new URL(`${apiBase}/v3/company/${realmId}${path}`);
   url.searchParams.set("minorversion", "75");
@@ -190,6 +190,7 @@ export async function qboRequest(agencyId, { method = "GET", path, query, body }
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
+      ...(requestId ? { "Request-Id": String(requestId).slice(0, 50) } : {}),
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -276,25 +277,54 @@ function escapeQueryLiteral(value) {
 }
 
 export async function findQuickBooksCustomerByEmail(agencyId, email) {
-  if (!email) return null;
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) return null;
   const payload = await qboRequest(agencyId, {
     path: "/query",
-    query: `SELECT Id, SyncToken, DisplayName, PrimaryEmailAddr, Active FROM Customer WHERE PrimaryEmailAddr = '${escapeQueryLiteral(email)}' MAXRESULTS 5`,
+    query: `SELECT Id, SyncToken, DisplayName, PrimaryEmailAddr, Active FROM Customer WHERE PrimaryEmailAddr = '${escapeQueryLiteral(normalizedEmail)}' MAXRESULTS 10`,
   });
-  const match = (payload.QueryResponse?.Customer || []).find((customer) => customer.Active !== false);
-  return match ? { id: match.Id, syncToken: match.SyncToken, displayName: match.DisplayName } : null;
+  const matches = (payload.QueryResponse?.Customer || [])
+    .filter((customer) => customer.Active !== false)
+    .filter((customer) => String(customer.PrimaryEmailAddr?.Address || "").trim().toLowerCase() === normalizedEmail)
+    .map(mapQuickBooksCustomer);
+  if (matches.length > 1) {
+    throw createHttpError(
+      409,
+      `More than one active QuickBooks customer uses ${normalizedEmail}. Merge or correct those customers in QuickBooks, then retry.`,
+      "QBO_CUSTOMER_AMBIGUOUS",
+    );
+  }
+  return matches[0] || null;
 }
 
 export async function getQuickBooksCustomer(agencyId, customerId) {
-  try {
-    const payload = await qboRequest(agencyId, { path: `/customer/${customerId}` });
-    const customer = payload.Customer;
-    if (!customer || customer.Active === false) return null;
-    return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
-  } catch (error) {
-    if (error.statusCode === 502 || error.code === "QBO_REQUEST_FAILED") return null;
-    throw error;
-  }
+  if (!customerId) return null;
+  // QBO inconsistently returns fault 2010 (instead of 610) for some stale
+  // customer ids. An exact query gives an unambiguous empty result while
+  // still throwing on authentication, rate-limit and service failures, so
+  // outages can never be mistaken for permission to re-link a client.
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: `SELECT Id, SyncToken, DisplayName, PrimaryEmailAddr, Active FROM Customer WHERE Id = '${escapeQueryLiteral(customerId)}' MAXRESULTS 1`,
+  });
+  const customer = payload.QueryResponse?.Customer?.[0] || null;
+  if (!customer || customer.Active === false) return null;
+  return mapQuickBooksCustomer(customer);
+}
+
+function mapQuickBooksCustomer(customer) {
+  return {
+    id: customer.Id,
+    syncToken: customer.SyncToken,
+    displayName: customer.DisplayName,
+    email: customer.PrimaryEmailAddr?.Address || null,
+    active: customer.Active !== false,
+  };
+}
+
+export function isQuickBooksDuplicateNameError(error) {
+  return error?.qboFaultCode === "6240"
+    || String(error?.message || "").toLowerCase().includes("duplicate name");
 }
 
 function customerFieldPayload({ displayName, email, phone, addressLine1 }) {
@@ -312,8 +342,7 @@ export async function createQuickBooksCustomer(agencyId, fields) {
     path: "/customer",
     body: customerFieldPayload(fields),
   });
-  const customer = payload.Customer;
-  return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
+  return mapQuickBooksCustomer(payload.Customer);
 }
 
 export async function updateQuickBooksCustomer(agencyId, { id, syncToken, ...fields }) {
@@ -322,8 +351,7 @@ export async function updateQuickBooksCustomer(agencyId, { id, syncToken, ...fie
     path: "/customer",
     body: { Id: id, SyncToken: syncToken, sparse: true, ...customerFieldPayload(fields) },
   });
-  const customer = payload.Customer;
-  return { id: customer.Id, syncToken: customer.SyncToken, displayName: customer.DisplayName };
+  return mapQuickBooksCustomer(payload.Customer);
 }
 
 function mapQuickBooksInvoice(invoice) {
@@ -334,6 +362,10 @@ function mapQuickBooksInvoice(invoice) {
     totalAmount: Number(invoice.TotalAmt ?? 0),
     balance: Number(invoice.Balance ?? 0),
     dueDate: invoice.DueDate || null,
+    transactionDate: invoice.TxnDate || null,
+    createdAt: invoice.MetaData?.CreateTime || invoice.TxnDate || null,
+    updatedAt: invoice.MetaData?.LastUpdatedTime || null,
+    currency: invoice.CurrencyRef?.value || "CAD",
     isVoided: String(invoice.PrivateNote || "").trim().toLowerCase() === "voided"
       || String(invoice.TxnStatus || "").trim().toLowerCase() === "voided",
     // Only present once the invoice has been sent — QuickBooks Payments
@@ -346,10 +378,11 @@ function mapQuickBooksInvoice(invoice) {
   };
 }
 
-export async function createQuickBooksInvoice(agencyId, { customerId, itemId, description, amount, dueDate }) {
+export async function createQuickBooksInvoice(agencyId, { customerId, itemId, description, amount, dueDate, requestId }) {
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",
+    requestId,
     body: {
       CustomerRef: { value: customerId },
       ...(dueDate ? { DueDate: dueDate } : {}),
@@ -445,6 +478,7 @@ function mapQuickBooksRefundReceipt(receipt) {
     createdAt: receipt.MetaData?.CreateTime || receipt.TxnDate || null,
     updatedAt: receipt.MetaData?.LastUpdatedTime || null,
     cardStatus: receipt.CreditCardPayment?.CreditChargeResponse?.Status || null,
+    currency: receipt.CurrencyRef?.value || "CAD",
   };
 }
 
@@ -464,6 +498,66 @@ export async function listQuickBooksRefundReceiptsSince(agencyId, since) {
   return (payload.QueryResponse?.RefundReceipt || []).map(mapQuickBooksRefundReceipt);
 }
 
+async function queryAllQuickBooksCustomerTransactions(agencyId, entityName, customerId) {
+  if (!customerId) return [];
+  const rows = [];
+  const pageSize = 1000;
+  // QBO caps one query page at 1,000 rows. Keep paging so a long-standing
+  // client account never loses its oldest payments or refunds from a
+  // statement just because it crossed that limit.
+  for (let startPosition = 1; startPosition <= 10_000; startPosition += pageSize) {
+    const payload = await qboRequest(agencyId, {
+      path: "/query",
+      query: `SELECT * FROM ${entityName} WHERE CustomerRef = '${escapeQueryLiteral(customerId)}' STARTPOSITION ${startPosition} MAXRESULTS ${pageSize}`,
+    });
+    const page = payload.QueryResponse?.[entityName] || [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+function mapQuickBooksPaymentForLedger(payment) {
+  const allocations = (payment.Line || []).flatMap((line) => {
+    const invoiceLinks = (line.LinkedTxn || []).filter((txn) => txn.TxnType === "Invoice");
+    if (!invoiceLinks.length) return [];
+    // QBO normally emits one invoice link per payment line. Dividing is a
+    // defensive fallback for an unusual multi-link line and preserves the
+    // exact line total rather than multiplying it across invoices.
+    const allocatedAmount = Number(line.Amount || 0) / invoiceLinks.length;
+    return invoiceLinks.map((txn) => ({ invoiceId: txn.TxnId, amount: allocatedAmount }));
+  });
+  return {
+    id: payment.Id,
+    totalAmount: Number(payment.TotalAmt || 0),
+    unappliedAmount: Number(payment.UnappliedAmt || 0),
+    transactionDate: payment.TxnDate || null,
+    createdAt: payment.MetaData?.CreateTime || payment.TxnDate || null,
+    updatedAt: payment.MetaData?.LastUpdatedTime || null,
+    paymentReference: payment.PaymentRefNum || null,
+    methodId: payment.PaymentMethodRef?.value || null,
+    methodName: payment.PaymentMethodRef?.name || null,
+    cardStatus: payment.CreditCardPayment?.CreditChargeResponse?.Status || null,
+    currency: payment.CurrencyRef?.value || "CAD",
+    allocations,
+  };
+}
+
+export async function listQuickBooksPaymentsForCustomer(agencyId, customerId) {
+  const rows = await queryAllQuickBooksCustomerTransactions(agencyId, "Payment", customerId);
+  return rows.map(mapQuickBooksPaymentForLedger);
+}
+
+export async function listQuickBooksInvoicesForCustomer(agencyId, customerId) {
+  const rows = await queryAllQuickBooksCustomerTransactions(agencyId, "Invoice", customerId);
+  return rows.map(mapQuickBooksInvoice);
+}
+
+export async function listQuickBooksRefundReceiptsForCustomer(agencyId, customerId) {
+  const rows = await queryAllQuickBooksCustomerTransactions(agencyId, "RefundReceipt", customerId);
+  return rows.map(mapQuickBooksRefundReceipt);
+}
+
 // Voids an abandoned/expired invoice so it doesn't sit Open in QuickBooks
 // forever once a payment hold expires unpaid. A void preserves the
 // transaction's audit trail; a hard delete would permanently remove it
@@ -476,17 +570,58 @@ export async function voidQuickBooksInvoice(agencyId, { id, syncToken }) {
   });
 }
 
-export async function createQuickBooksReceivePayment(agencyId, { customerId, invoiceId, amount }) {
+export async function findOrCreateQuickBooksPaymentMethod(agencyId, name) {
+  const normalizedName = String(name || "").trim().slice(0, 50);
+  if (!normalizedName) throw createHttpError(400, "A payment method is required.", "VALIDATION_ERROR");
+  const findExisting = async () => {
+    const payload = await qboRequest(agencyId, {
+      path: "/query",
+      query: "SELECT * FROM PaymentMethod MAXRESULTS 1000",
+    });
+    return (payload.QueryResponse?.PaymentMethod || []).find(
+      (method) => method.Active !== false && String(method.Name || "").trim().toLowerCase() === normalizedName.toLowerCase(),
+    );
+  };
+  const existing = await findExisting();
+  if (existing) return { id: existing.Id, name: existing.Name };
+  try {
+    const payload = await qboRequest(agencyId, {
+      method: "POST",
+      path: "/paymentmethod",
+      body: { Name: normalizedName, Type: "NON_CREDIT_CARD" },
+    });
+    return { id: payload.PaymentMethod.Id, name: payload.PaymentMethod.Name };
+  } catch (error) {
+    if (!isQuickBooksDuplicateNameError(error)) throw error;
+    const raced = await findExisting();
+    if (raced) return { id: raced.Id, name: raced.Name };
+    throw error;
+  }
+}
+
+export async function createQuickBooksReceivePayment(agencyId, {
+  customerId,
+  invoiceId,
+  amount,
+  paymentMethodId,
+  paymentReference,
+  privateNote,
+  requestId,
+}) {
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/payment",
+    requestId,
     body: {
       CustomerRef: { value: customerId },
       TotalAmt: amount,
+      ...(paymentMethodId ? { PaymentMethodRef: { value: paymentMethodId } } : {}),
+      ...(paymentReference ? { PaymentRefNum: String(paymentReference).slice(0, 21) } : {}),
+      ...(privateNote ? { PrivateNote: String(privateNote).slice(0, 4000) } : {}),
       Line: [{ Amount: amount, LinkedTxn: [{ TxnId: invoiceId, TxnType: "Invoice" }] }],
     },
   });
-  return { id: payload.Payment.Id, totalAmount: Number(payload.Payment.TotalAmt ?? 0) };
+  return mapQuickBooksPaymentForLedger(payload.Payment);
 }
 
 export async function revokeConnection(agencyId) {

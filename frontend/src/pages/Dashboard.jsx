@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import DashboardBottomRow from "../components/dashboard/DashboardBottomRow";
 import DashboardWorkRow from "../components/dashboard/DashboardWorkRow";
 import DashboardStats from "../components/dashboard/DashboardStats";
 import DashboardSchedulingOverview from "../components/dashboard/DashboardSchedulingOverview";
+import DashboardDocumentsDrawer from "../components/dashboard/DashboardDocumentsDrawer";
+import DashboardListDrawer from "../components/dashboard/DashboardListDrawer";
 import PageContainer from "../components/layout/PageContainer";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
@@ -13,6 +16,8 @@ const DASHBOARD_REFRESH_MS = 60_000;
 
 export default function Dashboard() {
   const { role } = useAuth();
+  const [activeDrawer, setActiveDrawer] = useState(null);
+  const [schedulingFocusSignal, setSchedulingFocusSignal] = useState(0);
   const scope = getApiCacheScope();
   const dashboardQuery = useQuery({
     queryKey: apiQueryKey(scope, DASHBOARD_PATH),
@@ -40,13 +45,30 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      <DashboardStats dashboard={dashboard} loading={loading} />
+      <DashboardStats
+        dashboard={dashboard}
+        loading={loading}
+        onOpenDrawer={setActiveDrawer}
+        onFocusScheduling={() => setSchedulingFocusSignal((count) => count + 1)}
+      />
 
       <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
 
       <DashboardBottomRow dashboard={dashboard} loading={loading} />
 
-      <DashboardSchedulingOverview role={role} initial={dashboard?.scheduling || null} />
+      <DashboardSchedulingOverview role={role} initial={dashboard?.scheduling || null} focusSignal={schedulingFocusSignal} />
+
+      <DashboardDocumentsDrawer
+        open={activeDrawer === "documents"}
+        onClose={() => setActiveDrawer(null)}
+        dashboard={dashboard}
+      />
+      <DashboardListDrawer
+        open={activeDrawer === "tasksToday" || activeDrawer === "tasksOverdue" || activeDrawer === "followUpsToday"}
+        onClose={() => setActiveDrawer(null)}
+        kind={activeDrawer}
+        dashboard={dashboard}
+      />
     </PageContainer>
   );
 }

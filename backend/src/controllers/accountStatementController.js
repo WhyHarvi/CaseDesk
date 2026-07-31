@@ -2,13 +2,13 @@ import prisma from "../services/prisma/client.js";
 import { clientAccessWhere } from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { buildAccountStatement, createStatementGeneration } from "../services/accountStatementService.js";
+import { buildAccountStatement, buildClientBillingLedger, createStatementGeneration } from "../services/accountStatementService.js";
 import { generateAccountStatementPdf } from "../services/accountStatementPdfService.js";
 
 async function getScopedClient(req) {
   const client = await prisma.client.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
-    select: { id: true, fullName: true },
+    select: { id: true, fullName: true, emailNormalized: true, qbCustomerId: true },
   });
   if (!client) throw createHttpError(404, "Client not found");
   return client;
@@ -28,6 +28,32 @@ export async function getAccountStatementOptions(req, res) {
   const client = await getScopedClient(req);
   const options = await getAvailableOptions(req, client);
   res.json({ data: { client, cases: options.cases, currencies: options.currencies, defaultCurrency: options.agency?.defaultCurrency || "CAD" } });
+}
+
+export async function getClientBillingOverview(req, res) {
+  const client = await getScopedClient(req);
+  const options = await getAvailableOptions(req, client);
+  const currency = String(req.query.currency || options.agency?.defaultCurrency || "CAD").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw createHttpError(400, "Choose a valid currency");
+  const caseReferences = Object.fromEntries(options.cases.map((item) => [item.id, item.caseType]));
+  const ledger = await buildClientBillingLedger({
+    agencyId: req.auth.agencyId,
+    client,
+    currency,
+    defaultCurrency: options.agency?.defaultCurrency || "CAD",
+    caseReferences,
+  });
+  res.json({
+    data: {
+      client: { id: client.id, fullName: client.fullName },
+      currency,
+      summary: ledger.summary,
+      transactions: [...ledger.transactions].reverse(),
+      syncWarning: ledger.syncWarning,
+      sourceCounts: ledger.sourceCounts,
+      refreshedAt: new Date(),
+    },
+  });
 }
 
 export async function generateAccountStatement(req, res) {

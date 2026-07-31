@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
@@ -1167,6 +1167,7 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
 }
 
 export default function Cases() {
+  const [searchParams] = useSearchParams();
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
@@ -1185,12 +1186,15 @@ export default function Cases() {
   const [deletingId, setDeletingId] = useState("");
   const [toast, setToast] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filters, setFilters] = useState({
-    caseType: "all",
-    stage: "all",
-    status: "all",
-    staff: "all",
-    priority: "all",
+  const [filters, setFilters] = useState(() => {
+    const stageFromUrl = searchParams.get("stage");
+    return {
+      caseType: "all",
+      stage: stageFromUrl && STAGE_OPTIONS.includes(stageFromUrl) ? stageFromUrl : "all",
+      status: "all",
+      staff: "all",
+      priority: "all",
+    };
   });
   const [refreshing, setRefreshing] = useState(false);
   const [registerView, setRegisterView] = useState("active");

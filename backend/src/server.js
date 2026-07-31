@@ -31,12 +31,14 @@ import quickbooksRoutes from "./routes/quickbooksRoutes.js";
 import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
+import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
 import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
 import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
 import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
 import { startQuickBooksWebhookWorker, stopQuickBooksWebhookWorker } from "./services/quickbooksWebhookService.js";
 import { startCaseInformationDriftDetector, stopCaseInformationDriftDetector } from "./services/caseInformationDriftDetector.js";
+import { startAppointmentNoShowWorker, stopAppointmentNoShowWorker } from "./services/appointmentNoShowService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -145,6 +147,7 @@ app.use("/api/leads", requireAuth, leadUser, leadRoutes);
 app.use("/api/clients", requireAuth, internalUser, clientRoutes);
 app.use("/api/cases", requireAuth, internalUser, caseRoutes);
 app.use("/api/payment-schedules", requireAuth, internalUser, paymentScheduleRoutes);
+app.use("/api/fee-categories", requireAuth, internalUser, feeCategoryRoutes);
 app.use("/api/case-easy-import", requireAuth, leadUser, caseEasyImportRoutes);
 app.use("/api/follow-ups", requireAuth, internalUser, followUpRoutes);
 app.use("/api/users", requireAuth, requireRole("admin"), userRoutes);
@@ -198,6 +201,7 @@ function onListening() {
   startNotificationDeliveryWorker();
   startAutomatedReminderWorker();
   startCaseInformationDriftDetector();
+  startAppointmentNoShowWorker();
 }
 
 // On a nodemon restart the outgoing process's listening socket can still be
@@ -241,6 +245,7 @@ async function shutdown(signal) {
   stopNotificationDeliveryWorker();
   stopAutomatedReminderWorker();
   stopCaseInformationDriftDetector();
+  stopAppointmentNoShowWorker();
   (server || { close: (cb) => cb() }).close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);

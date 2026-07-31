@@ -7,8 +7,9 @@ import {
   ListChecks,
   Users,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
-function getStats(dashboard) {
+function getStats(dashboard, { onOpenDrawer, onFocusScheduling }) {
   return [
     {
       label: "Total Clients",
@@ -18,6 +19,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "current records in the system",
+      to: "/app/clients",
     },
     {
       label: "Active Cases",
@@ -27,6 +29,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "currently open cases",
+      to: "/app/cases",
     },
     {
       label: "Pending Documents",
@@ -36,6 +39,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "documents awaiting action",
+      onClick: () => onOpenDrawer("documents"),
     },
     {
       label: "Tasks Due Today",
@@ -45,6 +49,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "workflow actions due today",
+      onClick: () => onOpenDrawer("tasksToday"),
     },
     {
       label: "Overdue Tasks",
@@ -54,6 +59,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "workflow actions past due",
+      onClick: () => onOpenDrawer("tasksOverdue"),
     },
     {
       label: "Follow-ups Today",
@@ -63,6 +69,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "client follow-ups scheduled today",
+      onClick: () => onOpenDrawer("followUpsToday"),
     },
     {
       label: "Appointments Today",
@@ -72,6 +79,7 @@ function getStats(dashboard) {
       badge: "Live",
       badgeClass: "bg-slate-100 text-slate-700",
       helper: "scheduled calls and meetings",
+      onClick: onFocusScheduling,
     },
   ];
 }
@@ -101,23 +109,27 @@ function DashboardStatsSkeleton() {
   );
 }
 
-export default function DashboardStats({ dashboard, loading }) {
+export default function DashboardStats({ dashboard, loading, onOpenDrawer, onFocusScheduling }) {
   if (loading) {
     return <DashboardStatsSkeleton />;
   }
 
-  const stats = getStats(dashboard);
+  const stats = getStats(dashboard, { onOpenDrawer, onFocusScheduling });
 
   return (
     <section aria-label="Dashboard overview" className="mb-6 w-full">
       <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {stats.map((stat) => {
           const Icon = stat.icon;
+          const Tag = stat.to ? Link : "button";
           return (
-            <article
+            <Tag
               key={stat.label}
+              type={stat.to ? undefined : "button"}
+              to={stat.to}
+              onClick={stat.onClick}
               className={[
-                "min-w-0 rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-sm backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",
+                "min-w-0 rounded-2xl border border-slate-200/70 bg-white/80 p-3 text-left shadow-sm backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-md",
                 stat.cardClass ?? "",
               ].join(" ")}
             >
@@ -143,7 +155,7 @@ export default function DashboardStats({ dashboard, loading }) {
               </div>
 
               <p className="mt-2 text-[11px] text-slate-400">{stat.helper}</p>
-            </article>
+            </Tag>
           );
         })}
       </div>

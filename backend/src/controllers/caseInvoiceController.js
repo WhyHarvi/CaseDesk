@@ -1,4 +1,4 @@
-import { createCaseInvoice, getCaseInvoicePdf, listCaseInvoices, recordCashPayment } from "../services/caseInvoiceService.js";
+import { createCaseInvoice, getCaseInvoicePdf, listCaseInvoices, recordCashPayment, recordManualPayment } from "../services/caseInvoiceService.js";
 
 export async function listInvoices(req, res) {
   const data = await listCaseInvoices(req.auth.agencyId, req.params.id);
@@ -31,6 +31,19 @@ export async function createCashPayment(req, res) {
     invoiceId: req.params.invoiceId,
     amount: req.body?.amount,
     note: req.body?.note,
+    actorUserId: req.auth.userId,
+  });
+  res.json({ data });
+}
+
+export async function createManualPayment(req, res) {
+  const data = await recordManualPayment(req.auth.agencyId, {
+    caseId: req.params.id,
+    invoiceId: req.params.invoiceId,
+    amount: req.body?.amount,
+    method: req.body?.method,
+    note: req.body?.note,
+    idempotencyKey: req.body?.idempotencyKey,
     actorUserId: req.auth.userId,
   });
   res.json({ data });

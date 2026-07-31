@@ -227,10 +227,14 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
         />
         <div className="flex-1 space-y-3">
           {pipelineStages.length ? pipelineStages.map((stage, index) => (
-            <div key={stage.stage}>
+            <Link
+              key={stage.stage}
+              to={`/app/cases?stage=${encodeURIComponent(stage.stage)}`}
+              className="block rounded-lg p-1 -m-1 transition hover:bg-emerald-50/60"
+            >
               <div className="mb-1.5 flex items-center justify-between text-xs"><span className="font-medium text-slate-600">{stage.stage}</span><span className="font-semibold text-slate-900">{stage.count}</span></div>
               <div className="h-2 rounded-full bg-slate-100"><div className={["h-2 rounded-full", pipelineColors[index % pipelineColors.length]].join(" ")} style={{ width: `${(stage.count / pipelineMax) * 100}%` }} /></div>
-            </div>
+            </Link>
           )) : <EmptyState loading={loading}>No open cases in the pipeline.</EmptyState>}
           {(dashboard?.stats?.casesWaitingUpdate || 0) > 0 ? (
             <div className="mt-4 flex items-center gap-2 rounded-2xl border border-amber-100 bg-amber-50 p-3 text-xs font-medium text-amber-800">

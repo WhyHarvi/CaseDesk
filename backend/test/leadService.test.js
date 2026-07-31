@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus } from "../src/modules/leads/lead.service.js";
+import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead creation writes its operational foundation in one transaction", async () => {
   const created = [];
@@ -132,6 +133,62 @@ test("booking a consultation updates the lead work queue in the same transaction
   assert.ok(calls.some(([kind]) => kind === "appointment"));
 });
 
+test("public booking links an existing client and website lead to the same consultation", async () => {
+  const calls = [];
+  const lead = {
+    id: "lead-1",
+    leadNumber: "LD-2026-000008",
+    stage: "NEW",
+    firstContactAt: null,
+    firstConnectedAt: null,
+  };
+  const tx = {
+    lead: {
+      findFirst: async ({ where }) => where.emailNormalized === "person@example.ca" ? lead : null,
+      update: async ({ data }) => calls.push(["lead", data]),
+    },
+    client: { findFirst: async () => ({ id: "client-1" }) },
+    appointment: { update: async ({ data }) => calls.push(["appointment", data]) },
+    bookingPaymentHold: { updateMany: async ({ data }) => calls.push(["hold", data]) },
+    leadConsultation: { create: async ({ data }) => ({ id: "consultation-1", ...data }) },
+    leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
+      create: async ({ data }) => calls.push(["followUp", data]),
+    },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+  };
+  const appointment = {
+    id: "appointment-1",
+    status: "Scheduled",
+    startsAt: new Date("2026-08-04T14:00:00Z"),
+    endsAt: new Date("2026-08-04T14:30:00Z"),
+    createdAt: new Date("2026-07-30T21:13:00Z"),
+    assignedToId: "consultant-1",
+    meetingMode: "Zoom",
+  };
+
+  const linked = await createOrLinkLeadForConsultation(tx, {
+    agencyId: "agency-1",
+    appointment,
+    guestName: "Person Example",
+    guestEmail: "person@example.ca",
+    guestPhone: "+14165550100",
+    paymentStatus: "PAID",
+    fee: 100,
+    holdId: "hold-1",
+  });
+
+  assert.deepEqual(linked, { clientId: "client-1", leadId: "lead-1" });
+  assert.ok(calls.some(([kind, data]) => kind === "appointment" && data.clientId === "client-1"));
+  assert.ok(calls.some(([kind, data]) => kind === "appointment" && data.leadId === "lead-1"));
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].stage, "CONSULTATION_BOOKED");
+  assert.equal(calls.find(([kind]) => kind === "closedFollowUp")[1].completionOutcome, "Consultation booked");
+  assert.equal(calls.find(([kind]) => kind === "followUp")[1].type, "CONFIRM_CONSULTATION");
+  assert.equal(calls.find(([kind]) => kind === "activity")[1].occurredAt.toISOString(), appointment.createdAt.toISOString());
+  assert.equal(calls.find(([kind]) => kind === "stage")[1].createdAt.toISOString(), appointment.createdAt.toISOString());
+});
+
 test("signed retainer and paid initial payment make a lead ready to convert", async () => {
   const calls = [];
   const tx = {
@@ -172,8 +229,18 @@ test("conversion creates and links the client and case atomically", async () => 
     agencyClientSequence: { upsert: async () => ({ nextValue: 2 }) },
     client: { findFirst: async () => null, create: async ({ data }) => { calls.push(["client", data]); return { id: "client-1", ...data }; } },
     case: { create: async ({ data }) => { calls.push(["case", data]); return { id: "case-1", ...data }; } },
-    note: { create: async ({ data }) => calls.push(["note", data]) },
-    followUp: { create: async ({ data }) => calls.push(["clientFollowUp", data]) },
+    appointment: {
+      findMany: async () => [{ id: "appointment-1" }],
+      updateMany: async ({ data }) => calls.push(["linkedAppointments", data]),
+    },
+    note: {
+      create: async ({ data }) => calls.push(["note", data]),
+      updateMany: async ({ data }) => calls.push(["linkedAppointmentNotes", data]),
+    },
+    followUp: {
+      create: async ({ data }) => calls.push(["clientFollowUp", data]),
+      updateMany: async ({ data }) => calls.push(["linkedAppointmentFollowUps", data]),
+    },
     leadFollowUp: { updateMany: async ({ data }) => calls.push(["closedLeadFollowUps", data]) },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
@@ -191,6 +258,9 @@ test("conversion creates and links the client and case atomically", async () => 
   assert.equal(calls.find(([kind]) => kind === "lead")[1].convertedClientId, "client-1");
   assert.equal(calls.find(([kind]) => kind === "closedLeadFollowUps")[1].status, "CANCELLED");
   assert.ok(calls.some(([kind]) => kind === "clientFollowUp"));
+  assert.equal(calls.find(([kind]) => kind === "linkedAppointments")[1].clientId, "client-1");
+  assert.equal(calls.find(([kind]) => kind === "linkedAppointmentNotes")[1].clientId, "client-1");
+  assert.equal(calls.find(([kind]) => kind === "linkedAppointmentFollowUps")[1].clientId, "client-1");
   assert.ok(calls.some(([kind]) => kind === "audit"));
 });
 

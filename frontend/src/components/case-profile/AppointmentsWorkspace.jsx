@@ -17,6 +17,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
+import AppointmentProfileOverlay from "../appointments/AppointmentProfileOverlay";
 
 const calendars = ["Case Calendar", "Workspace Calendar", "Personal Calendar"];
 const meetingModes = [
@@ -520,6 +521,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
   const [view, setView] = useState("upcoming");
   const [editor, setEditor] = useState(undefined);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [profileId, setProfileId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -555,14 +557,13 @@ export default function AppointmentsWorkspace({ caseItem }) {
   const visible = useMemo(() => {
     const now = Date.now();
     return appointments
-      .filter((item) => item.status === "Scheduled")
       .filter((item) =>
-        view === "overdue"
-          ? new Date(item.endsAt).getTime() < now
-          : new Date(item.endsAt).getTime() >= now,
+        view === "history"
+          ? item.status !== "Scheduled" || new Date(item.endsAt).getTime() < now
+          : item.status === "Scheduled" && new Date(item.endsAt).getTime() >= now,
       )
       .sort(
-        (left, right) => new Date(left.startsAt) - new Date(right.startsAt),
+        (left, right) => view === "history" ? new Date(right.startsAt) - new Date(left.startsAt) : new Date(left.startsAt) - new Date(right.startsAt),
       );
   }, [appointments, view]);
   const counts = useMemo(() => {
@@ -572,9 +573,9 @@ export default function AppointmentsWorkspace({ caseItem }) {
         (item) =>
           item.status === "Scheduled" && new Date(item.endsAt).getTime() >= now,
       ).length,
-      overdue: appointments.filter(
+      history: appointments.filter(
         (item) =>
-          item.status === "Scheduled" && new Date(item.endsAt).getTime() < now,
+          item.status !== "Scheduled" || new Date(item.endsAt).getTime() < now,
       ).length,
     };
   }, [appointments]);
@@ -658,7 +659,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
         <div className="relative grid grid-cols-2 rounded-full bg-slate-100 p-1">
           {[
             ["upcoming", `Upcoming ${counts.upcoming}`],
-            ["overdue", `Overdue ${counts.overdue}`],
+            ["history", `History ${counts.history}`],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -698,7 +699,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
               className="group flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50/70"
             >
               <span
-                className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-2xl ${view === "overdue" ? "bg-rose-50 text-rose-600" : "bg-sky-50 text-sky-600"}`}
+                className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-2xl ${view === "history" ? "bg-slate-100 text-slate-600" : "bg-sky-50 text-sky-600"}`}
               >
                 <span className="text-[9px] font-bold uppercase">
                   {new Date(appointment.startsAt).toLocaleDateString("en-CA", {
@@ -713,13 +714,18 @@ export default function AppointmentsWorkspace({ caseItem }) {
                 type="button"
                 onClick={() => {
                   setError("");
-                  setEditor(appointment);
+                  setProfileId(appointment.id);
                 }}
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold text-slate-900">
-                    {appointment.subject}
+                  <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-900">
+                    <span className="truncate">{appointment.subject}</span>
+                    {view === "history" ? (
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${appointment.status === "Completed" ? "bg-emerald-50 text-emerald-700" : appointment.status === "Cancelled" ? "bg-rose-50 text-rose-700" : appointment.status === "NoShow" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        {appointment.status === "NoShow" ? "No-show" : appointment.status}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="mt-1 block truncate text-xs text-slate-500">
                     {appointment.description || appointment.calendar}
@@ -727,7 +733,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
                   <span className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-medium text-slate-400">
                     <span
                       className={
-                        view === "overdue" ? "font-semibold text-rose-600" : ""
+                        view === "history" ? "font-semibold text-slate-600" : ""
                       }
                     >
                       <Clock3 className="mr-1 inline h-3 w-3" />
@@ -788,9 +794,9 @@ export default function AppointmentsWorkspace({ caseItem }) {
           {!visible.length ? (
             <div className="px-6 py-14 text-center">
               <span
-                className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl ${view === "overdue" ? "bg-rose-50 text-rose-500" : "bg-sky-50 text-sky-500"}`}
+                className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl ${view === "history" ? "bg-slate-100 text-slate-500" : "bg-sky-50 text-sky-500"}`}
               >
-                {view === "overdue" ? (
+                {view === "history" ? (
                   <CalendarDays className="h-6 w-6" />
                 ) : (
                   <CalendarPlus className="h-6 w-6" />
@@ -802,7 +808,7 @@ export default function AppointmentsWorkspace({ caseItem }) {
               <p className="mt-1 text-sm text-slate-500">
                 {view === "upcoming"
                   ? "Add the first appointment for this case."
-                  : "Missed appointments will appear here."}
+                  : "Completed, cancelled, no-show, and past appointments will appear here."}
               </p>
               {view === "upcoming" ? (
                 <button
@@ -850,6 +856,19 @@ export default function AppointmentsWorkspace({ caseItem }) {
             }
           }}
           onConfirm={remove}
+        />
+      ) : null}
+      {profileId ? (
+        <AppointmentProfileOverlay
+          appointmentId={profileId}
+          onClose={() => setProfileId(null)}
+          onChanged={(updated) => {
+            if (updated?.id) setAppointments((current) => current.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+          }}
+          onEditScheduling={(item) => {
+            setProfileId(null);
+            setEditor(item);
+          }}
         />
       ) : null}
     </section>

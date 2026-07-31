@@ -2,10 +2,10 @@ import { createCrudController, fieldParsers } from "../utils/prismaCrud.js";
 import {
   caseAccessWhere,
   clientAccessWhere,
-  relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { appointmentProfileAccessWhere } from "../services/appointmentProfileService.js";
 
 const include = {
   user: {
@@ -28,11 +28,24 @@ const include = {
       stage: true,
     },
   },
+  appointment: {
+    select: { id: true, subject: true, startsAt: true, status: true },
+  },
 };
+
+function noteAccessWhere(req) {
+  if (req.auth.role === "admin") return {};
+  return { OR: [
+    { client: clientAccessWhere(req) },
+    { case: caseAccessWhere(req) },
+    { appointment: appointmentProfileAccessWhere(req) },
+  ] };
+}
 
 const fields = {
   clientId: fieldParsers.relationField,
   caseId: fieldParsers.relationField,
+  appointmentId: fieldParsers.relationField,
   userId: fieldParsers.relationField,
   content: fieldParsers.stringField,
 };
@@ -43,10 +56,11 @@ const controller = createCrudController({
   createFields: fields,
   updateFields: fields,
   include,
-  buildAccessWhere: relatedRecordAccessWhere,
+  buildAccessWhere: noteAccessWhere,
   buildListWhere: (req) => ({
     ...(req.query.clientId ? { clientId: req.query.clientId } : {}),
     ...(req.query.caseId ? { caseId: req.query.caseId } : {}),
+    ...(req.query.appointmentId ? { appointmentId: req.query.appointmentId } : {}),
     ...(req.query.userId ? { userId: req.query.userId } : {}),
   }),
   activityEntity: "note",
@@ -60,7 +74,7 @@ async function manageableNote(req) {
     where: {
       id: req.params.id,
       agencyId: req.auth.agencyId,
-      ...relatedRecordAccessWhere(req),
+      ...noteAccessWhere(req),
     },
     select: { id: true, userId: true },
   });
@@ -75,7 +89,15 @@ export async function createNote(req, res) {
   const content = String(req.body.content || "").trim();
   if (!content) throw createHttpError(400, "Enter a note before saving");
 
-  if (req.body.caseId) {
+  if (req.body.appointmentId) {
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: req.body.appointmentId, agencyId: req.auth.agencyId, ...appointmentProfileAccessWhere(req) },
+      select: { id: true, clientId: true, caseId: true },
+    });
+    if (!appointment) throw createHttpError(403, "You do not have access to this appointment");
+    req.body.clientId = req.body.clientId || appointment.clientId;
+    req.body.caseId = req.body.caseId || appointment.caseId;
+  } else if (req.body.caseId) {
     const caseItem = await prisma.case.findFirst({
       where: {
         id: req.body.caseId,

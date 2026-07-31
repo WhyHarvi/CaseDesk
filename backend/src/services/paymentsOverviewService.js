@@ -1,6 +1,7 @@
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
+import { listFeeCategories } from "./feeCategoryService.js";
 
 const MAX_ROWS_PER_SOURCE = 1000;
 
@@ -32,18 +33,19 @@ export function netCollectedAmount(row) {
 }
 
 async function fetchCaseInvoiceRows(agencyId, { from, to }) {
-  const rows = await prisma.caseInvoice.findMany({
+  const [rows, categories] = await Promise.all([prisma.caseInvoice.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
     include: { client: { select: { fullName: true, email: true } }, case: { select: { caseType: true } } },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
-  });
+  }), listFeeCategories(agencyId, { includeInactive: true })]);
+  const labels = new Map(categories.map((category) => [category.code, category.name]));
   return rows.map((row) => {
     const status = normalizeCaseInvoiceStatus(row.status);
     return {
       id: `case_invoice:${row.id}`,
       source: "case_invoice",
-      type: CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
+      type: labels.get(row.paymentType) || CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
       description: row.description,
       clientName: row.client?.fullName || "Unknown client",
       clientId: row.clientId,
@@ -64,7 +66,10 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
 async function fetchBookingPaymentRows(agencyId, { from, to }) {
   const rows = await prisma.bookingPaymentHold.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
-    include: { appointment: { select: { status: true } } },
+    include: {
+      client: { select: { fullName: true } },
+      appointment: { select: { status: true, clientId: true, client: { select: { fullName: true } } } },
+    },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
   });
@@ -72,9 +77,9 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     id: `booking_payment:${row.id}`,
     source: "booking_payment",
     type: row.source === "WalkIn" ? "Consultation (walk-in)" : "Consultation booking",
-    description: "Consultation fee",
-    clientName: row.guestName,
-    clientId: null,
+    description: `Consultation fee${row.paymentMethod ? ` · ${row.paymentMethod === "ETransfer" ? "E-transfer" : row.paymentMethod}` : ""}`,
+    clientName: row.client?.fullName || row.appointment?.client?.fullName || row.guestName,
+    clientId: row.clientId || row.appointment?.clientId || null,
     caseId: null,
     caseType: null,
     amount: Number(row.amount),
@@ -106,8 +111,11 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     // than properly refunded, which produces no RefundReceipt for the
     // normal refund-matching path to ever pick up.
     balanceMismatch: Boolean(row.balanceMismatchAt),
-    qbInvoiceNumber: null,
+    qbInvoiceNumber: row.qbInvoiceNumber,
     qbInvoiceLink: row.qbInvoiceLink,
+    qbPaymentId: row.qbPaymentId,
+    paymentMethod: row.paymentMethod === "ETransfer" ? "E-transfer" : row.paymentMethod,
+    paymentNote: row.manualPaymentNote,
     createdAt: row.createdAt,
     paidAt: row.paidAt,
     dueDate: null,
@@ -168,7 +176,9 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
   if (source) combined = combined.filter((row) => row.source === source);
   if (query) {
     const needle = query.trim().toLowerCase();
-    combined = combined.filter((row) => row.clientName.toLowerCase().includes(needle) || (row.qbInvoiceNumber || "").toLowerCase().includes(needle));
+    combined = combined.filter((row) => row.clientName.toLowerCase().includes(needle)
+      || (row.qbInvoiceNumber || "").toLowerCase().includes(needle)
+      || (row.paymentMethod || "").toLowerCase().includes(needle));
   }
   combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 

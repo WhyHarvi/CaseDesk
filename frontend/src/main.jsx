@@ -15,7 +15,7 @@ function RoutedApplication() {
   const location = useLocation();
 
   return (
-    <RouteRecoveryBoundary key={location.pathname}>
+    <RouteRecoveryBoundary key={location.pathname} routeKey={location.pathname}>
       <AppRoutes />
     </RouteRecoveryBoundary>
   );

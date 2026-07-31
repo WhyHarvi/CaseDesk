@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLedgerFromPayments } from "../src/services/accountStatementService.js";
+import { buildLedgerFromPayments, buildUnifiedClientLedger } from "../src/services/accountStatementService.js";
 import { generateAccountStatementPdf } from "../src/services/accountStatementPdfService.js";
 
 const payment = (overrides = {}) => ({
@@ -25,6 +25,7 @@ test("builds charges and payments from a saved billing record", () => {
     totalPayments: 300,
     totalCredits: 0,
     totalRefunds: 0,
+    netCollected: 300,
     totalAdjustments: 0,
     closingBalance: 700,
   });
@@ -72,4 +73,44 @@ test("creates a valid PDF for an empty statement", async () => {
   const pdf = await generateAccountStatementPdf(statement);
   assert.equal(pdf.subarray(0, 4).toString(), "%PDF");
   assert.ok(pdf.length > 1000);
+});
+
+test("uses exact QuickBooks payment allocations without duplicating the cached invoice payment", () => {
+  const result = buildUnifiedClientLedger({
+    caseInvoices: [{
+      id: "case-invoice-1", caseId: "case-1", qbInvoiceId: "42", qbInvoiceNumber: "1006",
+      description: "Professional fees", amount: 100, balance: 0, status: "Paid",
+      createdAt: new Date("2026-07-30T20:00:00Z"), updatedAt: new Date("2026-07-30T21:00:00Z"),
+    }],
+    quickBooksPayments: [{
+      id: "43", totalAmount: 100, createdAt: new Date("2026-07-30T21:13:18Z"),
+      allocations: [{ invoiceId: "42", amount: 100 }],
+    }],
+  }, { caseReferences: { "case-1": "Visitor Visa" } });
+
+  assert.equal(result.summary.totalCharges, 100);
+  assert.equal(result.summary.totalPayments, 100);
+  assert.equal(result.summary.closingBalance, 0);
+  assert.equal(result.transactions.filter((entry) => entry.type === "Payment").length, 1);
+  assert.equal(result.transactions.find((entry) => entry.type === "Payment").reference, "QBP-43");
+});
+
+test("reports a consultation payment and refund without reopening the paid invoice balance", () => {
+  const result = buildUnifiedClientLedger({
+    bookingPayments: [{
+      id: "hold-1", qbInvoiceId: "42", qbInvoiceNumber: "1006", qbRefundReceiptId: "77",
+      guestName: "Client", amount: 100, status: "Refunded",
+      createdAt: new Date("2026-07-30T20:00:00Z"), paidAt: new Date("2026-07-30T21:00:00Z"), updatedAt: new Date("2026-07-31T16:00:00Z"),
+      appointment: { subject: "Initial Consultation", startsAt: new Date("2026-08-04T14:00:00Z") },
+    }],
+    quickBooksPayments: [{ id: "43", totalAmount: 100, createdAt: new Date("2026-07-30T21:00:00Z"), allocations: [{ invoiceId: "42", amount: 100 }] }],
+    quickBooksRefunds: [{ id: "77", totalAmount: 100, createdAt: new Date("2026-07-31T16:00:00Z") }],
+  });
+
+  assert.equal(result.summary.totalCharges, 100);
+  assert.equal(result.summary.totalPayments, 100);
+  assert.equal(result.summary.totalRefunds, 100);
+  assert.equal(result.summary.netCollected, 0);
+  assert.equal(result.summary.closingBalance, 0);
+  assert.equal(result.transactions.find((entry) => entry.type === "Refund").refund, 100);
 });

@@ -13,6 +13,12 @@ function recoveryKey(label) {
   return `${RECOVERY_PREFIX}:${label}`;
 }
 
+function reloadWithFreshAssets() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("__casedesk_recover", Date.now().toString());
+  window.location.replace(url.toString());
+}
+
 /**
  * Loads a split page normally, but performs one clean reload when the browser
  * has a stale or interrupted page bundle. A successful load clears the guard,
@@ -51,7 +57,7 @@ export function lazyWithRetry(loader, label) {
           alreadyRetried = true;
         }
         if (!alreadyRetried) {
-          window.location.reload();
+          reloadWithFreshAssets();
           return new Promise(() => {});
         }
       }

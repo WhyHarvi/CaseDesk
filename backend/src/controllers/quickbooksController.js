@@ -13,6 +13,7 @@ import {
   revokeConnection,
   saveConnection,
 } from "../services/quickbooksService.js";
+import { syncBuiltInFeeCategoryMapping } from "../services/feeCategoryService.js";
 
 function frontendBase() {
   return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -141,6 +142,11 @@ export async function updateQuickBooksMapping(req, res) {
     ...(consultFeeItemId !== undefined ? { consultFeeItemId, consultFeeItemName: consultFeeItemId ? byId.get(consultFeeItemId).name : null } : {}),
   };
   const settings = await prisma.agencyQuickBooksSettings.update({ where: { agencyId: req.auth.agencyId }, data });
+  const categoryUpdates = [];
+  if (feeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "fees", settings.feeItemId, settings.feeItemName));
+  if (disbursementItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "disbursement", settings.disbursementItemId, settings.disbursementItemName));
+  if (consultFeeItemId !== undefined) categoryUpdates.push(syncBuiltInFeeCategoryMapping(req.auth.agencyId, "consultation", settings.consultFeeItemId, settings.consultFeeItemName));
+  await Promise.all(categoryUpdates);
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,

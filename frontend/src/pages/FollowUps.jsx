@@ -21,7 +21,9 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
+import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 
 const defaultFormState = {
   clientId: "",
@@ -581,11 +583,14 @@ function FollowUpDrawer({
   );
 }
 
-function FollowUpCard({ item, onEdit, onDelete, onCopyMessage, onMarkDone, deletingId }) {
+function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMarkDone, onOpenAppointment, deletingId }) {
   const statusStyles = getStatusStyles(item.tone);
 
   return (
-    <article className="group relative overflow-hidden rounded-[18px] border border-slate-200/70 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_42px_rgba(15,23,42,0.09)]">
+    <article
+      id={`followup-row-${item.id}`}
+      className={`group relative overflow-hidden rounded-[18px] border border-slate-200/70 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_42px_rgba(15,23,42,0.09)] ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
+    >
       <div className={`absolute inset-y-0 left-0 w-1 ${getAccentBarClass(item.tone)}`} />
 
       <div className="grid gap-4 px-4 py-3.5 xl:grid-cols-[270px_minmax(260px,1fr)_150px_182px] xl:items-center">
@@ -622,6 +627,16 @@ function FollowUpCard({ item, onEdit, onDelete, onCopyMessage, onMarkDone, delet
             <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600">{item.category}</span>
             {item.missingDocs ? (
               <span className="rounded-md bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600">1 missing</span>
+            ) : null}
+            {item.appointment ? (
+              <button
+                type="button"
+                onClick={() => onOpenAppointment(item.appointment.id)}
+                className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
+              >
+                <CalendarClock className="h-3 w-3" />
+                From appointment · {formatDate(item.appointment.startsAt)}
+              </button>
             ) : null}
           </div>
         </div>
@@ -783,6 +798,8 @@ function TodayWorkRail({ items, overdueCount, missingDocItem, onCreate, onShowOv
 }
 
 export default function FollowUps() {
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get("highlight") || "";
   const [followUps, setFollowUps] = useState([]);
   const [clients, setClients] = useState([]);
   const [cases, setCases] = useState([]);
@@ -806,12 +823,21 @@ export default function FollowUps() {
   const [dateRangeFilter, setDateRangeFilter] = useState("Any time");
   const [sortBy, setSortBy] = useState("Due date");
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
 
   const isEditing = Boolean(editingFollowUp);
 
   useEffect(() => {
     loadWorkspaceData();
   }, []);
+
+  useEffect(() => {
+    if (!highlightId || loading) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`followup-row-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [highlightId, loading, followUps]);
 
   useEffect(() => {
     if (!toast) {
@@ -1389,10 +1415,12 @@ export default function FollowUps() {
                     <FollowUpCard
                       key={item.id}
                       item={item}
+                      highlighted={item.id === highlightId}
                       onEdit={openEditForm}
                       onDelete={handleDelete}
                       onCopyMessage={handleCopyMessage}
                       onMarkDone={handleMarkDone}
+                      onOpenAppointment={setSelectedAppointmentId}
                       deletingId={deletingId}
                     />
                   ))
@@ -1439,6 +1467,13 @@ export default function FollowUps() {
           users={users}
           isEditing={isEditing}
           closing={drawerClosing}
+        />
+      ) : null}
+      {selectedAppointmentId ? (
+        <AppointmentProfileOverlay
+          appointmentId={selectedAppointmentId}
+          onClose={() => setSelectedAppointmentId(null)}
+          onChanged={() => loadWorkspaceData({ quiet: true })}
         />
       ) : null}
     </>

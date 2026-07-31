@@ -160,7 +160,7 @@ export default function ManageBookingPage() {
 
   if (loadError) {
     return (
-      <PublicShell fullWidth>
+      <PublicShell>
         <div className="py-10 text-center">
           <p className="text-lg font-semibold text-slate-900">Link not valid</p>
           <p className="mt-2 text-sm text-slate-500">{loadError}</p>
@@ -171,7 +171,7 @@ export default function ManageBookingPage() {
 
   if (!booking) {
     return (
-      <PublicShell fullWidth>
+      <PublicShell>
         <div className="flex items-center justify-center gap-2 py-14 text-sm text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading your appointment…
         </div>
@@ -195,7 +195,7 @@ export default function ManageBookingPage() {
   const needsLocation = meetingMode === "InPerson" && locations.length > 1;
 
   return (
-    <PublicShell agencyName={booking.agencyName} fullWidth>
+    <PublicShell agencyName={booking.agencyName} wide={mode === "reschedule"}>
       <AnimatePresence mode="wait">
         {mode === "reschedule" ? (
           <motion.div
@@ -219,157 +219,164 @@ export default function ManageBookingPage() {
               <p className="text-sm text-slate-500">Update appointment</p>
             </div>
             {error ? (
-              <p className="mb-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <p className="mb-4 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 {error}
               </p>
             ) : null}
-            {booking.isRecurring ? (
-              <div className="mb-4 flex rounded-xl bg-slate-100 p-1">
-                {[
-                  ["single", "Only this appointment"],
-                  ["series", "This and future"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setSeriesScope(value)}
-                    className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
 
-            <div className="mb-5">
-              <p className="text-sm font-semibold text-slate-900">
-                How would you like to meet?
-              </p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {[
-                  {
-                    id: "InPerson",
-                    label: "In person",
-                    icon: MapPin,
-                    disabled:
-                      (!locations.length &&
-                        booking.meetingMode !== "InPerson") ||
-                      !booking.allowedMeetingModes?.includes("InPerson"),
-                  },
-                  {
-                    id: "Phone",
-                    label: "Phone call",
-                    icon: Phone,
-                    disabled: !booking.allowedMeetingModes?.includes("Phone"),
-                  },
-                  {
-                    id: "Online",
-                    label: "Jitsi",
-                    icon: Video,
-                    disabled: !booking.allowedMeetingModes?.includes("Online"),
-                  },
-                  {
-                    id: "Zoom",
-                    label: "Zoom",
-                    icon: Video,
-                    disabled: !booking.allowedMeetingModes?.includes("Zoom"),
-                  },
-                ].map(({ id, label, icon: Icon, disabled }) => (
-                  <motion.button
-                    key={id}
-                    type="button"
-                    disabled={disabled}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => {
-                      setMeetingMode(id);
-                      if (id === "InPerson" && locations.length === 1)
-                        setLocationId(locations[0].id);
-                    }}
-                    className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-3 text-sm font-semibold transition ${meetingMode === id ? "border-sky-600 bg-sky-600 text-white shadow-[0_8px_20px_rgba(2,132,199,0.28)]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"} disabled:opacity-40`}
-                  >
-                    <Icon className="h-4 w-4" /> {label}
-                  </motion.button>
-                ))}
+            <div className="lg:grid lg:grid-cols-[280px_1fr] lg:items-start lg:gap-10">
+              <div className="lg:sticky lg:top-6">
+                {booking.isRecurring ? (
+                  <div className="mb-5 flex rounded-xl bg-slate-100 p-1">
+                    {[
+                      ["single", "Only this appointment"],
+                      ["series", "This and future"],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setSeriesScope(value)}
+                        className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="mb-5">
+                  <p className="text-sm font-semibold text-slate-900">
+                    How would you like to meet?
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-1">
+                    {[
+                      {
+                        id: "InPerson",
+                        label: "In person",
+                        icon: MapPin,
+                        disabled:
+                          (!locations.length &&
+                            booking.meetingMode !== "InPerson") ||
+                          !booking.allowedMeetingModes?.includes("InPerson"),
+                      },
+                      {
+                        id: "Phone",
+                        label: "Phone call",
+                        icon: Phone,
+                        disabled: !booking.allowedMeetingModes?.includes("Phone"),
+                      },
+                      {
+                        id: "Online",
+                        label: "Jitsi",
+                        icon: Video,
+                        disabled: !booking.allowedMeetingModes?.includes("Online"),
+                      },
+                      {
+                        id: "Zoom",
+                        label: "Zoom",
+                        icon: Video,
+                        disabled: !booking.allowedMeetingModes?.includes("Zoom"),
+                      },
+                    ].map(({ id, label, icon: Icon, disabled }) => (
+                      <motion.button
+                        key={id}
+                        type="button"
+                        disabled={disabled}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => {
+                          setMeetingMode(id);
+                          if (id === "InPerson" && locations.length === 1)
+                            setLocationId(locations[0].id);
+                        }}
+                        className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-3 text-sm font-semibold transition lg:justify-start lg:px-4 ${meetingMode === id ? "border-sky-600 bg-sky-600 text-white shadow-[0_8px_20px_rgba(2,132,199,0.28)]" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"} disabled:opacity-40`}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" /> {label}
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+
+                {needsLocation ? (
+                  <div className="mb-5">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Choose an office
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {locations.map((location) => (
+                        <motion.button
+                          key={location.id}
+                          type="button"
+                          whileTap={{ scale: 0.985 }}
+                          onClick={() => setLocationId(location.id)}
+                          className={`flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition ${locationId === location.id ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                        >
+                          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-900">
+                              {location.name}
+                            </span>
+                            <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                              {location.address}
+                            </span>
+                          </span>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </div>
+                ) : meetingMode === "InPerson" && locations.length === 1 ? (
+                  <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                    <span>
+                      <span className="font-semibold">{locations[0].name}</span>
+                      <span className="block text-xs text-slate-500">
+                        {locations[0].address}
+                      </span>
+                    </span>
+                  </p>
+                ) : null}
+                {meetingMode === "Phone" ? (
+                  <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700">
+                    <Phone className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                    <span>
+                      {booking.agencyName} will call your saved phone number
+                      {booking.phoneCallerId
+                        ? ` from ${booking.phoneCallerId}`
+                        : ""}
+                      . You do not need to call the office.
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="mt-2 border-t border-slate-100 pt-6 lg:mt-0 lg:border-t-0 lg:pt-0">
+                <p className="mb-3 text-sm font-semibold text-slate-900">
+                  Pick a new date and time
+                </p>
+                <BookingMonthPicker
+                  key={`${meetingMode}:${locationId}`}
+                  fetchAvailability={fetchAvailability}
+                  onPickSlot={setSlot}
+                  timezone={booking.timezone}
+                />
+                <button
+                  type="button"
+                  disabled={
+                    !slot ||
+                    busy ||
+                    (meetingMode === "InPerson" &&
+                      locations.length > 1 &&
+                      !locationId)
+                  }
+                  onClick={confirmReschedule}
+                  className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40 lg:w-auto lg:min-w-[220px]"
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {slot
+                    ? `Move to ${new Date(slot.startsAt).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}, ${new Date(slot.startsAt).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })}`
+                    : "Pick a new time"}
+                </button>
               </div>
             </div>
-
-            {needsLocation ? (
-              <div className="mb-5">
-                <p className="text-sm font-semibold text-slate-900">
-                  Choose an office
-                </p>
-                <div className="mt-2 space-y-2">
-                  {locations.map((location) => (
-                    <motion.button
-                      key={location.id}
-                      type="button"
-                      whileTap={{ scale: 0.985 }}
-                      onClick={() => setLocationId(location.id)}
-                      className={`flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition ${locationId === location.id ? "border-sky-500 bg-sky-50 ring-1 ring-sky-400" : "border-slate-200 bg-white hover:border-slate-300"}`}
-                    >
-                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-900">
-                          {location.name}
-                        </span>
-                        <span className="mt-0.5 block text-xs leading-5 text-slate-500">
-                          {location.address}
-                        </span>
-                      </span>
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-            ) : meetingMode === "InPerson" && locations.length === 1 ? (
-              <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700">
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                <span>
-                  <span className="font-semibold">{locations[0].name}</span>
-                  <span className="block text-xs text-slate-500">
-                    {locations[0].address}
-                  </span>
-                </span>
-              </p>
-            ) : null}
-            {meetingMode === "Phone" ? (
-              <p className="mb-5 flex items-start gap-2.5 rounded-2xl bg-sky-50/70 px-3.5 py-3 text-sm text-slate-700">
-                <Phone className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                <span>
-                  {booking.agencyName} will call your saved phone number
-                  {booking.phoneCallerId
-                    ? ` from ${booking.phoneCallerId}`
-                    : ""}
-                  . You do not need to call the office.
-                </span>
-              </p>
-            ) : null}
-
-            <p className="mb-3 text-sm font-semibold text-slate-900">
-              Pick a new date and time
-            </p>
-            <BookingMonthPicker
-              key={`${meetingMode}:${locationId}`}
-              fetchAvailability={fetchAvailability}
-              onPickSlot={setSlot}
-              timezone={booking.timezone}
-            />
-            <button
-              type="button"
-              disabled={
-                !slot ||
-                busy ||
-                (meetingMode === "InPerson" &&
-                  locations.length > 1 &&
-                  !locationId)
-              }
-              onClick={confirmReschedule}
-              className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40"
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {slot
-                ? `Move to ${new Date(slot.startsAt).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}, ${new Date(slot.startsAt).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })}`
-                : "Pick a new time"}
-            </button>
           </motion.div>
         ) : mode === "cancel" ? (
           <motion.div
@@ -377,17 +384,17 @@ export default function ManageBookingPage() {
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className="py-4 text-center"
+            className="py-2 text-center"
           >
-            <XCircle
-              className="mx-auto h-12 w-12 text-rose-400"
-              strokeWidth={1.5}
-            />
-            <h2 className="mt-3 text-lg font-semibold text-slate-950">
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-rose-50">
+              <XCircle className="h-7 w-7 text-rose-500" strokeWidth={1.75} />
+            </span>
+            <h2 className="mt-4 text-lg font-semibold text-slate-950">
               Cancel this appointment?
             </h2>
-            <p className="mt-1.5 text-sm text-slate-500">
-              {booking.subject} ·{" "}
+            <p className="mx-auto mt-2 max-w-xs rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm text-slate-600">
+              {booking.subject}
+              <span className="mx-1.5 text-slate-300">·</span>
               {formatWhen(booking.startsAt, booking.timezone)}
             </p>
             <textarea

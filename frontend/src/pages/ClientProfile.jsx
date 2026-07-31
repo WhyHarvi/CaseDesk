@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Smartphone,
   Trash2,
-  WalletCards,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -21,10 +20,17 @@ import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
 import CaseEasyReportsCard from "../components/clients/CaseEasyReportsCard";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import { useAuth } from "../auth/AuthContext";
+import ClientAppointmentsCard from "../components/appointments/ClientAppointmentsCard";
+import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
+import ClientBillingCard from "../components/clients/ClientBillingCard";
 
 const defaultNoteFormState = {
   content: "",
 };
+
+// Mirrors caseController.js's TERMINAL_CASE_STATUSES — any status here
+// means the case is done, not just "not literally Closed".
+const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 
 function formatDate(value) {
   if (!value) {
@@ -288,16 +294,20 @@ export default function ClientProfile() {
   const [savingNote, setSavingNote] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState("");
   const [statementOpen, setStatementOpen] = useState(false);
+  const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
 
   const isEditingNote = Boolean(editingNote);
   const client = profile?.client || null;
   const cases =
-    profile?.cases || (profile?.primaryCase ? [profile.primaryCase] : []);
-  const currentCase = profile?.primaryCase || cases[0] || null;
+    profile?.cases || (profile?.activeCase ? [profile.activeCase] : []);
+  // Only ever the client's genuinely active case — never falls back to
+  // "whatever case happens to be first", which previously showed a closed
+  // case as if it were active whenever it was the client's only case.
+  const currentCase = profile?.activeCase || null;
   const notes = profile?.notes || [];
 
   const profileNotes = useMemo(
-    () => notes.filter((note) => !note.caseId),
+    () => notes.filter((note) => !note.caseId || note.appointmentId),
     [notes],
   );
   const sortedProfileNotes = useMemo(
@@ -315,7 +325,8 @@ export default function ClientProfile() {
   const openCases = useMemo(
     () =>
       cases.filter(
-        (item) => item.status !== "Closed" && item.stage !== "Closed",
+        (item) =>
+          !TERMINAL_CASE_STATUSES.has(item.status) && item.stage !== "Closed",
       ),
     [cases],
   );
@@ -514,6 +525,14 @@ export default function ClientProfile() {
           onClose={() => setStatementOpen(false)}
         />
       ) : null}
+      {selectedNoteAppointmentId ? (
+        <AppointmentProfileOverlay
+          appointmentId={selectedNoteAppointmentId}
+          initialTab="notes"
+          onClose={() => setSelectedNoteAppointmentId(null)}
+          onChanged={loadClient}
+        />
+      ) : null}
 
       {showNoteForm ? (
         <NoteForm
@@ -588,6 +607,8 @@ export default function ClientProfile() {
                           • {currentCase.stage || currentCase.status || "Open"}
                         </span>
                       </>
+                    ) : cases.length ? (
+                      "No active case"
                     ) : (
                       "No case yet"
                     )}
@@ -669,6 +690,8 @@ export default function ClientProfile() {
             />
           ) : null}
         </section>
+
+        <ClientAppointmentsCard clientId={client.id} />
 
         <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
           <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
@@ -775,24 +798,16 @@ export default function ClientProfile() {
 
             {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
 
-            <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700"><WalletCards className="h-4 w-4" /></div>
-                  <div><h3 className="text-lg font-semibold text-slate-950">Billing</h3><p className="mt-1 text-sm text-slate-500">Review the client account history.</p></div>
-                </div>
-                <button type="button" onClick={() => setStatementOpen(true)} className="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950">Statement of Account</button>
-              </div>
-            </article>
+            <ClientBillingCard clientId={client.id} onOpenStatement={() => setStatementOpen(true)} />
 
             <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">
-                    Profile notes
+                    Client notes
                   </h3>
                   <p className="mt-1 text-sm text-slate-500">
-                    Client-level notes only.
+                    Profile and appointment notes in one history.
                   </p>
                 </div>
                 <button
@@ -813,6 +828,16 @@ export default function ClientProfile() {
                       key={note.id}
                       className={note.id === highlightedNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}
                     >
+                      {note.appointment ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNoteAppointmentId(note.appointment.id)}
+                          className="mb-2 inline-flex max-w-full items-center gap-2 rounded-full bg-violet-50 px-3 py-1.5 text-left text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                        >
+                          <span className="truncate">{note.appointment.subject}</span>
+                          <span className="shrink-0 text-violet-400">{formatDateTime(note.appointment.startsAt)}</span>
+                        </button>
+                      ) : null}
                       <NoteCard
                         note={note}
                         onEdit={openEditNoteForm}

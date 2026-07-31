@@ -6,6 +6,7 @@ import { assertNoContactDuplicate, lockAgencyContactIntake, normalizeContact } f
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { notifyUsers } from "../services/notificationService.js";
 import { syncClientToQuickBooks } from "../services/clientQuickBooksSyncService.js";
+import { TERMINAL_CASE_STATUSES } from "./caseController.js";
 
 const include = {
   assignedUser: {
@@ -93,10 +94,20 @@ const controller = createCrudController({
   activityEntity: "client",
 });
 
+function isOpenCase(item) {
+  return !TERMINAL_CASE_STATUSES.has(item.status) && item.stage !== "Closed";
+}
+
+// Orders the full case list (open first, then most-recently-updated) for
+// display — this does NOT filter anything out, so closed cases stay
+// visible in the list. Picking the actually-active case is a separate
+// step (see activeCase below) — conflating the two is what previously let
+// a closed case get shown as "Active case" whenever it was the client's
+// only case.
 function sortCasesForPrimary(cases) {
   return [...cases].sort((left, right) => {
-    const leftIsOpen = left.status !== "Closed" && left.stage !== "Closed";
-    const rightIsOpen = right.status !== "Closed" && right.stage !== "Closed";
+    const leftIsOpen = isOpenCase(left);
+    const rightIsOpen = isOpenCase(right);
 
     if (leftIsOpen !== rightIsOpen) {
       return leftIsOpen ? -1 : 1;
@@ -134,7 +145,7 @@ function buildPaymentSummary(payments) {
   };
 }
 
-function buildNextAction({ primaryCase, documents, followUps, paymentSummary, client }) {
+function buildNextAction({ activeCase, documents, followUps, paymentSummary, client }) {
   const openFollowUps = [...followUps]
     .filter((followUp) => followUp.status !== "Completed")
     .sort((left, right) => {
@@ -169,15 +180,15 @@ function buildNextAction({ primaryCase, documents, followUps, paymentSummary, cl
   }
 
   return {
-    label: primaryCase?.nextAction || dueFollowUp?.title || null,
+    label: activeCase?.nextAction || dueFollowUp?.title || null,
     reason,
     dueDate: dueFollowUp?.dueDate || null,
     assignedUser:
       dueFollowUp?.assignedUser ||
-      primaryCase?.assignedUser ||
+      activeCase?.assignedUser ||
       client.assignedUser ||
       null,
-    stage: primaryCase?.stage || null,
+    stage: activeCase?.stage || null,
   };
 }
 
@@ -231,7 +242,7 @@ export async function getClientById(req, res) {
     ? { agencyId, clientId }
     : { agencyId, clientId, caseId: { in: accessibleCaseIds } };
 
-  const [documents, followUps, payments, notes, activityLogs] = await Promise.all([
+  const [documents, followUps, payments, notes, activityLogs, caseInvoices, bookingPayments] = await Promise.all([
     prisma.clientDocument.findMany({
       where: relatedWhere,
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -290,6 +301,7 @@ export async function getClientById(req, res) {
       select: {
         id: true,
         caseId: true,
+        appointmentId: true,
         content: true,
         createdAt: true,
         updatedAt: true,
@@ -298,6 +310,14 @@ export async function getClientById(req, res) {
             id: true,
             fullName: true,
             email: true,
+          },
+        },
+        appointment: {
+          select: {
+            id: true,
+            subject: true,
+            startsAt: true,
+            status: true,
           },
         },
       },
@@ -320,13 +340,45 @@ export async function getClientById(req, res) {
         },
       },
     }),
+    prisma.caseInvoice.findMany({
+      where: { agencyId, clientId, ...(hasWholeClientAccess ? {} : { caseId: { in: accessibleCaseIds } }) },
+      orderBy: { updatedAt: "desc" },
+      select: { amount: true, balance: true, status: true, updatedAt: true, createdAt: true },
+    }),
+    prisma.bookingPaymentHold.findMany({
+      where: { agencyId, OR: [{ clientId }, { appointment: { clientId } }] },
+      orderBy: { updatedAt: "desc" },
+      select: { amount: true, status: true, paidAt: true, updatedAt: true, createdAt: true },
+    }),
   ]);
 
   const sortedCases = sortCasesForPrimary(accessibleCases);
-  const primaryCase = sortedCases[0] || null;
-  const paymentSummary = buildPaymentSummary(payments);
+  // The client's genuinely active case, or null — never a closed/cancelled
+  // one. Previously this just took sortedCases[0], which is only sorted to
+  // *prefer* open cases, not filtered to exclude closed ones, so a client
+  // whose only case was closed still had it shown as "Active case".
+  const activeCase = sortedCases.find(isOpenCase) || null;
+  const modernPaymentRecords = [
+    ...caseInvoices.filter((row) => !["Void", "Voided"].includes(row.status)).map((row) => ({
+      totalFee: row.amount,
+      paidAmount: Math.max(0, Number(row.amount) - Number(row.balance)),
+      balance: row.balance,
+      status: row.status,
+      updatedAt: row.updatedAt,
+      createdAt: row.createdAt,
+    })),
+    ...bookingPayments.filter((row) => !["Expired", "Cancelled", "Void", "Voided"].includes(row.status)).map((row) => ({
+      totalFee: row.amount,
+      paidAmount: row.status === "Paid" ? row.amount : 0,
+      balance: ["Paid", "Refunded"].includes(row.status) ? 0 : row.amount,
+      status: row.status,
+      updatedAt: row.paidAt || row.updatedAt,
+      createdAt: row.createdAt,
+    })),
+  ];
+  const paymentSummary = buildPaymentSummary([...modernPaymentRecords, ...payments]);
   const nextAction = buildNextAction({
-    primaryCase,
+    activeCase,
     documents,
     followUps,
     paymentSummary,
@@ -337,7 +389,7 @@ export async function getClientById(req, res) {
     data: {
       client,
       cases: sortedCases,
-      primaryCase,
+      activeCase,
       documents,
       followUps,
       payments,
@@ -347,6 +399,61 @@ export async function getClientById(req, res) {
       nextAction,
     },
   });
+}
+
+export async function listClientAppointments(req, res) {
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+  const scope = ["upcoming", "history", "all"].includes(String(req.query.scope)) ? String(req.query.scope) : "all";
+  const status = String(req.query.status || "");
+  if (status && !["Scheduled", "Completed", "Cancelled", "NoShow"].includes(status)) {
+    throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
+  }
+  const search = String(req.query.search || "").trim().slice(0, 180);
+  const now = new Date();
+  const conditions = [];
+  if (scope === "history") conditions.push({ OR: [{ status: { not: "Scheduled" } }, { endsAt: { lt: now } }] });
+  if (search) conditions.push({ OR: [
+    { subject: { contains: search, mode: "insensitive" } },
+    { purpose: { contains: search, mode: "insensitive" } },
+    { description: { contains: search, mode: "insensitive" } },
+    { assignedTo: { fullName: { contains: search, mode: "insensitive" } } },
+    { case: { caseType: { contains: search, mode: "insensitive" } } },
+  ] });
+  const where = {
+    agencyId: req.auth.agencyId,
+    clientId: req.params.id,
+    ...(scope === "upcoming" ? { status: "Scheduled", endsAt: { gte: now } } : {}),
+    ...(status ? { status } : {}),
+    ...(conditions.length ? { AND: conditions } : {}),
+  };
+  const [data, total] = await Promise.all([
+    prisma.appointment.findMany({
+      where,
+      select: {
+        id: true,
+        subject: true,
+        purpose: true,
+        description: true,
+        startsAt: true,
+        endsAt: true,
+        status: true,
+        meetingMode: true,
+        location: true,
+        source: true,
+        referenceCode: true,
+        assignedTo: { select: { id: true, fullName: true } },
+        case: { select: { id: true, caseType: true, stage: true } },
+        sessionType: { select: { id: true, name: true } },
+        _count: { select: { notes: true, followUps: true } },
+      },
+      orderBy: scope === "upcoming" ? { startsAt: "asc" } : { startsAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.appointment.count({ where }),
+  ]);
+  res.json({ data, meta: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
 }
 
 export async function listClients(req, res) {
@@ -370,7 +477,39 @@ export async function listClients(req, res) {
     prisma.client.findMany({ where, include: scopedInclude(req), orderBy: { createdAt: "desc" }, skip: (page - 1) * limit, take: limit }),
     prisma.client.count({ where }),
   ]);
-  res.json({ data, meta: { page, limit, total } });
+  const clientIds = data.map((client) => client.id);
+  const [caseInvoices, bookingPayments, legacyPayments] = clientIds.length ? await Promise.all([
+    prisma.caseInvoice.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, amount: true, balance: true, status: true } }),
+    prisma.bookingPaymentHold.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, amount: true, status: true } }),
+    prisma.payment.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, totalFee: true, paidAmount: true, balance: true, status: true } }),
+  ]) : [[], [], []];
+  const summaries = new Map(clientIds.map((id) => [id, { totalCharges: 0, totalCollected: 0, totalRefunds: 0, balance: 0 }]));
+  for (const row of caseInvoices) {
+    if (["Void", "Voided"].includes(row.status)) continue;
+    const summary = summaries.get(row.clientId);
+    summary.totalCharges += Number(row.amount);
+    summary.totalCollected += Math.max(0, Number(row.amount) - Number(row.balance));
+    summary.balance += Number(row.balance);
+  }
+  for (const row of bookingPayments) {
+    if (!row.clientId || ["Expired", "Cancelled", "Voided", "Void"].includes(row.status)) continue;
+    const summary = summaries.get(row.clientId);
+    summary.totalCharges += Number(row.amount);
+    if (["Paid", "Refunded"].includes(row.status)) summary.totalCollected += Number(row.amount);
+    if (row.status === "Refunded") summary.totalRefunds += Number(row.amount);
+    if (!["Paid", "Refunded"].includes(row.status)) summary.balance += Number(row.amount);
+  }
+  for (const row of legacyPayments) {
+    const summary = summaries.get(row.clientId);
+    summary.totalCharges += Number(row.totalFee);
+    summary.totalCollected += Number(row.paidAmount);
+    summary.balance += Number(row.balance);
+  }
+  const enriched = data.map((client) => {
+    const summary = summaries.get(client.id);
+    return { ...client, billingSummary: { ...summary, netCollected: Math.max(0, summary.totalCollected - summary.totalRefunds) } };
+  });
+  res.json({ data: enriched, meta: { page, limit, total } });
 }
 
 function clientPayload(body, existing = null) {

@@ -11,6 +11,7 @@ import { processBookingMessageDeliveries, sendBookingMessages } from "../service
 import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
 import { syncLeadConsultationFromAppointment } from "../services/leadConsultationAppointmentService.js";
 import { offerWaitlistOpening } from "../services/bookingWaitlistService.js";
+import { invalidateDashboardCache } from "../services/dashboardCache.js";
 
 const include = {
   client: {
@@ -50,7 +51,7 @@ import { CASE_STAGES } from "../constants/caseStages.js";
 export { CASE_STAGES };
 export const CASE_STATUSES = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 export const CASE_PRIORITIES = ["Low", "Normal", "High", "Urgent"];
-const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
+export const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 const TERMINAL_CASE_STATUS_LIST = [...TERMINAL_CASE_STATUSES];
 
 export function caseRegisterWhere(req) {
@@ -260,6 +261,7 @@ export async function createCase(req, res) {
     details: activityDetails,
   });
 
+  invalidateDashboardCache(req.user.agencyId);
   res.status(201).json({ data: result.data });
 }
 
@@ -365,6 +367,7 @@ export async function updateCase(req, res) {
     });
   }
 
+  invalidateDashboardCache(req.user.agencyId);
   res.json({ data: result.data });
 }
 
@@ -600,6 +603,7 @@ export async function createCaseDocumentChecklist(req, res) {
     details: `${result.createdCount} documents added and ${result.reassignedCount} reassigned from ${programName}`,
   });
 
+  invalidateDashboardCache(req.user.agencyId);
   res.status(201).json({
     data: result.assigned,
     meta: {
@@ -687,6 +691,7 @@ export async function updateCaseDocumentAssignment(req, res) {
     details: `${result.documentCount} document requirement${result.documentCount === 1 ? "" : "s"} ${status === "NotRequired" ? "unassigned" : "reassigned"}`,
   });
 
+  invalidateDashboardCache(req.user.agencyId);
   res.json({ data: result.data, meta: { updatedCount: result.documentCount, status } });
 }
 
@@ -764,6 +769,7 @@ export async function softDeleteCase(req, res) {
     action: "case.deleted",
     details: `${existing.caseType} moved to trash`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
   res.json({ data });
 }
 
@@ -786,6 +792,7 @@ export async function restoreCase(req, res) {
     action: "case.restored",
     details: `${existing.caseType} restored from trash`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
   res.json({ data });
 }
 
@@ -817,6 +824,7 @@ export async function archiveCase(req, res) {
     action: "case.archived",
     details: `${existing.caseType} archived; history retained`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
   res.json({ data });
 }
 
@@ -845,6 +853,7 @@ export async function unarchiveCase(req, res) {
     action: "case.unarchived",
     details: `${existing.caseType} restored from archive`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
   res.json({ data });
 }
 
@@ -919,6 +928,7 @@ export async function closeCase(req, res) {
     action: "case.closed",
     details: `${existing.caseType} closed; ${result.tasks} tasks, ${result.followUps} follow-ups, and ${result.cancelledAppointments.length} appointments cancelled`,
   });
+  invalidateDashboardCache(req.auth.agencyId);
   res.json({ data: result.data });
 }
 

@@ -5,17 +5,56 @@ import {
   createQuickBooksCustomer,
   findQuickBooksCustomerByEmail,
   getQuickBooksCustomer,
+  isQuickBooksDuplicateNameError,
   quickBooksConfigured,
   updateQuickBooksCustomer,
 } from "./quickbooksService.js";
 
-function customerFields(client) {
+function customerFields(client, { includeDisplayName = true } = {}) {
   return {
-    displayName: client.fullName,
+    ...(includeDisplayName ? { displayName: client.fullName } : {}),
     email: client.email || null,
     phone: client.phone || null,
     addressLine1: client.address || null,
   };
+}
+
+function sameEmail(left, right) {
+  return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+}
+
+function collisionSafeDisplayName(client) {
+  const suffix = ` (${client.clientNumber})`;
+  return `${String(client.fullName || "Client").trim().slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;
+}
+
+async function updateKnownCustomer(agencyId, customer, client) {
+  const fields = customerFields(client);
+  try {
+    return await updateQuickBooksCustomer(agencyId, { id: customer.id, syncToken: customer.syncToken, ...fields });
+  } catch (error) {
+    // DisplayName is globally unique in a QBO company. Contact identity is
+    // the exact email match; a same-name customer must not prevent the link
+    // from being repaired or cause us to create yet another duplicate.
+    if (isQuickBooksDuplicateNameError(error)) {
+      try {
+        return await updateQuickBooksCustomer(agencyId, {
+          id: customer.id,
+          syncToken: customer.syncToken,
+          ...fields,
+          displayName: collisionSafeDisplayName(client),
+        });
+      } catch (retryError) {
+        if (!isQuickBooksDuplicateNameError(retryError)) throw retryError;
+        return updateQuickBooksCustomer(agencyId, {
+          id: customer.id,
+          syncToken: customer.syncToken,
+          ...customerFields(client, { includeDisplayName: false }),
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 async function persistSuccess(clientId, customerId) {
@@ -69,16 +108,30 @@ export async function syncClientToQuickBooks(agencyId, clientId) {
     if (client.qbCustomerId) {
       const existing = await getQuickBooksCustomer(agencyId, client.qbCustomerId);
       if (existing) {
-        const updated = await updateQuickBooksCustomer(agencyId, { id: existing.id, syncToken: existing.syncToken, ...fields });
-        return persistSuccess(clientId, updated.id);
+        // If the cached id now resolves to another person's email (common
+        // after reconnecting to a different QBO company or importing stale
+        // data), never overwrite that record. Prefer the exact email match;
+        // if none exists, create a new customer below.
+        if (!client.email || sameEmail(existing.email, client.email)) {
+          const updated = await updateKnownCustomer(agencyId, existing, client);
+          return persistSuccess(clientId, updated.id);
+        }
+        logger.warn("quickbooks.client_link_email_mismatch", {
+          agencyId,
+          clientId,
+          linkedCustomerId: existing.id,
+        });
       }
       // The linked QuickBooks customer is gone (deleted/deactivated there) —
-      // fall through and treat this as a fresh link.
+      // or belongs to another contact — fall through to exact-email repair.
     }
 
     const matched = client.email ? await findQuickBooksCustomerByEmail(agencyId, client.email) : null;
     if (matched) {
-      const updated = await updateQuickBooksCustomer(agencyId, { id: matched.id, syncToken: matched.syncToken, ...fields });
+      // Exact email is the durable identity signal. If the canonical name
+      // collides, update this same customer with a client-number suffix;
+      // never create another customer just to obtain a unique name.
+      const updated = await updateKnownCustomer(agencyId, matched, client);
       return persistSuccess(clientId, updated.id);
     }
 
@@ -88,9 +141,22 @@ export async function syncClientToQuickBooks(agencyId, clientId) {
     } catch (error) {
       // QBO enforces globally-unique DisplayName; retry once with the
       // client number appended so a same-name collision never blocks sync.
-      if (String(error.message || "").toLowerCase().includes("duplicate name")) {
-        const created = await createQuickBooksCustomer(agencyId, { ...fields, displayName: `${fields.displayName} (${client.clientNumber})` });
-        return persistSuccess(clientId, created.id);
+      if (isQuickBooksDuplicateNameError(error)) {
+        const raced = client.email ? await findQuickBooksCustomerByEmail(agencyId, client.email) : null;
+        if (raced) {
+          const updated = await updateKnownCustomer(agencyId, raced, client);
+          return persistSuccess(clientId, updated.id);
+        }
+        try {
+          const created = await createQuickBooksCustomer(agencyId, { ...fields, displayName: `${fields.displayName} (${client.clientNumber})` });
+          return persistSuccess(clientId, created.id);
+        } catch (retryError) {
+          if (!isQuickBooksDuplicateNameError(retryError) || !client.email) throw retryError;
+          const concurrent = await findQuickBooksCustomerByEmail(agencyId, client.email);
+          if (!concurrent) throw retryError;
+          const updated = await updateKnownCustomer(agencyId, concurrent, client);
+          return persistSuccess(clientId, updated.id);
+        }
       }
       throw error;
     }

@@ -589,9 +589,15 @@ export default function Payments() {
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           <p className="font-semibold text-slate-900">{row.clientName}</p>
                           <p className="mt-0.5 truncate text-xs text-slate-400">{row.description}</p>
+                          {row.paymentMethod ? (
+                            <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-100">{row.paymentMethod}</span>
+                          ) : null}
+                          {row.qbInvoiceNumber ? (
+                            <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.qbInvoiceNumber}</p>
+                          ) : null}
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><Icon className="h-3.5 w-3.5" style={{ color: SOURCE_COLOR[row.source] }} /> {SOURCE_ROW_LABEL[row.source] || row.type}</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600"><Icon className="h-3.5 w-3.5" style={{ color: SOURCE_COLOR[row.source] }} /> {row.type || SOURCE_ROW_LABEL[row.source]}</span>
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           {row.caseId ? (

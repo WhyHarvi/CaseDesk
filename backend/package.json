@@ -20,6 +20,8 @@
     "case-easy:import:dry-run": "node scripts/importCaseEasyData.js",
     "case-easy:report": "node scripts/importCaseEasyReport.js --apply",
     "case-easy:report:dry-run": "node scripts/importCaseEasyReport.js",
+    "booking-invoices:backfill": "node scripts/backfillBookingInvoiceNumbers.js --apply",
+    "booking-invoices:backfill:dry-run": "node scripts/backfillBookingInvoiceNumbers.js",
     "test": "node --test test/**/*.test.js",
     "load:test:intake": "node scripts/load-test-lead-intake.js"
   },

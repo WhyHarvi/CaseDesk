@@ -29,7 +29,8 @@ test("follow-up writes validate accessible relations and active internal assigne
   assert.match(controller, /caseAccessWhere\(req\)/);
   assert.match(controller, /The selected case does not belong to the selected client/);
   assert.match(controller, /Assigned staff member was not found or is inactive/);
-  assert.match(controller, /id: req\.params\.id,[\s\S]*\.\.\.relatedRecordAccessWhere\(req\)/);
+  assert.match(controller, /\.\.\.followUpAccessWhere\(req\)/);
+  assert.match(controller, /appointment: appointmentProfileAccessWhere\(req\)/);
   assert.doesNotMatch(routes, /error-demo/);
   assert.doesNotMatch(controller, /getFollowUpError/);
 });
