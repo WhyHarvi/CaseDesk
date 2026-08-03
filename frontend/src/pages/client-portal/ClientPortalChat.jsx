@@ -195,7 +195,11 @@ export default function ClientPortalChat() {
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-600"><MessagesSquare className="h-6 w-6" /></div>
             <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Say hello</h2>
-            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Send a message about your {activeCase?.caseType || "application"} — your consultant will reply right here.</p>
+            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">
+              {activeCase?.isGeneral
+                ? "Send a secure message to your agency — your team will reply right here."
+                : `Send a message about your ${activeCase?.caseType || "application"} — your consultant will reply right here.`}
+            </p>
           </div>
         ) : (
           <div className="space-y-4">

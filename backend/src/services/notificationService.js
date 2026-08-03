@@ -291,9 +291,13 @@ export async function dispatchCommunicationAuditNotification(event) {
   ]);
   const caseId = conversation?.caseId || message?.caseId;
   const clientId = conversation?.clientId || message?.clientId;
-  if (inbound && caseId) {
-    const recipients = conversation?.assignedToId ? [conversation.assignedToId] : await internalCaseRecipientIds(event.agencyId, caseId);
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: `/app/cases/${caseId}`, dedupeKey: `communication-audit:${event.id}:internal` });
+  if (inbound && (caseId || clientId)) {
+    const recipients = conversation?.assignedToId
+      ? [conversation.assignedToId]
+      : caseId
+        ? await internalCaseRecipientIds(event.agencyId, caseId)
+        : await adminRecipientIds(event.agencyId);
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, dedupeKey: `communication-audit:${event.id}:internal` });
   }
   if (failed) {
     const recipients = [...new Set([message?.senderUserId, ...(await adminRecipientIds(event.agencyId))].filter(Boolean))];

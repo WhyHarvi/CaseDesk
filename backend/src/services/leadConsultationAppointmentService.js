@@ -89,9 +89,19 @@ export async function syncLeadConsultationFromAppointment(db, appointment, {
   const consultation = typeof db.leadConsultation.findFirst === "function"
     ? await db.leadConsultation.findFirst({
       where: { appointmentId: appointment.id },
-      select: { id: true, agencyId: true, leadId: true },
+      select: { id: true, agencyId: true, leadId: true, outcome: true },
     })
     : null;
+  // The DB enforces that a COMPLETED consultation has an outcome
+  // (lead_consultations_completion_check) — outcome is a business decision
+  // only the lead workflow's own "complete consultation" action collects
+  // (lead.validation.js requires it there too). A blind appointment-status
+  // mirror — e.g. Calendar's "Mark attended", which has no outcome picker —
+  // must not push status: COMPLETED here without one, or this throws.
+  // Skipping it just leaves the consultation's status for that workflow to
+  // set once an outcome is actually recorded; the appointment itself still
+  // updates fine either way.
+  const canApplyStatus = consultationStatus !== "COMPLETED" || Boolean(consultation?.outcome);
   const result = await db.leadConsultation.updateMany({
     where: { appointmentId: appointment.id },
     data: {
@@ -100,10 +110,10 @@ export async function syncLeadConsultationFromAppointment(db, appointment, {
       appointmentType: leadConsultationAppointmentType(appointment.meetingMode),
       location: appointment.meetingMode === "InPerson" ? appointment.location : null,
       meetingUrl: appointment.meetingUrl || null,
-      ...(consultationStatus ? { status: consultationStatus } : {}),
+      ...(consultationStatus && canApplyStatus ? { status: consultationStatus } : {}),
     },
   });
-  if (consultationStatus && recordLeadActivity) {
+  if (consultationStatus && canApplyStatus && recordLeadActivity) {
     await recordLeadConsultationActivity(db, appointment, consultation, consultationStatus);
   }
   return result.count;

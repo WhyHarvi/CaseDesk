@@ -1896,7 +1896,7 @@ model CommunicationConversation {
   id               String                         @id @default(uuid())
   agencyId         String                         @map("agency_id")
   clientId         String                         @map("client_id")
-  caseId           String                         @map("case_id")
+  caseId           String?                        @map("case_id")
   channel          CommunicationChannel
   subject          String?
   provider         String?
@@ -1923,7 +1923,7 @@ model CommunicationConversation {
   updatedAt        DateTime                       @updatedAt @map("updated_at")
   agency           Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   client           Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case             Case                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  case             Case?                          @relation(fields: [caseId], references: [id], onDelete: Cascade)
   createdBy        User                           @relation("CreatedCommunicationConversationUser", fields: [createdById], references: [id], onDelete: Restrict)
   assignedTo       User?                          @relation("AssignedCommunicationConversationUser", fields: [assignedToId], references: [id], onDelete: SetNull)
   deletedBy        User?                          @relation("DeletedCommunicationConversationUser", fields: [deletedById], references: [id], onDelete: SetNull)
@@ -1945,7 +1945,7 @@ model CommunicationMessage {
   id                String                       @id @default(uuid())
   agencyId          String                       @map("agency_id")
   clientId          String                       @map("client_id")
-  caseId            String                       @map("case_id")
+  caseId            String?                      @map("case_id")
   conversationId    String                       @map("conversation_id")
   channel           CommunicationChannel
   direction         CommunicationDirection
@@ -1985,7 +1985,7 @@ model CommunicationMessage {
   updatedAt         DateTime                     @updatedAt @map("updated_at")
   agency            Agency                       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   client            Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case              Case                         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  case              Case?                        @relation(fields: [caseId], references: [id], onDelete: Cascade)
   conversation      CommunicationConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderUser        User?                        @relation("SenderCommunicationMessageUser", fields: [senderUserId], references: [id], onDelete: SetNull)
   deletedBy         User?                        @relation("DeletedCommunicationMessageUser", fields: [deletedById], references: [id], onDelete: SetNull)

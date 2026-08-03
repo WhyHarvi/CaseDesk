@@ -20,6 +20,7 @@ async function linkedClient(req) {
 }
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
+const GENERAL_CHAT_ID = "general";
 
 async function linkedCase(req, clientId, caseId) {
   const data = await prisma.case.findFirst({
@@ -238,21 +239,31 @@ export async function portalMessages(req, res) {
     orderBy: { updatedAt: "desc" },
   });
   const requestedCaseId = clean(req.query.caseId, 80);
-  const caseId = requestedCaseId || cases[0]?.id;
-  if (!caseId) return res.json({ success: true, data: { cases: [], selectedCaseId: null, messages: [] } });
-  if (!cases.some((item) => item.id === caseId)) throw createHttpError(404, "Application not found.", "NOT_FOUND");
+  const selectedCaseId = requestedCaseId || cases[0]?.id || GENERAL_CHAT_ID;
+  const generalChat = selectedCaseId === GENERAL_CHAT_ID;
+  if (!generalChat && !cases.some((item) => item.id === selectedCaseId)) throw createHttpError(404, "Application not found.", "NOT_FOUND");
   const messages = await prisma.communicationMessage.findMany({
-    where: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId, channel: "Chat", direction: { in: ["Inbound", "Outbound"] }, deletedAt: null },
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: generalChat ? null : selectedCaseId, channel: "Chat", direction: { in: ["Inbound", "Outbound"] }, deletedAt: null },
     select: { id: true, direction: true, status: true, bodyText: true, occurredAt: true, senderUser: { select: { fullName: true } } },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
     take: 200,
   });
-  res.json({ success: true, data: { cases, selectedCaseId: caseId, messages } });
+  res.json({
+    success: true,
+    data: {
+      cases: [{ id: GENERAL_CHAT_ID, caseType: "General inquiry", stage: null, status: "Open", isGeneral: true }, ...cases],
+      selectedCaseId,
+      messages,
+    },
+  });
 }
 
 export async function createPortalMessage(req, res) {
   const link = await linkedClient(req);
-  const caseItem = await linkedCase(req, link.clientId, req.body.caseId);
+  const requestedCaseId = clean(req.body.caseId, 80);
+  const caseItem = requestedCaseId && requestedCaseId !== GENERAL_CHAT_ID
+    ? await linkedCase(req, link.clientId, requestedCaseId)
+    : null;
   const bodyText = clean(req.body.bodyText, 5000);
   if (!bodyText) throw createHttpError(400, "Write a message before sending.", "VALIDATION_ERROR");
   const clientMessageId = clean(req.body.clientMessageId, 200) || randomUUID();
@@ -260,21 +271,22 @@ export async function createPortalMessage(req, res) {
   if (duplicate) return res.json({ success: true, data: duplicate, meta: { duplicate: true } });
   const preference = await prisma.communicationPreference.findUnique({ where: { clientId: link.clientId } });
   if (preference?.allowChat === false) throw createHttpError(403, "Portal messaging is disabled for this account.", "CHAT_DISABLED");
-  const owner = caseItem.assignedUserId || link.client.assignedUserId || (await prisma.user.findFirst({ where: { agencyId: req.auth.agencyId, status: "active", role: { in: ["admin", "consultant"] } }, orderBy: { createdAt: "asc" }, select: { id: true } }))?.id;
+  const owner = caseItem?.assignedUserId || link.client.assignedUserId || (await prisma.user.findFirst({ where: { agencyId: req.auth.agencyId, status: "active", role: { in: ["admin", "consultant"] } }, orderBy: { createdAt: "asc" }, select: { id: true } }))?.id;
   if (!owner) throw createHttpError(409, "No consultant is assigned to receive this message.", "NO_ASSIGNEE");
   const occurredAt = new Date();
   const [responseDueAt, resolutionDueAt] = await Promise.all([communicationResponseDueAt(req.auth.agencyId, occurredAt), communicationResolutionDueAt(req.auth.agencyId, occurredAt)]);
   const result = await prisma.$transaction(async (tx) => {
-    let conversation = await tx.communicationConversation.findFirst({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, channel: "Chat", state: { not: "Closed" }, deletedAt: null }, orderBy: { lastMessageAt: "desc" } });
-    if (!conversation) conversation = await tx.communicationConversation.create({ data: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: caseItem.id, channel: "Chat", subject: "Client portal messages", provider: "AuthenticatedPortal", assignedToId: owner, state: "WaitingOnAgency", firstInboundAt: occurredAt, lastInboundAt: occurredAt, responseDueAt, resolutionDueAt, lastMessageAt: occurredAt, createdById: owner } });
-    const message = await tx.communicationMessage.create({ data: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: caseItem.id, conversationId: conversation.id, channel: "Chat", direction: "Inbound", status: "Received", senderUserId: req.auth.userId, senderAddress: `client:${link.clientId}`, recipients: [], bodyText, provider: "AuthenticatedPortal", providerMessageId: clientMessageId, occurredAt, isRead: false } });
+    let conversation = await tx.communicationConversation.findFirst({ where: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: caseItem?.id || null, channel: "Chat", state: { not: "Closed" }, deletedAt: null }, orderBy: { lastMessageAt: "desc" } });
+    if (!conversation) conversation = await tx.communicationConversation.create({ data: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: caseItem?.id || null, channel: "Chat", subject: caseItem ? "Client portal messages" : "General client inquiry", provider: "AuthenticatedPortal", assignedToId: owner, state: "WaitingOnAgency", firstInboundAt: occurredAt, lastInboundAt: occurredAt, responseDueAt, resolutionDueAt, lastMessageAt: occurredAt, createdById: owner } });
+    const message = await tx.communicationMessage.create({ data: { agencyId: req.auth.agencyId, clientId: link.clientId, caseId: caseItem?.id || null, conversationId: conversation.id, channel: "Chat", direction: "Inbound", status: "Received", senderUserId: req.auth.userId, senderAddress: `client:${link.clientId}`, recipients: [], bodyText, provider: "AuthenticatedPortal", providerMessageId: clientMessageId, occurredAt, isRead: false } });
     conversation = await tx.communicationConversation.update({ where: { id: conversation.id }, data: { state: "WaitingOnAgency", isArchived: false, firstInboundAt: conversation.firstInboundAt || occurredAt, lastInboundAt: occurredAt, responseDueAt, lastMessageAt: occurredAt, unreadCount: { increment: 1 } } });
     await tx.communicationDeliveryEvent.create({ data: { agencyId: req.auth.agencyId, messageId: message.id, type: "Received", providerTimestamp: occurredAt, details: "Authenticated client portal message received" } });
     return { message, conversation };
   });
   await recordCommunicationAudit({ agencyId: req.auth.agencyId, userId: req.auth.userId, conversationId: result.conversation.id, messageId: result.message.id, action: "communication.portal_message_received", details: `Portal message received from ${link.client.fullName}` });
   await applyCommunicationAutomations({ agencyId: req.auth.agencyId, trigger: "InboundReceived", message: result.message, conversation: result.conversation, caseItem, client: link.client }).catch(() => {});
-  await broadcastCaseCommunication({ agencyId: req.auth.agencyId, caseId: caseItem.id, event: "message", payload: { messageId: result.message.id, conversationId: result.conversation.id, occurredAt } }).catch(() => {});
+  if (caseItem) await broadcastCaseCommunication({ agencyId: req.auth.agencyId, caseId: caseItem.id, event: "message", payload: { messageId: result.message.id, conversationId: result.conversation.id, occurredAt } }).catch(() => {});
+  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: link.clientId, caseId: caseItem?.id || null, action: "communication.portal_message_received", details: `Portal message received from ${link.client.fullName}` });
   res.status(201).json({ success: true, data: result.message });
 }
 

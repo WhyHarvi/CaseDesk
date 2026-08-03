@@ -11,7 +11,11 @@ export function requireRole(...roles) {
 }
 
 export function clientAccessWhere(req) {
-  if (req.auth.role === "admin") return {};
+  // Frontdesk is agency-wide staff, not a client-portal login — same
+  // treatment as admin here and in leadAccessWhere. Falling through to the
+  // portalUsers branch below left frontdesk unable to see any client at
+  // all, since no staff member is ever actually a client's portal user.
+  if (req.auth.role === "admin" || req.auth.role === "frontdesk") return {};
   if (req.auth.role === "consultant") {
     return {
       OR: [
@@ -27,7 +31,7 @@ export function clientAccessWhere(req) {
 }
 
 export function caseAccessWhere(req) {
-  if (req.auth.role === "admin") return {};
+  if (req.auth.role === "admin" || req.auth.role === "frontdesk") return {};
   if (req.auth.role === "consultant") {
     return { OR: [
       { assignedUserId: req.auth.userId },

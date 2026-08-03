@@ -1,11 +1,12 @@
-import { ClipboardList, CreditCard, FileText, House, MessagesSquare } from "lucide-react";
+import { CalendarDays, ClipboardList, CreditCard, FileText, House, MessagesSquare } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 const items = [
   { label: "Home", to: "/client-portal", icon: House, end: true },
-  { label: "Documents", to: "/client-portal/documents", icon: FileText },
+  { label: "Docs", to: "/client-portal/documents", icon: FileText },
   { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList },
-  { label: "Payments", to: "/client-portal/payments", icon: CreditCard },
+  { label: "Visits", to: "/client-portal/appointments", icon: CalendarDays },
+  { label: "Pay", to: "/client-portal/payments", icon: CreditCard },
   { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare },
 ];
 

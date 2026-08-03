@@ -14,7 +14,7 @@ function matches(rule, context) {
   if (
     conditions.caseType &&
     text(conditions.caseType).toLowerCase() !==
-      text(context.caseItem.caseType).toLowerCase()
+      text(context.caseItem?.caseType).toLowerCase()
   )
     return false;
   if (conditions.containsText) {
@@ -88,7 +88,7 @@ export async function applyCommunicationAutomations({
           data: {
             agencyId,
             clientId: client.id,
-            caseId: caseItem.id,
+            caseId: caseItem?.id || null,
             assignedUserId: assignedTo?.id || conversation.assignedToId,
             title:
               text(actions.followUpTitle, 200) ||

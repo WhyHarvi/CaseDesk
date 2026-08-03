@@ -4,6 +4,7 @@ import {
   getPortalAgreements,
   getPortalDocuments,
   getPortalOverview,
+  getPortalAppointments,
   getPortalPayments,
   downloadPortalInvoicePdf,
   getPortalQuestionnaires,
@@ -27,6 +28,7 @@ router.get("/documents", asyncHandler(getPortalDocuments));
 router.post("/documents/:id/upload", rateLimit({ windowMs: 60_000, max: 10 }), receiveDocumentFile, asyncHandler(uploadPortalDocument));
 router.get("/documents/:id/file", asyncHandler(servePortalDocument));
 router.get("/payments", asyncHandler(getPortalPayments));
+router.get("/appointments", asyncHandler(getPortalAppointments));
 router.get("/payments/invoices/:invoiceId/pdf", asyncHandler(downloadPortalInvoicePdf));
 router.get("/timeline", asyncHandler(getPortalTimeline));
 router.patch("/profile", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(updatePortalProfile));

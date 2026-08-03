@@ -25,6 +25,10 @@ export function getPortalPayments() {
   return api.get("/client-portal/payments").then((response) => response.data.data);
 }
 
+export function getPortalAppointments() {
+  return api.get("/client-portal/appointments").then((response) => response.data.data);
+}
+
 export async function downloadPortalInvoicePdf(invoiceId, filename) {
   const response = await api.get(`/client-portal/payments/invoices/${invoiceId}/pdf`, { responseType: "blob", timeout: 30000 });
   const url = URL.createObjectURL(response.data);

@@ -219,7 +219,7 @@ export async function getClientById(req, res) {
     throw createHttpError(404, "Client not found");
   }
 
-  const hasWholeClientAccess = req.auth.role === "admin";
+  const hasWholeClientAccess = req.auth.role === "admin" || req.auth.role === "frontdesk";
   const accessibleCases = await prisma.case.findMany({
     where: { agencyId, clientId, ...caseAccessWhere(req) },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -238,9 +238,13 @@ export async function getClientById(req, res) {
     },
   });
   const accessibleCaseIds = accessibleCases.map((caseItem) => caseItem.id);
+  // caseId: { in: accessibleCaseIds } never matches a NULL caseId in SQL —
+  // that silently hid every profile-level (no-case) note/document/payment/
+  // follow-up from non-admin viewers, not just ones tied to an
+  // inaccessible case.
   const relatedWhere = hasWholeClientAccess
     ? { agencyId, clientId }
-    : { agencyId, clientId, caseId: { in: accessibleCaseIds } };
+    : { agencyId, clientId, OR: [{ caseId: null }, { caseId: { in: accessibleCaseIds } }] };
 
   const [documents, followUps, payments, notes, activityLogs, caseInvoices, bookingPayments] = await Promise.all([
     prisma.clientDocument.findMany({

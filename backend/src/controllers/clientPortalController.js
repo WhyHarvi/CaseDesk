@@ -5,8 +5,9 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
-import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
-import { getCasePaymentSummary, getCaseSchedule } from "../services/paymentScheduleService.js";
+import { getClientInvoicePdf } from "../services/caseInvoiceService.js";
+import { getCaseSchedule } from "../services/paymentScheduleService.js";
+import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 
 // Everything in this controller is scoped through the logged-in user's
@@ -261,12 +262,10 @@ function publicDocument(document) {
   };
 }
 
-// The real numbers now come from getCasePaymentSummary (schedule
-// installments + invoices — see paymentScheduleService.js for why the
-// legacy Payment model this used to read is never actually written to by
-// any live UI path). This just attaches display fields to that summary.
+// The numbers come from the unified client ledger. This attaches the small
+// set of display fields shared by the portal home and Payments page.
 function withPaymentDisplay(summary, agency) {
-  const status = summary.totalFee === 0 ? "No Fee Recorded" : summary.status === "Paid" ? "Paid" : summary.status === "Partial" ? "Partially Paid" : "Not Paid";
+  const status = summary.status === "Refunded" ? "Refunded" : summary.totalFee === 0 ? "No Fee Recorded" : summary.status === "Paid" ? "Paid" : summary.status === "Partial" ? "Partially Paid" : "Not Paid";
   return {
     totalFee: money(summary.totalFee),
     paidAmount: money(summary.paidAmount),
@@ -274,6 +273,24 @@ function withPaymentDisplay(summary, agency) {
     status,
     currency: agency?.defaultCurrency || "CAD",
     nextDueDate: null,
+  };
+}
+
+function paymentSummaryFromLedger(ledger) {
+  const fullyRefunded = ledger.summary.totalPayments > 0
+    && ledger.summary.totalRefunds >= ledger.summary.totalPayments
+    && ledger.summary.closingBalance <= 0;
+  return {
+    totalFee: ledger.summary.totalCharges,
+    paidAmount: ledger.summary.netCollected,
+    balance: Math.max(0, ledger.summary.closingBalance),
+    status: fullyRefunded
+      ? "Refunded"
+      : ledger.summary.closingBalance <= 0 && ledger.summary.totalCharges > 0
+        ? "Paid"
+        : ledger.summary.netCollected > 0
+          ? "Partial"
+          : "Unpaid",
   };
 }
 
@@ -377,9 +394,16 @@ async function portalData(req) {
       orderBy: { updatedAt: "desc" },
     }),
   ]);
-  const [assessment, paymentSummary, invoices] = await Promise.all([
+  const [assessment, billingLedger, invoices] = await Promise.all([
     caseItem ? caseAssessmentFor(req, caseItem.id) : null,
-    caseItem ? getCasePaymentSummary(req.auth.agencyId, caseItem.id) : Promise.resolve({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" }),
+    buildClientBillingLedger({
+      agencyId: req.auth.agencyId,
+      client: link.client,
+      currency: agency?.defaultCurrency || "CAD",
+      defaultCurrency: agency?.defaultCurrency || "CAD",
+      caseReferences: caseItem ? { [caseItem.id]: caseItem.caseType } : {},
+      refreshQuickBooks: false,
+    }),
     caseItem
       ? prisma.caseInvoice.findMany({
           where: { agencyId: req.auth.agencyId, caseId: caseItem.id },
@@ -388,6 +412,7 @@ async function portalData(req) {
         })
       : Promise.resolve([]),
   ]);
+  const paymentSummary = paymentSummaryFromLedger(billingLedger);
   return { link, agency, caseItem, documents, paymentSummary, invoices, agreements, assessment };
 }
 
@@ -459,16 +484,47 @@ export async function getPortalDocuments(req, res) {
 
 export async function getPortalPayments(req, res) {
   const link = await linkedClient(req);
-  const { agency, caseItem, paymentSummary } = await portalData(req);
-  const [invoices, schedule] = await Promise.all([
-    listClientInvoices(req.auth.agencyId, link.clientId).catch(() => []),
-    caseItem ? getCaseSchedule(req.auth.agencyId, caseItem.id).catch(() => null) : null,
+  const [agency, caseItem, cases] = await Promise.all([
+    prisma.agency.findUnique({
+      where: { id: req.auth.agencyId },
+      select: { paymentInstructions: true, defaultCurrency: true },
+    }),
+    prisma.case.findFirst({
+      where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
+      orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
+      select: { id: true },
+    }),
+    prisma.case.findMany({
+      where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+      select: { id: true, caseType: true },
+    }),
   ]);
+  const currency = agency?.defaultCurrency || "CAD";
+  const [invoices, schedule, ledger] = await Promise.all([
+    prisma.caseInvoice.findMany({
+      where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+      orderBy: { createdAt: "desc" },
+    }),
+    caseItem ? getCaseSchedule(req.auth.agencyId, caseItem.id).catch(() => null) : null,
+    buildClientBillingLedger({
+      agencyId: req.auth.agencyId,
+      client: link.client,
+      currency,
+      defaultCurrency: currency,
+      caseReferences: Object.fromEntries(cases.map((item) => [item.id, item.caseType])),
+    }),
+  ]);
+  const paymentSummary = paymentSummaryFromLedger(ledger);
   res.json({
     success: true,
     data: {
-      summary: withPaymentDisplay(paymentSummary, agency),
+      summary: {
+        ...withPaymentDisplay(paymentSummary, agency),
+        totalRefunds: money(ledger.summary.totalRefunds),
+        netCollected: money(ledger.summary.netCollected),
+      },
       instructions: agency?.paymentInstructions || null,
+      syncWarning: ledger.syncWarning,
       schedule: schedule
         ? {
             signingDate: schedule.signingDate,
@@ -510,13 +566,69 @@ export async function getPortalPayments(req, res) {
         createdAt: invoice.createdAt,
         payNowUrl: Number(invoice.balance) > 0 ? invoice.qbInvoiceLink || null : null,
       })),
-      // The "invoices" list above is the real, populated record of what's
-      // been billed — this legacy standalone payment-history list never had
-      // a live writer (see paymentScheduleService.js's getCasePaymentSummary
-      // comment) and stays empty rather than duplicating invoice data.
+      // This is the same unified account ledger used by the staff billing
+      // view. It includes case fees, consultations, cash/e-transfer records,
+      // QuickBooks allocations, credits, and refunds without double-counting.
+      transactions: [...ledger.transactions].reverse(),
       history: [],
     },
   });
+}
+
+export async function getPortalAppointments(req, res) {
+  const link = await linkedClient(req);
+  const appointments = await prisma.appointment.findMany({
+    where: { agencyId: req.auth.agencyId, clientId: link.clientId },
+    select: {
+      id: true,
+      subject: true,
+      purpose: true,
+      description: true,
+      startsAt: true,
+      endsAt: true,
+      status: true,
+      confirmationStatus: true,
+      location: true,
+      locationMapsUrl: true,
+      meetingMode: true,
+      meetingUrl: true,
+      meetingPhoneNumber: true,
+      cancellationReason: true,
+      cancelledAt: true,
+      referenceCode: true,
+      assignedTo: { select: { fullName: true } },
+      sessionType: { select: { name: true } },
+      paymentHold: { select: { amount: true, status: true, paymentMethod: true, qbInvoiceNumber: true, paidAt: true } },
+    },
+    orderBy: [{ startsAt: "desc" }, { createdAt: "desc" }],
+  });
+  const now = Date.now();
+  const rows = appointments.map((item) => ({
+    ...item,
+    purpose: item.purpose || item.description || null,
+    description: undefined,
+    consultantName: item.assignedTo?.fullName || null,
+    assignedTo: undefined,
+    sessionTypeName: item.sessionType?.name || null,
+    sessionType: undefined,
+    payment: item.paymentHold
+      ? {
+          amount: money(item.paymentHold.amount),
+          status: item.paymentHold.status,
+          method: item.paymentHold.paymentMethod || null,
+          invoiceNumber: item.paymentHold.qbInvoiceNumber || null,
+          paidAt: item.paymentHold.paidAt || null,
+        }
+      : null,
+    paymentHold: undefined,
+  }));
+  const upcoming = rows
+    .filter((item) => item.status === "Scheduled" && new Date(item.endsAt).getTime() >= now)
+    .sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
+  const history = rows
+    .filter((item) => !upcoming.some((upcomingItem) => upcomingItem.id === item.id))
+    .sort((a, b) => new Date(b.startsAt) - new Date(a.startsAt));
+  res.json({ success: true, data: { upcoming, history, total: rows.length } });
 }
 
 export async function downloadPortalInvoicePdf(req, res) {

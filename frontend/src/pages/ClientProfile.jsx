@@ -23,6 +23,7 @@ import { useAuth } from "../auth/AuthContext";
 import ClientAppointmentsCard from "../components/appointments/ClientAppointmentsCard";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import ClientBillingCard from "../components/clients/ClientBillingCard";
+import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
 
 const defaultNoteFormState = {
   content: "",
@@ -658,10 +659,9 @@ export default function ClientProfile() {
                   disabled={!client.phone}
                 />
                 <QuickActionLink
-                  href={currentCase ? `/cases/${currentCase.id}?tab=communication&chat=1` : "#"}
+                  href="#client-communications"
                   icon={MessageSquareText}
-                  label="CaseDesk chat"
-                  disabled={!currentCase}
+                  label="Client chat"
                 />
               </div>
             </div>
@@ -692,6 +692,11 @@ export default function ClientProfile() {
         </section>
 
         <ClientAppointmentsCard clientId={client.id} />
+
+        <ClientCommunicationCard
+          clientId={client.id}
+          initialConversationId={new URLSearchParams(location.search).get("conversation")}
+        />
 
         <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
           <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">

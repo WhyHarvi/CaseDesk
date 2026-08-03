@@ -70,6 +70,10 @@ const ClientPortalPayments = lazyWithRetry(
   () => import("../pages/client-portal/ClientPortalPayments"),
   "portal-payments",
 );
+const ClientPortalAppointments = lazyWithRetry(
+  () => import("../pages/client-portal/ClientPortalAppointments"),
+  "portal-appointments",
+);
 const ClientPortalProfile = lazyWithRetry(
   () => import("../pages/client-portal/ClientPortalProfile"),
   "portal-profile",
@@ -301,6 +305,14 @@ export default function AppRoutes() {
           element={
             <Deferred>
               <ClientPortalChat />
+            </Deferred>
+          }
+        />
+        <Route
+          path="appointments"
+          element={
+            <Deferred>
+              <ClientPortalAppointments />
             </Deferred>
           }
         />

@@ -353,7 +353,7 @@ export default function ConversationOverlay({
     }
   };
   const createTask = async () => {
-    if (!conversation) return;
+    if (!conversation?.caseId) return;
     try {
       setSaving(true);
       await api.post(`/cases/${conversation.caseId}/tasks`, {
@@ -402,7 +402,7 @@ export default function ConversationOverlay({
               </h2>
               <p className="mt-1 text-xs text-slate-500">
                 {conversation
-                  ? `${conversation.client?.fullName} · ${conversation.case?.caseType} · ${conversation.channel}`
+                  ? `${conversation.client?.fullName} · ${conversation.case?.caseType || "General inquiry"} · ${conversation.channel}`
                   : "Loading conversation…"}
               </p>
             </div>
@@ -500,14 +500,14 @@ export default function ConversationOverlay({
                   ))}
                 </select>
               </label>
-              <button
+              {conversation.caseId ? <button
                 type="button"
                 onClick={createTask}
                 disabled={saving}
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold"
               >
                 <CalendarPlus className="h-3.5 w-3.5" /> Create follow-up
-              </button>
+              </button> : <div className="flex h-9 items-center justify-center rounded-xl bg-slate-100 px-3 text-xs font-medium text-slate-500">Client-level chat</div>}
             </div>
           ) : null}
         </header>

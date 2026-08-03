@@ -1,14 +1,12 @@
-import { Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Banknote, CalendarClock, CircleAlert, CreditCard, Download, FileText, Landmark, Loader2, ReceiptText, RotateCcw, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { downloadPortalInvoicePdf, getPortalPayments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
-import ClientPaymentCard, { PAYMENT_STATUS_TONE, formatMoney } from "../../components/client-portal/ClientPaymentCard";
+import ClientPaymentCard, { formatMoney } from "../../components/client-portal/ClientPaymentCard";
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
-
-const HISTORY_STATUS_LABEL = { Unpaid: "Not Paid", Partial: "Partially Paid", Paid: "Paid", Refunded: "Refunded" };
 
 const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Overdue: "Overdue" };
 const INVOICE_STATUS_TONE = {
@@ -57,6 +55,20 @@ function scheduleDueLabel(installment) {
   return `Due ${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
 }
 
+const TRANSACTION_STYLE = {
+  Invoice: { icon: ArrowUpRight, tone: "bg-amber-100 text-amber-700", amountTone: "text-slate-900" },
+  Payment: { icon: ArrowDownLeft, tone: "bg-emerald-100 text-emerald-700", amountTone: "text-emerald-700" },
+  Refund: { icon: RotateCcw, tone: "bg-rose-100 text-rose-700", amountTone: "text-rose-700" },
+  Credit: { icon: ArrowDownLeft, tone: "bg-sky-100 text-sky-700", amountTone: "text-sky-700" },
+  Adjustment: { icon: ReceiptText, tone: "bg-slate-100 text-slate-600", amountTone: "text-slate-700" },
+};
+
+function transactionAmount(item) {
+  if (item.type === "Invoice") return { value: item.charge, prefix: "+" };
+  if (item.type === "Refund") return { value: item.refund, prefix: "−" };
+  return { value: item.paymentOrCredit || item.charge, prefix: "−" };
+}
+
 export default function ClientPortalPayments() {
   const { overview } = usePortalData();
   const [data, setData] = useState(null);
@@ -88,6 +100,12 @@ export default function ClientPortalPayments() {
       ) : (
         <>
           <ClientPaymentCard payment={data.summary} />
+
+          {data.syncWarning ? (
+            <div className="flex items-start gap-2 rounded-2xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />{data.syncWarning}
+            </div>
+          ) : null}
 
           {data.schedule?.installments?.some((item) => item.status === "Scheduled") ? (
             <GlassCard className="p-5">
@@ -181,23 +199,34 @@ export default function ClientPortalPayments() {
               <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-700"><ReceiptText className="h-4 w-4" /></div>
               <h2 className="text-[15px] font-semibold text-slate-900">Payment history</h2>
             </div>
-            {data.history.length ? (
+            {data.transactions?.length ? (
               <ul className="mt-4 divide-y divide-slate-100">
-                {data.history.map((item) => (
+                {data.transactions.map((item) => {
+                  const style = TRANSACTION_STYLE[item.type] || TRANSACTION_STYLE.Adjustment;
+                  const Icon = style.icon;
+                  const amount = transactionAmount(item);
+                  return (
                   <li key={item.id} className="flex items-start justify-between gap-3 py-3.5 first:pt-1 last:pb-1">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900">{formatMoney(item.totalFee, item.currency)} fee</p>
-                      <p className="mt-0.5 text-[12px] text-slate-500">
-                        {formatMoney(item.paidAmount, item.currency)} paid · {formatMoney(item.balance, item.currency)} remaining
-                      </p>
-                      {item.note ? <p className="mt-1 text-[12px] leading-5 text-slate-500">{item.note}</p> : null}
-                      <p className="mt-1 text-[11px] text-slate-400">Recorded {formatPortalDate(item.recordedAt)}</p>
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <div className={["mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", style.tone].join(" ")}><Icon className="h-3.5 w-3.5" /></div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="text-sm font-semibold text-slate-900">{item.type}</p>
+                          <span className="text-[10px] font-medium text-slate-400">{item.reference}</span>
+                        </div>
+                        <p className="mt-0.5 text-[12px] leading-5 text-slate-500">{item.description}</p>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          {formatPortalDate(item.date)}{item.caseReference ? ` · ${item.caseReference}` : ""}
+                        </p>
+                      </div>
                     </div>
-                    <span className={["shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold", PAYMENT_STATUS_TONE[HISTORY_STATUS_LABEL[item.status]] || "bg-slate-100 text-slate-500"].join(" ")}>
-                      {HISTORY_STATUS_LABEL[item.status] || item.status}
-                    </span>
+                    <div className="shrink-0 text-right">
+                      <p className={["text-sm font-semibold tabular-nums", style.amountTone].join(" ")}>{amount.prefix}{formatMoney(amount.value, data.summary.currency)}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">Balance {formatMoney(item.runningBalance, data.summary.currency)}</p>
+                    </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             ) : (
               <p className="mt-3 text-sm leading-6 text-slate-500">No payments have been recorded yet. Your history will appear here.</p>
@@ -206,7 +235,7 @@ export default function ClientPortalPayments() {
 
           <p className="flex items-start gap-2 px-2 text-[12px] leading-5 text-slate-400">
             <CreditCard className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Payments are recorded by your agency. If something looks wrong, contact them from the Help tab.
+            This account history includes case fees, consultation payments, credits, and refunds. If something looks wrong, contact your agency in Chat.
           </p>
         </>
       )}

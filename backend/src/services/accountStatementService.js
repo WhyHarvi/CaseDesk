@@ -356,7 +356,7 @@ export async function createStatementGeneration({ agencyId, clientId, generatedB
 
 export async function buildClientBillingLedger({
   agencyId, client, currency = "CAD", defaultCurrency = "CAD",
-  caseId = null, from = null, to = null, caseReferences = {},
+  caseId = null, from = null, to = null, caseReferences = {}, refreshQuickBooks = true,
 }) {
   const includeModernSources = currency === defaultCurrency;
   const bookingIdentity = [
@@ -398,7 +398,7 @@ export async function buildClientBillingLedger({
   let quickBooksPayments = [];
   let quickBooksRefunds = [];
   let syncWarning = null;
-  if (includeModernSources && client.qbCustomerId) {
+  if (refreshQuickBooks && includeModernSources && client.qbCustomerId) {
     try {
       [quickBooksInvoices, quickBooksPayments, quickBooksRefunds] = await Promise.all([
         listQuickBooksInvoicesForCustomer(agencyId, client.qbCustomerId),
@@ -416,7 +416,7 @@ export async function buildClientBillingLedger({
 
   const ledger = buildUnifiedClientLedger(
     { legacyPayments, caseInvoices, bookingPayments, quickBooksInvoices, quickBooksPayments, quickBooksRefunds },
-    { from, to, caseReferences, includeUnmatchedQuickBooks: !caseId },
+    { from, to, caseReferences, includeUnmatchedQuickBooks: !caseId && refreshQuickBooks },
   );
   return {
     ...ledger,

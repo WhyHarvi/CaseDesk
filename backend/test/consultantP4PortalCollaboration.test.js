@@ -45,13 +45,31 @@ test("portal messages expose chat only and never internal communication", async 
     source("../src/routes/portalRoutes.js"),
   ]);
   const listSection = controller.slice(controller.indexOf("export async function portalMessages"), controller.indexOf("export async function createPortalMessage"));
-  assert.match(listSection, /clientId: link\.clientId, caseId, channel: "Chat"/);
+  assert.match(listSection, /clientId: link\.clientId, caseId: generalChat \? null : selectedCaseId, channel: "Chat"/);
+  assert.match(listSection, /GENERAL_CHAT_ID/);
   assert.match(listSection, /direction: \{ in: \["Inbound", "Outbound"\] \}/);
   assert.match(listSection, /deletedAt: null/);
   assert.doesNotMatch(listSection, /bodyHtml|attachments|metadata/);
   assert.match(controller, /provider: "AuthenticatedPortal"/);
   assert.match(controller, /state: "WaitingOnAgency"/);
   assert.match(routes, /router\.post\("\/messages", rateLimit/);
+});
+
+test("portal exposes the complete client appointment and billing history", async () => {
+  const [controller, routes, api, appointments, payments] = await Promise.all([
+    source("../src/controllers/clientPortalController.js"),
+    source("../src/routes/clientPortalRoutes.js"),
+    source("../../frontend/src/api/clientPortalApi.js"),
+    source("../../frontend/src/pages/client-portal/ClientPortalAppointments.jsx"),
+    source("../../frontend/src/pages/client-portal/ClientPortalPayments.jsx"),
+  ]);
+  assert.match(controller, /buildClientBillingLedger/);
+  assert.match(controller, /transactions: \[\.\.\.ledger\.transactions\]\.reverse\(\)/);
+  assert.match(controller, /export async function getPortalAppointments/);
+  assert.match(routes, /router\.get\("\/appointments", asyncHandler\(getPortalAppointments\)\)/);
+  assert.match(api, /client-portal\/appointments/);
+  assert.match(appointments, /Your upcoming visits and complete appointment history/);
+  assert.match(payments, /data\.transactions\.map/);
 });
 
 test("portal UI provides file exchange and messaging through the current modular pages", async () => {

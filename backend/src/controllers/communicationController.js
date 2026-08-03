@@ -449,6 +449,7 @@ export async function listCommunicationInbox(req, res) {
     ? req.query.state
     : null;
   const channel = channels.has(req.query.channel) ? req.query.channel : null;
+  const clientId = clean(req.query.clientId, 80);
   const search = clean(req.query.search, 120);
   const sort = clean(req.query.sort, 30, "newest");
   const orderBy =
@@ -466,6 +467,7 @@ export async function listCommunicationInbox(req, res) {
     isArchived: scope === "archived",
     ...(state ? { state } : {}),
     ...(channel ? { channel } : {}),
+    ...(clientId ? { clientId } : {}),
     ...(scope === "mine" || !permissions.canViewAll
       ? { assignedToId: req.user.id }
       : {}),
@@ -541,7 +543,19 @@ export async function getCommunicationConversation(req, res) {
 }
 
 export async function createCommunicationMessage(req, res) {
-  const caseItem = await scopedCase(req, clean(req.body.caseId, 80));
+  const requestedConversationId = clean(req.body.conversationId, 80);
+  const conversationContext = requestedConversationId
+    ? await prisma.communicationConversation.findFirst({
+        where: { id: requestedConversationId, agencyId: req.user.agencyId, deletedAt: null },
+        select: { id: true, clientId: true, caseId: true, assignedToId: true },
+      })
+    : null;
+  if (requestedConversationId && !conversationContext) throw createHttpError(404, "Conversation not found");
+  const requestedCaseId = clean(req.body.caseId, 80) || conversationContext?.caseId || "";
+  const caseItem = requestedCaseId ? await scopedCase(req, requestedCaseId) : null;
+  if (!caseItem && !conversationContext) throw createHttpError(400, "A case or existing client conversation is required");
+  if (caseItem && conversationContext && conversationContext.clientId !== caseItem.clientId) throw createHttpError(409, "The conversation does not belong to this case");
+  const clientId = caseItem?.clientId || conversationContext.clientId;
   const channel = channels.has(req.body.channel) ? req.body.channel : null;
   const direction = directions.has(req.body.direction)
     ? req.body.direction
@@ -580,7 +594,7 @@ export async function createCommunicationMessage(req, res) {
   if (shouldQueue || (direction === "Outbound" && channel === "Chat")) {
     const preference = await ensureRecipientAllowed(
       req.user.agencyId,
-      caseItem.clientId,
+      clientId,
       channel,
       recipients,
     );
@@ -634,7 +648,7 @@ export async function createCommunicationMessage(req, res) {
       where: {
         id: req.body.parentMessageId,
         agencyId: req.user.agencyId,
-        caseId: caseItem.id,
+        conversationId: conversationContext?.id || undefined,
       },
     });
     if (!parent) throw createHttpError(404, "Parent message not found");
@@ -646,7 +660,8 @@ export async function createCommunicationMessage(req, res) {
           where: {
             id: req.body.conversationId,
             agencyId: req.user.agencyId,
-            caseId: caseItem.id,
+            clientId,
+            caseId: caseItem?.id || null,
             deletedAt: null,
           },
         })
@@ -659,14 +674,14 @@ export async function createCommunicationMessage(req, res) {
       conversation = await tx.communicationConversation.create({
         data: {
           agencyId: req.user.agencyId,
-          clientId: caseItem.clientId,
-          caseId: caseItem.id,
+          clientId,
+          caseId: caseItem?.id || null,
           channel,
           subject,
           provider,
           providerThreadId: clean(req.body.providerThreadId, 300) || null,
           assignedToId:
-            req.body.assignedToId || caseItem.assignedUserId || req.user.id,
+            req.body.assignedToId || caseItem?.assignedUserId || conversationContext?.assignedToId || req.user.id,
           state: nextConversationState(direction),
           lastMessageAt: occurredAt,
           lastInboundAt: direction === "Inbound" ? occurredAt : null,
@@ -700,8 +715,8 @@ export async function createCommunicationMessage(req, res) {
     const message = await tx.communicationMessage.create({
       data: {
         agencyId: req.user.agencyId,
-        clientId: caseItem.clientId,
-        caseId: caseItem.id,
+        clientId,
+        caseId: caseItem?.id || null,
         conversationId: conversation.id,
         channel,
         direction,
@@ -813,8 +828,8 @@ export async function createCommunicationMessage(req, res) {
     recordActivity({
       agencyId: req.user.agencyId,
       userId: req.user.id,
-      clientId: caseItem.clientId,
-      caseId: caseItem.id,
+      clientId,
+      caseId: caseItem?.id || null,
       action: shouldQueue ? "communication.queued" : "communication.recorded",
       details: `${channel} ${direction.toLowerCase()} communication ${shouldQueue ? "queued" : "recorded"}`,
     }),
@@ -826,7 +841,7 @@ export async function createCommunicationMessage(req, res) {
       metadata: { status: data.status },
     }),
   ]);
-  if (channel === "Chat") {
+  if (channel === "Chat" && caseItem) {
     await broadcastCaseCommunication({
       agencyId: req.user.agencyId,
       caseId: caseItem.id,

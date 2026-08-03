@@ -1,4 +1,4 @@
-import { ClipboardList, CreditCard, FileText, House, LogOut, MessagesSquare, Settings2, UserRound } from "lucide-react";
+import { CalendarDays, ClipboardList, CreditCard, FileText, House, LogOut, MessagesSquare, Settings2, UserRound } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { usePortalData } from "./ClientPortalLayout";
@@ -7,6 +7,7 @@ const items = [
   { label: "Home", to: "/client-portal", icon: House, end: true },
   { label: "Documents", to: "/client-portal/documents", icon: FileText },
   { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList },
+  { label: "Appointments", to: "/client-portal/appointments", icon: CalendarDays },
   { label: "Payments", to: "/client-portal/payments", icon: CreditCard },
   { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare },
 ];
