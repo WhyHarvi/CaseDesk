@@ -1,6 +1,10 @@
 import prisma from "../../services/prisma/client.js";
+import { createHttpError } from "../../utils/http.js";
 import { leadAccessWhere } from "./lead.permissions.js";
 import { conversionRate, DEFAULT_INACTIVE_LEAD_DAYS, INVALID_CONVERSION_STATUSES, reportingBounds } from "./lead.metrics.js";
+
+const DRILLDOWN_METRICS = ["followUpsDueToday", "overdueFollowUps", "slaMissed", "consultationsToday"];
+const leadStub = { id: true, leadNumber: true, firstName: true, lastName: true, phone: true, stage: true, status: true };
 
 function issueFor(lead, now) {
   if (!lead.firstContactAt && lead.firstContactDueAt && lead.firstContactDueAt < now) return "First response overdue";
@@ -136,4 +140,47 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
       watchlist: watchlist.map((lead) => ({ ...lead, issues: operationalIssues(lead, inactiveBefore) })),
     },
   };
+}
+
+// Mirrors the exact where-clauses used for the top-4 summary counts above,
+// so a card's number and its drill-down list can never disagree.
+export async function getLeadDashboardDrilldown(req, db = prisma, now = new Date()) {
+  const metric = req.query.metric;
+  if (!DRILLDOWN_METRICS.includes(metric)) throw createHttpError(400, "Unknown dashboard metric.", "VALIDATION_ERROR");
+
+  const agencyId = req.auth.agencyId;
+  const agency = await db.agency.findUnique({ where: { id: agencyId }, select: { timezone: true } });
+  const timezone = agency?.timezone || "America/Toronto";
+  const { todayStart, tomorrowStart } = reportingBounds(now, timezone);
+  const access = leadAccessWhere(req);
+  const relatedLeadWhere = { agencyId, deletedAt: null, ...access };
+
+  if (metric === "followUpsDueToday" || metric === "overdueFollowUps") {
+    const dueAt = metric === "followUpsDueToday" ? { gte: todayStart, lt: tomorrowStart } : { lt: now };
+    const rows = await db.leadFollowUp.findMany({
+      where: { agencyId, status: "PENDING", dueAt, lead: relatedLeadWhere },
+      orderBy: { dueAt: "asc" },
+      take: 100,
+      select: { id: true, type: true, description: true, dueAt: true, lead: { select: leadStub } },
+    });
+    return rows.map((row) => ({ id: row.id, kind: "followUp", type: row.type, description: row.description, dueAt: row.dueAt, lead: row.lead }));
+  }
+
+  if (metric === "consultationsToday") {
+    const rows = await db.leadConsultation.findMany({
+      where: { agencyId, startAt: { gte: todayStart, lt: tomorrowStart }, status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] }, lead: relatedLeadWhere },
+      orderBy: { startAt: "asc" },
+      take: 100,
+      select: { id: true, appointmentType: true, startAt: true, status: true, location: true, lead: { select: leadStub } },
+    });
+    return rows.map((row) => ({ id: row.id, kind: "consultation", appointmentType: row.appointmentType, startAt: row.startAt, status: row.status, location: row.location, lead: row.lead }));
+  }
+
+  const rows = await db.lead.findMany({
+    where: { ...relatedLeadWhere, status: "OPEN", firstContactAt: null, firstContactDueAt: { lt: now } },
+    orderBy: { firstContactDueAt: "asc" },
+    take: 100,
+    select: { ...leadStub, firstContactDueAt: true },
+  });
+  return rows.map((row) => ({ id: row.id, kind: "lead", firstContactDueAt: row.firstContactDueAt, lead: row }));
 }

@@ -98,6 +98,12 @@ export function parseLeadListQuery(query = {}) {
     sortDirection,
     search: text(query.search, "search", { max: 200 }) || "",
     sourceId: text(query.sourceId, "sourceId", { max: 100 }),
+    // Dashboard drill-down flags — match reportingBounds()'s day/week windows
+    // exactly so a stat card's count and its linked list always agree.
+    createdToday: query.createdToday === "true",
+    uncontacted: query.uncontacted === "true",
+    convertedThisWeek: query.convertedThisWeek === "true",
+    lostThisWeek: query.lostThisWeek === "true",
   };
 }
 

@@ -3,16 +3,30 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../../../services/api";
 import LeadDetailSheet from "../components/LeadDetailSheet";
+import LeadDashboardDrilldownDrawer from "../components/LeadDashboardDrilldownDrawer";
 import { formatDueDate, humanize, leadName } from "../leadPresentation";
 
-function MetricCard({ label, value, detail, icon: Icon, tone = "brand" }) {
+function MetricCard({ label, value, detail, icon: Icon, tone = "brand", onClick }) {
   const tones = {
     brand: "bg-brand-50 text-brand-700",
     rose: "bg-rose-50 text-rose-700",
     amber: "bg-amber-50 text-amber-700",
     violet: "bg-violet-50 text-violet-700",
   };
-  return <article className="rounded-2xl border border-slate-200/70 bg-white p-5"><div className="flex items-start justify-between"><div><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{value}</p></div><div className={`flex h-10 w-10 items-center justify-center rounded-xl ${tones[tone]}`}><Icon className="h-5 w-5" /></div></div><p className="mt-3 text-xs text-slate-400">{detail}</p></article>;
+  const Tag = onClick ? "button" : "article";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`rounded-2xl border border-slate-200/70 bg-white p-5 text-left ${onClick ? "transition hover:border-slate-300 hover:shadow-sm" : ""}`}
+    >
+      <div className="flex items-start justify-between">
+        <div><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{value}</p></div>
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${tones[tone]}`}><Icon className="h-5 w-5" /></div>
+      </div>
+      <p className="mt-3 text-xs text-slate-400">{detail}</p>
+    </Tag>
+  );
 }
 
 function DashboardSkeleton() {
@@ -35,6 +49,30 @@ export default function LeadDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [operationalFilter, setOperationalFilter] = useState("ALL");
+  const [drilldown, setDrilldown] = useState(null);
+  const [drilldownItems, setDrilldownItems] = useState([]);
+  const [drilldownLoading, setDrilldownLoading] = useState(false);
+  const [drilldownError, setDrilldownError] = useState("");
+
+  const openDrilldown = useCallback(async (metric) => {
+    setDrilldown(metric);
+    setDrilldownLoading(true);
+    setDrilldownError("");
+    try {
+      const response = await api.get(`/leads/dashboard/drilldown?metric=${metric}`);
+      setDrilldownItems(response.data.data);
+    } catch (requestError) {
+      setDrilldownError(requestError.response?.data?.message || "This list could not be loaded.");
+    } finally {
+      setDrilldownLoading(false);
+    }
+  }, []);
+
+  const closeDrilldown = useCallback(() => {
+    setDrilldown(null);
+    setDrilldownItems([]);
+    setDrilldownError("");
+  }, []);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -67,21 +105,26 @@ export default function LeadDashboardPage() {
       {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><p>{error}</p><button type="button" onClick={loadDashboard} className="mt-2 font-semibold">Try again</button></div> : null}
       {loading ? <DashboardSkeleton /> : dashboard ? <>
         <section aria-label="Today's lead priorities" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Follow-ups today" value={summary.followUpsDueToday} detail="Pending within today" icon={CalendarCheck2} />
-          <MetricCard label="Overdue work" value={summary.overdueFollowUps} detail="Pending past its due time" icon={Clock3} tone="rose" />
-          <MetricCard label="SLA missed" value={summary.slaMissed} detail="First response deadline passed" icon={Gauge} tone="amber" />
-          <MetricCard label="Consultations today" value={summary.consultationsToday} detail="Scheduled or confirmed" icon={Video} tone="violet" />
+          <MetricCard label="Follow-ups today" value={summary.followUpsDueToday} detail="Pending within today" icon={CalendarCheck2} onClick={() => openDrilldown("followUpsDueToday")} />
+          <MetricCard label="Overdue work" value={summary.overdueFollowUps} detail="Pending past its due time" icon={Clock3} tone="rose" onClick={() => openDrilldown("overdueFollowUps")} />
+          <MetricCard label="SLA missed" value={summary.slaMissed} detail="First response deadline passed" icon={Gauge} tone="amber" onClick={() => openDrilldown("slaMissed")} />
+          <MetricCard label="Consultations today" value={summary.consultationsToday} detail="Scheduled or confirmed" icon={Video} tone="violet" onClick={() => openDrilldown("consultationsToday")} />
         </section>
 
         <section aria-label="Lead pipeline signals" className="grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200/70 bg-white sm:grid-cols-3 xl:grid-cols-6">
           {[
-            ["New today", summary.newToday, ContactRound],
-            ["Uncontacted", summary.uncontacted, PhoneOff],
-            ["Converted this week", summary.convertedThisWeek, UserRoundCheck],
-            ["Lost this week", summary.lostThisWeek, AlertTriangle],
-            ["Open pipeline", money.format(summary.openPipelineValue), TrendingUp],
-            ["Conversion", `${summary.overallConversionRate}%`, Gauge],
-          ].map(([label, value, Icon], index) => <div key={label} className={`px-4 py-4 ${index % 2 ? "border-l" : ""} border-slate-100 sm:border-l sm:first:border-l-0`}><div className="flex items-center gap-2 text-xs font-medium text-slate-400"><Icon className="h-3.5 w-3.5" />{label}</div><p className="mt-2 text-lg font-semibold text-slate-900">{value}</p></div>)}
+            ["New today", summary.newToday, ContactRound, "/leads?createdToday=true"],
+            ["Uncontacted", summary.uncontacted, PhoneOff, "/leads?status=OPEN&uncontacted=true"],
+            ["Converted this week", summary.convertedThisWeek, UserRoundCheck, "/leads?status=CONVERTED&convertedThisWeek=true"],
+            ["Lost this week", summary.lostThisWeek, AlertTriangle, "/leads?status=LOST&lostThisWeek=true"],
+            ["Open pipeline", money.format(summary.openPipelineValue), TrendingUp, "/leads?status=OPEN"],
+            ["Conversion", `${summary.overallConversionRate}%`, Gauge, "/lead-reports"],
+          ].map(([label, value, Icon, to], index) => (
+            <Link key={label} to={to} className={`px-4 py-4 transition hover:bg-slate-50 ${index % 2 ? "border-l" : ""} border-slate-100 sm:border-l sm:first:border-l-0`}>
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-400"><Icon className="h-3.5 w-3.5" />{label}</div>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
+            </Link>
+          ))}
         </section>
 
         <section className="overflow-hidden rounded-3xl border border-white/80 bg-white shadow-[0_18px_55px_rgba(28,45,74,0.08)]">
@@ -106,6 +149,15 @@ export default function LeadDashboardPage() {
           {!watchlist.length ? <div className="px-6 py-12 text-center"><p className="text-sm font-semibold text-slate-800">No leads in this category</p><p className="mt-1 text-xs text-slate-500">Select another issue to review the operational queue.</p></div> : <div>{watchlist.map((lead, index) => <div key={lead.id} className={`flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center ${index ? "border-t border-slate-100" : ""}`}><div className="min-w-0 sm:w-52"><p className="truncate text-sm font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.originalSource?.name || "Unknown source"}</p></div><div className="flex min-w-0 flex-1 flex-wrap gap-1.5">{lead.issues.map((issue) => <span key={issue} className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${issue === "INACTIVE" || issue === "CONSULTATION_NO_SHOW" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{operationalLabels[issue]}</span>)}</div><div className="shrink-0 sm:w-40"><p className="text-xs text-slate-400">Owner</p><p className="mt-0.5 truncate text-sm text-slate-600">{lead.owner?.fullName || "Unassigned"}</p></div><button type="button" onClick={() => setSelectedLead(lead)} className="h-9 shrink-0 rounded-full border border-slate-200 px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50">Review</button></div>)}</div>}
         </section> : null}
       </> : null}
+
+      <LeadDashboardDrilldownDrawer
+        metric={drilldown}
+        items={drilldownItems}
+        loading={drilldownLoading}
+        error={drilldownError}
+        onClose={closeDrilldown}
+        onSelectLead={(lead) => { closeDrilldown(); setSelectedLead(lead); }}
+      />
 
       {selectedLead ? <LeadDetailSheet lead={selectedLead} staff={staff} onClose={() => setSelectedLead(null)} onChanged={loadDashboard} /> : null}
     </section>

@@ -430,7 +430,7 @@ function ClientDrawer({
   );
 }
 
-function StatCard({ icon: Icon, label, value, helper, accent }) {
+function StatCard({ icon: Icon, label, value, helper, accent, onClick, active }) {
   const accentStyles = {
     blue: "bg-sky-100 text-sky-700",
     teal: "bg-teal-100 text-teal-700",
@@ -438,9 +438,17 @@ function StatCard({ icon: Icon, label, value, helper, accent }) {
     rose: "bg-rose-100 text-rose-700",
   };
 
+  const Tag = onClick ? "button" : "div";
+
   return (
-    <div className="flex max-h-[92px] min-h-[92px] items-center gap-4 rounded-2xl border border-white/70 bg-white/70 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
-      <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${accentStyles[accent]}`}>
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`flex max-h-[92px] min-h-[92px] w-full items-center gap-4 rounded-2xl border p-4 text-left shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl transition ${
+        active ? "border-sky-300 bg-white ring-2 ring-sky-100" : "border-white/70 bg-white/70"
+      } ${onClick ? "hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_16px_36px_rgba(15,23,42,0.1)]" : ""}`}
+    >
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${accentStyles[accent]}`}>
         <Icon className="h-5 w-5" />
       </div>
       <div>
@@ -448,7 +456,7 @@ function StatCard({ icon: Icon, label, value, helper, accent }) {
         <p className="mt-0.5 text-sm font-medium text-slate-600">{label}</p>
         <p className="mt-1 text-xs text-slate-400">{helper}</p>
       </div>
-    </div>
+    </Tag>
   );
 }
 
@@ -950,13 +958,23 @@ export default function Clients() {
         </section>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={Users} label="Total Clients" value={summary.totalClients} helper="All profiles in the workspace" accent="blue" />
+          <StatCard
+            icon={Users}
+            label="Total Clients"
+            value={summary.totalClients}
+            helper="All profiles in the workspace"
+            accent="blue"
+            active={activeView === "All Clients"}
+            onClick={() => setActiveView("All Clients")}
+          />
           <StatCard
             icon={BriefcaseBusiness}
             label="Active Cases"
             value={summary.activeCases}
             helper="Files currently moving forward"
             accent="teal"
+            active={activeView === "Active"}
+            onClick={() => setActiveView("Active")}
           />
           <StatCard
             icon={FileWarning}
@@ -964,6 +982,8 @@ export default function Clients() {
             value={summary.documentsPending}
             helper="Clients needing document follow-up"
             accent="amber"
+            active={activeView === "Pending Documents"}
+            onClick={() => setActiveView("Pending Documents")}
           />
           <StatCard
             icon={CalendarClock}
@@ -971,6 +991,8 @@ export default function Clients() {
             value={summary.followUpsDue}
             helper="Tasks that need attention today"
             accent="rose"
+            active={activeView === "Follow-ups Due"}
+            onClick={() => setActiveView("Follow-ups Due")}
           />
         </section>
 

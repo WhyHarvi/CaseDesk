@@ -1,5 +1,5 @@
 import { Component, Fragment } from "react";
-import { Loader2 } from "lucide-react";
+import LogoLoader from "../ui/LogoLoader";
 
 const RECOVERY_PREFIX = "casedesk.route-recovery";
 const RECOVERY_WINDOW_MS = 90_000;
@@ -137,9 +137,7 @@ export default class RouteRecoveryBoundary extends Component {
             </>
           ) : (
             <>
-              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-50 text-sky-700">
-                <Loader2 className="h-5 w-5 animate-spin" />
-              </span>
+              <LogoLoader size={56} className="mx-auto" />
               <h1 className="mt-5 text-xl font-semibold tracking-tight text-slate-950">
                 Recovering this page…
               </h1>

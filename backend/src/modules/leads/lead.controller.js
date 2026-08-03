@@ -1,10 +1,14 @@
 import * as service from "./lead.service.js";
 import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
-import { getLeadDashboard as loadLeadDashboard } from "./lead.dashboard.service.js";
+import { getLeadDashboard as loadLeadDashboard, getLeadDashboardDrilldown as loadLeadDashboardDrilldown } from "./lead.dashboard.service.js";
 import { getAgeingReport as loadAgeingReport, getConversionTrendReport as loadConversionTrendReport, getEmployeeReport as loadEmployeeReport, getFunnelReport as loadFunnelReport, getLostReport as loadLostReport, getResponseTimeReport as loadResponseTimeReport, getSourceReport as loadSourceReport, getWorkloadReport as loadWorkloadReport } from "./lead.report.service.js";
 
 export async function getLeadDashboard(req, res) {
   res.json({ data: await loadLeadDashboard(req) });
+}
+
+export async function getLeadDashboardDrilldown(req, res) {
+  res.json({ data: await loadLeadDashboardDrilldown(req) });
 }
 
 export async function getFunnelReport(req, res) {

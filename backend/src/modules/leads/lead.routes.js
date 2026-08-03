@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { assignLead, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
+import { assignLead, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, getImport, getOperations, listEvents, listForms, listImports, previewImport, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
@@ -13,6 +13,7 @@ router.get("/staff", asyncHandler(listLeadStaff));
 router.get("/settings", asyncHandler(getLeadSettings));
 router.patch("/settings", requireRole("admin"), asyncHandler(updateLeadSettings));
 router.get("/dashboard", requireRole("admin"), asyncHandler(getLeadDashboard));
+router.get("/dashboard/drilldown", requireRole("admin"), asyncHandler(getLeadDashboardDrilldown));
 router.get("/reports/funnel", requireRole("admin"), asyncHandler(getFunnelReport));
 router.get("/reports/sources", requireRole("admin"), asyncHandler(getSourceReport));
 router.get("/reports/employees", requireRole("admin"), asyncHandler(getEmployeeReport));

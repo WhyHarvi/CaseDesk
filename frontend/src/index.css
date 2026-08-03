@@ -219,6 +219,16 @@ input {
   text-align: center;
 }
 
+/* ---------- Animated logo loader ---------- */
+.casedesk-logo-loader {
+  display: inline-block;
+  animation: casedeskLogoSpin 1.8s linear infinite;
+}
+
+@keyframes casedeskLogoSpin {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

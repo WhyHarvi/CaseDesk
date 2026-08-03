@@ -2,6 +2,7 @@ import prisma from "../../services/prisma/client.js";
 import { createHttpError } from "../../utils/http.js";
 import { nextClientNumber } from "../../services/clientNumberService.js";
 import { canCreateLead, leadAccessWhere } from "./lead.permissions.js";
+import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
 import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
@@ -86,7 +87,17 @@ export async function createLead(req, db = prisma) {
 }
 
 export async function listLeads(req) {
-  const { page, limit, search, status, stage, sourceId, sortBy, sortDirection } = parseLeadListQuery(req.query);
+  const { page, limit, search, status, stage, sourceId, sortBy, sortDirection, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
+
+  // Only computed when a date-scoped dashboard flag is present — same
+  // bounds getLeadDashboard() uses, so a stat card's count and this list
+  // never disagree.
+  let bounds = null;
+  if (createdToday || convertedThisWeek || lostThisWeek) {
+    const agency = await prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: { timezone: true } });
+    bounds = reportingBounds(new Date(), agency?.timezone || "America/Toronto");
+  }
+
   const where = {
     agencyId: req.auth.agencyId,
     deletedAt: null,
@@ -103,6 +114,10 @@ export async function listLeads(req) {
     ...(status ? { status } : {}),
     ...(stage ? { stage } : {}),
     ...(sourceId ? { originalSourceId: sourceId } : {}),
+    ...(createdToday ? { createdAt: { gte: bounds.todayStart, lt: bounds.tomorrowStart } } : {}),
+    ...(uncontacted ? { firstContactAt: null } : {}),
+    ...(convertedThisWeek ? { convertedAt: { gte: bounds.weekStart, lt: bounds.tomorrowStart } } : {}),
+    ...(lostThisWeek ? { lostAt: { gte: bounds.weekStart, lt: bounds.tomorrowStart } } : {}),
   };
   const [data, total] = await Promise.all([
     prisma.lead.findMany({ where, include: leadInclude, orderBy: { [sortBy]: sortDirection }, skip: (page - 1) * limit, take: limit }),
