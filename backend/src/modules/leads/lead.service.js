@@ -185,7 +185,12 @@ export async function getLead(req) {
               createdAt: true,
             },
           },
-          _count: { select: { notes: true, followUps: true } },
+          _count: {
+            select: {
+              notes: { where: { deletedAt: null } },
+              followUps: true,
+            },
+          },
         },
       },
       lostDetail: true,

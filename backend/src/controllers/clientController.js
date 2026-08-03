@@ -299,8 +299,8 @@ export async function getClientById(req, res) {
         updatedAt: true,
       },
     }),
-    prisma.note.findMany({
-      where: relatedWhere,
+    req.auth.role === "frontdesk" ? Promise.resolve([]) : prisma.note.findMany({
+      where: { ...relatedWhere, deletedAt: null },
       orderBy: [{ createdAt: "desc" }],
       select: {
         id: true,
@@ -449,7 +449,12 @@ export async function listClientAppointments(req, res) {
         assignedTo: { select: { id: true, fullName: true } },
         case: { select: { id: true, caseType: true, stage: true } },
         sessionType: { select: { id: true, name: true } },
-        _count: { select: { notes: true, followUps: true } },
+        _count: {
+          select: {
+            notes: { where: { deletedAt: null } },
+            followUps: true,
+          },
+        },
       },
       orderBy: scope === "upcoming" ? { startsAt: "asc" } : { startsAt: "desc" },
       skip: (page - 1) * limit,

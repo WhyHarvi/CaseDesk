@@ -12,7 +12,9 @@ import {
   NotebookPen,
   Phone,
   Plus,
+  Pencil,
   Save,
+  Trash2,
   UserRound,
   Video,
   X,
@@ -26,10 +28,13 @@ import {
   convertAppointmentToClient,
   createAppointmentFollowUp,
   createAppointmentNote,
+  archiveAppointmentNote,
   getAppointmentRegistryDetail,
   updateAppointmentProfileContext,
+  updateAppointmentNote,
   updateBookingAppointmentStatus,
 } from "../../api/bookingApi";
+import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -71,7 +76,7 @@ function Empty({ children }) {
 }
 
 export default function AppointmentProfileOverlay({ appointmentId, initialTab = "details", onClose, onChanged, onEditScheduling }) {
-  const { role } = useAuth();
+  const { role, appUser } = useAuth();
   const canWrite = ["admin", "consultant"].includes(role);
   const [appointment, setAppointment] = useState(null);
   const [tab, setTab] = useState("details");
@@ -82,6 +87,10 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [purpose, setPurpose] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
   const [note, setNote] = useState("");
+  const [editingNote, setEditingNote] = useState(null);
+  const [editingNoteContent, setEditingNoteContent] = useState("");
+  const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
+  const [deleteNoteError, setDeleteNoteError] = useState("");
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [followUp, setFollowUp] = useState({ title: "", description: "", dueDate: dateInput() });
 
@@ -107,8 +116,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (appointmentId) setTab(initialTab);
-  }, [appointmentId, initialTab]);
+    if (appointmentId) setTab(role === "frontdesk" && initialTab === "notes" ? "details" : initialTab);
+  }, [appointmentId, initialTab, role]);
   useEffect(() => {
     const close = (event) => event.key === "Escape" && !saving && onClose();
     window.addEventListener("keydown", close);
@@ -116,7 +125,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   }, [onClose, saving]);
 
   const person = useMemo(() => personFor(appointment), [appointment]);
-  const clientAppointmentNotes = appointment?.clientAppointmentNotes || appointment?.notes || [];
+  const clientNotes = appointment?.clientNotes ?? appointment?.notes ?? [];
+  const visibleTabs = role === "frontdesk" ? tabs.filter(([id]) => id !== "notes") : tabs;
   const hasStarted = appointment ? new Date(appointment.startsAt) <= new Date() : false;
   const calendarUrl = appointment ? `/app/calendar?appointment=${appointment.id}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}` : "/app/calendar";
 
@@ -145,6 +155,40 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       onChanged?.();
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The note could not be saved.");
+    } finally { setSaving(false); }
+  }
+
+  async function saveNoteEdit(event) {
+    event.preventDefault();
+    const content = editingNoteContent.trim();
+    if (!editingNote || !content) return;
+    try {
+      setSaving(true);
+      await updateAppointmentNote(editingNote.id, content);
+      setEditingNote(null);
+      setEditingNoteContent("");
+      await load();
+      onChanged?.();
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "The note could not be updated.");
+    } finally { setSaving(false); }
+  }
+
+  async function archiveNote() {
+    if (!deleteNoteTarget) return;
+    try {
+      setSaving(true);
+      setDeleteNoteError("");
+      await archiveAppointmentNote(deleteNoteTarget.id);
+      if (editingNote?.id === deleteNoteTarget.id) {
+        setEditingNote(null);
+        setEditingNoteContent("");
+      }
+      setDeleteNoteTarget(null);
+      await load();
+      onChanged?.();
+    } catch (requestError) {
+      setDeleteNoteError(requestError.response?.data?.message || "The note could not be archived.");
     } finally { setSaving(false); }
   }
 
@@ -209,7 +253,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               </div>
             </div>
             <nav className="mt-4 flex gap-1 overflow-x-auto scrollbar-hidden">
-              {tabs.map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setTab(id)} className={`relative inline-flex h-11 shrink-0 items-center gap-2 px-4 text-sm font-medium ${tab === id ? "text-sky-700" : "text-slate-500"}`}><Icon className="h-4 w-4" />{label}{id === "notes" && appointment?.notes?.length ? <span className="rounded-full bg-slate-100 px-1.5 text-[10px]">{appointment.notes.length}</span> : null}{tab === id ? <motion.span layoutId="appointment-profile-tab" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-sky-600" /> : null}</button>)}
+              {visibleTabs.map(([id, label, Icon]) => <button key={id} type="button" onClick={() => setTab(id)} className={`relative inline-flex h-11 shrink-0 items-center gap-2 px-4 text-sm font-medium ${tab === id ? "text-sky-700" : "text-slate-500"}`}><Icon className="h-4 w-4" />{label}{id === "notes" && clientNotes.length ? <span className="rounded-full bg-slate-100 px-1.5 text-[10px]">{clientNotes.length}</span> : null}{tab === id ? <motion.span layoutId="appointment-profile-tab" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-sky-600" /> : null}</button>)}
             </nav>
           </header>
 
@@ -245,25 +289,31 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               <section>
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-900">{appointment.client ? `All appointment notes for ${appointment.client.fullName}` : "Appointment notes"}</h3>
-                    <p className="mt-1 text-xs text-slate-400">One chronological history across this client’s appointments.</p>
+                    <h3 className="text-sm font-semibold text-slate-900">{appointment.client ? `All client notes for ${appointment.client.fullName}` : "Appointment notes"}</h3>
+                    <p className="mt-1 text-xs text-slate-400">Profile notes and notes from every appointment, in one history.</p>
                   </div>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">{clientAppointmentNotes.length}</span>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">{clientNotes.length}</span>
                 </div>
                 <div className="space-y-2">
-                  {clientAppointmentNotes.length ? clientAppointmentNotes.map((item) => (
+                  {clientNotes.length ? clientNotes.map((item) => (
                     <article key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm ${item.appointmentId === appointment.id || item.appointment?.id === appointment.id ? "border-violet-200 ring-2 ring-violet-100" : "border-white"}`}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-2">
                           <p className="text-xs font-semibold text-slate-700">{item.user?.fullName || "Team member"}</p>
-                          {item.appointment ? <span className="truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{item.appointment.id === appointment.id ? "Current appointment" : item.appointment.subject}</span> : null}
+                          {item.appointment ? <span className="truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{item.appointment.id === appointment.id ? "Current appointment" : item.appointment.subject}</span> : <span className="truncate rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-600">Client profile</span>}
                         </div>
-                        <time className="text-[11px] text-slate-400">{dateTime(item.createdAt)}</time>
+                        <div className="flex items-center gap-1.5">
+                          <time className="text-[11px] text-slate-400">{dateTime(item.updatedAt || item.createdAt)}</time>
+                          {role === "admin" || item.user?.id === appUser?.id ? <>
+                            <button type="button" onClick={() => { setEditingNote(item); setEditingNoteContent(item.content || ""); }} className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-800" aria-label="Edit note"><Pencil className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => { setDeleteNoteError(""); setDeleteNoteTarget(item); }} className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-amber-50 hover:text-amber-700" aria-label="Archive note"><Trash2 className="h-3.5 w-3.5" /></button>
+                          </> : null}
+                        </div>
                       </div>
                       {item.appointment && item.appointment.id !== appointment.id ? <p className="mt-2 text-[11px] font-medium text-violet-600">{dateTime(item.appointment.startsAt)}</p> : null}
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.content}</p>
+                      {editingNote?.id === item.id ? <form onSubmit={saveNoteEdit} className="mt-3"><textarea rows={4} value={editingNoteContent} onChange={(event) => setEditingNoteContent(event.target.value)} className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none focus:border-sky-400" /><div className="mt-2 flex justify-end gap-2"><button type="button" onClick={() => { setEditingNote(null); setEditingNoteContent(""); }} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !editingNoteContent.trim()} className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">Save changes</button></div></form> : <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.content}</p>}
                     </article>
-                  )) : <Empty>No appointment notes yet.</Empty>}
+                  )) : <Empty>No client notes yet.</Empty>}
                 </div>
               </section>
               <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Follow-ups</h3><p className="mt-1 text-xs text-slate-400">Next actions connected to this appointment.</p></div>{canWrite ? <button type="button" onClick={() => setShowFollowUp((current) => !current)} className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-950 text-white" aria-label="Add follow-up"><Plus className="h-4 w-4" /></button> : null}</div>{showFollowUp ? <form onSubmit={addFollowUp} className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-4"><input required value={followUp.title} onChange={(event) => setFollowUp((current) => ({ ...current, title: event.target.value }))} placeholder="Follow-up title" className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none" /><textarea rows={3} value={followUp.description} onChange={(event) => setFollowUp((current) => ({ ...current, description: event.target.value }))} placeholder="What needs to happen next?" className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none" /><input type="datetime-local" required value={followUp.dueDate} onChange={(event) => setFollowUp((current) => ({ ...current, dueDate: event.target.value }))} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none" /><button type="submit" disabled={saving} className="w-full rounded-full bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white">Create follow-up</button></form> : null}<div className="mt-4 space-y-2">{appointment.followUps?.length ? appointment.followUps.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 rounded-2xl border border-slate-100 px-4 py-3"><div><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-xs text-slate-400">{item.assignedUser?.fullName || "Unassigned"}{item.description ? ` · ${item.description}` : ""}</p></div><div className="text-right"><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{item.status}</span><p className="mt-1 text-[10px] text-slate-400">{dateTime(item.dueDate)}</p></div></div>) : <Empty>No follow-ups connected yet.</Empty>}</div></section>
@@ -274,6 +324,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
             {!loading && appointment && tab === "messages" ? <div className="space-y-3">{appointment.messageDeliveries?.length ? appointment.messageDeliveries.map((delivery) => <div key={delivery.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white bg-white p-4 shadow-sm"><div><p className="text-sm font-semibold capitalize text-slate-800">{delivery.kind} · {delivery.channel}</p><p className="mt-1 text-xs text-slate-400">{dateTime(delivery.sentAt || delivery.failedAt || delivery.createdAt)}</p>{delivery.lastError ? <p className="mt-2 text-xs text-rose-600">{delivery.lastError}</p> : null}</div><span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${String(delivery.status).toLowerCase() === "sent" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{delivery.status}</span></div>) : <Empty>No appointment messages have been sent.</Empty>}</div> : null}
           </main>
         </motion.aside>
+        <NoteDeleteOverlay note={deleteNoteTarget} busy={saving} error={deleteNoteError} onClose={() => !saving && setDeleteNoteTarget(null)} onConfirm={archiveNote} />
       </div>
     </AnimatePresence>,
     document.body,

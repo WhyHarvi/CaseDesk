@@ -1,4 +1,4 @@
-import { createCrudController, fieldParsers } from "../utils/prismaCrud.js";
+import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import {
   caseAccessWhere,
   clientAccessWhere,
@@ -6,6 +6,7 @@ import {
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { appointmentProfileAccessWhere } from "../services/appointmentProfileService.js";
+import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 
 const include = {
   user: {
@@ -34,12 +35,15 @@ const include = {
 };
 
 function noteAccessWhere(req) {
-  if (req.auth.role === "admin") return {};
-  return { OR: [
-    { client: clientAccessWhere(req) },
-    { case: caseAccessWhere(req) },
-    { appointment: appointmentProfileAccessWhere(req) },
-  ] };
+  if (req.auth.role === "admin") return { deletedAt: null };
+  return {
+    deletedAt: null,
+    OR: [
+      { client: clientAccessWhere(req) },
+      { case: caseAccessWhere(req) },
+      { appointment: appointmentProfileAccessWhere(req) },
+    ],
+  };
 }
 
 const fields = {
@@ -64,6 +68,28 @@ const controller = createCrudController({
     ...(req.query.userId ? { userId: req.query.userId } : {}),
   }),
   activityEntity: "note",
+  afterCreate: async ({ req, data }) => {
+    if (!data.appointmentId) return;
+    await recordAppointmentEvent(prisma, {
+      agencyId: req.auth.agencyId,
+      appointmentId: data.appointmentId,
+      actorUserId: req.auth.userId,
+      type: "NOTE_ADDED",
+      summary: "Internal appointment note added",
+      metadata: { noteId: data.id },
+    });
+  },
+  afterUpdate: async ({ req, data }) => {
+    if (!data.appointmentId) return;
+    await recordAppointmentEvent(prisma, {
+      agencyId: req.auth.agencyId,
+      appointmentId: data.appointmentId,
+      actorUserId: req.auth.userId,
+      type: "NOTE_UPDATED",
+      summary: "Internal appointment note updated",
+      metadata: { noteId: data.id },
+    });
+  },
 });
 
 export const listNotes = controller.list;
@@ -76,7 +102,7 @@ async function manageableNote(req) {
       agencyId: req.auth.agencyId,
       ...noteAccessWhere(req),
     },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, clientId: true, caseId: true, appointmentId: true },
   });
   if (!note) throw createHttpError(404, "Note not found", "NOT_FOUND");
   if (req.auth.role === "consultant" && note.userId !== req.auth.userId) {
@@ -136,8 +162,35 @@ export async function updateNote(req, res) {
 }
 
 export async function deleteNote(req, res) {
-  await manageableNote(req);
-  return controller.remove(req, res);
+  const existing = await manageableNote(req);
+  await prisma.$transaction(async (tx) => {
+    await tx.note.update({
+      where: { id: existing.id },
+      data: { deletedAt: new Date(), deletedById: req.auth.userId },
+    });
+    if (existing.appointmentId) {
+      await recordAppointmentEvent(tx, {
+        agencyId: req.auth.agencyId,
+        appointmentId: existing.appointmentId,
+        actorUserId: req.auth.userId,
+        type: "NOTE_ARCHIVED",
+        summary: "Internal appointment note archived",
+        metadata: { noteId: existing.id },
+      });
+    }
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: existing.clientId,
+    caseId: existing.caseId,
+    action: "note.archived",
+    details: "Note archived",
+    entityType: "note",
+    entityId: existing.id,
+    metadata: { appointmentId: existing.appointmentId },
+  });
+  res.status(204).send();
 }
 
 export default controller;

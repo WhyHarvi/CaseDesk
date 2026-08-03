@@ -164,8 +164,8 @@ export default function CaseProfile() {
   useEffect(() => {
     if (caseItem?.id !== id) return;
     const params = new URLSearchParams(location.search);
-    if (params.get("overlay") === "notes") setNotesOverlayOpen(true);
-  }, [caseItem?.id, id, location.search]);
+    if (role !== "frontdesk" && params.get("overlay") === "notes") setNotesOverlayOpen(true);
+  }, [caseItem?.id, id, location.search, role]);
 
   useEffect(() => {
     async function loadCaseProfile() {
@@ -177,7 +177,7 @@ export default function CaseProfile() {
           fetchAllCaseDocuments(id),
           api.get(`/cases/${id}/payment-summary`),
           api.get(`/follow-ups?caseId=${id}`),
-          api.get(`/notes?caseId=${id}`),
+          role === "frontdesk" ? Promise.resolve({ data: { data: [] } }) : api.get(`/notes?caseId=${id}`),
           api.get(`/activity-logs?caseId=${id}`),
           api.get(`/cases/${id}/assessment`),
           api.get(`/cases/${id}/workflow`),
@@ -257,7 +257,7 @@ export default function CaseProfile() {
     }
 
     loadCaseProfile();
-  }, [id]);
+  }, [id, role]);
 
   const outstandingDocuments = useMemo(
     () =>
@@ -1734,7 +1734,7 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setPermissionsOverlayOpen(true);
           }}
-          onOpenNotes={() => {
+          onOpenNotes={role === "frontdesk" ? null : () => {
             setActiveToolbarTray("");
             setNotesOverlayOpen(true);
           }}

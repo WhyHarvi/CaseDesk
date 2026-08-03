@@ -120,6 +120,7 @@ async function searchInternalRecords(req, query, digits) {
       prisma.client.findMany({
         where: {
           agencyId,
+          deletedAt: null,
           AND: [clientAccessWhere(req), clientSearch],
         },
         select: {
@@ -201,6 +202,7 @@ async function searchInternalRecords(req, query, digits) {
       prisma.note.findMany({
         where: {
           agencyId,
+          deletedAt: null,
           AND: [
             relatedRecordAccessWhere(req),
             noteSearch,

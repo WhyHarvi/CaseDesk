@@ -38,6 +38,7 @@ export const appointmentProfileInclude = {
     select: { id: true, status: true, amount: true, paidAt: true, qbInvoiceNumber: true },
   },
   notes: {
+    where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     include: { user: { select: { id: true, fullName: true, email: true } } },
   },
@@ -57,12 +58,24 @@ export async function requireAppointmentProfile(req, appointmentId, db = prisma)
     include: appointmentProfileInclude,
   });
   if (!data) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  const clientAppointmentNotes = data.clientId && req.auth.role !== "frontdesk"
-    ? await db.note.findMany({
+  const clientNotes = req.auth.role === "frontdesk"
+    ? []
+    : data.clientId
+      ? await db.note.findMany({
         where: {
           clientId: data.clientId,
-          appointmentId: { not: null },
-          appointment: appointmentProfileAccessWhere(req),
+          deletedAt: null,
+          OR: [
+            {
+              appointmentId: { not: null },
+              appointment: appointmentProfileAccessWhere(req),
+            },
+            {
+              appointmentId: null,
+              caseId: null,
+              ...(req.auth.role === "admin" ? {} : { client: clientAccessWhere(req) }),
+            },
+          ],
         },
         orderBy: { createdAt: "desc" },
         include: {
@@ -70,14 +83,17 @@ export async function requireAppointmentProfile(req, appointmentId, db = prisma)
           appointment: { select: { id: true, subject: true, startsAt: true, status: true } },
         },
       })
-    : [];
+      : data.notes;
   return {
     ...data,
     purpose: data.purpose || data.description || null,
     internalNotes: req.auth.role === "frontdesk" ? null : data.internalNotes,
     notes: req.auth.role === "frontdesk" ? [] : data.notes,
+    events: req.auth.role === "frontdesk"
+      ? (data.events || []).filter((event) => !String(event.type || "").startsWith("NOTE_"))
+      : data.events,
     followUps: req.auth.role === "frontdesk" ? [] : data.followUps,
-    clientAppointmentNotes,
+    clientNotes,
   };
 }
 

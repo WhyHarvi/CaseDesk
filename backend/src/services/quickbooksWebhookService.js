@@ -13,7 +13,7 @@ import { lockSchedulingTransaction } from "./schedulingAssignmentService.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "./bookingNotificationService.js";
 import { appointmentReference, recordAppointmentEvent } from "./appointmentOperationsService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
-import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
+import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
@@ -390,6 +390,9 @@ async function processEvent(event) {
     if (hold.status !== "AwaitingPayment") continue;
     if (!invoice || invoice.isVoided) {
       await prisma.bookingPaymentHold.updateMany({ where: { id: hold.id, status: "AwaitingPayment" }, data: { status: "Voided", voidedAt: new Date() } });
+      await captureAbandonedPublicBookingLead(hold.agencyId, hold.id).catch((error) => {
+        logger.warn("booking_payment_hold.abandoned_lead_capture_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+      });
       continue;
     }
     if (invoice.balance <= 0) {
@@ -571,6 +574,9 @@ export async function reconcilePaymentHold(agencyId, holdId, { allowExpired = fa
       await prisma.bookingPaymentHold.updateMany({
         where: { id: hold.id, agencyId, status: hold.status },
         data: { status: "Voided", voidedAt: new Date() },
+      });
+      await captureAbandonedPublicBookingLead(agencyId, hold.id).catch((error) => {
+        logger.warn("booking_payment_hold.abandoned_lead_capture_failed", { agencyId, holdId: hold.id, reason: error.message });
       });
       reconciliationChecks.delete(key);
       return prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });

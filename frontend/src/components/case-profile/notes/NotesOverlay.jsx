@@ -6,6 +6,7 @@ import api from "../../../services/api";
 import NoteCard from "./NoteCard";
 import NoteComposer from "./NoteComposer";
 import { useAuth } from "../../../auth/AuthContext";
+import NoteDeleteOverlay from "./NoteDeleteOverlay";
 
 export default function NotesOverlay({ caseItem, initialNotes = [], highlightNoteId = "", onNotesChange, onClose }) {
   const { role, appUser } = useAuth();
@@ -18,6 +19,8 @@ export default function NotesOverlay({ caseItem, initialNotes = [], highlightNot
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [deletingId, setDeletingId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
 
   const sortedNotes = useMemo(
     () => [...notes].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt)),
@@ -140,14 +143,15 @@ export default function NotesOverlay({ caseItem, initialNotes = [], highlightNot
   }
 
   async function deleteNote(note) {
-    if (!window.confirm("Delete this note?")) return;
     try {
       setDeletingId(note.id);
+      setDeleteError("");
       await api.delete(`/notes/${note.id}`);
       updateNotes(notes.filter((item) => item.id !== note.id));
+      setDeleteTarget(null);
       if (editingNote?.id === note.id) closeComposer();
     } catch (error) {
-      setLoadError(error.response?.data?.message || "Note could not be deleted.");
+      setDeleteError(error.response?.data?.message || "Note could not be archived.");
     } finally {
       setDeletingId("");
     }
@@ -175,13 +179,14 @@ export default function NotesOverlay({ caseItem, initialNotes = [], highlightNot
             {loading && !notes.length ? (
               <div className="flex min-h-56 items-center justify-center"><LoaderCircle className="h-6 w-6 animate-spin text-slate-400" /></div>
             ) : sortedNotes.length ? (
-              <div className="space-y-3">{sortedNotes.map((note) => <div id={`case-note-${note.id}`} key={note.id} className={note.id === highlightNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}><NoteCard note={note} canManage={role === "admin" || note.user?.id === appUser?.id} deleting={deletingId === note.id} onEdit={openEdit} onDelete={deleteNote} /></div>)}</div>
+              <div className="space-y-3">{sortedNotes.map((note) => <div id={`case-note-${note.id}`} key={note.id} className={note.id === highlightNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}><NoteCard note={note} canManage={role === "admin" || note.user?.id === appUser?.id} deleting={deletingId === note.id} onEdit={openEdit} onDelete={(item) => { setDeleteError(""); setDeleteTarget(item); }} /></div>)}</div>
             ) : !loadError ? (
               <div className="rounded-[1.75rem] border border-dashed border-slate-200 bg-white/55 px-6 py-12 text-center"><div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm"><MessageSquareText className="h-5 w-5" /></div><h3 className="mt-4 text-sm font-semibold text-slate-900">No case notes yet</h3><p className="mt-1 text-sm text-slate-400">Add a private note for the consulting team.</p><button type="button" onClick={openCreate} className="mt-5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">Add first note</button></div>
             ) : null}
           </div>
         </div>
       </motion.section>
+      <NoteDeleteOverlay note={deleteTarget} busy={Boolean(deletingId)} error={deleteError} onClose={() => !deletingId && setDeleteTarget(null)} onConfirm={() => deleteNote(deleteTarget)} />
     </motion.div>,
     document.body,
   );

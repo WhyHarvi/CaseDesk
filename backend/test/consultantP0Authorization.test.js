@@ -36,14 +36,27 @@ test("follow-up writes validate accessible relations and active internal assigne
 });
 
 test("consultants can mutate only notes they authored", async () => {
-  const [controller, overlay, card] = await Promise.all([
+  const [controller, routes, overlay, appointmentOverlay, clientProfile, card, schema, migration] = await Promise.all([
     source("../src/controllers/noteController.js"),
+    source("../src/routes/noteRoutes.js"),
     source("../../frontend/src/components/case-profile/notes/NotesOverlay.jsx"),
+    source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
     source("../../frontend/src/components/case-profile/notes/NoteCard.jsx"),
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260803150000_note_soft_delete/migration.sql"),
   ]);
   assert.match(controller, /note\.userId !== req\.auth\.userId/);
   assert.match(controller, /You can only change notes that you created/);
   assert.match(controller, /req\.body = \{ content \}/);
+  assert.match(controller, /deletedAt: new Date\(\)/);
+  assert.match(controller, /type: "NOTE_UPDATED"/);
+  assert.match(controller, /type: "NOTE_ARCHIVED"/);
+  assert.match(routes, /requireRole\("admin", "consultant"\)/);
   assert.match(overlay, /role === "admin" \|\| note\.user\?\.id === appUser\?\.id/);
+  assert.match(appointmentOverlay, /role === "admin" \|\| item\.user\?\.id === appUser\?\.id/);
+  assert.match(clientProfile, /role === "admin" \|\| note\.user\?\.id === appUser\?\.id/);
   assert.match(card, /canManage \?/);
+  assert.match(schema, /deletedAt\s+DateTime\?/);
+  assert.match(migration, /ADD COLUMN "deleted_at"/);
 });

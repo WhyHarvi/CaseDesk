@@ -24,6 +24,7 @@ import ClientAppointmentsCard from "../components/appointments/ClientAppointment
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import ClientBillingCard from "../components/clients/ClientBillingCard";
 import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
+import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
 
 const defaultNoteFormState = {
   content: "",
@@ -193,7 +194,7 @@ function NoteForm({
   );
 }
 
-function NoteCard({ note, onEdit, onDelete, deletingId }) {
+function NoteCard({ note, canManage, onEdit, onDelete, deletingId }) {
   return (
     <div className="rounded-[1.5rem] border border-slate-100 bg-slate-50/90 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -205,7 +206,7 @@ function NoteCard({ note, onEdit, onDelete, deletingId }) {
             {formatDateTime(note.createdAt)}
           </p>
         </div>
-        <div className="flex items-start gap-2">
+        {canManage ? <div className="flex items-start gap-2">
           <button
             type="button"
             onClick={() => onEdit(note)}
@@ -223,7 +224,7 @@ function NoteCard({ note, onEdit, onDelete, deletingId }) {
           >
             <Trash2 className="h-4 w-4" />
           </button>
-        </div>
+        </div> : null}
       </div>
 
       <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
@@ -284,7 +285,7 @@ function CaseRow({ item, isPrimary = false }) {
 export default function ClientProfile() {
   const { id } = useParams();
   const location = useLocation();
-  const { role } = useAuth();
+  const { role, appUser } = useAuth();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -294,6 +295,7 @@ export default function ClientProfile() {
   const [noteFormError, setNoteFormError] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState("");
+  const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
 
@@ -423,16 +425,11 @@ export default function ClientProfile() {
   }
 
   async function handleDeleteNote(note) {
-    const confirmed = window.confirm("Delete this note?");
-
-    if (!confirmed) {
-      return;
-    }
-
     try {
       setDeletingNoteId(note.id);
       await api.delete(`/notes/${note.id}`);
       await loadClient();
+      setDeleteNoteTarget(null);
 
       if (editingNote?.id === note.id) {
         resetNoteForm();
@@ -534,6 +531,13 @@ export default function ClientProfile() {
           onChanged={loadClient}
         />
       ) : null}
+      <NoteDeleteOverlay
+        note={deleteNoteTarget}
+        busy={Boolean(deletingNoteId)}
+        error={noteFormError}
+        onClose={() => { if (!deletingNoteId) { setDeleteNoteTarget(null); setNoteFormError(""); } }}
+        onConfirm={() => handleDeleteNote(deleteNoteTarget)}
+      />
 
       {showNoteForm ? (
         <NoteForm
@@ -805,7 +809,7 @@ export default function ClientProfile() {
 
             <ClientBillingCard clientId={client.id} onOpenStatement={() => setStatementOpen(true)} />
 
-            <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
+            {role !== "frontdesk" ? <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">
@@ -845,8 +849,9 @@ export default function ClientProfile() {
                       ) : null}
                       <NoteCard
                         note={note}
+                        canManage={role === "admin" || note.user?.id === appUser?.id}
                         onEdit={openEditNoteForm}
-                        onDelete={handleDeleteNote}
+                        onDelete={(item) => { setNoteFormError(""); setDeleteNoteTarget(item); }}
                         deletingId={deletingNoteId}
                       />
                     </div>
@@ -855,7 +860,7 @@ export default function ClientProfile() {
                   <EmptyState message="No profile notes yet." />
                 )}
               </div>
-            </article>
+            </article> : null}
           </div>
         </section>
       </div>

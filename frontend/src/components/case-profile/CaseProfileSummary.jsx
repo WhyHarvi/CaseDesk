@@ -137,7 +137,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
             }}
           />
           <SimpleActionPill icon={UserRound} label="Applicants" onClick={onOpenApplicants} />
-          <SimpleActionPill icon={Pencil} label="Notes" onClick={onOpenNotes} />
+          {onOpenNotes ? <SimpleActionPill icon={Pencil} label="Notes" onClick={onOpenNotes} /> : null}
           <SimpleActionPill icon={History} label="Activities" onClick={onOpenActivities} />
           <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} />
           <SimpleActionPill icon={Clock3} label="Time entries" />

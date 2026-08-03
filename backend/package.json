@@ -22,6 +22,8 @@
     "case-easy:report:dry-run": "node scripts/importCaseEasyReport.js",
     "booking-invoices:backfill": "node scripts/backfillBookingInvoiceNumbers.js --apply",
     "booking-invoices:backfill:dry-run": "node scripts/backfillBookingInvoiceNumbers.js",
+    "abandoned-leads:backfill": "node scripts/backfillAbandonedBookingLeads.js --apply",
+    "abandoned-leads:backfill:dry-run": "node scripts/backfillAbandonedBookingLeads.js",
     "test": "node --test test/**/*.test.js",
     "load:test:intake": "node scripts/load-test-lead-intake.js"
   },

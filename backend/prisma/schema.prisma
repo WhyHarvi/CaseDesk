@@ -1048,7 +1048,8 @@ model User {
   assignedCaseAssignments              CaseAssignment[]                @relation("CaseAssignmentActor")
   assignedClients                      Client[]                        @relation("AssignedClientUser")
   assignedCases                        Case[]                          @relation("AssignedCaseUser")
-  notes                                Note[]
+  notes                                Note[]                          @relation("AuthoredNotes")
+  deletedNotes                         Note[]                          @relation("DeletedNotes")
   assignedFollowUps                    FollowUp[]                      @relation("AssignedFollowUpUser")
   activityLogs                         ActivityLog[]
   caseAssessments                      CaseAssessment[]
@@ -1749,6 +1750,11 @@ model BookingPaymentHold {
   // info either way. Read by confirmPaymentHold to link the eventual
   // Appointment to the right client instead of leaving it guest-only.
   clientId             String?             @map("client_id")
+  // Set once an abandoned (Expired/Voided, never-paid) public hold has been
+  // recovered into a Lead so staff can follow up — see
+  // captureAbandonedPublicBookingLead in lead.booking.js. Doubles as the
+  // idempotency marker: a hold with this set is never reprocessed.
+  leadId               String?             @map("lead_id")
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
   agency               Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1758,6 +1764,7 @@ model BookingPaymentHold {
   offerHold            BookingSlotHold?    @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
   createdBy            User?               @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
   client               Client?             @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  lead                 Lead?               @relation(fields: [leadId], references: [id], onDelete: SetNull)
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
@@ -1766,6 +1773,7 @@ model BookingPaymentHold {
   @@index([agencyId, assignedToId, startsAt, endsAt, status, expiresAt])
   @@index([agencyId, status, expiresAt])
   @@index([clientId])
+  @@index([leadId])
   @@map("booking_payment_holds")
 }
 
@@ -2793,21 +2801,26 @@ model Note {
   caseId        String?      @map("case_id")
   appointmentId String?      @map("appointment_id")
   userId        String?      @map("user_id")
+  deletedById   String?      @map("deleted_by_id")
   content       String
   clientVisible Boolean      @default(false) @map("client_visible")
+  deletedAt     DateTime?    @map("deleted_at")
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
   agency        Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   client        Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
   case          Case?        @relation(fields: [caseId], references: [id], onDelete: SetNull)
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user          User?        @relation("AuthoredNotes", fields: [userId], references: [id], onDelete: SetNull)
+  deletedBy     User?        @relation("DeletedNotes", fields: [deletedById], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([clientId])
   @@index([caseId])
   @@index([appointmentId])
   @@index([userId])
+  @@index([deletedById])
+  @@index([agencyId, deletedAt])
   @@map("notes")
 }
 
@@ -3054,6 +3067,7 @@ model Lead {
   incomingEvents           LeadIncomingEvent[]
   duplicateCandidates      LeadDuplicateCandidate[]
   importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
+  bookingPaymentHolds      BookingPaymentHold[]
 
   @@unique([agencyId, leadNumber])
   @@index([agencyId, status])

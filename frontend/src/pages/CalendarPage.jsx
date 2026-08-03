@@ -1075,7 +1075,7 @@ export default function CalendarPage() {
   );
 
   const visible = useMemo(
-    () => appointments.filter((item) => item.status === "Scheduled" && (!staffFilter || item.assignedTo?.id === staffFilter)),
+    () => appointments.filter((item) => ["Scheduled", "Completed"].includes(item.status) && (!staffFilter || item.assignedTo?.id === staffFilter)),
     [appointments, staffFilter],
   );
 
@@ -1244,6 +1244,7 @@ export default function CalendarPage() {
                         const isNarrowWeekPill = view === "week" && columns > 1;
                         const tone = toneFor(item);
                         const isSelected = selected?.id === item.id;
+                        const isDone = item.status === "Completed";
                         const displayName = item.client?.fullName || item.guestName || item.subject;
                         const outerGutter = 5;
                         const columnGap = 4;
@@ -1258,13 +1259,14 @@ export default function CalendarPage() {
                             key={item.id}
                             type="button"
                             onClick={() => setSelected(item)}
-                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}`}
-                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}`}
-                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isSelected ? "ring-2 ring-slate-950/70" : ""}`}
+                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : ""}`}
+                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : ""}`}
+                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""}`}
                             style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
-                            <p className={`w-full overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
-                              {displayName}
+                            <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
+                              {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
+                              <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
                             </p>
                             {!isCompact && !isNarrowWeekPill ? (
                               <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>

@@ -1,4 +1,5 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import prisma from "../../services/prisma/client.js";
 import { nextLeadNumber } from "./lead.repository.js";
 import { nextConsultationAction } from "./lead.service.js";
 import { leadConsultationAppointmentType, leadConsultationStatusForAppointment } from "../../services/leadConsultationAppointmentService.js";
@@ -191,4 +192,122 @@ export async function createOrLinkLeadForConsultation(tx, {
   });
 
   return { clientId: existingClient?.id || null, leadId: lead.id };
+}
+
+/**
+ * A public paid-booking visitor who never completes checkout leaves behind
+ * only a BookingPaymentHold — no Appointment is ever created for it (see
+ * createPaymentHoldForPublicBooking), so unlike createOrLinkLeadForConsultation
+ * above there's no appointment to hand this a scheduling snapshot or hang a
+ * LeadConsultation off of. Called once a hold has settled into a terminal
+ * unpaid state (Expired or Voided) from releaseExpiredPaymentHolds and both
+ * "invoice voided" branches in quickbooksWebhookService.js, so their contact
+ * info isn't simply lost.
+ */
+export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
+  return prisma.$transaction(async (tx) => {
+    // None of this function's callers check their own status-flip update's
+    // affected-row count before calling here, so two of them can race on the
+    // same hold (e.g. the webhook handler and a reconcile poll firing close
+    // together) — this lock plus the re-fetch-and-check below is what
+    // actually prevents a duplicate Lead, not just the leadId check alone.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`booking_payment_hold_lead:${holdId}`}, 0))`;
+
+    const hold = await tx.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+    if (!hold || hold.leadId || hold.source !== "Public" || hold.appointmentId || !["Expired", "Voided"].includes(hold.status)) {
+      return { leadId: hold?.leadId || null, created: false };
+    }
+
+    const phoneNormalized = normalizePhoneSafe(hold.guestPhone);
+    const now = new Date();
+
+    let existingLead = hold.guestEmailNormalized ? await tx.lead.findFirst({
+      where: { agencyId, deletedAt: null, status: "OPEN", emailNormalized: hold.guestEmailNormalized },
+      orderBy: { createdAt: "desc" },
+    }) : null;
+    if (!existingLead && phoneNormalized) {
+      existingLead = await tx.lead.findFirst({
+        where: { agencyId, deletedAt: null, status: "OPEN", phoneNormalized },
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
+    let lead = existingLead;
+    if (lead) {
+      await tx.leadActivity.create({
+        data: {
+          agencyId,
+          leadId: lead.id,
+          activityType: "INTERNAL_NOTE",
+          direction: "INTERNAL",
+          channel: "WEBSITE",
+          title: "Started but did not complete a paid consultation booking",
+          description: hold.notes || null,
+          metadata: { holdId },
+        },
+      });
+      if (!lead.nextActionAt || lead.nextActionAt > now) {
+        await tx.lead.update({
+          where: { id: lead.id },
+          data: { nextActionType: "CALL", nextActionDescription: "Follow up — payment wasn't completed for a requested consultation", nextActionAt: now, version: { increment: 1 } },
+        });
+        await tx.leadFollowUp.create({
+          data: { agencyId, leadId: lead.id, assignedUserId: lead.nextActionOwnerId || hold.assignedToId, type: "CALL", description: "Follow up — payment wasn't completed for a requested consultation", dueAt: now },
+        });
+      }
+    } else {
+      const source = await ensureBookingLeadSource(tx, agencyId, "Online Booking (Payment Abandoned)");
+      const leadNumber = await nextLeadNumber(tx, agencyId);
+      const nameParts = String(hold.guestName || "").trim().split(/\s+/);
+      lead = await tx.lead.create({
+        data: {
+          agencyId,
+          leadNumber,
+          firstName: nameParts[0] || hold.guestName,
+          lastName: nameParts.slice(1).join(" ") || null,
+          phone: hold.guestPhone,
+          phoneNormalized,
+          email: hold.guestEmail,
+          emailNormalized: hold.guestEmailNormalized,
+          initialMessage: hold.notes || null,
+          estimatedValue: hold.amount,
+          ownerUserId: hold.assignedToId,
+          originalSourceId: source.id,
+          status: "OPEN",
+          stage: "NEW",
+          priority: "NORMAL",
+          temperature: "WARM",
+          nextActionType: "CALL",
+          nextActionDescription: "Follow up — payment wasn't completed for a requested consultation",
+          nextActionAt: now,
+          nextActionOwnerId: hold.assignedToId,
+          // Deliberately not set: notificationScheduler.js fires a
+          // "first response breached" critical alert the moment
+          // firstContactDueAt is in the past, and there's no real SLA
+          // commitment for this lead type to breach — nextActionAt above
+          // already drives its own due-today follow-up correctly.
+          // createOrLinkLeadForConsultation (this file's sibling for
+          // confirmed bookings) leaves it unset for the same reason.
+        },
+      });
+      await tx.leadActivity.create({
+        data: {
+          agencyId,
+          leadId: lead.id,
+          activityType: "LEAD_CREATED",
+          direction: "INTERNAL",
+          channel: "WEBSITE",
+          title: "Lead created from an abandoned paid consultation booking",
+          metadata: { holdId },
+        },
+      });
+      await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, newStage: "NEW", reason: "Created from an abandoned paid consultation booking" } });
+      await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, newOwnerId: hold.assignedToId, assignmentType: "SYSTEM", reason: "Assigned to the requested consultant" } });
+      await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: hold.assignedToId, type: "CALL", description: "Follow up — payment wasn't completed for a requested consultation", dueAt: now } });
+      await tx.activityLog.create({ data: { agencyId, action: "lead.created_from_abandoned_booking", details: `Created ${leadNumber} from an abandoned paid consultation booking`, entityType: "lead", entityId: lead.id, metadata: { holdId } } });
+    }
+
+    await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { leadId: lead.id } });
+    return { leadId: lead.id, created: !existingLead };
+  });
 }

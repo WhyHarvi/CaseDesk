@@ -15,6 +15,7 @@ import {
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
+import { captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { paymentHoldMeetingFields } from "./bookingMeetingModeService.js";
 import { deliverBookingMessages, sendBookingMessages } from "./bookingNotificationService.js";
@@ -846,6 +847,9 @@ export async function releaseExpiredPaymentHolds() {
     // complete, so it's also the only place that can tell staff about it.
     await notifyExpiredHold(updated).catch((error) => {
       logger.warn("booking_payment_hold.expiry_notify_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+    });
+    await captureAbandonedPublicBookingLead(hold.agencyId, hold.id).catch((error) => {
+      logger.warn("booking_payment_hold.abandoned_lead_capture_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
     });
   }
   return expired.length;

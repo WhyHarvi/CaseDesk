@@ -70,6 +70,15 @@ export async function createAppointmentNote(id, content) {
   return response.data.data;
 }
 
+export async function updateAppointmentNote(id, content) {
+  const response = await api.patch(`/notes/${id}`, { content });
+  return response.data.data;
+}
+
+export async function archiveAppointmentNote(id) {
+  await api.delete(`/notes/${id}`);
+}
+
 export async function createAppointmentFollowUp(id, values) {
   const response = await api.post(`/appointments/${id}/follow-ups`, values);
   return response.data.data;
