@@ -28,6 +28,7 @@ import {
   getFreeConsultationEligibility,
   lookupBookingClients,
   getBookingPaymentHoldById,
+  getAppointmentRefundEstimate,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -44,6 +45,7 @@ router.get("/client-lookup", asyncHandler(lookupBookingClients));
 router.get("/payment-holds/:id", asyncHandler(getBookingPaymentHoldById));
 router.get("/appointments/registry", asyncHandler(listAppointmentRegistry));
 router.get("/appointments/:id/detail", asyncHandler(getAppointmentRegistryDetail));
+router.get("/appointments/:id/refund-estimate", asyncHandler(getAppointmentRefundEstimate));
 router.get("/blocks", asyncHandler(listSchedulingBlocks));
 router.post("/blocks", asyncHandler(createSchedulingBlock));
 router.delete("/blocks/:id", asyncHandler(deleteSchedulingBlock));

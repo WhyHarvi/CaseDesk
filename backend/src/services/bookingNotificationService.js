@@ -170,7 +170,16 @@ function detailRow(label, value) {
   return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${escapeHtml(value)}</td></tr>`;
 }
 
-export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null, payNowUrl = null, amount = null }) {
+function detailLinkRow(label, text, url) {
+  if (!text) return "";
+  const safeUrl = safeWebUrl(url);
+  const valueHtml = safeUrl
+    ? `<a href="${escapeHtml(safeUrl)}" style="color:#0f172a;text-decoration:underline">${escapeHtml(text)}</a>`
+    : escapeHtml(text);
+  return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${valueHtml}</td></tr>`;
+}
+
+export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null }) {
   const template = messageTemplates?.[kind] && typeof messageTemplates[kind] === "object" ? messageTemplates[kind] : {};
   const copy = { ...(KIND_COPY[kind] || KIND_COPY.booked), ...(template.subject ? { title: String(template.subject).slice(0, 140) } : {}), ...(template.intro ? { intro: String(template.intro).slice(0, 600) } : {}) };
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
@@ -227,6 +236,8 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
           <tr><td style="padding:23px 24px 8px"><p style="margin:0 0 20px;color:#0f172a;font-size:19px;font-weight:750;line-height:1.35">${escapeHtml(subject)}</p>
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
               ${kind === "payment_requested" && amount ? detailRow("Amount due", `$${Number(amount).toFixed(2)}`) : ""}
+              ${(kind === "booked" || kind === "cancelled") && amount ? detailRow("Amount paid", `$${Number(amount).toFixed(2)}`) : ""}
+              ${kind === "booked" && amount && invoiceUrl ? detailLinkRow("Receipt", "View invoice in QuickBooks", invoiceUrl) : ""}
               ${detailRow("Date", date)}
               ${detailRow("Time", `${time} (${timezoneLabel})`)}
               ${detailRow("Format", modeLabel)}
@@ -239,6 +250,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
         </table>
       </td></tr>
       ${kind !== "cancelled" && mode === MEETING_MODES.PHONE && phoneCallInstructions ? `<tr><td class="content-pad" style="padding:18px 34px 0"><div style="border-radius:18px;background:#eff6ff;border:1px solid #bfdbfe;padding:18px"><p style="margin:0;color:#1d4ed8;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">Phone appointment</p><p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">${escapeHtml(phoneCallInstructions)}</p></div></td></tr>` : ""}
+      ${kind === "cancelled" && refundEstimate ? `<tr><td class="content-pad" style="padding:18px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">About your refund</p><p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">You paid $${Number(refundEstimate.paid).toFixed(2)}. QuickBooks processing fees mean you'll receive approximately <strong>$${Number(refundEstimate.estimatedRefund).toFixed(2)}</strong> back, not the full amount. Our team will process this in QuickBooks and follow up.</p></div></td></tr>` : ""}
       ${primaryUrl ? `<tr><td class="content-pad" style="padding:18px 34px 0"><a class="action-button" href="${escapeHtml(primaryUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(primaryLabel)} &nbsp;→</a>${showManageButton ? `<a class="action-button secondary-action" href="${escapeHtml(safeManageUrl)}" style="display:inline-block;margin-left:10px;color:#334155;text-decoration:none;padding:13px 8px;font-size:14px;font-weight:700">Reschedule or cancel</a>` : ""}</td></tr>` : ""}
       ${kind !== "cancelled" && (appointment.sessionType?.preparationInstructions || appointment.sessionType?.preparationChecklist?.length || (appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON)) ? `<tr><td class="content-pad" style="padding:22px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">Before your appointment</p>${appointment.sessionType?.preparationInstructions ? `<p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">${escapeHtml(appointment.sessionType.preparationInstructions)}</p>` : ""}${appointment.sessionType?.preparationChecklist?.length ? `<ul style="margin:9px 0 0;padding-left:20px;color:#475569;font-size:14px;line-height:1.7">${appointment.sessionType.preparationChecklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}${appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON ? `<p style="margin:9px 0 0;color:#64748b;font-size:13px;line-height:1.5"><strong>Arrival:</strong> ${escapeHtml(appointment.sessionType.parkingInstructions)}</p>` : ""}</div></td></tr>` : ""}
       <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : "A calendar file is attached so you can add this appointment to your calendar."}</p></td></tr>
@@ -264,6 +276,9 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     subject,
     kind === "payment_requested" && amount ? `Amount due: $${Number(amount).toFixed(2)}` : null,
     kind === "payment_requested" && safePayNowUrl ? `Pay now: ${safePayNowUrl}` : null,
+    (kind === "booked" || kind === "cancelled") && amount ? `Amount paid: $${Number(amount).toFixed(2)}` : null,
+    kind === "booked" && amount && invoiceUrl ? `Receipt: ${safeWebUrl(invoiceUrl)}` : null,
+    kind === "cancelled" && refundEstimate ? `About your refund: QuickBooks processing fees mean you'll receive approximately $${Number(refundEstimate.estimatedRefund).toFixed(2)} back, not the full amount. Our team will process this in QuickBooks and follow up.` : null,
     `Date: ${date}`,
     `Time: ${time} (${timezoneLabel})`,
     `Format: ${modeLabel}`,
@@ -337,7 +352,7 @@ async function bookingDeliveryAllowed(deliveryId, appointmentId) {
   return Boolean(delivery && bookingDeliveryIsCurrent(delivery, appointment));
 }
 
-export async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null, payNowUrl = null, amount = null, includeIcs = true }) {
+export async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null, includeIcs = true }) {
   const [agency, settings] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
@@ -355,7 +370,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
       const transport = createMailTransport(config);
       const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
       const avatarCid = avatarBuffer ? `workspace-avatar-${appointment.id}-${kind}@casedesk` : null;
-      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions, payNowUrl, amount });
+      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions, payNowUrl, amount, invoiceUrl, refundEstimate });
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await transport.sendMail({
         from: config.from,
@@ -464,7 +479,7 @@ export async function cancelQueuedBookingReminders(appointmentIds, db = prisma) 
   return result.count;
 }
 
-export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma, payNowUrl = null, amount = null }) {
+export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null }) {
   if (kind === "cancelled") await cancelQueuedBookingReminders(appointment.id, db);
   const contact = recipientContact(appointment);
   const startsAtVersion = new Date(appointment.startsAt).toISOString();
@@ -483,7 +498,7 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
         channel: job.channel,
         recipient: job.recipient,
         dedupeKey: `${appointment.id}:${kind}:${job.channel}:${revision}${dedupeSuffix ? `:${dedupeSuffix}` : ""}`,
-        payload: { actorUserId, dedupeSuffix, appointmentStartsAt: startsAtVersion, appointmentRevision: revision, ...(payNowUrl ? { payNowUrl } : {}), ...(amount != null ? { amount } : {}) },
+        payload: { actorUserId, dedupeSuffix, appointmentStartsAt: startsAtVersion, appointmentRevision: revision, ...(payNowUrl ? { payNowUrl } : {}), ...(amount != null ? { amount } : {}), ...(invoiceUrl ? { invoiceUrl } : {}), ...(refundEstimate ? { refundEstimate } : {}) },
       })),
       skipDuplicates: true,
     });
@@ -577,6 +592,8 @@ async function processBookingDeliveryPass() {
           deliveryId: job.id,
           payNowUrl: job.payload?.payNowUrl || null,
           amount: job.payload?.amount ?? null,
+          invoiceUrl: job.payload?.invoiceUrl || null,
+          refundEstimate: job.payload?.refundEstimate || null,
         });
         if (delivery?.suppressed) {
           await prisma.bookingMessageDelivery.updateMany({

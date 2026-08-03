@@ -2,6 +2,7 @@ import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 import { listFeeCategories } from "./feeCategoryService.js";
+import { quickBooksAppUrl } from "./quickbooksService.js";
 
 const MAX_ROWS_PER_SOURCE = 1000;
 
@@ -44,6 +45,7 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
     const status = normalizeCaseInvoiceStatus(row.status);
     return {
       id: `case_invoice:${row.id}`,
+      recordId: row.id,
       source: "case_invoice",
       type: labels.get(row.paymentType) || CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
       description: row.description,
@@ -56,6 +58,7 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       status,
       qbInvoiceNumber: row.qbInvoiceNumber,
       qbInvoiceLink: row.qbInvoiceLink,
+      qbRefundUrl: quickBooksAppUrl("invoice", row.qbInvoiceId),
       createdAt: row.createdAt,
       paidAt: status === "Paid" ? row.updatedAt : null,
       dueDate: row.dueDate,
@@ -68,18 +71,25 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
     include: {
       client: { select: { fullName: true } },
-      appointment: { select: { status: true, clientId: true, client: { select: { fullName: true } } } },
+      appointment: { select: { id: true, status: true, clientId: true, startsAt: true, client: { select: { fullName: true } } } },
     },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
   });
   return rows.map((row) => ({
     id: `booking_payment:${row.id}`,
+    recordId: row.id,
     source: "booking_payment",
     type: row.source === "WalkIn" ? "Consultation (walk-in)" : "Consultation booking",
     description: `Consultation fee${row.paymentMethod ? ` · ${row.paymentMethod === "ETransfer" ? "E-transfer" : row.paymentMethod}` : ""}`,
     clientName: row.client?.fullName || row.appointment?.client?.fullName || row.guestName,
     clientId: row.clientId || row.appointment?.clientId || null,
+    // A hold only gets a linked appointment once payment is confirmed —
+    // an AwaitingPayment hold has neither, so "what this payment is about"
+    // falls back to the client (or is simply not clickable, on the
+    // frontend, if there's no client either).
+    appointmentId: row.appointmentId,
+    appointmentStartsAt: row.appointment?.startsAt || null,
     caseId: null,
     caseType: null,
     amount: Number(row.amount),
@@ -114,6 +124,7 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     qbInvoiceNumber: row.qbInvoiceNumber,
     qbInvoiceLink: row.qbInvoiceLink,
     qbPaymentId: row.qbPaymentId,
+    qbRefundUrl: quickBooksAppUrl("recvpayment", row.qbPaymentId) || quickBooksAppUrl("invoice", row.qbInvoiceId),
     paymentMethod: row.paymentMethod === "ETransfer" ? "E-transfer" : row.paymentMethod,
     paymentNote: row.manualPaymentNote,
     createdAt: row.createdAt,
@@ -131,6 +142,7 @@ async function fetchLegacyPaymentRows(agencyId, { from, to }) {
   });
   return rows.map((row) => ({
     id: `legacy_payment:${row.id}`,
+    recordId: row.id,
     source: "legacy_payment",
     type: "Retainer (legacy)",
     description: row.notes || "Retainer payment",
@@ -143,6 +155,9 @@ async function fetchLegacyPaymentRows(agencyId, { from, to }) {
     status: normalizeLegacyStatus(row.status),
     qbInvoiceNumber: null,
     qbInvoiceLink: null,
+    // Legacy retainer payments predate the QuickBooks integration — there's
+    // no QuickBooks transaction to navigate to for these.
+    qbRefundUrl: null,
     createdAt: row.createdAt,
     paidAt: Number(row.balance) <= 0 ? row.updatedAt : null,
     dueDate: null,

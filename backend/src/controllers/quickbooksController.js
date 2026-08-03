@@ -110,9 +110,13 @@ export async function createQuickBooksMappingItem(req, res) {
 export async function getQuickBooksMapping(req, res) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
     where: { agencyId: req.auth.agencyId },
-    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true },
+    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true, refundFeeRatePercent: true },
   });
-  res.json({ data: settings || { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null } });
+  res.json({
+    data: settings
+      ? { ...settings, refundFeeRatePercent: Number(settings.refundFeeRatePercent) }
+      : { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null, refundFeeRatePercent: null },
+  });
 }
 
 export async function updateQuickBooksMapping(req, res) {
@@ -120,7 +124,11 @@ export async function updateQuickBooksMapping(req, res) {
   const feeItemId = req.body?.feeItemId !== undefined ? String(req.body.feeItemId || "").trim() || null : undefined;
   const disbursementItemId = req.body?.disbursementItemId !== undefined ? String(req.body.disbursementItemId || "").trim() || null : undefined;
   const consultFeeItemId = req.body?.consultFeeItemId !== undefined ? String(req.body.consultFeeItemId || "").trim() || null : undefined;
-  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined) {
+  const refundFeeRatePercent = req.body?.refundFeeRatePercent !== undefined ? Number(req.body.refundFeeRatePercent) : undefined;
+  if (refundFeeRatePercent !== undefined && (!Number.isFinite(refundFeeRatePercent) || refundFeeRatePercent < 0 || refundFeeRatePercent > 20)) {
+    throw createHttpError(400, "Enter a refund fee rate between 0% and 20%.", "VALIDATION_ERROR");
+  }
+  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined && refundFeeRatePercent === undefined) {
     throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
   }
 
@@ -140,6 +148,7 @@ export async function updateQuickBooksMapping(req, res) {
     ...(feeItemId !== undefined ? { feeItemId, feeItemName: feeItemId ? byId.get(feeItemId).name : null } : {}),
     ...(disbursementItemId !== undefined ? { disbursementItemId, disbursementItemName: disbursementItemId ? byId.get(disbursementItemId).name : null } : {}),
     ...(consultFeeItemId !== undefined ? { consultFeeItemId, consultFeeItemName: consultFeeItemId ? byId.get(consultFeeItemId).name : null } : {}),
+    ...(refundFeeRatePercent !== undefined ? { refundFeeRatePercent } : {}),
   };
   const settings = await prisma.agencyQuickBooksSettings.update({ where: { agencyId: req.auth.agencyId }, data });
   const categoryUpdates = [];
@@ -153,7 +162,7 @@ export async function updateQuickBooksMapping(req, res) {
     action: "quickbooks.mapping_updated",
     details: "Payment account mapping updated",
   }).catch(() => {});
-  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName } });
+  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName, refundFeeRatePercent: Number(settings.refundFeeRatePercent) } });
 }
 
 export async function disconnectQuickBooks(req, res) {

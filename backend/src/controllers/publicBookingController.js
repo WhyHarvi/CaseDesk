@@ -33,6 +33,7 @@ import {
   normalizeMeetingMode,
 } from "../services/bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
+import { estimateRefundAfterFees, refundFeeRateForAgency } from "../services/refundFeeEstimateService.js";
 import { syncLeadConsultationFromAppointment } from "../services/leadConsultationAppointmentService.js";
 import { assertZoomOperational } from "../services/zoomService.js";
 
@@ -663,8 +664,14 @@ function publicView(appointment, settings) {
 
 export async function getManagedBooking(req, res) {
   const appointment = await resolveManaged(req.params.manageToken);
-  const settings = await prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } });
-  res.json({ data: publicView(appointment, settings) });
+  const [settings, paidHold, feeRate] = await Promise.all([
+    prisma.bookingSettings.findUnique({ where: { agencyId: appointment.agencyId } }),
+    appointment.status === "Scheduled"
+      ? prisma.bookingPaymentHold.findFirst({ where: { agencyId: appointment.agencyId, appointmentId: appointment.id, status: "Paid" }, select: { amount: true } })
+      : null,
+    refundFeeRateForAgency(appointment.agencyId),
+  ]);
+  res.json({ data: { ...publicView(appointment, settings), refundEstimate: paidHold ? estimateRefundAfterFees(paidHold.amount, feeRate) : null } });
 }
 
 export async function getManagedAvailability(req, res) {

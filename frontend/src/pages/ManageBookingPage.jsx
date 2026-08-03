@@ -22,6 +22,7 @@ import {
   rescheduleManagedBooking,
 } from "../api/bookingApi";
 import { BookingMonthPicker, PublicShell } from "./PublicBookingPage";
+import RefundFeeNotice from "../components/booking/RefundFeeNotice";
 
 function formatWhen(value, timezone) {
   return `${new Date(value).toLocaleDateString("en-CA", { timeZone: timezone, weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${new Date(value).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}`;
@@ -397,6 +398,11 @@ export default function ManageBookingPage() {
               <span className="mx-1.5 text-slate-300">·</span>
               {formatWhen(booking.startsAt, booking.timezone)}
             </p>
+            {booking.refundEstimate ? (
+              <div className="mt-4 text-left">
+                <RefundFeeNotice estimate={booking.refundEstimate} audience="client" />
+              </div>
+            ) : null}
             <textarea
               value={cancelReason}
               onChange={(event) => setCancelReason(event.target.value)}

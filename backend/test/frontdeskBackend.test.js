@@ -6,10 +6,10 @@ import { parseLeadActivity, parseLeadAssignment, parseLeadFollowUp, parseLeadFol
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
-test("front desk receives assignment-scoped lead access without changing consultant scope", () => {
+test("front desk receives agency-wide lead access without changing consultant scope", () => {
   assert.deepEqual(leadAccessWhere({ auth: { role: "admin", userId: "admin-1" } }), {});
   assert.deepEqual(leadAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }), { ownerUserId: "consultant-1" });
-  assert.deepEqual(leadAccessWhere({ auth: { role: "frontdesk", userId: "frontdesk-1" } }), { OR: [{ ownerUserId: "frontdesk-1" }, { nextActionOwnerId: "frontdesk-1" }] });
+  assert.deepEqual(leadAccessWhere({ auth: { role: "frontdesk", userId: "frontdesk-1" } }), {});
   assert.equal(canCreateLead({ auth: { role: "frontdesk" } }), true);
   assert.equal(canCreateLead({ auth: { role: "client" } }), false);
 });
@@ -66,7 +66,7 @@ test("team member administration supports consultant and front desk without expo
   assert.match(routes, /"\/team-members"/);
   assert.match(controller, /managedRoles = new Set\(\["consultant", "frontdesk"\]\)/);
   assert.match(controller, /Role must be consultant or frontdesk/);
-  assert.match(controller, /leadAccess: "assigned"/);
+  assert.match(controller, /leadAccess: "all"/);
   assert.match(controller, /ROLE_CHANGE_NOT_ALLOWED/);
   assert.match(controller, /ACTIVE_ASSIGNMENTS/);
   assert.doesNotMatch(controller, /managedRoles[^\n]*admin/);

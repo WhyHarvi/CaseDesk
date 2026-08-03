@@ -473,8 +473,8 @@ export async function getDashboardSummary(req, res) {
       recentActivity,
   };
   const [registry, analytics, waitlist] = await Promise.all([
-    buildAppointmentRegistry(req, { attendance: "all", range: "all", page: 1, limit: 6 }).catch(() => null),
-    req.auth.role === "admin" ? buildSchedulingAnalytics(req, { range: "all" }).catch(() => null) : Promise.resolve(null),
+    buildAppointmentRegistry(req, { attendance: "all", range: "today", page: 1, limit: 6 }).catch(() => null),
+    req.auth.role === "admin" ? buildSchedulingAnalytics(req, { range: "today" }).catch(() => null) : Promise.resolve(null),
     req.auth.role === "admin" ? buildBookingWaitlist(req, "Waiting").catch(() => null) : Promise.resolve(null),
   ]);
   data.scheduling = { registry, analytics, waitlist };

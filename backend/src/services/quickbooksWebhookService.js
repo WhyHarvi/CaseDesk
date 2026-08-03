@@ -6,6 +6,7 @@ import {
   getQuickBooksPayment,
   getQuickBooksRefundReceipt,
   listQuickBooksRefundReceiptsSince,
+  findQuickBooksPaymentIdForInvoice,
 } from "./quickbooksService.js";
 import { assertSlotAvailable } from "./bookingAvailabilityService.js";
 import { lockSchedulingTransaction } from "./schedulingAssignmentService.js";
@@ -619,6 +620,16 @@ export async function confirmPaymentHold(agencyId, holdId) {
 
   const hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
   if (!hold) return null;
+  // Best-effort — CaseDesk never created this Payment itself (the client
+  // paid through QuickBooks' own hosted invoice page), so this resolves
+  // which Payment record QuickBooks made for it. A failure here must never
+  // block confirming a payment that has genuinely already landed; it just
+  // means the "Refund in QuickBooks" link falls back to the Invoice screen
+  // instead of the more precise Payment screen.
+  const qbPaymentId = await findQuickBooksPaymentIdForInvoice(agencyId, hold.qbCustomerId, hold.qbInvoiceId).catch((error) => {
+    logger.warn("booking_payment_hold.payment_id_lookup_failed", { agencyId, holdId, reason: error.message });
+    return null;
+  });
   try {
     // Walk-in (front-desk) holds already have their Appointment — it was
     // created immediately through the normal staff booking flow, with no
@@ -626,7 +637,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
     // creating a second appointment or lead would be wrong here.
     if (hold.appointmentId) {
       const appointment = await prisma.$transaction(async (tx) => {
-        await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), paymentMethod: hold.paymentMethod || "Online" } });
+        await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), paymentMethod: hold.paymentMethod || "Online", ...(qbPaymentId ? { qbPaymentId } : {}) } });
         return tx.appointment.findUnique({ where: { id: hold.appointmentId }, include: { assignedTo: { select: { id: true, fullName: true } }, client: { select: { fullName: true, email: true, phone: true } } } });
       });
       await recordActivity({
@@ -731,11 +742,11 @@ export async function confirmPaymentHold(agencyId, holdId) {
         });
       }
       if (hold.meetingMode === MEETING_MODES.ZOOM) {
-        await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}` });
+        await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}`, amount: Number(hold.amount), invoiceUrl: hold.qbInvoiceLink });
       } else {
-        await sendBookingMessages({ agencyId, appointment: created, kind: "booked", db: tx });
+        await sendBookingMessages({ agencyId, appointment: created, kind: "booked", db: tx, amount: Number(hold.amount), invoiceUrl: hold.qbInvoiceLink });
       }
-      await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id, paymentMethod: hold.paymentMethod || "Online" } });
+      await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id, paymentMethod: hold.paymentMethod || "Online", ...(qbPaymentId ? { qbPaymentId } : {}) } });
       if (offerHold) {
         // Only now — payment genuinely confirmed and the appointment
         // genuinely created — is the waitlist offer actually fulfilled.
@@ -770,7 +781,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
     // appointment attached, and get a human involved immediately instead
     // of hiding it.
     if (error.code === "SLOT_CONFLICT_AT_CONFIRMATION") {
-      const orphaned = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), paymentMethod: hold.paymentMethod || "Online" } });
+      const orphaned = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), paymentMethod: hold.paymentMethod || "Online", ...(qbPaymentId ? { qbPaymentId } : {}) } });
       logger.warn("booking_payment_hold.confirmed_with_no_slot", { agencyId, holdId });
       await notifyOrphanedPayment(orphaned).catch((notifyError) => {
         logger.warn("booking_payment_hold.orphaned_notify_failed", { agencyId, holdId, reason: notifyError.message });

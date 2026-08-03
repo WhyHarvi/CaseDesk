@@ -27,32 +27,31 @@ function escapeHtml(value) {
 // Best-effort and fire-and-forget by design: a failed welcome message
 // should never block or fail lead intake itself, so every error here is
 // caught and logged, never thrown back to the caller.
-export async function sendLeadWelcomeEmail(agencyId, lead) {
+export async function sendLeadWelcomeEmail(agencyId, lead, dependencies = {}) {
   if (!lead?.email && !lead?.phone) return;
+  const db = dependencies.db || prisma;
+  const sendSms = dependencies.sendSms || sendAgencyOomaSms;
+  const resolveMailConfig = dependencies.resolveMailConfig || resolveAgencyMailConfig;
+  const makeMailTransport = dependencies.makeMailTransport || createMailTransport;
+  const channel = lead.email ? "email" : "sms";
+  const recipient = lead.email || lead.phone;
+  const dedupeKey = `lead-welcome:${lead.id}`;
+  let delivery = null;
   try {
     const [leadSettings, agency, bookingSettings] = await Promise.all([
-      prisma.leadSettings.findUnique({ where: { agencyId } }),
-      prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, phone: true, email: true } }),
-      prisma.bookingSettings.findUnique({ where: { agencyId } }),
+      db.leadSettings.findUnique({ where: { agencyId } }),
+      db.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, phone: true, email: true } }),
+      db.bookingSettings.findUnique({ where: { agencyId } }),
     ]);
-    if (leadSettings?.welcomeEmailEnabled === false) return;
-    if (!bookingSettings) return;
 
     const agencyName = agency?.legalName || agency?.name || "our team";
     const firstName = lead.firstName || "there";
-    const bookingUrl = publicBookingPageUrl(bookingSettings);
-
-    // No email on file — fall back to a text through the agency's Ooma
-    // line rather than sending the lead nothing at all.
-    if (!lead.email) {
-      const smsBody = `${agencyName}: Hi ${firstName}, thanks for reaching out — we've read what you shared and would love to help. Book a time here: ${bookingUrl}`;
-      await sendAgencyOomaSms({ agencyId, to: lead.phone, body: smsBody, idempotencyKey: `lead-welcome:${lead.id}` });
-      logger.info("lead.welcome_sms_sent", { agencyId, leadId: lead.id });
-      return;
-    }
-
-    const subject = `Thanks for reaching out to ${agencyName}`;
-    const text = [
+    const bookingUrl = bookingSettings ? publicBookingPageUrl(bookingSettings) : null;
+    const subject = channel === "email" ? `Thanks for reaching out to ${agencyName}` : null;
+    const smsBody = bookingUrl
+      ? `${agencyName}: Hi ${firstName}, thanks for reaching out — we've read what you shared and would love to help. Book a time here: ${bookingUrl}`
+      : null;
+    const text = bookingUrl ? [
       `Hi ${firstName},`,
       "",
       `Thanks for getting in touch with ${agencyName} — we've read through what you shared, and we'd be happy to go over it with you in more detail.`,
@@ -61,7 +60,65 @@ export async function sendLeadWelcomeEmail(agencyId, lead) {
       "",
       "Talk soon,",
       agencyName,
-    ].join("\n");
+    ].join("\n") : null;
+
+    delivery = await db.leadMessageDelivery.upsert({
+      where: { agencyId_dedupeKey: { agencyId, dedupeKey } },
+      create: {
+        agencyId,
+        leadId: lead.id,
+        kind: "welcome",
+        channel,
+        recipient,
+        status: "pending",
+        dedupeKey,
+        subject,
+        body: channel === "sms" ? smsBody : text,
+        sourceChannel: lead.sourceChannel || null,
+        payload: { automated: true },
+      },
+      update: {},
+    });
+
+    // Intake events are idempotent. Never send the same welcome twice if a
+    // worker is restarted or an already-processed event is encountered again.
+    if (delivery.status !== "pending") return delivery;
+
+    if (leadSettings?.welcomeEmailEnabled === false || !bookingSettings) {
+      const reason = leadSettings?.welcomeEmailEnabled === false
+        ? "Automatic welcome messages are turned off in Lead Settings."
+        : "Public booking settings are unavailable, so a booking link could not be generated.";
+      return db.leadMessageDelivery.update({
+        where: { id: delivery.id },
+        data: { status: "skipped", lastError: reason },
+      });
+    }
+
+    const claimed = await db.leadMessageDelivery.updateMany({
+      where: { id: delivery.id, status: "pending" },
+      data: { status: "sending", attempts: { increment: 1 }, lastError: null },
+    });
+    if (!claimed.count) return delivery;
+
+    // No email on file — fall back to a text through the agency's Ooma
+    // line rather than sending the lead nothing at all.
+    if (!lead.email) {
+      const result = await sendSms({ agencyId, to: lead.phone, body: smsBody, idempotencyKey: dedupeKey });
+      const sent = await db.leadMessageDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          status: "sent",
+          sentAt: new Date(),
+          failedAt: null,
+          provider: result?.provider || "Ooma",
+          providerId: result?.id ? String(result.id) : null,
+          lastError: null,
+        },
+      });
+      logger.info("lead.welcome_sms_sent", { agencyId, leadId: lead.id });
+      return sent;
+    }
+
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
 <body style="margin:0;padding:0;background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
@@ -80,11 +137,34 @@ export async function sendLeadWelcomeEmail(agencyId, lead) {
   </td></tr></table>
 </body></html>`;
 
-    const config = await resolveAgencyMailConfig(agencyId);
-    const transport = createMailTransport(config);
-    await transport.sendMail({ from: config.from, to: lead.email, subject, text, html });
+    const config = await resolveMailConfig(agencyId);
+    const transport = makeMailTransport(config);
+    const result = await transport.sendMail({ from: config.from, to: lead.email, subject, text, html });
+    const sent = await db.leadMessageDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: "sent",
+        sentAt: new Date(),
+        failedAt: null,
+        provider: "Agency email",
+        providerId: result?.messageId ? String(result.messageId) : null,
+        lastError: null,
+      },
+    });
     logger.info("lead.welcome_email_sent", { agencyId, leadId: lead.id });
+    return sent;
   } catch (error) {
+    if (delivery?.id) {
+      await db.leadMessageDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          status: "failed",
+          failedAt: new Date(),
+          lastError: String(error?.message || "Welcome message delivery failed").slice(0, 1000),
+        },
+      }).catch(() => {});
+    }
     logger.warn("lead.welcome_message_failed", { agencyId, leadId: lead.id, reason: error.message });
+    return null;
   }
 }

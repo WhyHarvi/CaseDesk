@@ -33,6 +33,8 @@ export async function enqueueAppointmentMeetingJob(db, {
   providerMeetingId = null,
   forceCreate = false,
   dedupeSuffix = "",
+  amount = null,
+  invoiceUrl = null,
 }) {
   if (!appointment?.id || !appointment?.agencyId) return null;
   const dedupeKey = [
@@ -49,6 +51,8 @@ export async function enqueueAppointmentMeetingJob(db, {
     providerMeetingId,
     forceCreate,
     dedupeSuffix,
+    ...(amount != null ? { amount } : {}),
+    ...(invoiceUrl ? { invoiceUrl } : {}),
   };
   if (action === "SYNC") {
     // Only the newest pending revision should run. This is especially
@@ -295,6 +299,8 @@ async function processSync(job, appointment) {
       actorUserId: job.payload.actorUserId || null,
       dedupeSuffix: job.payload.dedupeSuffix || "",
       db: tx,
+      amount: job.payload?.amount ?? null,
+      invoiceUrl: job.payload?.invoiceUrl || null,
     });
     return { saved: true, updated, notificationQueued: true };
   });

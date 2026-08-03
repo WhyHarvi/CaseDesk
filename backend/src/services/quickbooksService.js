@@ -23,6 +23,18 @@ export function quickBooksApiBase() {
     : "https://quickbooks.api.intuit.com";
 }
 
+// Browser-facing QuickBooks Online app URLs (app.qbo.intuit.com), not the
+// API host above — opens directly on the transaction screen for a staff
+// member already logged into the agency's QuickBooks company. CaseDesk
+// never calls a refund API itself; this is navigation only, so staff can
+// issue the refund in QuickBooks in a couple of clicks instead of
+// searching for the transaction.
+export function quickBooksAppUrl(kind, txnId) {
+  if (!txnId) return null;
+  const path = kind === "invoice" ? "invoice" : "recvpayment";
+  return `https://app.qbo.intuit.com/app/${path}?txnId=${encodeURIComponent(txnId)}`;
+}
+
 function stateSecret() {
   return String(process.env.MAIL_SETTINGS_ENCRYPTION_KEY || process.env.QBO_CLIENT_SECRET || "casedesk");
 }
@@ -546,6 +558,23 @@ function mapQuickBooksPaymentForLedger(payment) {
 export async function listQuickBooksPaymentsForCustomer(agencyId, customerId) {
   const rows = await queryAllQuickBooksCustomerTransactions(agencyId, "Payment", customerId);
   return rows.map(mapQuickBooksPaymentForLedger);
+}
+
+// QuickBooks creates the Payment itself when a client pays through the
+// hosted invoice link — CaseDesk only finds out the invoice's balance
+// dropped to zero, never which Payment record did it, so qbPaymentId was
+// never captured for online payments (only the staff-recorded walk-in
+// cash/e-transfer path creates the Payment directly and already knows its
+// id). Without qbPaymentId, "Refund in QuickBooks" could only link to the
+// Invoice screen, which doesn't pre-fill a refund — this resolves the
+// actual Payment so that link lands on the Receive Payment screen instead,
+// where QuickBooks' own Refund action is pre-filled with the right
+// customer and amount.
+export async function findQuickBooksPaymentIdForInvoice(agencyId, customerId, invoiceId) {
+  if (!customerId || !invoiceId) return null;
+  const payments = await listQuickBooksPaymentsForCustomer(agencyId, customerId);
+  const match = payments.find((payment) => payment.allocations.some((allocation) => allocation.invoiceId === invoiceId));
+  return match?.id || null;
 }
 
 export async function listQuickBooksInvoicesForCustomer(agencyId, customerId) {

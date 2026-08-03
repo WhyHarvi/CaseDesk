@@ -577,6 +577,7 @@ model Agency {
   leadCampaigns                  LeadCampaign[]
   leads                          Lead[]
   leadActivities                 LeadActivity[]
+  leadMessageDeliveries          LeadMessageDelivery[]
   leadStageHistory               LeadStageHistory[]
   leadAssignmentHistory          LeadAssignmentHistory[]
   leadFollowUps                  LeadFollowUp[]
@@ -864,6 +865,11 @@ model AgencyQuickBooksSettings {
   disbursementItemName  String?  @map("disbursement_item_name")
   consultFeeItemId      String?  @map("consult_fee_item_id")
   consultFeeItemName    String?  @map("consult_fee_item_name")
+  // Percent, not a fraction (2.99 means 2.99%) — matches how an admin
+  // reads it off their QuickBooks Payments account rate. Applied twice
+  // when estimating a refund (original charge's fee, never returned, plus
+  // a new fee on the refund itself) — see refundFeeEstimateService.js.
+  refundFeeRatePercent  Decimal  @default(2.99) @db.Decimal(5, 3) @map("refund_fee_rate_percent")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
   agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -3036,6 +3042,7 @@ model Lead {
   convertedClient          Client?                  @relation("LeadConvertedClient", fields: [convertedClientId], references: [id], onDelete: SetNull)
   convertedCase            Case?                    @relation("LeadConvertedCase", fields: [convertedCaseId], references: [id], onDelete: SetNull)
   activities               LeadActivity[]
+  messageDeliveries        LeadMessageDelivery[]
   stageHistory             LeadStageHistory[]
   assignmentHistory        LeadAssignmentHistory[]
   followUps                LeadFollowUp[]
@@ -3084,6 +3091,36 @@ model LeadActivity {
   @@index([agencyId, leadId, occurredAt])
   @@index([agencyId, activityType, occurredAt])
   @@map("lead_activities")
+}
+
+model LeadMessageDelivery {
+  id            String    @id @default(uuid())
+  agencyId      String    @map("agency_id")
+  leadId        String    @map("lead_id")
+  kind          String
+  channel       String
+  recipient     String
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  sentAt        DateTime? @map("sent_at")
+  failedAt      DateTime? @map("failed_at")
+  provider      String?
+  providerId    String?   @map("provider_id")
+  lastError     String?   @map("last_error")
+  dedupeKey     String    @map("dedupe_key")
+  subject       String?
+  body          String?
+  sourceChannel String?   @map("source_channel")
+  payload       Json      @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  agency        Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead          Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, dedupeKey])
+  @@index([leadId, createdAt])
+  @@index([agencyId, status, createdAt])
+  @@map("lead_message_deliveries")
 }
 
 model LeadStageHistory {

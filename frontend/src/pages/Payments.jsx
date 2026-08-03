@@ -14,7 +14,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { getPaymentsOverview, getPaymentsOverviewSummary } from "../api/paymentsOverviewApi";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
@@ -58,6 +58,27 @@ const ORPHANED_PAYMENT_RUNBOOK = [
 function formatDate(value) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// "What this payment is about" — a consultation-booking hold points at the
+// appointment it paid for (once one exists; an AwaitingPayment hold has
+// none yet), a case invoice/legacy retainer points at the case's billing
+// tab, and anything without a case falls back to the client. Same
+// resolution regardless of source, per the "click a payment, land on the
+// exact thing it's for" ask.
+function paymentLink(row) {
+  if (row.source === "booking_payment") {
+    if (row.appointmentId) {
+      const date = row.appointmentStartsAt ? new Date(row.appointmentStartsAt).toISOString().slice(0, 10) : "";
+      return `/app/calendar?appointment=${row.appointmentId}${date ? `&date=${date}` : ""}`;
+    }
+    return row.clientId ? `/app/clients/${row.clientId}` : null;
+  }
+  if (row.source === "case_invoice" && row.caseId) {
+    return `/app/cases/${row.caseId}?tab=billing&highlight=${row.recordId}`;
+  }
+  if (row.caseId) return `/app/cases/${row.caseId}?tab=billing`;
+  return row.clientId ? `/app/clients/${row.clientId}` : null;
 }
 
 function paymentBalanceLabel(row) {
@@ -425,6 +446,7 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
 }
 
 export default function Payments() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
@@ -578,13 +600,18 @@ export default function Payments() {
                 ) : rows?.length ? (
                   rows.map((row, index) => {
                     const Icon = SOURCE_ICON[row.source] || Banknote;
+                    const to = paymentLink(row);
                     return (
                       <motion.tr
                         key={row.id}
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: Math.min(index * 0.03, 0.3), duration: 0.25 }}
-                        className="border-t border-slate-100 text-[13px] text-slate-700 transition-colors hover:bg-sky-50/40"
+                        onClick={to ? () => navigate(to) : undefined}
+                        className={cx(
+                          "border-t border-slate-100 text-[13px] text-slate-700 transition-colors hover:bg-sky-50/40",
+                          to ? "cursor-pointer" : "",
+                        )}
                       >
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           <p className="font-semibold text-slate-900">{row.clientName}</p>
@@ -601,9 +628,7 @@ export default function Payments() {
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           {row.caseId ? (
-                            <Link to={`/app/cases/${row.caseId}`} className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 transition hover:text-sky-900">
-                              {row.caseType || "View case"} <ExternalLink className="h-3 w-3" />
-                            </Link>
+                            <span className="text-xs font-semibold text-slate-600">{row.caseType || "Case"}</span>
                           ) : <span className="text-xs text-slate-400">—</span>}
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5 font-semibold tabular-nums text-slate-900">{money.format(row.amount)}</td>
@@ -645,6 +670,18 @@ export default function Payments() {
                               >
                                 <ShieldAlert className="h-3 w-3" /> Payment reversed in QuickBooks
                               </span>
+                            ) : null}
+                            {row.status === "Paid" && row.qbRefundUrl ? (
+                              <a
+                                href={row.qbRefundUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(event) => event.stopPropagation()}
+                                title="Opens the transaction directly in QuickBooks — CaseDesk doesn't process the refund itself, this just skips the search."
+                                className="inline-flex h-7 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:border-sky-200 hover:text-sky-700"
+                              >
+                                <ExternalLink className="h-3 w-3" /> Refund in QuickBooks
+                              </a>
                             ) : null}
                           </div>
                         </td>

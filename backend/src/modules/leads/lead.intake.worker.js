@@ -106,7 +106,13 @@ async function processClaimed(eventId) {
     await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
   }
   if (result?.leadId && leadWelcomeEmailEligible(result.channel)) {
-    void sendLeadWelcomeEmail(result.agencyId, { id: result.leadId, email: result.email, phone: result.phone, firstName: result.firstName });
+    void sendLeadWelcomeEmail(result.agencyId, {
+      id: result.leadId,
+      email: result.email,
+      phone: result.phone,
+      firstName: result.firstName,
+      sourceChannel: result.channel,
+    });
   }
 }
 

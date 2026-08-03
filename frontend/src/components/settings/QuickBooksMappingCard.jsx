@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Banknote, CalendarClock, Check, ChevronDown, Landmark, Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { Banknote, CalendarClock, Check, ChevronDown, Landmark, Loader2, Percent, Plus, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -441,6 +441,71 @@ function AdditionalFeeCategories({ items }) {
   );
 }
 
+function RefundFeeRateField({ mapping, onSaved }) {
+  const [value, setValue] = useState(String(mapping.refundFeeRatePercent ?? 2.99));
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    const percent = Number(value);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 20) {
+      setError("Enter a rate between 0 and 20.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const patch = await updateQuickBooksMapping({ refundFeeRatePercent: percent });
+      onSaved(patch);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not save the refund fee rate.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 border-t border-slate-100 pt-5">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+        <Percent className="h-[18px] w-[18px]" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-slate-900">Refund processing fee rate</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          QuickBooks' per-transaction rate for card/invoice payments — used to estimate what a client actually gets back after a refund (applied twice: the original charge's fee, which is never returned, plus a new fee on the refund itself). Check Settings → Payments in QuickBooks Online for your exact contracted rate.
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <div className="relative w-28">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="20"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-3 pr-7 text-sm text-slate-900 outline-none transition focus:border-sky-400"
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="inline-flex h-10 items-center gap-1.5 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : null}
+            {saving ? "Saving…" : saved ? "Saved" : "Save"}
+          </button>
+        </div>
+        {error ? <p className="mt-2 text-xs text-rose-600">{error}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function QuickBooksMappingCard() {
   const [items, setItems] = useState(null);
   const [accounts, setAccounts] = useState(null);
@@ -487,6 +552,7 @@ export default function QuickBooksMappingCard() {
           <ItemPicker slotKey="fee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="disbursement" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="consult" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <RefundFeeRateField mapping={mapping} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <AdditionalFeeCategories items={items} />
         </div>
       )}

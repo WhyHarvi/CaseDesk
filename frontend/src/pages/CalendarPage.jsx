@@ -28,6 +28,7 @@ import {
   convertAppointmentToClient,
   createBookingAppointment,
   createWalkInPayNowLink,
+  getAppointmentRefundEstimate,
   getAvailability,
   getBookingPaymentHoldStatus,
   getBookingSettings,
@@ -40,6 +41,7 @@ import {
 } from "../api/bookingApi";
 import PageContainer from "../components/layout/PageContainer";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
+import RefundFeeNotice from "../components/booking/RefundFeeNotice";
 import Select from "../components/ui/Select";
 import api from "../services/api";
 
@@ -236,6 +238,9 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [reschedLocationId, setReschedLocationId] = useState(currentLocationId || (locations.length === 1 ? locations[0].id : ""));
   const [converting, setConverting] = useState(false);
   const [seriesScope, setSeriesScope] = useState("single");
+  const [refundEstimate, setRefundEstimate] = useState(null);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [checkingRefund, setCheckingRefund] = useState(false);
   const duration = Math.round((new Date(appointment.endsAt) - start) / 60000);
   const [payNow, setPayNow] = useState(() => appointment.paymentHold ? {
     id: appointment.paymentHold.id,
@@ -257,6 +262,26 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       : appointment.meetingSyncStatus === "Failed"
         ? "link setup failed"
         : "";
+
+  // Free/unpaid appointments cancel immediately, same as before — the
+  // extra confirmation step only appears when there's an actual paid hold
+  // to disclose the refund-fee impact of.
+  async function requestCancel() {
+    setCheckingRefund(true);
+    try {
+      const estimate = await getAppointmentRefundEstimate(appointment.id);
+      if (estimate) {
+        setRefundEstimate(estimate);
+        setConfirmingCancel(true);
+      } else {
+        onCancel(seriesScope);
+      }
+    } catch {
+      onCancel(seriesScope);
+    } finally {
+      setCheckingRefund(false);
+    }
+  }
 
   async function generatePayNowLink() {
     setPayNowBusy(true);
@@ -567,6 +592,28 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             </button>
           </div>
         </div>
+      ) : confirmingCancel ? (
+        <div className="mt-4 space-y-3">
+          <RefundFeeNotice estimate={refundEstimate} audience="staff" />
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingCancel(false)}
+              disabled={cancelling}
+              className="flex h-11 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Keep appointment
+            </button>
+            <button
+              type="button"
+              onClick={() => onCancel(seriesScope)}
+              disabled={cancelling}
+              className="flex h-11 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+            >
+              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel anyway
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="mt-4 grid grid-cols-2 gap-2">
           {appointment.status === "Scheduled" && start > new Date() ? <><button
@@ -578,11 +625,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           </button>
           <button
             type="button"
-            onClick={() => onCancel(seriesScope)}
-            disabled={cancelling}
+            onClick={requestCancel}
+            disabled={cancelling || checkingRefund}
             className="flex h-11 items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
           >
-            {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
+            {cancelling || checkingRefund ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Cancel
           </button></> : null}
           {appointment.status === "Scheduled" && start > new Date() && appointment.seriesKey ? <div className="col-span-2 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future appointments"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
           {appointment.status === "Scheduled" && start <= new Date() ? <>

@@ -9,6 +9,7 @@ import {
   Landmark,
   Mail,
   MapPin,
+  MessageSquareText,
   Phone,
   PhoneIncoming,
   UserRound,
@@ -16,7 +17,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../auth/AuthContext";
 import api from "../../../services/api";
@@ -31,6 +32,7 @@ const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
   { id: "work", label: "Work", icon: CalendarClock },
   { id: "history", label: "History", icon: Activity },
+  { id: "messages", label: "Messages", icon: MessageSquareText },
 ];
 
 function SummaryValue({ label, value }) {
@@ -71,13 +73,14 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [activeAction, setActiveAction] = useState(null);
   const [closingFollowUp, setClosingFollowUp] = useState(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
+  const [selectedAppointmentTab, setSelectedAppointmentTab] = useState("details");
 
   useEffect(() => {
     setLead(initialLead);
     setTab("overview");
     setLoading(true);
     setError("");
-    api.get(`/leads/${initialLead.id}`)
+    api.getFresh(`/leads/${initialLead.id}`)
       .then((response) => setLead(response.data.data))
       .catch((requestError) => setError(requestError.response?.data?.message || "Complete lead details could not be loaded."))
       .finally(() => setLoading(false));
@@ -96,8 +99,15 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     return () => window.removeEventListener("keydown", close);
   }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, closingFollowUp, selectedAppointmentId, onClose]);
 
+  useEffect(() => {
+    if (tab !== "messages") return;
+    api.getFresh(`/leads/${initialLead.id}`)
+      .then((response) => setLead(response.data.data))
+      .catch(() => {});
+  }, [tab, initialLead.id]);
+
   function refreshLead() {
-    api.get(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {});
+    api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {});
     onChanged();
   }
 
@@ -110,6 +120,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const due = formatDueDate(lead.nextActionAt);
   const activities = lead.activities || [];
   const followUps = lead.followUps || [];
+  const leadMessages = useMemo(() => [
+    ...(lead.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "lead" })),
+    ...(lead.appointments || []).flatMap((appointment) => (appointment.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "appointment", appointment }))),
+  ].sort((left, right) => new Date(right.sentAt || right.failedAt || right.createdAt).getTime() - new Date(left.sentAt || left.failedAt || left.createdAt).getTime()), [lead.appointments, lead.messageDeliveries]);
   const isWorkable = ["OPEN", "NURTURE"].includes(lead.status);
   const ownsLead = lead.ownerUserId === appUser?.id;
   const canReassign = isWorkable && (!isFrontdesk || ownsLead);
@@ -154,6 +168,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                 ].join(" ")}>
                   <Icon className="h-4 w-4" />
                   {item.label}
+                  {item.id === "messages" && leadMessages.length ? <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">{leadMessages.length}</span> : null}
                   {active ? <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-brand-600" /> : null}
                 </button>
               );
@@ -228,7 +243,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   <section>
                     <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Video className="h-4 w-4 text-slate-400" />Consultations</h3><p className="mt-1 text-xs text-slate-500">{consultations.length} records</p></div>{lead.status === "OPEN" ? <button type="button" onClick={() => setBookingOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-600 px-3.5 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" />Book</button> : null}</div>
                     {consultationError ? <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">{consultationError}</div> : null}
-                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{consultations.length ? consultations.map((item, index) => <div key={item.id} role={item.appointment?.id ? "button" : undefined} tabIndex={item.appointment?.id ? 0 : undefined} onClick={() => item.appointment?.id && setSelectedAppointmentId(item.appointment.id)} onKeyDown={(event) => event.key === "Enter" && item.appointment?.id && setSelectedAppointmentId(item.appointment.id)} className={[
+                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{consultations.length ? consultations.map((item, index) => <div key={item.id} role={item.appointment?.id ? "button" : undefined} tabIndex={item.appointment?.id ? 0 : undefined} onClick={() => { if (item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} onKeyDown={(event) => { if (event.key === "Enter" && item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} className={[
                       "px-5 py-4 transition",
                       item.appointment?.id ? "cursor-pointer hover:bg-sky-50/50" : "",
                       index ? "border-t border-slate-100" : "",
@@ -248,6 +263,52 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{activities.length ? activities.map((item, index) => <div key={item.id} className={`flex gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"><Activity className="h-3.5 w-3.5" /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-xs text-slate-500">{humanize(item.activityType)}{item.outcome ? ` · ${humanize(item.outcome)}` : ""}</p></div><time className="shrink-0 text-xs text-slate-400">{new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.occurredAt))}</time></div>{item.description ? <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p> : null}</div></div>) : <EmptyState>No activity recorded.</EmptyState>}</div>
                 </section>
               ) : null}
+
+              {tab === "messages" ? (
+                <section>
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div><h3 className="text-sm font-semibold text-slate-900">Lead messages</h3><p className="mt-1 text-xs text-slate-500">Website acknowledgements and appointment messages sent to this lead.</p></div>
+                    <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">{leadMessages.length} deliveries</span>
+                  </div>
+                  <div className="space-y-3">
+                    {leadMessages.length ? leadMessages.map((delivery) => {
+                      const deliveryAt = delivery.sentAt || delivery.failedAt || delivery.createdAt;
+                      const normalizedStatus = String(delivery.status || "").toLowerCase();
+                      const sent = ["sent", "delivered"].includes(normalizedStatus);
+                      const failed = ["failed", "bounced"].includes(normalizedStatus);
+                      const untracked = normalizedStatus === "untracked";
+                      const ChannelIcon = String(delivery.channel || "").toLowerCase() === "email" ? Mail : MessageSquareText;
+                      const channelLabel = String(delivery.channel || "").toLowerCase() === "sms" ? "SMS" : humanize(delivery.channel);
+                      const recipientLabel = String(delivery.channel || "").toLowerCase() === "staff" ? "Agency team" : delivery.recipient;
+                      const MessageRow = delivery.appointment ? "button" : "article";
+                      return (
+                        <MessageRow
+                          key={`${delivery.source}-${delivery.id}`}
+                          {...(delivery.appointment ? { type: "button", onClick: () => { setSelectedAppointmentTab("messages"); setSelectedAppointmentId(delivery.appointment.id); } } : {})}
+                          className={`group w-full rounded-2xl border border-slate-200/70 bg-white p-4 text-left shadow-sm ${delivery.appointment ? "transition hover:border-brand-200 hover:bg-brand-50/30" : ""}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${sent ? "bg-emerald-50 text-emerald-600" : failed ? "bg-rose-50 text-rose-600" : untracked ? "bg-slate-100 text-slate-500" : "bg-amber-50 text-amber-600"}`}><ChannelIcon className="h-4 w-4" /></span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div><p className="text-sm font-semibold text-slate-800">{humanize(delivery.kind)} · {channelLabel}</p><p className="mt-1 break-all text-xs text-slate-400">To {recipientLabel}</p></div>
+                                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${sent ? "bg-emerald-50 text-emerald-700" : failed ? "bg-rose-50 text-rose-700" : untracked ? "bg-slate-100 text-slate-600" : "bg-amber-50 text-amber-700"}`}>{humanize(delivery.status)}</span>
+                              </div>
+                              {delivery.subject ? <p className="mt-3 text-xs font-semibold text-slate-700">{delivery.subject}</p> : null}
+                              {delivery.body ? <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-500">{delivery.body}</p> : null}
+                              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                                <span className="text-xs font-medium text-slate-500">{delivery.appointment ? `${delivery.appointment.subject} · ${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(delivery.appointment.startsAt))}` : `${humanize(delivery.sourceChannel || "website")} · Automatic welcome${delivery.provider ? ` · ${delivery.provider}` : ""}`}</span>
+                                <time className="text-[11px] text-slate-400">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(deliveryAt))}</time>
+                              </div>
+                              {delivery.lastError ? <p className={`mt-2 rounded-xl px-3 py-2 text-xs ${failed ? "bg-rose-50 text-rose-700" : "bg-slate-50 text-slate-600"}`}>{delivery.lastError}</p> : null}
+                            </div>
+                          </div>
+                        </MessageRow>
+                      );
+                    }) : <EmptyState>No website or appointment messages have been recorded for this lead.</EmptyState>}
+                  </div>
+                </section>
+              ) : null}
             </div>
           )}
         </div>
@@ -259,10 +320,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       {activeAction === "nurture" ? <NurtureLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "lost" ? <MarkLostSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
-      {bookingOpen ? <BookConsultationSheet lead={lead} staff={staff} onClose={() => setBookingOpen(false)} onCreated={(consultation) => { setConsultations((current) => [consultation, ...current]); setBookingOpen(false); api.get(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {}); }} /> : null}
+      {bookingOpen ? <BookConsultationSheet lead={lead} staff={staff} onClose={() => setBookingOpen(false)} onCreated={(consultation) => { setConsultations((current) => [consultation, ...current]); setBookingOpen(false); api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {}); }} /> : null}
       {commercialStatusOpen ? <LeadCommercialStatusSheet lead={lead} onClose={() => setCommercialStatusOpen(false)} onUpdated={(updated) => { setLead((current) => ({ ...current, ...updated })); setCommercialStatusOpen(false); }} /> : null}
       {conversionOpen ? <ConvertLeadSheet lead={lead} onClose={() => setConversionOpen(false)} onConverted={(conversion) => { setLead((current) => ({ ...current, status: "CONVERTED", convertedClientId: conversion.client.id, convertedCaseId: conversion.case.id, convertedAt: conversion.convertedAt, nextActionType: null, nextActionDescription: null, nextActionAt: null, conversion })); setConversionOpen(false); onChanged(); }} /> : null}
-      {selectedAppointmentId ? <AppointmentProfileOverlay appointmentId={selectedAppointmentId} onClose={() => setSelectedAppointmentId(null)} onChanged={() => { api.get(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}
+      {selectedAppointmentId ? <AppointmentProfileOverlay appointmentId={selectedAppointmentId} initialTab={selectedAppointmentTab} onClose={() => setSelectedAppointmentId(null)} onChanged={() => { api.get(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}
     </div>
   );
 }

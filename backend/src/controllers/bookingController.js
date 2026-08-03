@@ -32,6 +32,7 @@ import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
+import { estimateRefundAfterFees, refundFeeRateForAgency } from "../services/refundFeeEstimateService.js";
 import {
   MEETING_MODES,
   MEETING_MODE_VALUES,
@@ -927,6 +928,20 @@ export async function recordWalkInManualPayment(req, res) {
   res.status(201).json({ data: { id: hold.id, status: hold.status, amount: hold.amount, paidAt: hold.paidAt } });
 }
 
+// Feeds the "Amount paid" / refund-fee disclosure into the booked and
+// cancelled emails (bookingEmailContent's invoiceUrl/refundEstimate) —
+// empty object when nothing was ever paid, so those emails render exactly
+// as before for free/unpaid appointments.
+async function paidHoldSummary(db, agencyId, appointmentId) {
+  const hold = await db.bookingPaymentHold.findFirst({
+    where: { agencyId, appointmentId, status: "Paid" },
+    select: { amount: true, qbInvoiceLink: true },
+  });
+  if (!hold) return {};
+  const feeRate = await refundFeeRateForAgency(agencyId);
+  return { amount: Number(hold.amount), invoiceUrl: hold.qbInvoiceLink, refundEstimate: estimateRefundAfterFees(hold.amount, feeRate) };
+}
+
 export async function cancelBookingAppointment(req, res) {
   const existing = await prisma.appointment.findFirst({
     where: {
@@ -953,7 +968,7 @@ export async function cancelBookingAppointment(req, res) {
       await tx.appointment.updateMany({ where: { id: { in: series.map((item) => item.id) }, status: "Scheduled" }, data: { status: "Cancelled", cancelledAt, cancelledById: req.auth.userId, cancellationReason: reason } });
       for (const item of cancelled) {
         await syncLeadConsultationFromAppointment(tx, item, { consultationStatus: "CANCELLED" });
-        await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
+        await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: item, kind: "cancelled", actorUserId: req.auth.userId, db: tx, ...(await paidHoldSummary(tx, req.auth.agencyId, item.id)) });
         if (item.meetingProvider === "Zoom" && item.meetingProviderId) {
           await enqueueAppointmentMeetingJob(tx, {
             appointment: item,
@@ -980,7 +995,7 @@ export async function cancelBookingAppointment(req, res) {
     });
     await syncLeadConsultationFromAppointment(tx, result, { consultationStatus: "CANCELLED" });
     await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "CANCELLED", summary: "Appointment cancelled", metadata: { reason: result.cancellationReason } });
-    await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: "cancelled", actorUserId: req.auth.userId, db: tx });
+    await sendBookingMessages({ agencyId: req.auth.agencyId, appointment: result, kind: "cancelled", actorUserId: req.auth.userId, db: tx, ...(await paidHoldSummary(tx, req.auth.agencyId, existing.id)) });
     if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
       await enqueueAppointmentMeetingJob(tx, {
         appointment: result,
@@ -1352,6 +1367,20 @@ export async function updateBookingAppointmentStatus(req, res) {
     reason: status === "Cancelled" ? (String(req.body?.reason || "").trim().slice(0, 500) || null) : null,
   });
   res.json({ data });
+}
+
+// Only meaningful when there's actually money on the table — returns null
+// for an appointment with no Paid hold rather than a zeroed-out estimate,
+// so the frontend knows to skip the disclosure step entirely for free or
+// unpaid appointments instead of showing a "$0.00 fee" confirmation.
+export async function getAppointmentRefundEstimate(req, res) {
+  const hold = await prisma.bookingPaymentHold.findFirst({
+    where: { agencyId: req.auth.agencyId, appointmentId: req.params.id, status: "Paid" },
+    select: { amount: true },
+  });
+  if (!hold) return res.json({ data: null });
+  const feeRate = await refundFeeRateForAgency(req.auth.agencyId);
+  res.json({ data: estimateRefundAfterFees(hold.amount, feeRate) });
 }
 
 export async function buildAppointmentRegistry(req, query) {

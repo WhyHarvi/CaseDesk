@@ -57,7 +57,7 @@ function memberPayload(body, { creating = false } = {}) {
 }
 
 function defaultPermissions(role) {
-  if (role === "frontdesk") return { leadAccess: "assigned", canCreateLead: true, canScheduleConsultation: true };
+  if (role === "frontdesk") return { leadAccess: "all", canCreateLead: true, canScheduleConsultation: true };
   return { createClientPortal: true };
 }
 

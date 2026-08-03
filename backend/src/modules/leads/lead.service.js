@@ -120,6 +120,27 @@ export async function getLead(req) {
       stageHistory: { orderBy: { createdAt: "desc" } },
       assignmentHistory: { orderBy: { createdAt: "desc" } },
       followUps: { orderBy: { dueAt: "asc" } },
+      messageDeliveries: {
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          kind: true,
+          channel: true,
+          recipient: true,
+          status: true,
+          attempts: true,
+          sentAt: true,
+          failedAt: true,
+          provider: true,
+          providerId: true,
+          lastError: true,
+          subject: true,
+          body: true,
+          sourceChannel: true,
+          createdAt: true,
+        },
+      },
       appointments: {
         orderBy: { startsAt: "desc" },
         select: {
@@ -133,6 +154,22 @@ export async function getLead(req) {
           meetingMode: true,
           referenceCode: true,
           assignedTo: { select: { id: true, fullName: true } },
+          messageDeliveries: {
+            orderBy: { createdAt: "desc" },
+            take: 50,
+            select: {
+              id: true,
+              kind: true,
+              channel: true,
+              recipient: true,
+              status: true,
+              attempts: true,
+              sentAt: true,
+              failedAt: true,
+              lastError: true,
+              createdAt: true,
+            },
+          },
           _count: { select: { notes: true, followUps: true } },
         },
       },
@@ -243,7 +280,7 @@ export async function updateLeadFollowUp(req, db = prisma) {
   const actorId = req.auth.userId;
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
-    const existing = await tx.leadFollowUp.findFirst({ where: { id: req.params.followUpId, leadId: lead.id, agencyId, ...(req.auth.role === "frontdesk" ? { assignedUserId: actorId } : {}) } });
+    const existing = await tx.leadFollowUp.findFirst({ where: { id: req.params.followUpId, leadId: lead.id, agencyId } });
     if (!existing) throw createHttpError(404, "Lead follow-up not found.", "FOLLOW_UP_NOT_FOUND");
     if (existing.status !== "PENDING") throw createHttpError(409, "This lead follow-up is already closed.", "FOLLOW_UP_CLOSED");
     const followUp = await tx.leadFollowUp.update({ where: { id: existing.id }, data: { status: values.status, completionOutcome: values.completionOutcome, completedAt: new Date(), completedById: actorId } });
@@ -260,7 +297,6 @@ export async function assignLead(req, db = prisma) {
   const actorId = req.auth.userId;
   const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
-    if (req.auth.role === "frontdesk" && lead.ownerUserId !== actorId) throw createHttpError(403, "Only the current lead owner can reassign this lead.", "FORBIDDEN");
     await requireLeadStaff(tx, agencyId, values.ownerUserId);
     if (lead.ownerUserId === values.ownerUserId) throw createHttpError(409, "This team member already owns the lead.", "NO_ASSIGNMENT_CHANGE");
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { ownerUserId: values.ownerUserId, ...(lead.nextActionOwnerId === lead.ownerUserId ? { nextActionOwnerId: values.ownerUserId } : {}), stage: lead.stage === "NEW" ? "ASSIGNED" : lead.stage, version: { increment: 1 } }, include: leadInclude });

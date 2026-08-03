@@ -182,6 +182,11 @@ export async function cancelBookingAppointment(id, options = {}) {
   return response.data.data;
 }
 
+export async function getAppointmentRefundEstimate(id) {
+  const response = await api.get(`/booking/appointments/${id}/refund-estimate`);
+  return response.data.data;
+}
+
 export async function rescheduleBookingAppointment(id, startsAt, options = {}) {
   const response = await api.patch(`/booking/appointments/${id}/reschedule`, { startsAt, ...options });
   return response.data.data;

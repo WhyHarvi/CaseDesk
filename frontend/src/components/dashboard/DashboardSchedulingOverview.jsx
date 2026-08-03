@@ -11,7 +11,7 @@ export default function DashboardSchedulingOverview({ role, initial = null, focu
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     attendance: "all",
-    range: "all",
+    range: "today",
     search: "",
     page: 1,
   });
@@ -30,7 +30,7 @@ export default function DashboardSchedulingOverview({ role, initial = null, focu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusSignal]);
 
-  const filtersAreDefault = filters.attendance === "all" && filters.range === "all" && !debouncedSearch && filters.page === 1;
+  const filtersAreDefault = filters.attendance === "all" && filters.range === "today" && !debouncedSearch && filters.page === 1;
   const registryQuery = useQuery({
     queryKey: ["dashboard", "appointment-registry", { ...filters, search: debouncedSearch }],
     queryFn: () => getAppointmentRegistry({ ...filters, search: debouncedSearch, limit: 6 }),
@@ -44,7 +44,7 @@ export default function DashboardSchedulingOverview({ role, initial = null, focu
     enabled: role === "admin",
     staleTime: 60_000,
     placeholderData: (previous) => previous,
-    initialData: filters.range === "all" && initial?.analytics ? initial.analytics : undefined,
+    initialData: filters.range === "today" && initial?.analytics ? initial.analytics : undefined,
   });
   const waitlistQuery = useQuery({
     queryKey: ["dashboard", "booking-waitlist"],

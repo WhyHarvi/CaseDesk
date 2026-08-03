@@ -124,7 +124,7 @@ function CashPaymentRow({ invoice, onPaid }) {
   );
 }
 
-function InvoiceCard({ invoice, onPaid, canRecordPayment, categories }) {
+function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighted }) {
   const category = categories.find((item) => item.code === invoice.paymentType);
   const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
@@ -157,7 +157,13 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories }) {
   }
 
   return (
-    <motion.article layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-[1.4rem] border border-white/70 bg-white/85 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      id={`case-invoice-${invoice.id}`}
+      className={`rounded-[1.4rem] border border-white/70 bg-white/85 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${meta.tint}`}>
@@ -317,7 +323,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
   );
 }
 
-export default function CaseBillingWorkspace({ caseItem }) {
+export default function CaseBillingWorkspace({ caseItem, highlightId }) {
   const { role } = useAuth();
   const [invoices, setInvoices] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -337,6 +343,14 @@ export default function CaseBillingWorkspace({ caseItem }) {
   }
 
   useEffect(() => { load(); }, [caseItem.id]);
+
+  useEffect(() => {
+    if (!highlightId || !invoices) return undefined;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`case-invoice-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightId, invoices]);
 
   function patchInvoice(updated) {
     setInvoices((current) => {
@@ -379,7 +393,7 @@ export default function CaseBillingWorkspace({ caseItem }) {
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {invoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === highlightId} />
             ))}
           </AnimatePresence>
         </div>

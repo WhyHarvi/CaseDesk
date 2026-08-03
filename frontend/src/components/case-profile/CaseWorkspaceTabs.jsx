@@ -3552,7 +3552,7 @@ function CaseWorkspacePanel({
         </div>
         <CasePaymentScheduleWorkspace caseItem={caseItem} />
         <div className="border-t border-slate-100 pt-6">
-          <CaseBillingWorkspace caseItem={caseItem} />
+          <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} />
         </div>
       </div>
     );
