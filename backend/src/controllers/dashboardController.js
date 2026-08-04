@@ -11,6 +11,7 @@ import {
   getCachedDashboard,
   setCachedDashboard,
 } from "../services/dashboardCache.js";
+import { hasPortalCapability } from "../services/portalAccessService.js";
 
 const caseSummarySelect = {
   id: true,
@@ -23,6 +24,26 @@ const caseSummarySelect = {
 };
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
 export const DASHBOARD_HIDDEN_ACTIVITY_ACTIONS = Object.freeze(["USER_LOGIN", "USER_LOGOUT"]);
+export const DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS = Object.freeze([
+  "invoice.created",
+  "invoice.manual_payment_recorded",
+  "invoice.paid",
+  "payment_schedule.created",
+  "payment_schedule.updated",
+  "payment_schedule.voided",
+  "payment_schedule.installment_invoiced",
+  "payment_schedule.installment_invoice_voided",
+  "appointment.payment_refunded",
+  "payment_settings.updated",
+  "quickbooks.connected",
+  "quickbooks.disconnected",
+  "quickbooks.item_created",
+  "quickbooks.mapping_updated",
+]);
+
+export function canViewDashboardFinancialData(req) {
+  return hasPortalCapability(req, "financialData");
+}
 
 function consultantTaskAccess(req) {
   if (req.auth.role === "admin") return {};
@@ -194,6 +215,7 @@ export async function getDashboardSummary(req, res) {
     return res.json({ data: cached });
   }
   res.set("X-CaseDesk-Cache", "miss");
+  const canViewFinancialData = canViewDashboardFinancialData(req);
   const {
     clientWhere,
     caseWhere,
@@ -287,27 +309,39 @@ export async function getDashboardSummary(req, res) {
         startsAt: { gte: todayStart, lt: tomorrowStart },
       },
     }),
-    prisma.payment.count({
-      where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
-    }),
-    prisma.payment.aggregate({
-      where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
-      _sum: { balance: true },
-    }),
-    prisma.caseInvoice.count({
-      where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
-    }),
-    prisma.caseInvoice.aggregate({
-      where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
-      _sum: { balance: true },
-    }),
-    prisma.bookingPaymentHold.count({
-      where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
-    }),
-    prisma.bookingPaymentHold.aggregate({
-      where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
-      _sum: { amount: true },
-    }),
+    canViewFinancialData
+      ? prisma.payment.count({
+          where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
+        })
+      : Promise.resolve(0),
+    canViewFinancialData
+      ? prisma.payment.aggregate({
+          where: { ...paymentWhere, status: { in: ["Unpaid", "Partial"] } },
+          _sum: { balance: true },
+        })
+      : Promise.resolve({ _sum: { balance: null } }),
+    canViewFinancialData
+      ? prisma.caseInvoice.count({
+          where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
+        })
+      : Promise.resolve(0),
+    canViewFinancialData
+      ? prisma.caseInvoice.aggregate({
+          where: { ...caseInvoiceWhere, status: { in: ["Open", "Overdue", "PartiallyPaid"] } },
+          _sum: { balance: true },
+        })
+      : Promise.resolve({ _sum: { balance: null } }),
+    canViewFinancialData
+      ? prisma.bookingPaymentHold.count({
+          where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+        })
+      : Promise.resolve(0),
+    canViewFinancialData
+      ? prisma.bookingPaymentHold.aggregate({
+          where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+          _sum: { amount: true },
+        })
+      : Promise.resolve({ _sum: { amount: null } }),
     prisma.case.groupBy({
       by: ["stage"],
       where: caseWhere,
@@ -372,7 +406,16 @@ export async function getDashboardSummary(req, res) {
       where: {
         AND: [
           activityWhere,
-          { action: { notIn: DASHBOARD_HIDDEN_ACTIVITY_ACTIONS } },
+          {
+            action: {
+              notIn: canViewFinancialData
+                ? DASHBOARD_HIDDEN_ACTIVITY_ACTIONS
+                : [
+                    ...DASHBOARD_HIDDEN_ACTIVITY_ACTIONS,
+                    ...DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS,
+                  ],
+            },
+          },
         ],
       },
       orderBy: { createdAt: "desc" },
@@ -440,15 +483,19 @@ export async function getDashboardSummary(req, res) {
         followUpsDueToday,
         overdueFollowUps: overdueFollowUpCount,
         appointmentsToday,
-        // Combines three separate money-owed sources that used to only
-        // count legacy retainer Payments — case invoices and consultation
-        // payment holds are just as much "pending payments" and were
-        // invisible here before, even though both show up in the Payments
-        // page.
-        pendingPayments: pendingLegacyPayments + pendingCaseInvoices + pendingBookingHolds,
-        pendingPaymentBalance: Number(pendingLegacyPaymentTotals._sum.balance ?? 0)
-          + Number(pendingCaseInvoiceTotals._sum.balance ?? 0)
-          + Number(pendingBookingHoldTotals._sum.amount ?? 0),
+        ...(canViewFinancialData
+          ? {
+              // Combines legacy retainers, case invoices, and consultation
+              // payment holds. The entire block is omitted when Financial
+              // Information is disabled for the team member.
+              pendingPayments:
+                pendingLegacyPayments + pendingCaseInvoices + pendingBookingHolds,
+              pendingPaymentBalance:
+                Number(pendingLegacyPaymentTotals._sum.balance ?? 0) +
+                Number(pendingCaseInvoiceTotals._sum.balance ?? 0) +
+                Number(pendingBookingHoldTotals._sum.amount ?? 0),
+            }
+          : {}),
         casesWaitingUpdate: casesWaitingUpdateCount,
       },
       casePipeline: casePipelineRaw.map((item) => ({

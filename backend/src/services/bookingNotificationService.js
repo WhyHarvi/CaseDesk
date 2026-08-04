@@ -5,7 +5,7 @@ import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailServic
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { releaseExpiredWaitlistHolds } from "./bookingWaitlistService.js";
-import { publicBookingManageUrl } from "./bookingPublicLinkService.js";
+import { publicBookingManageUrl, publicBookingPageUrl } from "./bookingPublicLinkService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
 import { MEETING_MODES, meetingModeLabel, normalizeMeetingMode } from "./bookingMeetingModeService.js";
 
@@ -522,6 +522,89 @@ export async function sendBookingStaffNotification({ agencyId, appointment, kind
     skipDuplicates: true,
   });
   if (db === prisma) void processBookingDeliveryPass();
+}
+
+// A BookingPaymentHold that expires/voids unpaid never became a real
+// Appointment (see captureAbandonedPublicBookingLead in lead.booking.js,
+// which this feeds), so this is deliberately NOT built on top of
+// bookingEmailContent()/deliverBookingMessages() above — those assume a
+// real, confirmed appointment throughout (date/time/location detail rows,
+// an ICS attachment, SMS + staff-notification + delivery-queue
+// orchestration). Reusing them here would risk implying a booking was
+// actually held. This is its own small, simpler template instead: no
+// confirmed date/time to show, just a link back to book again.
+export async function sendAbandonedBookingPaymentEmail({ agencyId, hold, sessionType = null }) {
+  if (!hold?.guestEmail) return { skipped: true };
+  const [agency, settings] = await Promise.all([
+    prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
+    prisma.bookingSettings.findUnique({ where: { agencyId } }),
+  ]);
+  const agencyName = agency?.legalName || agency?.name || "CaseDesk";
+  const contactName = hold.guestName || "there";
+  const sessionLabel = sessionType?.name || "consultation";
+  const bookingUrl = safeWebUrl(publicBookingPageUrl(settings));
+  const feeLine = hold.amount ? ` for the $${Number(hold.amount).toFixed(2)} fee` : "";
+  const agencyContact = [agency?.phone, agency?.email].filter(Boolean).join(" · ");
+  const agencyAddress = [agency?.address, agency?.city, agency?.province, agency?.postalCode].filter(Boolean).join(", ");
+
+  const config = await resolveAgencyMailConfig(agencyId);
+  const transport = createMailTransport(config);
+  const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
+  const avatarCid = avatarBuffer ? `workspace-avatar-${hold.id}-payment-abandoned@casedesk` : null;
+  const logoUrl = avatarCid ? `cid:${avatarCid}` : safeWebUrl(agency?.logoUrl);
+  const brandMark = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" width="46" height="46" alt="${escapeHtml(agencyName)}" style="display:block;width:46px;height:46px;border-radius:${avatarCid ? "50%" : "13px"};background:#ffffff;object-fit:${avatarCid ? "cover" : "contain"}">`
+    : `<div style="width:46px;height:46px;border-radius:13px;background:#ffffff;color:#0f172a;font-size:20px;font-weight:800;line-height:46px;text-align:center">${escapeHtml(agencyName.charAt(0).toUpperCase())}</div>`;
+
+  const subject = `You can still book with ${agencyName}`;
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f1f5f9"><tr><td align="center" style="padding:38px 14px">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e2e8f0;border-radius:28px;overflow:hidden;box-shadow:0 18px 55px rgba(15,23,42,.09)">
+      <tr><td style="padding:24px 34px;background:#0f172a">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td width="58">${brandMark}</td><td style="color:#ffffff;font-size:18px;font-weight:750;letter-spacing:-.01em">${escapeHtml(agencyName)}</td></tr></table>
+      </td></tr>
+      <tr><td style="padding:36px 34px 10px">
+        <p style="margin:0 0 8px;color:#0f172a;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Still available</p>
+        <h1 style="margin:0;color:#0f172a;font-size:26px;line-height:1.3;letter-spacing:-.03em;font-weight:750">You can still book your ${escapeHtml(sessionLabel)}</h1>
+        <p style="margin:14px 0 0;color:#475569;font-size:16px;line-height:1.65">Hi ${escapeHtml(contactName)},<br>It looks like we couldn't complete payment${escapeHtml(feeLine)}, so that time wasn't held for you. No problem — you're welcome to book a new time whenever works.</p>
+      </td></tr>
+      ${bookingUrl ? `<tr><td style="padding:18px 34px 0"><a href="${escapeHtml(bookingUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">Book a new time &nbsp;→</a></td></tr>` : ""}
+      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">If you already sorted this out or have questions, just reach out — we're happy to help.</p></td></tr>
+      <tr><td style="padding:23px 34px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;color:#334155;font-size:13px;font-weight:700">${escapeHtml(agencyName)}</p>${agencyContact ? `<p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5">${escapeHtml(agencyContact)}</p>` : ""}${agencyAddress ? `<p style="margin:3px 0 0;color:#94a3b8;font-size:12px;line-height:1.5">${escapeHtml(agencyAddress)}</p>` : ""}</td></tr>
+    </table>
+    <p style="margin:18px 0 0;color:#94a3b8;font-size:11px">Sent securely by CaseDesk</p>
+  </td></tr></table>
+</body></html>`;
+
+  const text = [
+    `You can still book your ${sessionLabel}`,
+    "",
+    `Hi ${contactName},`,
+    `It looks like we couldn't complete payment${feeLine}, so that time wasn't held for you. No problem — you're welcome to book a new time whenever works.`,
+    bookingUrl ? `Book a new time: ${bookingUrl}` : null,
+    "",
+    agencyName,
+    agencyContact || null,
+  ].filter(Boolean).join("\n");
+
+  await transport.sendMail({
+    from: config.from,
+    to: hold.guestEmail,
+    messageId: `<booking-hold-${hold.id}-payment-abandoned@casedesk>`,
+    subject,
+    text,
+    html,
+    attachments: avatarBuffer ? [{
+      filename: `workspace-avatar.${agency.avatarMimeType === "image/jpeg" ? "jpg" : agency.avatarMimeType === "image/webp" ? "webp" : "png"}`,
+      content: avatarBuffer,
+      contentType: agency.avatarMimeType || "image/png",
+      cid: avatarCid,
+      contentDisposition: "inline",
+    }] : [],
+  });
+  return { sent: true };
 }
 
 export function bookingDeliveryIsCurrent(job, appointment) {

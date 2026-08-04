@@ -646,6 +646,36 @@ export async function createBookingAppointment(req, res) {
   }
   const guestName = String(body.guestName || "").trim().slice(0, 160) || null;
   if (!client && !guestName) throw createHttpError(400, "Pick a client or enter the visitor’s name.", "VALIDATION_ERROR");
+  if (!client && !String(body.guestEmail || "").trim() && !String(body.guestPhone || "").trim()) {
+    throw createHttpError(400, "Enter the visitor’s email or phone number.", "VALIDATION_ERROR");
+  }
+
+  // Never leave a walk-in as a disconnected guest when their contact info
+  // already matches a real Client — best-effort only: guest phone/email are
+  // free text with no format validation upstream of this call, and
+  // normalizeContact() throws on anything that doesn't parse, which must
+  // never fail the booking itself. Ambiguous (2+) matches are deliberately
+  // left unlinked, same as convertAppointmentToClient's own semantics —
+  // resolvable later by staff rather than guessed here.
+  if (!client && guestName) {
+    try {
+      const contact = normalizeContact({ phone: body.guestPhone, email: body.guestEmail });
+      const contactOr = [
+        contact.emailNormalized ? { emailNormalized: contact.emailNormalized } : null,
+        contact.phoneNormalized ? { phoneNormalized: contact.phoneNormalized } : null,
+      ].filter(Boolean);
+      if (contactOr.length) {
+        const matches = await prisma.client.findMany({
+          where: { agencyId: req.auth.agencyId, OR: contactOr },
+          select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true },
+          take: 2,
+        });
+        if (matches.length === 1) client = matches[0];
+      }
+    } catch (error) {
+      logger.warn("booking.guest_duplicate_lookup_skipped", { agencyId: req.auth.agencyId, reason: error.message });
+    }
+  }
   const guestEmailNormalized = String(body.guestEmail || "").trim().toLowerCase().slice(0, 254) || null;
   // Staff can always complete the booking even past the free-consultation
   // cutoff — unlike the public page, this never blocks; it only decides
@@ -864,11 +894,21 @@ export async function getFreeConsultationEligibility(req, res) {
 // match a walk-in to their existing client record without gaining the
 // broader client-browsing access that role is otherwise kept out of.
 export async function lookupBookingClients(req, res) {
+  const search = String(req.query.search || "").trim().slice(0, 200);
+  const searchDigits = search.replace(/\D/g, "");
+  const searchFields = search ? ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map((field) => ({
+    [field]: { contains: search, mode: "insensitive" },
+  })) : [];
+  if (searchDigits.length >= 7) searchFields.push({ phoneNormalized: { contains: searchDigits } });
   const clients = await prisma.client.findMany({
-    where: { agencyId: req.auth.agencyId, archivedAt: null },
+    where: {
+      agencyId: req.auth.agencyId,
+      archivedAt: null,
+      ...(searchFields.length ? { OR: searchFields } : {}),
+    },
     select: { id: true, fullName: true, email: true, phone: true, clientNumber: true },
     orderBy: { createdAt: "desc" },
-    take: 100,
+    take: search ? 20 : 100,
   });
   res.json({ data: clients });
 }

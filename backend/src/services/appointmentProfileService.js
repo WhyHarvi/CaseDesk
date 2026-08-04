@@ -1,6 +1,10 @@
 import prisma from "./prisma/client.js";
-import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
+import {
+  caseAccessWhere,
+  clientAccessWhere,
+} from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
+import { hasPortalCapability } from "./portalAccessService.js";
 
 export function appointmentProfileAccessWhere(req) {
   if (["admin", "frontdesk"].includes(req.auth.role)) return {};
@@ -17,8 +21,25 @@ export function appointmentProfileAccessWhere(req) {
 }
 
 export const appointmentProfileInclude = {
-  client: { select: { id: true, clientNumber: true, fullName: true, email: true, phone: true } },
-  lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true, email: true, phone: true } },
+  client: {
+    select: {
+      id: true,
+      clientNumber: true,
+      fullName: true,
+      email: true,
+      phone: true,
+    },
+  },
+  lead: {
+    select: {
+      id: true,
+      leadNumber: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+    },
+  },
   case: { select: { id: true, caseType: true, stage: true, status: true } },
   assignedTo: { select: { id: true, fullName: true, email: true } },
   createdBy: { select: { id: true, fullName: true } },
@@ -30,12 +51,27 @@ export const appointmentProfileInclude = {
     include: { actor: { select: { id: true, fullName: true } } },
   },
   messageDeliveries: {
-    select: { id: true, channel: true, kind: true, status: true, sentAt: true, failedAt: true, lastError: true, createdAt: true },
+    select: {
+      id: true,
+      channel: true,
+      kind: true,
+      status: true,
+      sentAt: true,
+      failedAt: true,
+      lastError: true,
+      createdAt: true,
+    },
     orderBy: { createdAt: "desc" },
     take: 50,
   },
   paymentHold: {
-    select: { id: true, status: true, amount: true, paidAt: true, qbInvoiceNumber: true },
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      paidAt: true,
+      qbInvoiceNumber: true,
+    },
   },
   notes: {
     where: { deletedAt: null },
@@ -44,11 +80,17 @@ export const appointmentProfileInclude = {
   },
   followUps: {
     orderBy: [{ status: "asc" }, { dueDate: "asc" }, { createdAt: "desc" }],
-    include: { assignedUser: { select: { id: true, fullName: true, email: true } } },
+    include: {
+      assignedUser: { select: { id: true, fullName: true, email: true } },
+    },
   },
 };
 
-export async function requireAppointmentProfile(req, appointmentId, db = prisma) {
+export async function requireAppointmentProfile(
+  req,
+  appointmentId,
+  db = prisma,
+) {
   const data = await db.appointment.findFirst({
     where: {
       id: appointmentId,
@@ -58,39 +100,46 @@ export async function requireAppointmentProfile(req, appointmentId, db = prisma)
     include: appointmentProfileInclude,
   });
   if (!data) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  const clientNotes = req.auth.role === "frontdesk"
+  const canAccessInternalNotes = hasPortalCapability(req, "internalNotes");
+  const clientNotes = !canAccessInternalNotes
     ? []
     : data.clientId
       ? await db.note.findMany({
-        where: {
-          clientId: data.clientId,
-          deletedAt: null,
-          OR: [
-            {
-              appointmentId: { not: null },
-              appointment: appointmentProfileAccessWhere(req),
+          where: {
+            clientId: data.clientId,
+            deletedAt: null,
+            OR: [
+              {
+                appointmentId: { not: null },
+                appointment: appointmentProfileAccessWhere(req),
+              },
+              {
+                appointmentId: null,
+                caseId: null,
+                ...(req.auth.role === "admin"
+                  ? {}
+                  : { client: clientAccessWhere(req) }),
+              },
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          include: {
+            user: { select: { id: true, fullName: true, email: true } },
+            appointment: {
+              select: { id: true, subject: true, startsAt: true, status: true },
             },
-            {
-              appointmentId: null,
-              caseId: null,
-              ...(req.auth.role === "admin" ? {} : { client: clientAccessWhere(req) }),
-            },
-          ],
-        },
-        orderBy: { createdAt: "desc" },
-        include: {
-          user: { select: { id: true, fullName: true, email: true } },
-          appointment: { select: { id: true, subject: true, startsAt: true, status: true } },
-        },
-      })
+          },
+        })
       : data.notes;
   return {
     ...data,
     purpose: data.purpose || data.description || null,
-    internalNotes: req.auth.role === "frontdesk" ? null : data.internalNotes,
-    notes: req.auth.role === "frontdesk" ? [] : data.notes,
-    events: req.auth.role === "frontdesk"
-      ? (data.events || []).filter((event) => !String(event.type || "").startsWith("NOTE_"))
+    internalNotes: canAccessInternalNotes ? data.internalNotes : null,
+    notes: canAccessInternalNotes ? data.notes : [],
+    events: !canAccessInternalNotes
+      ? (data.events || []).filter(
+          (event) => !String(event.type || "").startsWith("NOTE_"),
+        )
       : data.events,
     followUps: req.auth.role === "frontdesk" ? [] : data.followUps,
     clientNotes,
@@ -98,9 +147,17 @@ export async function requireAppointmentProfile(req, appointmentId, db = prisma)
 }
 
 export async function ensureAppointmentCompletionFollowUp(db, appointment) {
-  if (!appointment?.id || (!appointment.clientId && !appointment.caseId) || !appointment.assignedToId) return null;
+  if (
+    !appointment?.id ||
+    (!appointment.clientId && !appointment.caseId) ||
+    !appointment.assignedToId
+  )
+    return null;
   const existing = await db.followUp.findFirst({
-    where: { appointmentId: appointment.id, status: { in: ["Pending", "Overdue"] } },
+    where: {
+      appointmentId: appointment.id,
+      status: { in: ["Pending", "Overdue"] },
+    },
   });
   if (existing) return existing;
   const dueDate = new Date(Date.now() + 24 * 60 * 60_000);
@@ -112,7 +169,8 @@ export async function ensureAppointmentCompletionFollowUp(db, appointment) {
       caseId: appointment.caseId,
       assignedUserId: appointment.assignedToId,
       title: `Follow up after ${appointment.subject || "appointment"}`,
-      description: "Review the appointment outcome, next steps, and any information the client still needs to provide.",
+      description:
+        "Review the appointment outcome, next steps, and any information the client still needs to provide.",
       dueDate,
       reminderAt: dueDate,
       notificationChannels: ["in_app"],

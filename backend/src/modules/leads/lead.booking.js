@@ -1,8 +1,10 @@
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import prisma from "../../services/prisma/client.js";
+import { logger } from "../../services/logger.js";
 import { nextLeadNumber } from "./lead.repository.js";
 import { nextConsultationAction } from "./lead.service.js";
 import { leadConsultationAppointmentType, leadConsultationStatusForAppointment } from "../../services/leadConsultationAppointmentService.js";
+import { sendAbandonedBookingPaymentEmail } from "../../services/bookingNotificationService.js";
 
 const STAGE_ORDER = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
 
@@ -205,7 +207,7 @@ export async function createOrLinkLeadForConsultation(tx, {
  * info isn't simply lost.
  */
 export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     // None of this function's callers check their own status-flip update's
     // affected-row count before calling here, so two of them can race on the
     // same hold (e.g. the webhook handler and a reconcile poll firing close
@@ -213,9 +215,9 @@ export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
     // actually prevents a duplicate Lead, not just the leadId check alone.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`booking_payment_hold_lead:${holdId}`}, 0))`;
 
-    const hold = await tx.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+    const hold = await tx.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId }, include: { sessionType: { select: { name: true } } } });
     if (!hold || hold.leadId || hold.source !== "Public" || hold.appointmentId || !["Expired", "Voided"].includes(hold.status)) {
-      return { leadId: hold?.leadId || null, created: false };
+      return { leadId: hold?.leadId || null, created: false, hold: null };
     }
 
     const phoneNormalized = normalizePhoneSafe(hold.guestPhone);
@@ -308,6 +310,18 @@ export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
     }
 
     await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { leadId: lead.id } });
-    return { leadId: lead.id, created: !existingLead };
+    return { leadId: lead.id, created: !existingLead, hold };
   });
+
+  // Sent once, exactly when a hold is first processed here (result.hold is
+  // only populated on that branch above, never on the no-op/already-claimed
+  // one) — outside the transaction since a network call to SMTP has no
+  // business holding the advisory lock open, and a mail hiccup must never
+  // undo the lead capture that already committed.
+  if (result.hold) {
+    await sendAbandonedBookingPaymentEmail({ agencyId, hold: result.hold, sessionType: result.hold.sessionType }).catch((error) => {
+      logger.warn("booking_payment_hold.abandoned_email_failed", { agencyId, holdId, reason: error.message });
+    });
+  }
+  return { leadId: result.leadId, created: result.created };
 }

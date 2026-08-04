@@ -25,6 +25,7 @@ import AppointmentProfileOverlay from "../components/appointments/AppointmentPro
 import ClientBillingCard from "../components/clients/ClientBillingCard";
 import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
+import { hasCapability } from "../auth/portalAccess";
 
 const defaultNoteFormState = {
   content: "",
@@ -285,7 +286,10 @@ function CaseRow({ item, isPrimary = false }) {
 export default function ClientProfile() {
   const { id } = useParams();
   const location = useLocation();
-  const { role, appUser } = useAuth();
+  const { role, appUser, membership } = useAuth();
+  const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
+  const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
+  const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -671,14 +675,14 @@ export default function ClientProfile() {
             </div>
           </article>
 
-          <PortalAccessCard
+          {canManageClientPortal ? <PortalAccessCard
             clientId={client.id}
             clientEmail={client.email}
             clientName={client.fullName}
             openCaseCount={openCases.length}
-          />
+          /> : null}
 
-          {["admin", "consultant"].includes(role) ? (
+          {["admin", "consultant"].includes(role) && canAccessFinancialData ? (
             <QuickBooksSyncCard
               clientId={client.id}
               qbCustomerId={client.qbCustomerId}
@@ -807,9 +811,9 @@ export default function ClientProfile() {
 
             {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
 
-            <ClientBillingCard clientId={client.id} onOpenStatement={() => setStatementOpen(true)} />
+            {canAccessFinancialData ? <ClientBillingCard clientId={client.id} onOpenStatement={() => setStatementOpen(true)} /> : null}
 
-            {role !== "frontdesk" ? <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
+            {canAccessInternalNotes ? <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">

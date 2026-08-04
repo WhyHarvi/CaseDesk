@@ -49,7 +49,9 @@ test("Case Easy raw fields map without moving UCI or marital status onto Client"
 });
 
 test("Case Easy conversion writes assessment paths and validates agency staff", async () => {
-  const controller = await source("../src/controllers/caseEasyImportController.js");
+  const controller = await source(
+    "../src/controllers/caseEasyImportController.js",
+  );
   assert.match(
     controller,
     /profileQuestionnaires = \{ canadianStatus: \{ uci \} \}/,
@@ -63,10 +65,7 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   assert.match(controller, /Next action is required/);
   assert.match(controller, /FOR UPDATE/);
   assert.match(controller, /lockedStagingCase/);
-  assert.doesNotMatch(
-    controller,
-    /identificationNumber:\s*(contact\.uci|uci)/,
-  );
+  assert.doesNotMatch(controller, /identificationNumber:\s*(contact\.uci|uci)/);
 });
 
 test("Case Easy staging UI exposes unresolved cases and all raw source fields", async () => {
@@ -90,11 +89,19 @@ test("Case Easy staging UI exposes unresolved cases and all raw source fields", 
 test("Case Easy staging data remains tenant scoped for every internal staff role", async () => {
   const [routes, migration] = await Promise.all([
     source("../src/routes/caseEasyImportRoutes.js"),
-    source("../prisma/migrations/20260723170000_case_easy_staff_access/migration.sql"),
+    source(
+      "../prisma/migrations/20260723170000_case_easy_staff_access/migration.sql",
+    ),
   ]);
-  assert.match(routes, /router\.use\(requireRole\("admin", "consultant", "frontdesk"\)\)/);
+  assert.match(
+    routes,
+    /router\.use\(requireRole\("admin", "consultant", "frontdesk"\)\)/,
+  );
   assert.match(migration, /current_agency_id\(\)/);
-  assert.match(migration, /current_user_role\(\) IN \('admin', 'consultant', 'frontdesk'\)/);
+  assert.match(
+    migration,
+    /current_user_role\(\) IN \('admin', 'consultant', 'frontdesk'\)/,
+  );
 });
 
 test("Case Easy is a main staff tab directly above Settings", async () => {
@@ -104,8 +111,14 @@ test("Case Easy is a main staff tab directly above Settings", async () => {
     source("../../frontend/src/pages/Settings.jsx"),
     source("../../frontend/src/pages/CaseEasyImport.jsx"),
   ]);
-  assert.match(sidebar, /Case Easy Import[\s\S]*\/app\/case-easy-import[\s\S]*Settings/);
-  assert.match(routes, /case-easy-import" element=\{<Internal allowFrontdesk>/);
+  assert.match(
+    sidebar,
+    /Case Easy Import[\s\S]*\/app\/case-easy-import[\s\S]*Settings/,
+  );
+  assert.match(
+    routes,
+    /case-easy-import"[\s\S]*<Access page="caseEasyImport">/,
+  );
   assert.doesNotMatch(settings, /id: "case-easy-import"/);
   assert.match(page, /<CaseEasyImportSettingsPanel \/>/);
 });

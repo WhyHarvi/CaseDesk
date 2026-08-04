@@ -10,7 +10,7 @@ import { asyncHandler } from "../utils/http.js";
 import { requireRole } from "../middleware/authorization.js";
 
 const router = Router();
-router.use(requireRole("admin", "consultant"));
+router.use(requireRole("admin", "consultant", "frontdesk"));
 
 router.get("/", asyncHandler(listNotes));
 router.get("/:id", asyncHandler(getNoteById));

@@ -1368,7 +1368,7 @@ export default function PublicBookingPage() {
   const detailsReady = Boolean(
     meetingMode &&
     (meetingMode !== "InPerson" || locationId) &&
-    (meetingMode !== "Phone" || form.phone.trim()) &&
+    form.phone.trim() &&
     form.name.trim() &&
     emailValid &&
     form.notes.trim(),
@@ -1947,10 +1947,8 @@ export default function PublicBookingPage() {
                         </>
                       ) : (
                         <>
-                          Send text messages to{" "}
-                          <span className="font-normal text-[#6B7280]">
-                            (optional)
-                          </span>
+                          Phone number
+                          <span className="text-rose-500">*</span>
                         </>
                       )}
                       <div className="mt-1.5 flex overflow-hidden rounded-md border border-[#E5E7EB] focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
@@ -1975,7 +1973,11 @@ export default function PublicBookingPage() {
                             : ""}
                           . You do not need to call the office.
                         </span>
-                      ) : null}
+                      ) : (
+                        <span className="mt-1.5 block font-normal leading-5 text-[#6B7280]">
+                          So we can reach you about your appointment.
+                        </span>
+                      )}
                     </motion.label>
 
                     {requiresPayment ? (

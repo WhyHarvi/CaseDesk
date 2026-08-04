@@ -14,6 +14,12 @@ import documentTemplateRoutes from "./routes/documentTemplateRoutes.js";
 import followUpRoutes from "./routes/followUpRoutes.js";
 import requireAuth from "./middleware/authMiddleware.js";
 import { requireRole } from "./middleware/authorization.js";
+import {
+  requireAnyPortalPage,
+  requirePortalArea,
+  requirePortalCapability,
+  requirePortalPage,
+} from "./services/portalAccessService.js";
 import errorHandler, { notFoundHandler } from "./middleware/errorHandler.js";
 import noteRoutes from "./routes/noteRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
@@ -33,12 +39,30 @@ import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
-import { startBookingReminderWorker, stopBookingReminderWorker } from "./services/bookingNotificationService.js";
-import { startPaymentScheduleWorker, stopPaymentScheduleWorker } from "./services/paymentScheduleService.js";
-import { startPaymentHoldExpiryWorker, stopPaymentHoldExpiryWorker } from "./services/bookingPaymentHoldService.js";
-import { startQuickBooksWebhookWorker, stopQuickBooksWebhookWorker } from "./services/quickbooksWebhookService.js";
-import { startCaseInformationDriftDetector, stopCaseInformationDriftDetector } from "./services/caseInformationDriftDetector.js";
-import { startAppointmentNoShowWorker, stopAppointmentNoShowWorker } from "./services/appointmentNoShowService.js";
+import {
+  startBookingReminderWorker,
+  stopBookingReminderWorker,
+} from "./services/bookingNotificationService.js";
+import {
+  startPaymentScheduleWorker,
+  stopPaymentScheduleWorker,
+} from "./services/paymentScheduleService.js";
+import {
+  startPaymentHoldExpiryWorker,
+  stopPaymentHoldExpiryWorker,
+} from "./services/bookingPaymentHoldService.js";
+import {
+  startQuickBooksWebhookWorker,
+  stopQuickBooksWebhookWorker,
+} from "./services/quickbooksWebhookService.js";
+import {
+  startCaseInformationDriftDetector,
+  stopCaseInformationDriftDetector,
+} from "./services/caseInformationDriftDetector.js";
+import {
+  startAppointmentNoShowWorker,
+  stopAppointmentNoShowWorker,
+} from "./services/appointmentNoShowService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
@@ -51,13 +75,25 @@ import leadRoutes from "./modules/leads/lead.routes.js";
 import leadPublicRoutes from "./modules/leads/lead.public.routes.js";
 import leadWebsiteRoutes from "./modules/leads/lead.website.routes.js";
 import leadProviderRoutes from "./modules/leads/lead.provider.routes.js";
-import { startLeadIntakeWorker, stopLeadIntakeWorker } from "./modules/leads/lead.intake.worker.js";
+import {
+  startLeadIntakeWorker,
+  stopLeadIntakeWorker,
+} from "./modules/leads/lead.intake.worker.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
-import { startNotificationScheduler, stopNotificationScheduler } from "./services/notificationScheduler.js";
-import { startNotificationDeliveryWorker, stopNotificationDeliveryWorker } from "./services/notificationDeliveryService.js";
-import { startAutomatedReminderWorker, stopAutomatedReminderWorker } from "./services/automatedReminderService.js";
+import {
+  startNotificationScheduler,
+  stopNotificationScheduler,
+} from "./services/notificationScheduler.js";
+import {
+  startNotificationDeliveryWorker,
+  stopNotificationDeliveryWorker,
+} from "./services/notificationDeliveryService.js";
+import {
+  startAutomatedReminderWorker,
+  stopAutomatedReminderWorker,
+} from "./services/automatedReminderService.js";
 import { invalidateDashboardCache } from "./services/dashboardCache.js";
 import {
   startFormRevisionMonitor,
@@ -76,9 +112,15 @@ import {
   stopCommunicationMaintenance,
 } from "./services/communicationMaintenanceService.js";
 import prisma from "./services/prisma/client.js";
-import { requestContext, secureHeaders } from "./middleware/productionSecurity.js";
+import {
+  requestContext,
+  secureHeaders,
+} from "./middleware/productionSecurity.js";
 import { logger } from "./services/logger.js";
-import { startAppointmentMeetingWorker, stopAppointmentMeetingWorker } from "./services/appointmentMeetingService.js";
+import {
+  startAppointmentMeetingWorker,
+  stopAppointmentMeetingWorker,
+} from "./services/appointmentMeetingService.js";
 import {
   startZoomConnectionMaintenance,
   stopZoomConnectionMaintenance,
@@ -96,26 +138,42 @@ app.use(secureHeaders);
 
 app.use(
   cors({
-    origin: String(process.env.FRONTEND_URL || "http://localhost:5173").split(",").map((item) => item.trim()),
+    origin: String(process.env.FRONTEND_URL || "http://localhost:5173")
+      .split(",")
+      .map((item) => item.trim()),
     // Let browsers reuse the preflight response instead of sending OPTIONS
     // before every request (Chrome caps this at 2h, Firefox at 24h).
     maxAge: 86400,
   }),
 );
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb", verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
+app.use(
+  express.json({
+    limit: process.env.JSON_BODY_LIMIT || "1mb",
+    verify: (req, _res, buffer) => {
+      req.rawBody = Buffer.from(buffer);
+    },
+  }),
+);
 
 app.use((req, res, next) => {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
   res.on("finish", () => {
-    if (res.statusCode < 400 && req.auth?.agencyId) invalidateDashboardCache(req.auth.agencyId);
+    if (res.statusCode < 400 && req.auth?.agencyId)
+      invalidateDashboardCache(req.auth.agencyId);
   });
   return next();
 });
 
 app.get("/api/health/live", (_req, res) => res.json({ status: "ok" }));
 app.get("/api/health", async (req, res, next) => {
-  try { await prisma.$queryRaw`SELECT 1`; res.json({ status: "ok", database: "connected", requestId: req.requestId }); }
-  catch (error) { next(Object.assign(error, { statusCode: 503, code: "DATABASE_UNAVAILABLE" })); }
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", database: "connected", requestId: req.requestId });
+  } catch (error) {
+    next(
+      Object.assign(error, { statusCode: 503, code: "DATABASE_UNAVAILABLE" }),
+    );
+  }
 });
 
 app.use("/api/auth", authRoutes);
@@ -136,54 +194,213 @@ app.use("/api/client-portal", requireAuth, clientPortalRoutes);
 app.use("/api/notifications", requireAuth, notificationRoutes);
 app.use("/api/admin", requireAuth, adminRoutes);
 app.use("/api/consultants", requireAuth, consultantRoutes);
-const internalUser = requireRole("admin", "consultant");
+const staffUser = requireRole("admin", "consultant", "frontdesk");
 const leadUser = requireRole("admin", "consultant", "frontdesk");
 app.use("/api/search", requireAuth, leadUser, globalSearchRoutes);
-app.use("/api/dashboard", requireAuth, internalUser, dashboardRoutes);
+app.use(
+  "/api/dashboard",
+  requireAuth,
+  staffUser,
+  requirePortalPage("dashboard"),
+  dashboardRoutes,
+);
 // Distinct path — /api/payments belongs to the legacy Payment CRUD below,
 // which Cases.jsx/CaseProfile.jsx still consume with an array response.
-app.use("/api/payments-overview", requireAuth, paymentsOverviewRoutes);
-app.use("/api/leads", requireAuth, leadUser, leadRoutes);
-app.use("/api/clients", requireAuth, internalUser, clientRoutes);
-app.use("/api/cases", requireAuth, internalUser, caseRoutes);
-app.use("/api/payment-schedules", requireAuth, internalUser, paymentScheduleRoutes);
-app.use("/api/fee-categories", requireAuth, internalUser, feeCategoryRoutes);
-app.use("/api/case-easy-import", requireAuth, leadUser, caseEasyImportRoutes);
-app.use("/api/follow-ups", requireAuth, internalUser, followUpRoutes);
+app.use(
+  "/api/payments-overview",
+  requireAuth,
+  staffUser,
+  requirePortalPage("payments"),
+  requirePortalCapability("financialData"),
+  paymentsOverviewRoutes,
+);
+app.use(
+  "/api/leads",
+  requireAuth,
+  leadUser,
+  requireAnyPortalPage("leads", "leadIntake"),
+  leadRoutes,
+);
+app.use(
+  "/api/clients",
+  requireAuth,
+  staffUser,
+  requirePortalPage("clients"),
+  clientRoutes,
+);
+app.use(
+  "/api/cases",
+  requireAuth,
+  staffUser,
+  requirePortalPage("cases"),
+  caseRoutes,
+);
+app.use(
+  "/api/payment-schedules",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    pages: ["payments"],
+    caseTabs: ["billing"],
+    capabilities: ["financialData"],
+  }),
+  paymentScheduleRoutes,
+);
+app.use(
+  "/api/fee-categories",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    pages: ["payments"],
+    caseTabs: ["billing"],
+    capabilities: ["financialData"],
+  }),
+  feeCategoryRoutes,
+);
+app.use(
+  "/api/case-easy-import",
+  requireAuth,
+  leadUser,
+  requirePortalPage("caseEasyImport"),
+  caseEasyImportRoutes,
+);
+app.use(
+  "/api/follow-ups",
+  requireAuth,
+  staffUser,
+  requireAnyPortalPage("followUps", "cases"),
+  followUpRoutes,
+);
 app.use("/api/users", requireAuth, requireRole("admin"), userRoutes);
-app.use("/api/notes", requireAuth, internalUser, noteRoutes);
-app.use("/api/payments", requireAuth, internalUser, paymentRoutes);
-app.use("/api/client-documents", requireAuth, internalUser, clientDocumentRoutes);
-app.use("/api/document-templates", requireAuth, internalUser, documentTemplateRoutes);
-app.use("/api/workflow-templates", requireAuth, internalUser, workflowTemplateRoutes);
-app.use("/api/activity-logs", requireAuth, internalUser, activityLogRoutes);
-app.use("/api/shared-library", requireAuth, internalUser, sharedLibraryRoutes);
-app.use("/api/written-documents", requireAuth, internalUser, writtenDocumentRoutes);
-app.use("/api/case-forms", requireAuth, internalUser, caseFormRoutes);
-app.use("/api/form-templates", requireAuth, internalUser, agencyFormTemplateRoutes);
-app.use("/api/correspondence", requireAuth, internalUser, correspondenceRoutes);
-app.use("/api/appointments", requireAuth, internalUser, appointmentRoutes);
-app.use("/api/booking", requireAuth, leadUser, bookingRoutes);
-app.use("/api/communications", requireAuth, internalUser, communicationRoutes);
+app.use(
+  "/api/notes",
+  requireAuth,
+  staffUser,
+  requirePortalCapability("internalNotes"),
+  noteRoutes,
+);
+app.use(
+  "/api/payments",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    pages: ["payments"],
+    caseTabs: ["billing"],
+    capabilities: ["financialData"],
+  }),
+  paymentRoutes,
+);
+app.use(
+  "/api/client-documents",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ pages: ["documents"], caseTabs: ["documents"] }),
+  clientDocumentRoutes,
+);
+app.use(
+  "/api/document-templates",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ pages: ["documents"], caseTabs: ["documents"] }),
+  documentTemplateRoutes,
+);
+app.use(
+  "/api/workflow-templates",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ caseTabs: ["tasks"] }),
+  workflowTemplateRoutes,
+);
+app.use(
+  "/api/activity-logs",
+  requireAuth,
+  staffUser,
+  requirePortalPage("cases"),
+  activityLogRoutes,
+);
+app.use(
+  "/api/shared-library",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ pages: ["documents"], caseTabs: ["documents"] }),
+  sharedLibraryRoutes,
+);
+app.use(
+  "/api/written-documents",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    pages: ["documents"],
+    caseTabs: ["documents", "agreementsLetters"],
+  }),
+  writtenDocumentRoutes,
+);
+app.use(
+  "/api/case-forms",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ caseTabs: ["forms"] }),
+  caseFormRoutes,
+);
+app.use(
+  "/api/form-templates",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ caseTabs: ["forms"] }),
+  agencyFormTemplateRoutes,
+);
+app.use(
+  "/api/correspondence",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ caseTabs: ["agreementsLetters"] }),
+  correspondenceRoutes,
+);
+app.use(
+  "/api/appointments",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ pages: ["calendar"], caseTabs: ["appointments"] }),
+  appointmentRoutes,
+);
+app.use(
+  "/api/booking",
+  requireAuth,
+  leadUser,
+  requirePortalPage("calendar"),
+  bookingRoutes,
+);
+app.use(
+  "/api/communications",
+  requireAuth,
+  staffUser,
+  requirePortalArea({ caseTabs: ["communication"] }),
+  communicationRoutes,
+);
 app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
 
 function onListening() {
-  logger.info("server.started", { port, environment: process.env.NODE_ENV || "development" });
+  logger.info("server.started", {
+    port,
+    environment: process.env.NODE_ENV || "development",
+  });
   if (!process.env.QBO_WEBHOOK_VERIFIER_TOKEN) {
     // Every connected agency's Intuit webhook silently rejects with 401
     // when this is unset — there's no other startup-time signal, so this
     // is the only chance to notice before a payment/refund's confirmation
     // quietly falls back to the slower reconciliation-only path.
     logger.warn("server.qbo_webhook_verifier_token_missing", {
-      detail: "QBO_WEBHOOK_VERIFIER_TOKEN is not set — all QuickBooks webhook deliveries will be rejected with 401 until it matches the token registered in the Intuit developer dashboard.",
+      detail:
+        "QBO_WEBHOOK_VERIFIER_TOKEN is not set — all QuickBooks webhook deliveries will be rejected with 401 until it matches the token registered in the Intuit developer dashboard.",
     });
   }
   if (!zoomConfigured()) {
     logger.warn("server.zoom_not_configured", {
-      detail: "Zoom booking is unavailable until ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and MAIL_SETTINGS_ENCRYPTION_KEY are all configured.",
+      detail:
+        "Zoom booking is unavailable until ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and MAIL_SETTINGS_ENCRYPTION_KEY are all configured.",
     });
   }
   startFormRevisionMonitor();

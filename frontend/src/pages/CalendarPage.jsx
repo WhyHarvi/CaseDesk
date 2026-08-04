@@ -43,6 +43,7 @@ import PageContainer from "../components/layout/PageContainer";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import RefundFeeNotice from "../components/booking/RefundFeeNotice";
 import Select from "../components/ui/Select";
+import ClientCombobox, { useClientMatches } from "../components/ui/ClientCombobox";
 import api from "../services/api";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -648,30 +649,29 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 }
 
 function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, settings }) {
-  const [clients, setClients] = useState([]);
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
   const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "" });
+  const [selectedClient, setSelectedClient] = useState(null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [freeEligibility, setFreeEligibility] = useState(null);
-  const [clientSearch, setClientSearch] = useState("");
   const [pendingHold, setPendingHold] = useState(null);
   const [bookedWarning, setBookedWarning] = useState(null);
 
+  const searchClients = useCallback((query) => role === "frontdesk"
+    ? lookupBookingClients({ search: query })
+    : api.get(`/clients?limit=20${query ? `&search=${encodeURIComponent(query)}` : ""}`).then((response) => response.data.data || []),
+  [role]);
+
   useEffect(() => {
     if (!open) return;
-    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "" }));
+    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "", clientId: "" }));
+    setSelectedClient(null);
     setError("");
-    setClientSearch("");
     setPendingHold(null);
     setBookedWarning(null);
-    if (role === "frontdesk") {
-      lookupBookingClients().then(setClients).catch(() => {});
-    } else {
-      api.get("/clients?limit=100").then((response) => setClients(response.data.data || [])).catch(() => {});
-    }
   }, [open, role, userId, initialDate]);
 
   useEffect(() => {
@@ -707,14 +707,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
-  const selectedClient = clients.find((client) => client.id === form.clientId) || null;
-  const clientMatchesByName = form.clientId ? clients.filter((client) => client.fullName === selectedClient?.fullName) : [];
   const consultFeeAmount = Number(settings?.consultFeeAmount) || 0;
   const showsPaymentStep = consultFeeAmount > 0 && freeEligibility?.eligible !== true;
-  const clientSearchNeedle = clientSearch.trim().toLowerCase();
-  const filteredClients = clientSearchNeedle
-    ? clients.filter((client) => [client.fullName, client.email, client.phone, client.clientNumber].filter(Boolean).some((field) => String(field).toLowerCase().includes(clientSearchNeedle)))
-    : clients;
   const zoomCandidateId = role === "consultant" ? userId : form.assignedToId;
   const zoomHostAvailable = zoomCandidateId
     ? staff.some((member) => member.id === zoomCandidateId && member.zoomHostMapping?.status === "active")
@@ -735,8 +729,24 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setForm((current) => ({ ...current, meetingMode: meetingModes[0]?.[0] || "InPerson", startsAt: "" }));
   }, [selectedType, meetingModes, form.meetingMode]);
 
+  // Guest-mode "this looks like an existing client" hint — mirrors the
+  // backend's own email-or-phone OR match (createBookingAppointment) so the
+  // hint and the auto-link it's describing never disagree about what counts
+  // as a match.
+  const guestEmailQuery = form.mode === "guest" && /\S+@\S+\.\S+/.test(form.guestEmail.trim()) ? form.guestEmail.trim() : "";
+  const guestPhoneDigits = form.guestPhone.replace(/\D/g, "");
+  const guestPhoneQuery = form.mode === "guest" && guestPhoneDigits.length >= 7 ? form.guestPhone.trim() : "";
+  const { results: guestEmailMatches } = useClientMatches(Boolean(guestEmailQuery), guestEmailQuery, searchClients);
+  const { results: guestPhoneMatches } = useClientMatches(Boolean(guestPhoneQuery), guestPhoneQuery, searchClients);
+  const guestMatches = useMemo(() => {
+    const merged = new Map();
+    [...guestEmailMatches, ...guestPhoneMatches].forEach((client) => merged.set(client.id, client));
+    return [...merged.values()];
+  }, [guestEmailMatches, guestPhoneMatches]);
+
   const loadSlots = useCallback(async () => {
-    if (!form.date || !selectedType) return;
+    const locationChoicePending = form.meetingMode === "InPerson" && locations.length > 1 && !form.locationId;
+    if (!form.date || !selectedType || locationChoicePending) { setSlots(null); return; }
     setLoadingSlots(true);
     setSlots(null);
     try {
@@ -755,7 +765,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     } finally {
       setLoadingSlots(false);
     }
-  }, [form.date, form.assignedToId, form.meetingMode, form.locationId, selectedType, role]);
+  }, [form.date, form.assignedToId, form.meetingMode, form.locationId, selectedType, role, locations.length]);
 
   useEffect(() => { if (open) loadSlots(); }, [open, loadSlots]);
 
@@ -844,29 +854,16 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               </div>
 
               {form.mode === "client" ? (
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-slate-600">Search by name, email, phone, or client #
-                    <input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Start typing to narrow the list…" className={`mt-1.5 ${input}`} />
-                  </label>
-                  <label className="block text-xs font-medium text-slate-600">Client
-                    <Select value={form.clientId} onChange={(event) => setForm((c) => ({ ...c, clientId: event.target.value }))} className="mt-1.5 w-full" ariaLabel="Client">
-                      <option value="">Choose a client…</option>
-                      {filteredClients.map((client) => (
-                        <option key={client.id} value={client.id}>
-                          {client.fullName}
-                          {client.clientNumber ? ` · #${client.clientNumber}` : ""}
-                          {client.email ? ` · ${client.email}` : ""}
-                          {client.phone ? ` · ${client.phone}` : ""}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                  {selectedClient && clientMatchesByName.length > 1 ? (
-                    <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                      {clientMatchesByName.length} clients are named "{selectedClient.fullName}". You selected {selectedClient.email || selectedClient.phone || `client #${selectedClient.clientNumber || selectedClient.id.slice(0, 8)}`} — double-check this is the right one.
-                    </p>
-                  ) : null}
-                </div>
+                <label className="block text-xs font-medium text-slate-600">Client
+                  <div className="mt-1.5">
+                    <ClientCombobox
+                      selected={selectedClient}
+                      onSelect={(client) => { setSelectedClient(client); setForm((c) => ({ ...c, clientId: client.id })); }}
+                      onClear={() => { setSelectedClient(null); setForm((c) => ({ ...c, clientId: "" })); }}
+                      search={searchClients}
+                    />
+                  </div>
+                </label>
               ) : (
                 <div className="space-y-3">
                   <label className="block text-xs font-medium text-slate-600">Visitor name
@@ -880,6 +877,29 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                       <input value={form.guestPhone} onChange={(event) => setForm((c) => ({ ...c, guestPhone: event.target.value }))} className={`mt-1.5 ${input}`} />
                     </label>
                   </div>
+                  <p className="text-xs text-slate-400">Enter at least one of email or phone.</p>
+                  {guestMatches.length === 1 ? (
+                    <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                      This looks like an existing client — {guestMatches[0].fullName}. It'll be linked automatically when you book.
+                    </p>
+                  ) : guestMatches.length > 1 ? (
+                    <div className="rounded-lg bg-amber-50 p-2.5">
+                      <p className="px-0.5 text-xs font-semibold leading-5 text-amber-800">{guestMatches.length} existing clients match this contact info — pick the right one to avoid creating a duplicate.</p>
+                      <div className="mt-1.5 space-y-1">
+                        {guestMatches.map((client) => (
+                          <button
+                            key={client.id}
+                            type="button"
+                            onClick={() => { setSelectedClient(client); setForm((c) => ({ ...c, mode: "client", clientId: client.id })); }}
+                            className="flex w-full items-center justify-between rounded-lg bg-white px-2.5 py-1.5 text-left text-xs font-medium text-slate-700 shadow-sm transition hover:bg-amber-100/60"
+                          >
+                            <span className="truncate">{client.fullName}</span>
+                            <span className="ml-2 shrink-0 truncate text-slate-400">{client.email || client.phone}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -915,6 +935,19 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 ))}
               </div>
 
+              {(form.meetingMode || "InPerson") === "InPerson" && locations.length > 1 ? (
+                <label className="block text-xs font-medium text-slate-600">Office location
+                  <Select value={form.locationId} onChange={(event) => setForm((c) => ({ ...c, locationId: event.target.value, startsAt: "" }))} className="mt-1.5 w-full" ariaLabel="Office location">
+                    <option value="">Choose a location…</option>
+                    {locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </Select>
+                </label>
+              ) : (form.meetingMode || "InPerson") === "InPerson" && !locations.length ? (
+                <label className="block text-xs font-medium text-slate-600">Location (optional)
+                  <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office or meeting place" className={`mt-1.5 ${input}`} />
+                </label>
+              ) : null}
+
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-medium text-slate-600">Session type
                   <Select value={selectedType?.id || ""} onChange={(event) => setForm((c) => ({ ...c, sessionTypeId: event.target.value, startsAt: "" }))} className="mt-1.5 w-full" ariaLabel="Session type">
@@ -938,7 +971,9 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
               <div>
                 <p className="text-xs font-medium text-slate-600">Available times</p>
-                {loadingSlots ? (
+                {form.meetingMode === "InPerson" && locations.length > 1 && !form.locationId ? (
+                  <p className="mt-2 text-sm text-slate-400">Choose an office location above to see available times.</p>
+                ) : loadingSlots ? (
                   <p className="mt-2 flex items-center gap-2 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Checking availability…</p>
                 ) : slots && slots.length ? (
                   <div className="mt-2 grid grid-cols-4 gap-1.5">
@@ -956,18 +991,6 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               <label className="block text-xs font-medium text-slate-600">Subject (optional)
                 <input value={form.subject} onChange={(event) => setForm((c) => ({ ...c, subject: event.target.value }))} placeholder={selectedType?.name || "Appointment"} className={`mt-1.5 ${input}`} />
               </label>
-              {(form.meetingMode || "InPerson") === "InPerson" && locations.length ? (
-                <label className="block text-xs font-medium text-slate-600">Office location
-                  <Select value={form.locationId} onChange={(event) => setForm((c) => ({ ...c, locationId: event.target.value }))} className="mt-1.5 w-full" ariaLabel="Office location">
-                    <option value="">Choose a location…</option>
-                    {locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                  </Select>
-                </label>
-              ) : (form.meetingMode || "InPerson") === "InPerson" ? (
-                <label className="block text-xs font-medium text-slate-600">Location (optional)
-                  <input value={form.location} onChange={(event) => setForm((c) => ({ ...c, location: event.target.value }))} placeholder="Office or meeting place" className={`mt-1.5 ${input}`} />
-                </label>
-              ) : null}
               {form.meetingMode === "Phone" ? <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {form.mode === "client" ? selectedClient?.phone || "the client’s saved number" : form.guestPhone || "the visitor’s number"}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}. A valid client phone number is required.</p> : null}
 
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
@@ -982,7 +1005,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
             )}
             {!pendingHold && !bookedWarning ? (
             <footer className="border-t border-slate-100 p-4">
-              <button type="button" onClick={submit} disabled={saving || !form.startsAt || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+              <button type="button" onClick={submit} disabled={saving || !form.startsAt || (form.mode === "guest" && !form.guestEmail.trim() && !form.guestPhone.trim()) || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : form.paymentMethod === "Card" ? "Reserve & send payment link" : "Book appointment"}
               </button>
             </footer>

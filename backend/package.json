@@ -34,6 +34,7 @@
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "imapflow": "^1.4.7",
+    "jose": "^6.2.8",
     "libphonenumber-js": "^1.13.8",
     "mailparser": "^3.9.14",
     "multer": "^2.2.0",

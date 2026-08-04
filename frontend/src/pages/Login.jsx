@@ -15,7 +15,7 @@ const flipVariants = {
 };
 
 export default function Login() {
-  const { signIn, isAuthenticated, role, accountError } = useAuth();
+  const { signIn, isAuthenticated, role, membership, accountError } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [mode, setMode] = useState(searchParams.get("forgot") === "1" ? "forgot" : "login");
@@ -87,7 +87,7 @@ export default function Login() {
   const mxPct = useTransform(mxSpring, (value) => `${value}%`);
   const myPct = useTransform(mySpring, (value) => `${value}%`);
 
-  if (isAuthenticated && status !== "success") return <Navigate to={homePathForRole(role)} replace />;
+  if (isAuthenticated && status !== "success") return <Navigate to={homePathForRole(role, membership?.permissions)} replace />;
 
   function handlePointerMove(event) {
     const rect = cardRef.current?.getBoundingClientRect();
@@ -121,7 +121,7 @@ export default function Login() {
       }
       const destination = identity.appUser.mustChangePassword
         ? "/change-password"
-        : homePathForRole(identity.membership.role);
+        : homePathForRole(identity.membership.role, identity.membership.permissions);
       setStatus("success");
       window.setTimeout(() => navigate(destination, { replace: true }), 1200);
     } catch (reason) {

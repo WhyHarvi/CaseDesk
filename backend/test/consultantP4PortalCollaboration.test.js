@@ -10,10 +10,10 @@ test("portal document operations require linked ownership and client visibility"
     source("../src/controllers/portalController.js"),
     source("../src/routes/portalRoutes.js"),
   ]);
-  assert.match(controller, /clientId: link\.clientId, visibility: "Client"/);
-  assert.match(controller, /updatedAt: existing\.updatedAt, status: \{ notIn: \["Approved", "Finalized", "NotRequired"\] \}/);
+  assert.match(controller, /clientId: link\.clientId,[\s\S]*visibility: "Client"/);
+  assert.match(controller, /updatedAt: existing\.updatedAt,[\s\S]*status: \{ notIn: \["Approved", "Finalized", "NotRequired"\] \}/);
   assert.match(controller, /hasFile: Boolean\(storageKey\)/);
-  assert.match(controller, /data\.map\(\(\{ storageKey, \.\.\.item \}\) => \(\{ \.\.\.item, hasFile:/);
+  assert.match(controller, /data\.map\([\s\S]*\(\{ storageKey, \.\.\.item \}\)[\s\S]*\.\.\.item,[\s\S]*hasFile:/);
   assert.match(routes, /documents\/:id\/upload/);
   assert.match(routes, /documents\/:id\/file/);
   assert.match(routes, /rateLimit\(\{ windowMs: 60_000, max: 10 \}\)/);
@@ -45,7 +45,7 @@ test("portal messages expose chat only and never internal communication", async 
     source("../src/routes/portalRoutes.js"),
   ]);
   const listSection = controller.slice(controller.indexOf("export async function portalMessages"), controller.indexOf("export async function createPortalMessage"));
-  assert.match(listSection, /clientId: link\.clientId, caseId: generalChat \? null : selectedCaseId, channel: "Chat"/);
+  assert.match(listSection, /clientId: link\.clientId,[\s\S]*caseId: generalChat \? null : selectedCaseId,[\s\S]*channel: "Chat"/);
   assert.match(listSection, /GENERAL_CHAT_ID/);
   assert.match(listSection, /direction: \{ in: \["Inbound", "Outbound"\] \}/);
   assert.match(listSection, /deletedAt: null/);
@@ -157,7 +157,7 @@ test("case Manage Permissions controls owner and collaborator access without str
     source("../../frontend/src/components/case-profile/CasePermissionsOverlay.jsx"),
   ]);
 
-  assert.match(routes, /\/:id\/permissions", requireRole\("admin"\)/);
+  assert.match(routes, /\/:id\/permissions",[\s\S]*requireRole\("admin"\)/);
   assert.match(controller, /memberships: \{ some: \{ agencyId: req\.auth\.agencyId, role: "consultant", isActive: true \} \}/);
   assert.match(controller, /assignmentType: "supporting"/);
   assert.match(controller, /Reassign.*active work item/);

@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { homePathForRole } from "../../auth/AuthRoutes";
@@ -9,15 +17,22 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from "../../api/notificationApi";
+import {
+  NOTIFICATION_POLL_MS,
+  claimNotificationPollLease,
+  createNotificationPollOwner,
+  notificationChannelName,
+  notificationLeaseKey,
+  releaseNotificationPollLease,
+} from "../../services/notificationPolling";
 
 const NotificationContext = createContext(null);
-const POLL_MS = 45_000;
 
 // actionUrls the backend can emit that have no matching frontend route yet
 const PATH_REWRITES = {};
 
 export function NotificationProvider({ children }) {
-  const { isAuthenticated, role } = useAuth();
+  const { isAuthenticated, role, membership } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -30,32 +45,33 @@ export function NotificationProvider({ children }) {
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const pendingRef = useRef(new Set());
+  const pollOwnerRef = useRef(createNotificationPollOwner());
   const filterRef = useRef(filter);
   filterRef.current = filter;
 
-  const refreshUnreadCount = useCallback(async () => {
-    try {
-      setUnreadCount(await getUnreadNotificationCount());
-    } catch {
-      /* polling failure is silent; next tick retries */
-    }
-  }, []);
-
-  const loadPage = useCallback(async (page, activeFilter, { append = false } = {}) => {
-    const setBusy = append ? setLoadingMore : setLoading;
-    setBusy(true);
-    setError("");
-    try {
-      const response = await getNotifications({ page, unread: activeFilter === "unread" });
-      setItems((current) => (append ? [...current, ...response.data] : response.data));
-      setMeta({ page: response.meta.page, total: response.meta.total });
-      setUnreadCount(response.meta.unread);
-    } catch {
-      setError("Notifications could not be loaded.");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const loadPage = useCallback(
+    async (page, activeFilter, { append = false } = {}) => {
+      const setBusy = append ? setLoadingMore : setLoading;
+      setBusy(true);
+      setError("");
+      try {
+        const response = await getNotifications({
+          page,
+          unread: activeFilter === "unread",
+        });
+        setItems((current) =>
+          append ? [...current, ...response.data] : response.data,
+        );
+        setMeta({ page: response.meta.page, total: response.meta.total });
+        setUnreadCount(response.meta.unread);
+      } catch {
+        setError("Notifications could not be loaded.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -64,19 +80,87 @@ export function NotificationProvider({ children }) {
       setPanelOpen(false);
       return undefined;
     }
-    refreshUnreadCount();
-    const interval = window.setInterval(refreshUnreadCount, POLL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refreshUnreadCount();
+    let stopped = false;
+    const owner = pollOwnerRef.current;
+    const scope = membership?.id || "session";
+    const leaseKey = notificationLeaseKey(scope);
+    let storage = null;
+    let channel = null;
+    try {
+      storage = window.localStorage;
+    } catch {
+      /* cross-tab coordination is unavailable in restricted storage modes */
+    }
+    try {
+      channel =
+        typeof window.BroadcastChannel === "function"
+          ? new window.BroadcastChannel(notificationChannelName(scope))
+          : null;
+    } catch {
+      /* polling continues without cross-tab count broadcasts */
+    }
+
+    const releaseLease = () =>
+      releaseNotificationPollLease({ storage, key: leaseKey, owner });
+    const refreshUnreadCount = async () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      const ownsLease = claimNotificationPollLease({
+        storage,
+        key: leaseKey,
+        owner,
+      });
+      if (!ownsLease) return;
+      try {
+        const count = await getUnreadNotificationCount();
+        if (stopped) return;
+        setUnreadCount(count);
+        channel?.postMessage({ type: "unread-count", count });
+      } catch {
+        /* polling failure is silent; next tick or focus retries */
+      }
     };
-    window.addEventListener("focus", refreshUnreadCount);
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (
+          event.data?.type === "unread-count" &&
+          Number.isFinite(event.data.count)
+        ) {
+          setUnreadCount(event.data.count);
+        }
+      };
+    }
+    void refreshUnreadCount();
+    const interval = window.setInterval(
+      () => void refreshUnreadCount(),
+      NOTIFICATION_POLL_MS,
+    );
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshUnreadCount();
+      else releaseLease();
+    };
+    const onFocus = () => void refreshUnreadCount();
+    const onLeaseChanged = (event) => {
+      if (
+        event.key === leaseKey &&
+        !event.newValue &&
+        document.visibilityState === "visible"
+      ) {
+        void refreshUnreadCount();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onLeaseChanged);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      stopped = true;
       window.clearInterval(interval);
-      window.removeEventListener("focus", refreshUnreadCount);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onLeaseChanged);
       document.removeEventListener("visibilitychange", onVisible);
+      releaseLease();
+      channel?.close();
     };
-  }, [isAuthenticated, refreshUnreadCount]);
+  }, [isAuthenticated, membership?.id]);
 
   const openPanel = useCallback(() => {
     setPanelOpen(true);
@@ -105,7 +189,10 @@ export function NotificationProvider({ children }) {
       current.map((item) => {
         if (item.id !== id) return item;
         previous = item;
-        return { ...item, readAt: read ? item.readAt || new Date().toISOString() : null };
+        return {
+          ...item,
+          readAt: read ? item.readAt || new Date().toISOString() : null,
+        };
       }),
     );
     const wasUnread = previous && !previous.readAt;
@@ -114,9 +201,13 @@ export function NotificationProvider({ children }) {
     try {
       await markNotificationRead(id, read);
     } catch {
-      if (previous) setItems((current) => current.map((item) => (item.id === id ? previous : item)));
+      if (previous)
+        setItems((current) =>
+          current.map((item) => (item.id === id ? previous : item)),
+        );
       if (read && wasUnread) setUnreadCount((count) => count + 1);
-      if (!read && previous?.readAt) setUnreadCount((count) => Math.max(0, count - 1));
+      if (!read && previous?.readAt)
+        setUnreadCount((count) => Math.max(0, count - 1));
     } finally {
       pendingRef.current.delete(id);
     }
@@ -126,7 +217,9 @@ export function NotificationProvider({ children }) {
     const previousItems = items;
     const previousCount = unreadCount;
     const now = new Date().toISOString();
-    setItems((current) => current.map((item) => (item.readAt ? item : { ...item, readAt: now })));
+    setItems((current) =>
+      current.map((item) => (item.readAt ? item : { ...item, readAt: now })),
+    );
     setUnreadCount(0);
     try {
       await markAllNotificationsRead();
@@ -151,7 +244,10 @@ export function NotificationProvider({ children }) {
     if (wasUnread) setUnreadCount((count) => Math.max(0, count - 1));
     try {
       await dismissNotification(id);
-      setMeta((current) => ({ ...current, total: Math.max(0, current.total - 1) }));
+      setMeta((current) => ({
+        ...current,
+        total: Math.max(0, current.total - 1),
+      }));
     } catch {
       if (removed) {
         setItems((current) => {
@@ -173,11 +269,16 @@ export function NotificationProvider({ children }) {
       setPanelOpen(false);
       const raw = String(notification.actionUrl || "");
       const safe = raw.startsWith("/") && !raw.startsWith("//");
-      const path = safe ? PATH_REWRITES[raw] || raw : homePathForRole(role);
-      const clientSafe = role === "client" && !path.startsWith("/client-portal") ? "/client-portal" : path;
+      const path = safe
+        ? PATH_REWRITES[raw] || raw
+        : homePathForRole(role, membership?.permissions);
+      const clientSafe =
+        role === "client" && !path.startsWith("/client-portal")
+          ? "/client-portal"
+          : path;
       navigate(clientSafe);
     },
-    [markRead, navigate, role],
+    [markRead, membership?.permissions, navigate, role],
   );
 
   // Close the panel on route changes triggered elsewhere
@@ -206,14 +307,39 @@ export function NotificationProvider({ children }) {
       openNotification,
       retry: () => loadPage(1, filterRef.current),
     }),
-    [items, unreadCount, meta, filter, loading, loadingMore, error, panelOpen, openPanel, closePanel, changeFilter, loadMore, markRead, markAllRead, dismiss, openNotification, loadPage],
+    [
+      items,
+      unreadCount,
+      meta,
+      filter,
+      loading,
+      loadingMore,
+      error,
+      panelOpen,
+      openPanel,
+      closePanel,
+      changeFilter,
+      loadMore,
+      markRead,
+      markAllRead,
+      dismiss,
+      openNotification,
+      loadPage,
+    ],
   );
 
-  return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;
+  return (
+    <NotificationContext.Provider value={value}>
+      {children}
+    </NotificationContext.Provider>
+  );
 }
 
 export function useNotifications() {
   const value = useContext(NotificationContext);
-  if (!value) throw new Error("useNotifications must be used inside NotificationProvider");
+  if (!value)
+    throw new Error(
+      "useNotifications must be used inside NotificationProvider",
+    );
   return value;
 }

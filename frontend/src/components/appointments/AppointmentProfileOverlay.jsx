@@ -35,6 +35,7 @@ import {
   updateBookingAppointmentStatus,
 } from "../../api/bookingApi";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
+import { hasCapability } from "../../auth/portalAccess";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -76,8 +77,9 @@ function Empty({ children }) {
 }
 
 export default function AppointmentProfileOverlay({ appointmentId, initialTab = "details", onClose, onChanged, onEditScheduling }) {
-  const { role, appUser } = useAuth();
-  const canWrite = ["admin", "consultant"].includes(role);
+  const { role, appUser, membership } = useAuth();
+  const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
+  const canWrite = ["admin", "consultant", "frontdesk"].includes(role);
   const [appointment, setAppointment] = useState(null);
   const [tab, setTab] = useState("details");
   const [loading, setLoading] = useState(true);
@@ -116,8 +118,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (appointmentId) setTab(role === "frontdesk" && initialTab === "notes" ? "details" : initialTab);
-  }, [appointmentId, initialTab, role]);
+    if (appointmentId) setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
+  }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
     const close = (event) => event.key === "Escape" && !saving && onClose();
     window.addEventListener("keydown", close);
@@ -126,7 +128,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
 
   const person = useMemo(() => personFor(appointment), [appointment]);
   const clientNotes = appointment?.clientNotes ?? appointment?.notes ?? [];
-  const visibleTabs = role === "frontdesk" ? tabs.filter(([id]) => id !== "notes") : tabs;
+  const visibleTabs = canAccessInternalNotes ? tabs : tabs.filter(([id]) => id !== "notes");
   const hasStarted = appointment ? new Date(appointment.startsAt) <= new Date() : false;
   const calendarUrl = appointment ? `/app/calendar?appointment=${appointment.id}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}` : "/app/calendar";
 

@@ -11,7 +11,6 @@ import {
   Gauge,
   LogOut,
   ContactRound,
-  UserRound,
   BarChart3,
   Waypoints,
   DatabaseZap,
@@ -20,6 +19,7 @@ import { NavLink } from "react-router-dom";
 import logo from "../../assets/logo.png";
 import { useAuth } from "../../auth/AuthContext";
 import { prefetchRoute } from "../../services/routePrefetch";
+import { getPortalAccess } from "../../auth/portalAccess";
 
 const adminNavigation = [
   {
@@ -114,24 +114,63 @@ const adminNavigation = [
   },
 ];
 
-const consultantNavigation = [
-  { label: "Dashboard", to: "/app/dashboard", icon: LayoutDashboard },
-  { label: "Leads", to: "/leads", icon: ContactRound },
-  { label: "Lead Intake", to: "/lead-intake", icon: Waypoints },
-  { label: "My Clients", to: "/app/clients", icon: Users },
-  { label: "My Cases", to: "/app/cases", icon: BriefcaseBusiness },
-  { label: "Follow-ups", to: "/app/follow-ups", icon: CalendarClock },
-  { label: "Calendar", to: "/app/calendar", icon: CalendarDays },
-  { label: "My Workload", to: "/app/workload", icon: Gauge },
-  { label: "Case Easy Import", to: "/app/case-easy-import", icon: DatabaseZap },
-  { label: "Settings", to: "/app/settings", icon: Settings },
-];
-
-const frontdeskNavigation = [
-  { label: "Leads", to: "/leads", icon: ContactRound, description: "Assigned inquiries" },
-  { label: "Calendar", to: "/app/calendar", icon: CalendarDays, description: "Book walk-ins" },
-  { label: "My Profile", to: "/app/settings?section=personal-profile", icon: UserRound },
-  { label: "Case Easy Import", to: "/app/case-easy-import", icon: DatabaseZap },
+const memberNavigation = [
+  {
+    label: "Dashboard",
+    to: "/app/dashboard",
+    icon: LayoutDashboard,
+    accessKey: "dashboard",
+  },
+  { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads" },
+  {
+    label: "Lead Intake",
+    to: "/lead-intake",
+    icon: Waypoints,
+    accessKey: "leadIntake",
+  },
+  { label: "Clients", to: "/app/clients", icon: Users, accessKey: "clients" },
+  {
+    label: "Cases",
+    to: "/app/cases",
+    icon: BriefcaseBusiness,
+    accessKey: "cases",
+  },
+  {
+    label: "Follow-ups",
+    to: "/app/follow-ups",
+    icon: CalendarClock,
+    accessKey: "followUps",
+  },
+  {
+    label: "Calendar",
+    to: "/app/calendar",
+    icon: CalendarDays,
+    accessKey: "calendar",
+  },
+  {
+    label: "Documents",
+    to: "/app/documents",
+    icon: FileCheck2,
+    accessKey: "documents",
+  },
+  {
+    label: "Workload",
+    to: "/app/workload",
+    icon: Gauge,
+    accessKey: "workload",
+  },
+  {
+    label: "Payments",
+    to: "/app/payments",
+    icon: CreditCard,
+    accessKey: "payments",
+  },
+  {
+    label: "Case Easy Import",
+    to: "/app/case-easy-import",
+    icon: DatabaseZap,
+    accessKey: "caseEasyImport",
+  },
   { label: "Settings", to: "/app/settings", icon: Settings },
 ];
 
@@ -152,11 +191,15 @@ function NavItem({ item, collapsed, onNavigate, role }) {
         <div
           className={[
             "min-w-0 transition-[width,transform,opacity] duration-300 ease-out",
-            collapsed ? "w-0 -translate-x-3 opacity-0" : "w-full translate-x-0 opacity-100",
+            collapsed
+              ? "w-0 -translate-x-3 opacity-0"
+              : "w-full translate-x-0 opacity-100",
           ].join(" ")}
         >
           <div className="flex items-center gap-2">
-            <span className="truncate font-medium text-slate-400">{item.label}</span>
+            <span className="truncate font-medium text-slate-400">
+              {item.label}
+            </span>
             <span className="ml-auto rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
               Soon
             </span>
@@ -199,10 +242,17 @@ function NavItem({ item, collapsed, onNavigate, role }) {
           <div
             className={[
               "min-w-0 transition-[width,transform,opacity] duration-300 ease-out",
-              collapsed ? "w-0 -translate-x-3 opacity-0" : "w-full translate-x-0 opacity-100",
+              collapsed
+                ? "w-0 -translate-x-3 opacity-0"
+                : "w-full translate-x-0 opacity-100",
             ].join(" ")}
           >
-            <p className={["truncate text-sm font-medium", isActive ? "text-slate-900" : "text-slate-600"].join(" ")}>
+            <p
+              className={[
+                "truncate text-sm font-medium",
+                isActive ? "text-slate-900" : "text-slate-600",
+              ].join(" ")}
+            >
               {item.label}
             </p>
           </div>
@@ -213,32 +263,67 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 }
 
 function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
-  const { role, appUser, signOut } = useAuth();
-  const navigation = role === "admin" ? adminNavigation : role === "frontdesk" ? frontdeskNavigation : consultantNavigation;
-  const initials = appUser?.fullName?.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "CD";
+  const { role, appUser, membership, signOut } = useAuth();
+  const access = getPortalAccess(role, membership?.permissions);
+  const navigation = (
+    role === "admin" ? adminNavigation : memberNavigation
+  ).filter((item) => !item.accessKey || access.pages[item.accessKey]);
+  const initials =
+    appUser?.fullName
+      ?.split(" ")
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "CD";
   return (
     <>
-      <div className={["border-b border-slate-200 pb-4", collapsed ? "px-0" : "px-1"].join(" ")}>
-        <div className={["flex items-center gap-3", collapsed ? "justify-center" : "justify-start"].join(" ")}>
+      <div
+        className={[
+          "border-b border-slate-200 pb-4",
+          collapsed ? "px-0" : "px-1",
+        ].join(" ")}
+      >
+        <div
+          className={[
+            "flex items-center gap-3",
+            collapsed ? "justify-center" : "justify-start",
+          ].join(" ")}
+        >
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white">
-              <img src={logo} alt="CaseDesk logo" className="h-full w-full rounded-full object-cover" />
+              <img
+                src={logo}
+                alt="CaseDesk logo"
+                className="h-full w-full rounded-full object-cover"
+              />
             </div>
             <div
               className={[
                 "min-w-0 transition-[width,transform,opacity] duration-300 ease-out",
-                collapsed ? "w-0 -translate-x-3 opacity-0" : "w-full translate-x-0 opacity-100",
+                collapsed
+                  ? "w-0 -translate-x-3 opacity-0"
+                  : "w-full translate-x-0 opacity-100",
               ].join(" ")}
             >
-              <h1 className="truncate text-lg font-semibold text-slate-900">CaseDesk</h1>
-              <p className="truncate text-sm text-slate-500">Client operations</p>
+              <h1 className="truncate text-lg font-semibold text-slate-900">
+                CaseDesk
+              </h1>
+              <p className="truncate text-sm text-slate-500">
+                Client operations
+              </p>
             </div>
           </div>
         </div>
       </div>
       <nav className="mt-5 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {navigation.map((item) => (
-          <NavItem key={item.label} item={item} collapsed={collapsed} onNavigate={mobile ? onCloseMobile : undefined} role={role} />
+          <NavItem
+            key={item.label}
+            item={item}
+            collapsed={collapsed}
+            onNavigate={mobile ? onCloseMobile : undefined}
+            role={role}
+          />
         ))}
       </nav>
       <div
@@ -261,13 +346,28 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
           <div
             className={[
               "min-w-0 transition-[width,transform,opacity] duration-300 ease-out",
-              collapsed ? "w-0 -translate-x-3 opacity-0" : "w-full translate-x-0 opacity-100",
+              collapsed
+                ? "w-0 -translate-x-3 opacity-0"
+                : "w-full translate-x-0 opacity-100",
             ].join(" ")}
           >
-            <p className="truncate text-sm font-semibold text-slate-900">{appUser?.fullName}</p>
+            <p className="truncate text-sm font-semibold text-slate-900">
+              {appUser?.fullName}
+            </p>
             <p className="truncate text-xs capitalize text-slate-500">{role}</p>
           </div>
-          <button type="button" onClick={signOut} className={collapsed ? "hidden" : "rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"} aria-label="Sign out"><LogOut className="h-4 w-4" /></button>
+          <button
+            type="button"
+            onClick={signOut}
+            className={
+              collapsed
+                ? "hidden"
+                : "rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            }
+            aria-label="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </>
@@ -287,17 +387,28 @@ export default function Sidebar({
       <div
         className={[
           "fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm transition-all duration-300 lg:hidden",
-          mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+          mobileOpen
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0",
         ].join(" ")}
       >
-        <button type="button" aria-label="Close sidebar overlay" className="absolute inset-0" onClick={onCloseMobile} />
+        <button
+          type="button"
+          aria-label="Close sidebar overlay"
+          className="absolute inset-0"
+          onClick={onCloseMobile}
+        />
         <aside
           className={[
             "relative flex h-full w-[22rem] max-w-[88vw] flex-col border-r border-slate-200 bg-slate-50 px-5 py-6 shadow-2xl transition-transform duration-300 ease-out",
             mobileOpen ? "translate-x-0" : "-translate-x-full",
           ].join(" ")}
         >
-          <SidebarContent collapsed={false} onCloseMobile={onCloseMobile} mobile />
+          <SidebarContent
+            collapsed={false}
+            onCloseMobile={onCloseMobile}
+            mobile
+          />
         </aside>
       </div>
     );
@@ -311,7 +422,8 @@ export default function Sidebar({
       onMouseLeave={() => setHovered(false)}
       onFocusCapture={() => setHovered(true)}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setHovered(false);
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setHovered(false);
       }}
       className={[
         "sticky top-0 hidden h-screen shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 py-6 transition-[width,padding] duration-300 ease-out lg:flex",

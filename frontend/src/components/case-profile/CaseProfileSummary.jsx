@@ -17,7 +17,7 @@ import PortalAccessCard from "../clients/PortalAccessCard";
 import { ExpandingPillMenu, QuickActionLink, SimpleActionPill } from "./CaseProfileActions";
 import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./caseProfileUtils";
 
-export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, onContactClient, onEditClient }) {
+export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, onContactClient, onEditClient }) {
   return (
     <section className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
       <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -61,11 +61,11 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
               <p>
                 <span className="font-medium text-slate-900">Next:</span> {caseItem.nextAction || "No action set"}
               </p>
-              <p>
+              {showFinancials ? <p>
                 <span className="font-medium text-slate-900">Payments:</span> {formatCurrency(paymentSummary.balance)} balance
                 <span className="text-slate-400"> • {paymentSummary.status}</span>
                 <span className="text-slate-400"> • {outstandingDocuments.length ? `${outstandingDocuments.length} docs pending` : "Docs complete"}</span>
-              </p>
+              </p> : <p><span className="font-medium text-slate-900">Documents:</span> <span className="text-slate-500">{outstandingDocuments.length ? `${outstandingDocuments.length} pending` : "Complete"}</span></p>}
             </div>
           </div>
 
@@ -77,6 +77,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                 onClick={onEditClient}
               />
             ) : null}
+            {showCommunications ? <>
             <QuickActionLink
               icon={Mail}
               label="Mail"
@@ -93,11 +94,12 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
               onClick={() => onContactClient("Sms")}
             />
             <QuickActionLink icon={MessageSquareText} label="CaseDesk chat" onClick={() => onContactClient("Chat")} />
+            </> : null}
           </div>
         </div>
       </article>
 
-      {caseItem.client?.id ? (
+      {showPortalAccess ? (caseItem.client?.id ? (
         <PortalAccessCard
           clientId={caseItem.client.id}
           clientEmail={caseItem.client?.email}
@@ -109,7 +111,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
           <h3 className="mt-1 text-base font-semibold text-slate-950">Client access</h3>
           <p className="mt-1 text-sm text-slate-500">Link a client to this case to manage portal access.</p>
         </article>
-      )}
+      )) : null}
     </section>
   );
 }
@@ -139,7 +141,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <SimpleActionPill icon={UserRound} label="Applicants" onClick={onOpenApplicants} />
           {onOpenNotes ? <SimpleActionPill icon={Pencil} label="Notes" onClick={onOpenNotes} /> : null}
           <SimpleActionPill icon={History} label="Activities" onClick={onOpenActivities} />
-          <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} />
+          {onOpenStatement ? <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} /> : null}
           <SimpleActionPill icon={Clock3} label="Time entries" />
           <SimpleActionPill icon={BriefcaseBusiness} label="Workflow" onClick={onOpenWorkflow} />
         </div>

@@ -1,12 +1,27 @@
-import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
+import {
+  createCrudController,
+  fieldParsers,
+  recordActivity,
+} from "../utils/prismaCrud.js";
 import { createHttpError } from "../utils/http.js";
 import prisma from "../services/prisma/client.js";
-import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
-import { assertNoContactDuplicate, lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
+import {
+  caseAccessWhere,
+  clientAccessWhere,
+} from "../middleware/authorization.js";
+import {
+  assertNoContactDuplicate,
+  lockAgencyContactIntake,
+  normalizeContact,
+} from "../services/contactDuplicateService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { notifyUsers } from "../services/notificationService.js";
 import { syncClientToQuickBooks } from "../services/clientQuickBooksSyncService.js";
 import { TERMINAL_CASE_STATUSES } from "./caseController.js";
+import {
+  hasPortalCapability,
+  portalDataScope,
+} from "../services/portalAccessService.js";
 
 const include = {
   assignedUser: {
@@ -30,7 +45,14 @@ const include = {
       updatedAt: true,
       clientDocuments: { select: { status: true } },
       followUps: { select: { status: true, dueDate: true } },
-      payments: { select: { totalFee: true, paidAmount: true, balance: true, status: true } },
+      payments: {
+        select: {
+          totalFee: true,
+          paidAmount: true,
+          balance: true,
+          status: true,
+        },
+      },
     },
   },
 };
@@ -89,7 +111,9 @@ const controller = createCrudController({
   buildAccessWhere: clientAccessWhere,
   buildListWhere: (req) => ({
     ...(req.query.status ? { status: req.query.status } : {}),
-    ...(req.query.assignedUserId ? { assignedUserId: req.query.assignedUserId } : {}),
+    ...(req.query.assignedUserId
+      ? { assignedUserId: req.query.assignedUserId }
+      : {}),
   }),
   activityEntity: "client",
 });
@@ -113,7 +137,9 @@ function sortCasesForPrimary(cases) {
       return leftIsOpen ? -1 : 1;
     }
 
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    return (
+      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    );
   });
 }
 
@@ -124,7 +150,7 @@ function buildPaymentSummary(payments) {
       paidAmount: summary.paidAmount + Number(payment.paidAmount || 0),
       balance: summary.balance + Number(payment.balance || 0),
     }),
-    { totalFee: 0, paidAmount: 0, balance: 0 }
+    { totalFee: 0, paidAmount: 0, balance: 0 },
   );
 
   let status = "Unpaid";
@@ -145,12 +171,21 @@ function buildPaymentSummary(payments) {
   };
 }
 
-function buildNextAction({ activeCase, documents, followUps, paymentSummary, client }) {
+function buildNextAction({
+  activeCase,
+  documents,
+  followUps,
+  paymentSummary,
+  client,
+}) {
   const openFollowUps = [...followUps]
     .filter((followUp) => followUp.status !== "Completed")
     .sort((left, right) => {
       if (!left.dueDate && !right.dueDate) {
-        return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+        return (
+          new Date(right.createdAt).getTime() -
+          new Date(left.createdAt).getTime()
+        );
       }
 
       if (!left.dueDate) {
@@ -161,7 +196,9 @@ function buildNextAction({ activeCase, documents, followUps, paymentSummary, cli
         return -1;
       }
 
-      return new Date(left.dueDate).getTime() - new Date(right.dueDate).getTime();
+      return (
+        new Date(left.dueDate).getTime() - new Date(right.dueDate).getTime()
+      );
     });
 
   const dueFollowUp = openFollowUps[0] || null;
@@ -219,7 +256,9 @@ export async function getClientById(req, res) {
     throw createHttpError(404, "Client not found");
   }
 
-  const hasWholeClientAccess = req.auth.role === "admin" || req.auth.role === "frontdesk";
+  const hasWholeClientAccess = portalDataScope(req, "clients") === "all";
+  const canAccessInternalNotes = hasPortalCapability(req, "internalNotes");
+  const canAccessFinancialData = hasPortalCapability(req, "financialData");
   const accessibleCases = await prisma.case.findMany({
     where: { agencyId, clientId, ...caseAccessWhere(req) },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -234,7 +273,9 @@ export async function getClientById(req, res) {
       decisionAt: true,
       createdAt: true,
       updatedAt: true,
-      assignedUser: { select: { id: true, fullName: true, email: true, role: true } },
+      assignedUser: {
+        select: { id: true, fullName: true, email: true, role: true },
+      },
     },
   });
   const accessibleCaseIds = accessibleCases.map((caseItem) => caseItem.id);
@@ -244,9 +285,21 @@ export async function getClientById(req, res) {
   // inaccessible case.
   const relatedWhere = hasWholeClientAccess
     ? { agencyId, clientId }
-    : { agencyId, clientId, OR: [{ caseId: null }, { caseId: { in: accessibleCaseIds } }] };
+    : {
+        agencyId,
+        clientId,
+        OR: [{ caseId: null }, { caseId: { in: accessibleCaseIds } }],
+      };
 
-  const [documents, followUps, payments, notes, activityLogs, caseInvoices, bookingPayments] = await Promise.all([
+  const [
+    documents,
+    followUps,
+    payments,
+    notes,
+    activityLogs,
+    caseInvoices,
+    bookingPayments,
+  ] = await Promise.all([
     prisma.clientDocument.findMany({
       where: relatedWhere,
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
@@ -284,48 +337,52 @@ export async function getClientById(req, res) {
         },
       },
     }),
-    prisma.payment.findMany({
-      where: relatedWhere,
-      orderBy: [{ createdAt: "desc" }],
-      select: {
-        id: true,
-        caseId: true,
-        totalFee: true,
-        paidAmount: true,
-        balance: true,
-        status: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    }),
-    req.auth.role === "frontdesk" ? Promise.resolve([]) : prisma.note.findMany({
-      where: { ...relatedWhere, deletedAt: null },
-      orderBy: [{ createdAt: "desc" }],
-      select: {
-        id: true,
-        caseId: true,
-        appointmentId: true,
-        content: true,
-        createdAt: true,
-        updatedAt: true,
-        user: {
+    canAccessFinancialData
+      ? prisma.payment.findMany({
+          where: relatedWhere,
+          orderBy: [{ createdAt: "desc" }],
           select: {
             id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-        appointment: {
-          select: {
-            id: true,
-            subject: true,
-            startsAt: true,
+            caseId: true,
+            totalFee: true,
+            paidAmount: true,
+            balance: true,
             status: true,
+            notes: true,
+            createdAt: true,
+            updatedAt: true,
           },
-        },
-      },
-    }),
+        })
+      : Promise.resolve([]),
+    canAccessInternalNotes
+      ? prisma.note.findMany({
+          where: { ...relatedWhere, deletedAt: null },
+          orderBy: [{ createdAt: "desc" }],
+          select: {
+            id: true,
+            caseId: true,
+            appointmentId: true,
+            content: true,
+            createdAt: true,
+            updatedAt: true,
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+            appointment: {
+              select: {
+                id: true,
+                subject: true,
+                startsAt: true,
+                status: true,
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
     prisma.activityLog.findMany({
       where: relatedWhere,
       orderBy: [{ createdAt: "desc" }],
@@ -344,16 +401,41 @@ export async function getClientById(req, res) {
         },
       },
     }),
-    prisma.caseInvoice.findMany({
-      where: { agencyId, clientId, ...(hasWholeClientAccess ? {} : { caseId: { in: accessibleCaseIds } }) },
-      orderBy: { updatedAt: "desc" },
-      select: { amount: true, balance: true, status: true, updatedAt: true, createdAt: true },
-    }),
-    prisma.bookingPaymentHold.findMany({
-      where: { agencyId, OR: [{ clientId }, { appointment: { clientId } }] },
-      orderBy: { updatedAt: "desc" },
-      select: { amount: true, status: true, paidAt: true, updatedAt: true, createdAt: true },
-    }),
+    canAccessFinancialData
+      ? prisma.caseInvoice.findMany({
+          where: {
+            agencyId,
+            clientId,
+            ...(hasWholeClientAccess
+              ? {}
+              : { caseId: { in: accessibleCaseIds } }),
+          },
+          orderBy: { updatedAt: "desc" },
+          select: {
+            amount: true,
+            balance: true,
+            status: true,
+            updatedAt: true,
+            createdAt: true,
+          },
+        })
+      : Promise.resolve([]),
+    canAccessFinancialData
+      ? prisma.bookingPaymentHold.findMany({
+          where: {
+            agencyId,
+            OR: [{ clientId }, { appointment: { clientId } }],
+          },
+          orderBy: { updatedAt: "desc" },
+          select: {
+            amount: true,
+            status: true,
+            paidAt: true,
+            updatedAt: true,
+            createdAt: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const sortedCases = sortCasesForPrimary(accessibleCases);
@@ -363,24 +445,34 @@ export async function getClientById(req, res) {
   // whose only case was closed still had it shown as "Active case".
   const activeCase = sortedCases.find(isOpenCase) || null;
   const modernPaymentRecords = [
-    ...caseInvoices.filter((row) => !["Void", "Voided"].includes(row.status)).map((row) => ({
-      totalFee: row.amount,
-      paidAmount: Math.max(0, Number(row.amount) - Number(row.balance)),
-      balance: row.balance,
-      status: row.status,
-      updatedAt: row.updatedAt,
-      createdAt: row.createdAt,
-    })),
-    ...bookingPayments.filter((row) => !["Expired", "Cancelled", "Void", "Voided"].includes(row.status)).map((row) => ({
-      totalFee: row.amount,
-      paidAmount: row.status === "Paid" ? row.amount : 0,
-      balance: ["Paid", "Refunded"].includes(row.status) ? 0 : row.amount,
-      status: row.status,
-      updatedAt: row.paidAt || row.updatedAt,
-      createdAt: row.createdAt,
-    })),
+    ...caseInvoices
+      .filter((row) => !["Void", "Voided"].includes(row.status))
+      .map((row) => ({
+        totalFee: row.amount,
+        paidAmount: Math.max(0, Number(row.amount) - Number(row.balance)),
+        balance: row.balance,
+        status: row.status,
+        updatedAt: row.updatedAt,
+        createdAt: row.createdAt,
+      })),
+    ...bookingPayments
+      .filter(
+        (row) =>
+          !["Expired", "Cancelled", "Void", "Voided"].includes(row.status),
+      )
+      .map((row) => ({
+        totalFee: row.amount,
+        paidAmount: row.status === "Paid" ? row.amount : 0,
+        balance: ["Paid", "Refunded"].includes(row.status) ? 0 : row.amount,
+        status: row.status,
+        updatedAt: row.paidAt || row.updatedAt,
+        createdAt: row.createdAt,
+      })),
   ];
-  const paymentSummary = buildPaymentSummary([...modernPaymentRecords, ...payments]);
+  const paymentSummary = buildPaymentSummary([
+    ...modernPaymentRecords,
+    ...payments,
+  ]);
   const nextAction = buildNextAction({
     activeCase,
     documents,
@@ -408,26 +500,45 @@ export async function getClientById(req, res) {
 export async function listClientAppointments(req, res) {
   const page = Math.max(Number(req.query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
-  const scope = ["upcoming", "history", "all"].includes(String(req.query.scope)) ? String(req.query.scope) : "all";
+  const scope = ["upcoming", "history", "all"].includes(String(req.query.scope))
+    ? String(req.query.scope)
+    : "all";
   const status = String(req.query.status || "");
-  if (status && !["Scheduled", "Completed", "Cancelled", "NoShow"].includes(status)) {
-    throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
+  if (
+    status &&
+    !["Scheduled", "Completed", "Cancelled", "NoShow"].includes(status)
+  ) {
+    throw createHttpError(
+      400,
+      "Choose a valid appointment status.",
+      "VALIDATION_ERROR",
+    );
   }
-  const search = String(req.query.search || "").trim().slice(0, 180);
+  const search = String(req.query.search || "")
+    .trim()
+    .slice(0, 180);
   const now = new Date();
   const conditions = [];
-  if (scope === "history") conditions.push({ OR: [{ status: { not: "Scheduled" } }, { endsAt: { lt: now } }] });
-  if (search) conditions.push({ OR: [
-    { subject: { contains: search, mode: "insensitive" } },
-    { purpose: { contains: search, mode: "insensitive" } },
-    { description: { contains: search, mode: "insensitive" } },
-    { assignedTo: { fullName: { contains: search, mode: "insensitive" } } },
-    { case: { caseType: { contains: search, mode: "insensitive" } } },
-  ] });
+  if (scope === "history")
+    conditions.push({
+      OR: [{ status: { not: "Scheduled" } }, { endsAt: { lt: now } }],
+    });
+  if (search)
+    conditions.push({
+      OR: [
+        { subject: { contains: search, mode: "insensitive" } },
+        { purpose: { contains: search, mode: "insensitive" } },
+        { description: { contains: search, mode: "insensitive" } },
+        { assignedTo: { fullName: { contains: search, mode: "insensitive" } } },
+        { case: { caseType: { contains: search, mode: "insensitive" } } },
+      ],
+    });
   const where = {
     agencyId: req.auth.agencyId,
     clientId: req.params.id,
-    ...(scope === "upcoming" ? { status: "Scheduled", endsAt: { gte: now } } : {}),
+    ...(scope === "upcoming"
+      ? { status: "Scheduled", endsAt: { gte: now } }
+      : {}),
     ...(status ? { status } : {}),
     ...(conditions.length ? { AND: conditions } : {}),
   };
@@ -456,57 +567,107 @@ export async function listClientAppointments(req, res) {
           },
         },
       },
-      orderBy: scope === "upcoming" ? { startsAt: "asc" } : { startsAt: "desc" },
+      orderBy:
+        scope === "upcoming" ? { startsAt: "asc" } : { startsAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
     }),
     prisma.appointment.count({ where }),
   ]);
-  res.json({ data, meta: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
+  res.json({
+    data,
+    meta: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+  });
 }
 
 export async function listClients(req, res) {
   const page = Math.max(Number(req.query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
-  const search = String(req.query.search || "").trim().slice(0, 200);
+  const search = String(req.query.search || "")
+    .trim()
+    .slice(0, 200);
   const searchDigits = search.replace(/\D/g, "");
-  const searchFields = search ? ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map((field) => ({
-    [field]: { contains: search, mode: "insensitive" },
-  })) : [];
-  if (searchDigits.length >= 7) searchFields.push({ phoneNormalized: { contains: searchDigits } });
+  const searchFields = search
+    ? ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map(
+        (field) => ({
+          [field]: { contains: search, mode: "insensitive" },
+        }),
+      )
+    : [];
+  if (searchDigits.length >= 7)
+    searchFields.push({ phoneNormalized: { contains: searchDigits } });
   const where = {
     agencyId: req.auth.agencyId,
     ...clientAccessWhere(req),
     ...(req.query.status ? { status: req.query.status } : {}),
-    ...(req.query.assignedUserId ? { assignedUserId: req.query.assignedUserId } : {}),
+    ...(req.query.assignedUserId
+      ? { assignedUserId: req.query.assignedUserId }
+      : {}),
     ...(req.query.includeArchived === "true" ? {} : { archivedAt: null }),
     ...(searchFields.length ? { OR: searchFields } : {}),
   };
   const [data, total] = await Promise.all([
-    prisma.client.findMany({ where, include: scopedInclude(req), orderBy: { createdAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+    prisma.client.findMany({
+      where,
+      include: scopedInclude(req),
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
     prisma.client.count({ where }),
   ]);
   const clientIds = data.map((client) => client.id);
-  const [caseInvoices, bookingPayments, legacyPayments] = clientIds.length ? await Promise.all([
-    prisma.caseInvoice.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, amount: true, balance: true, status: true } }),
-    prisma.bookingPaymentHold.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, amount: true, status: true } }),
-    prisma.payment.findMany({ where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } }, select: { clientId: true, totalFee: true, paidAmount: true, balance: true, status: true } }),
-  ]) : [[], [], []];
-  const summaries = new Map(clientIds.map((id) => [id, { totalCharges: 0, totalCollected: 0, totalRefunds: 0, balance: 0 }]));
+  const [caseInvoices, bookingPayments, legacyPayments] = clientIds.length
+    ? await Promise.all([
+        prisma.caseInvoice.findMany({
+          where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } },
+          select: { clientId: true, amount: true, balance: true, status: true },
+        }),
+        prisma.bookingPaymentHold.findMany({
+          where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } },
+          select: { clientId: true, amount: true, status: true },
+        }),
+        prisma.payment.findMany({
+          where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } },
+          select: {
+            clientId: true,
+            totalFee: true,
+            paidAmount: true,
+            balance: true,
+            status: true,
+          },
+        }),
+      ])
+    : [[], [], []];
+  const summaries = new Map(
+    clientIds.map((id) => [
+      id,
+      { totalCharges: 0, totalCollected: 0, totalRefunds: 0, balance: 0 },
+    ]),
+  );
   for (const row of caseInvoices) {
     if (["Void", "Voided"].includes(row.status)) continue;
     const summary = summaries.get(row.clientId);
     summary.totalCharges += Number(row.amount);
-    summary.totalCollected += Math.max(0, Number(row.amount) - Number(row.balance));
+    summary.totalCollected += Math.max(
+      0,
+      Number(row.amount) - Number(row.balance),
+    );
     summary.balance += Number(row.balance);
   }
   for (const row of bookingPayments) {
-    if (!row.clientId || ["Expired", "Cancelled", "Voided", "Void"].includes(row.status)) continue;
+    if (
+      !row.clientId ||
+      ["Expired", "Cancelled", "Voided", "Void"].includes(row.status)
+    )
+      continue;
     const summary = summaries.get(row.clientId);
     summary.totalCharges += Number(row.amount);
-    if (["Paid", "Refunded"].includes(row.status)) summary.totalCollected += Number(row.amount);
+    if (["Paid", "Refunded"].includes(row.status))
+      summary.totalCollected += Number(row.amount);
     if (row.status === "Refunded") summary.totalRefunds += Number(row.amount);
-    if (!["Paid", "Refunded"].includes(row.status)) summary.balance += Number(row.amount);
+    if (!["Paid", "Refunded"].includes(row.status))
+      summary.balance += Number(row.amount);
   }
   for (const row of legacyPayments) {
     const summary = summaries.get(row.clientId);
@@ -516,34 +677,75 @@ export async function listClients(req, res) {
   }
   const enriched = data.map((client) => {
     const summary = summaries.get(client.id);
-    return { ...client, billingSummary: { ...summary, netCollected: Math.max(0, summary.totalCollected - summary.totalRefunds) } };
+    return {
+      ...client,
+      billingSummary: {
+        ...summary,
+        netCollected: Math.max(
+          0,
+          summary.totalCollected - summary.totalRefunds,
+        ),
+      },
+    };
   });
   res.json({ data: enriched, meta: { page, limit, total } });
 }
 
 function clientPayload(body, existing = null) {
   const fullName = String(body.fullName ?? existing?.fullName ?? "").trim();
-  if (!fullName || fullName.length > 200) throw createHttpError(400, "Full name is required and must be 200 characters or fewer.", "VALIDATION_ERROR");
+  if (!fullName || fullName.length > 200)
+    throw createHttpError(
+      400,
+      "Full name is required and must be 200 characters or fewer.",
+      "VALIDATION_ERROR",
+    );
   const contact = normalizeContact({
     phone: Object.hasOwn(body, "phone") ? body.phone : existing?.phone,
     email: Object.hasOwn(body, "email") ? body.email : existing?.email,
   });
   const status = body.status ?? existing?.status ?? "Lead";
-  if (!CLIENT_STATUSES.includes(status)) throw createHttpError(400, "Client status is invalid.", "VALIDATION_ERROR");
-  const rawDate = Object.hasOwn(body, "dateOfBirth") ? body.dateOfBirth : existing?.dateOfBirth;
+  if (!CLIENT_STATUSES.includes(status))
+    throw createHttpError(400, "Client status is invalid.", "VALIDATION_ERROR");
+  const rawDate = Object.hasOwn(body, "dateOfBirth")
+    ? body.dateOfBirth
+    : existing?.dateOfBirth;
   const dateOfBirth = rawDate ? new Date(rawDate) : null;
-  if (dateOfBirth && Number.isNaN(dateOfBirth.getTime())) throw createHttpError(400, "Date of birth is invalid.", "VALIDATION_ERROR");
-  const address = Object.hasOwn(body, "address") ? String(body.address || "").trim() || null : existing?.address || null;
+  if (dateOfBirth && Number.isNaN(dateOfBirth.getTime()))
+    throw createHttpError(400, "Date of birth is invalid.", "VALIDATION_ERROR");
+  const address = Object.hasOwn(body, "address")
+    ? String(body.address || "").trim() || null
+    : existing?.address || null;
   const text = (field, max) => {
-    const value = Object.hasOwn(body, field) ? String(body[field] || "").trim() || null : existing?.[field] || null;
-    if (value && value.length > max) throw createHttpError(400, `${field} must be ${max} characters or fewer.`, "VALIDATION_ERROR");
+    const value = Object.hasOwn(body, field)
+      ? String(body[field] || "").trim() || null
+      : existing?.[field] || null;
+    if (value && value.length > max)
+      throw createHttpError(
+        400,
+        `${field} must be ${max} characters or fewer.`,
+        "VALIDATION_ERROR",
+      );
     return value;
   };
-  const rawExpiry = Object.hasOwn(body, "identificationExpiryDate") ? body.identificationExpiryDate : existing?.identificationExpiryDate;
+  const rawExpiry = Object.hasOwn(body, "identificationExpiryDate")
+    ? body.identificationExpiryDate
+    : existing?.identificationExpiryDate;
   const identificationExpiryDate = rawExpiry ? new Date(rawExpiry) : null;
-  if (identificationExpiryDate && Number.isNaN(identificationExpiryDate.getTime())) throw createHttpError(400, "Identification expiry date is invalid.", "VALIDATION_ERROR");
+  if (
+    identificationExpiryDate &&
+    Number.isNaN(identificationExpiryDate.getTime())
+  )
+    throw createHttpError(
+      400,
+      "Identification expiry date is invalid.",
+      "VALIDATION_ERROR",
+    );
   return {
-    fullName, ...contact, dateOfBirth, address, status,
+    fullName,
+    ...contact,
+    dateOfBirth,
+    address,
+    status,
     preferredLanguage: text("preferredLanguage", 100),
     identificationType: text("identificationType", 100),
     identificationNumber: text("identificationNumber", 150),
@@ -561,109 +763,319 @@ export async function createClient(req, res) {
   try {
     const data = await prisma.$transaction(async (tx) => {
       await lockAgencyContactIntake(tx, req.auth.agencyId);
-      await assertNoContactDuplicate(tx, { agencyId: req.auth.agencyId, ...payload });
+      await assertNoContactDuplicate(tx, {
+        agencyId: req.auth.agencyId,
+        ...payload,
+      });
       const clientNumber = await nextClientNumber(tx, req.auth.agencyId);
-      return tx.client.create({ data: { ...payload, clientNumber, agencyId: req.auth.agencyId }, include: scopedInclude(req) });
+      return tx.client.create({
+        data: { ...payload, clientNumber, agencyId: req.auth.agencyId },
+        include: scopedInclude(req),
+      });
     });
-    await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.created", details: `${data.fullName} created` });
-    if (data.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.assigned", category: "cases", title: `Client assigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}` });
-    const qbResult = await syncClientToQuickBooks(req.auth.agencyId, data.id).catch(() => null);
-    if (qbResult) Object.assign(data, { qbCustomerId: qbResult.qbCustomerId, qbSyncStatus: qbResult.qbSyncStatus, qbSyncError: qbResult.qbSyncError, qbSyncedAt: qbResult.qbSyncedAt });
+    await recordActivity({
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      clientId: data.id,
+      action: "client.created",
+      details: `${data.fullName} created`,
+    });
+    if (data.assignedUserId)
+      await notifyUsers({
+        agencyId: req.auth.agencyId,
+        recipientIds: [data.assignedUserId],
+        actorUserId: req.auth.userId,
+        type: "client.assigned",
+        category: "cases",
+        title: `Client assigned: ${data.fullName}`,
+        entityType: "client",
+        entityId: data.id,
+        actionUrl: `/app/clients/${data.id}`,
+        dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}`,
+      });
+    const qbResult = await syncClientToQuickBooks(
+      req.auth.agencyId,
+      data.id,
+    ).catch(() => null);
+    if (qbResult)
+      Object.assign(data, {
+        qbCustomerId: qbResult.qbCustomerId,
+        qbSyncStatus: qbResult.qbSyncStatus,
+        qbSyncError: qbResult.qbSyncError,
+        qbSyncedAt: qbResult.qbSyncedAt,
+      });
     res.status(201).json({ data });
   } catch (error) {
-    if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
+    if (error?.code === "P2002")
+      throw createHttpError(
+        409,
+        "A client with this phone number or email address already exists.",
+        "DUPLICATE_CLIENT",
+      );
     throw error;
   }
 }
 export async function updateClient(req, res) {
   req.body = { ...(req.body || {}) };
-  if (req.auth.role === "consultant" && Object.hasOwn(req.body, "assignedUserId")) req.body.assignedUserId = req.auth.userId;
+  if (
+    req.auth.role === "consultant" &&
+    Object.hasOwn(req.body, "assignedUserId")
+  )
+    req.body.assignedUserId = req.auth.userId;
   await validateAssignedUser(req);
   const existing = await prisma.client.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...clientAccessWhere(req),
+    },
   });
   if (!existing) throw createHttpError(404, "Client not found.", "NOT_FOUND");
   const payload = clientPayload(req.body, existing);
-  payload.assignedUserId = Object.hasOwn(req.body, "assignedUserId") ? req.body.assignedUserId || null : existing.assignedUserId;
+  payload.assignedUserId = Object.hasOwn(req.body, "assignedUserId")
+    ? req.body.assignedUserId || null
+    : existing.assignedUserId;
   try {
     const data = await prisma.$transaction(async (tx) => {
       await lockAgencyContactIntake(tx, req.auth.agencyId);
-      await assertNoContactDuplicate(tx, { agencyId: req.auth.agencyId, ...payload, excludeClientId: existing.id });
-      return tx.client.update({ where: { id: existing.id }, data: payload, include: scopedInclude(req) });
+      await assertNoContactDuplicate(tx, {
+        agencyId: req.auth.agencyId,
+        ...payload,
+        excludeClientId: existing.id,
+      });
+      return tx.client.update({
+        where: { id: existing.id },
+        data: payload,
+        include: scopedInclude(req),
+      });
     });
-    await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.updated", details: `${data.fullName} updated` });
-    if (data.assignedUserId && data.assignedUserId !== existing.assignedUserId) await notifyUsers({ agencyId: req.auth.agencyId, recipientIds: [data.assignedUserId], actorUserId: req.auth.userId, type: "client.reassigned", category: "cases", title: `Client reassigned: ${data.fullName}`, entityType: "client", entityId: data.id, actionUrl: `/app/clients/${data.id}`, dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}` });
-    const contactChanged = ["fullName", "email", "phone", "address"].some((field) => Object.hasOwn(payload, field) && payload[field] !== existing[field]);
+    await recordActivity({
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      clientId: data.id,
+      action: "client.updated",
+      details: `${data.fullName} updated`,
+    });
+    if (data.assignedUserId && data.assignedUserId !== existing.assignedUserId)
+      await notifyUsers({
+        agencyId: req.auth.agencyId,
+        recipientIds: [data.assignedUserId],
+        actorUserId: req.auth.userId,
+        type: "client.reassigned",
+        category: "cases",
+        title: `Client reassigned: ${data.fullName}`,
+        entityType: "client",
+        entityId: data.id,
+        actionUrl: `/app/clients/${data.id}`,
+        dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}`,
+      });
+    const contactChanged = ["fullName", "email", "phone", "address"].some(
+      (field) =>
+        Object.hasOwn(payload, field) && payload[field] !== existing[field],
+    );
     if (contactChanged) {
-      const qbResult = await syncClientToQuickBooks(req.auth.agencyId, data.id).catch(() => null);
-      if (qbResult) Object.assign(data, { qbCustomerId: qbResult.qbCustomerId, qbSyncStatus: qbResult.qbSyncStatus, qbSyncError: qbResult.qbSyncError, qbSyncedAt: qbResult.qbSyncedAt });
+      const qbResult = await syncClientToQuickBooks(
+        req.auth.agencyId,
+        data.id,
+      ).catch(() => null);
+      if (qbResult)
+        Object.assign(data, {
+          qbCustomerId: qbResult.qbCustomerId,
+          qbSyncStatus: qbResult.qbSyncStatus,
+          qbSyncError: qbResult.qbSyncError,
+          qbSyncedAt: qbResult.qbSyncedAt,
+        });
     }
     res.json({ data });
   } catch (error) {
-    if (error?.code === "P2002") throw createHttpError(409, "A client with this phone number or email address already exists.", "DUPLICATE_CLIENT");
+    if (error?.code === "P2002")
+      throw createHttpError(
+        409,
+        "A client with this phone number or email address already exists.",
+        "DUPLICATE_CLIENT",
+      );
     throw error;
   }
 }
 
 export async function syncClientQuickBooks(req, res) {
   const existing = await prisma.client.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...clientAccessWhere(req),
+    },
     select: { id: true },
   });
   if (!existing) throw createHttpError(404, "Client not found.", "NOT_FOUND");
   const result = await syncClientToQuickBooks(req.auth.agencyId, existing.id);
-  if (!result) throw createHttpError(409, "QuickBooks is not connected for this workspace.", "QBO_NOT_CONNECTED");
-  if (result.qbSyncStatus === "error") throw createHttpError(502, result.qbSyncError || "QuickBooks sync failed.", "QBO_SYNC_FAILED");
-  res.json({ data: { qbCustomerId: result.qbCustomerId, qbSyncStatus: result.qbSyncStatus, qbSyncError: result.qbSyncError, qbSyncedAt: result.qbSyncedAt } });
+  if (!result)
+    throw createHttpError(
+      409,
+      "QuickBooks is not connected for this workspace.",
+      "QBO_NOT_CONNECTED",
+    );
+  if (result.qbSyncStatus === "error")
+    throw createHttpError(
+      502,
+      result.qbSyncError || "QuickBooks sync failed.",
+      "QBO_SYNC_FAILED",
+    );
+  res.json({
+    data: {
+      qbCustomerId: result.qbCustomerId,
+      qbSyncStatus: result.qbSyncStatus,
+      qbSyncError: result.qbSyncError,
+      qbSyncedAt: result.qbSyncedAt,
+    },
+  });
 }
 
 export async function closeClient(req, res) {
   const existing = await prisma.client.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...clientAccessWhere(req),
+    },
     select: { id: true, fullName: true },
   });
   if (!existing) throw createHttpError(404, "Client not found.", "NOT_FOUND");
-  const openCases = await prisma.case.count({ where: { agencyId: req.auth.agencyId, clientId: existing.id, status: { notIn: ["Closed", "Cancelled", "Completed", "Inactive"] } } });
-  if (openCases) throw createHttpError(409, "Close or complete the client’s active cases before closing the client.", "CLIENT_HAS_OPEN_CASES");
-  const data = await prisma.client.update({ where: { id: existing.id }, data: { status: "Closed" }, include: scopedInclude(req) });
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.closed", details: `${data.fullName} closed` });
+  const openCases = await prisma.case.count({
+    where: {
+      agencyId: req.auth.agencyId,
+      clientId: existing.id,
+      status: { notIn: ["Closed", "Cancelled", "Completed", "Inactive"] },
+    },
+  });
+  if (openCases)
+    throw createHttpError(
+      409,
+      "Close or complete the client’s active cases before closing the client.",
+      "CLIENT_HAS_OPEN_CASES",
+    );
+  const data = await prisma.client.update({
+    where: { id: existing.id },
+    data: { status: "Closed" },
+    include: scopedInclude(req),
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: data.id,
+    action: "client.closed",
+    details: `${data.fullName} closed`,
+  });
   res.json({ data });
 }
 
 async function getArchiveImpact(agencyId, clientId) {
   const where = { agencyId, clientId };
-  const [cases, documents, payments, notes, followUps, activity] = await Promise.all([
-    prisma.case.count({ where }),
-    prisma.clientDocument.count({ where }),
-    prisma.payment.count({ where }),
-    prisma.note.count({ where }),
-    prisma.followUp.count({ where }),
-    prisma.activityLog.count({ where }),
-  ]);
-  return { cases, documents, payments, notes, followUps, activity, totalHistory: cases + documents + payments + notes + followUps + activity };
+  const [cases, documents, payments, notes, followUps, activity] =
+    await Promise.all([
+      prisma.case.count({ where }),
+      prisma.clientDocument.count({ where }),
+      prisma.payment.count({ where }),
+      prisma.note.count({ where }),
+      prisma.followUp.count({ where }),
+      prisma.activityLog.count({ where }),
+    ]);
+  return {
+    cases,
+    documents,
+    payments,
+    notes,
+    followUps,
+    activity,
+    totalHistory: cases + documents + payments + notes + followUps + activity,
+  };
 }
 
 export async function getClientArchiveImpact(req, res) {
-  const client = await prisma.client.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) }, select: { id: true, fullName: true, clientNumber: true, archivedAt: true } });
+  const client = await prisma.client.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...clientAccessWhere(req),
+    },
+    select: { id: true, fullName: true, clientNumber: true, archivedAt: true },
+  });
   if (!client) throw createHttpError(404, "Client not found.", "NOT_FOUND");
-  res.json({ data: { client, impact: await getArchiveImpact(req.auth.agencyId, client.id) } });
+  res.json({
+    data: {
+      client,
+      impact: await getArchiveImpact(req.auth.agencyId, client.id),
+    },
+  });
 }
 
 export async function archiveClient(req, res) {
-  const existing = await prisma.client.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) }, select: { id: true, fullName: true, archivedAt: true } });
+  const existing = await prisma.client.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      ...clientAccessWhere(req),
+    },
+    select: { id: true, fullName: true, archivedAt: true },
+  });
   if (!existing) throw createHttpError(404, "Client not found.", "NOT_FOUND");
-  if (existing.archivedAt) throw createHttpError(409, "Client is already archived.", "CLIENT_ALREADY_ARCHIVED");
-  const openCases = await prisma.case.count({ where: { agencyId: req.auth.agencyId, clientId: existing.id, status: { notIn: ["Closed", "Cancelled", "Completed", "Inactive"] } } });
-  if (openCases) throw createHttpError(409, "Close or complete the client’s active cases before archiving the client.", "CLIENT_HAS_OPEN_CASES");
-  const data = await prisma.client.update({ where: { id: existing.id }, data: { archivedAt: new Date(), status: "Inactive" }, include: scopedInclude(req) });
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: data.id, action: "client.archived", details: `${data.fullName} archived; history retained` });
+  if (existing.archivedAt)
+    throw createHttpError(
+      409,
+      "Client is already archived.",
+      "CLIENT_ALREADY_ARCHIVED",
+    );
+  const openCases = await prisma.case.count({
+    where: {
+      agencyId: req.auth.agencyId,
+      clientId: existing.id,
+      status: { notIn: ["Closed", "Cancelled", "Completed", "Inactive"] },
+    },
+  });
+  if (openCases)
+    throw createHttpError(
+      409,
+      "Close or complete the client’s active cases before archiving the client.",
+      "CLIENT_HAS_OPEN_CASES",
+    );
+  const data = await prisma.client.update({
+    where: { id: existing.id },
+    data: { archivedAt: new Date(), status: "Inactive" },
+    include: scopedInclude(req),
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: data.id,
+    action: "client.archived",
+    details: `${data.fullName} archived; history retained`,
+  });
   res.json({ data });
 }
 
 async function validateAssignedUser(req) {
   if (!req.body.assignedUserId) return;
-  const user = await prisma.user.findFirst({ where: { id: req.body.assignedUserId, agencyId: req.auth.agencyId, status: "active", memberships: { some: { agencyId: req.auth.agencyId, role: { in: ["admin", "consultant"] }, isActive: true } } }, select: { id: true } });
-  if (!user) throw createHttpError(400, "Assigned user was not found.", "VALIDATION_ERROR");
+  const user = await prisma.user.findFirst({
+    where: {
+      id: req.body.assignedUserId,
+      agencyId: req.auth.agencyId,
+      status: "active",
+      memberships: {
+        some: {
+          agencyId: req.auth.agencyId,
+          role: { in: ["admin", "consultant"] },
+          isActive: true,
+        },
+      },
+    },
+    select: { id: true },
+  });
+  if (!user)
+    throw createHttpError(
+      400,
+      "Assigned user was not found.",
+      "VALIDATION_ERROR",
+    );
 }
 
 export default controller;

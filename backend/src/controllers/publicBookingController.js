@@ -256,6 +256,7 @@ export async function createPublicBooking(req, res) {
     : null;
   if (!name) throw createHttpError(400, "Your name is required.", "VALIDATION_ERROR");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR");
+  if (!phone) throw createHttpError(400, "A valid phone number is required.", "VALIDATION_ERROR");
   if (offerHold && email !== offerHold.waitlistEntry.emailNormalized) throw createHttpError(400, "Use the email address that joined the waitlist.", "INVALID_OFFER");
 
   // Re-validate that the requested slot really is offered (working hours,
@@ -479,6 +480,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     : null;
   if (!name) throw createHttpError(400, "Your name is required.", "VALIDATION_ERROR");
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw createHttpError(400, "A valid email is required.", "VALIDATION_ERROR");
+  if (!phone) throw createHttpError(400, "A valid phone number is required.", "VALIDATION_ERROR");
   if (offerHold && email !== offerHold.waitlistEntry.emailNormalized) throw createHttpError(400, "Use the email address that joined the waitlist.", "INVALID_OFFER");
   const verification = body.verificationToken ? await prisma.bookingVerificationCode.findFirst({
     where: {

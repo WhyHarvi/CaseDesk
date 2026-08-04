@@ -38,8 +38,10 @@ export async function getFreeConsultationEligibility({ clientId, guestEmail } = 
   return response.data.data;
 }
 
-export async function lookupBookingClients() {
-  const response = await api.get("/booking/client-lookup");
+export async function lookupBookingClients({ search } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  const response = await api.get(`/booking/client-lookup${params.size ? `?${params.toString()}` : ""}`);
   return response.data.data;
 }
 

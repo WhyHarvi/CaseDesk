@@ -13,7 +13,7 @@ test("assigned-case applicants can be edited and safely detached", async () => {
   ]);
 
   assert.match(routes, /router\.patch\("\/:id\/applicants\/:applicantId"/);
-  assert.match(routes, /router\.delete\("\/:id\/applicants\/:applicantId"/);
+  assert.match(routes, /router\.delete\([\s\S]*"\/:id\/applicants\/:applicantId"/);
   assert.match(controller, /caseAccesses: \{ some: \{ caseId \} \}/);
   assert.match(controller, /inaccessibleExistingIds/);
   assert.match(controller, /filter\(\(access\) => referenceById\.has\(access\.caseId\)\)/);

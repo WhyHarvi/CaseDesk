@@ -1,33 +1,83 @@
 import prisma from "../services/prisma/client.js";
-import { deleteAuthUser, findAuthUserByEmail, generateAuthLink, inviteAuthUser, sendPasswordRecovery, updateAuthUser } from "../services/supabaseAuth.js";
+import {
+  deleteAuthUser,
+  findAuthUserByEmail,
+  generateAuthLink,
+  inviteAuthUser,
+  sendPasswordRecovery,
+  updateAuthUser,
+} from "../services/supabaseAuth.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { logger } from "../services/logger.js";
+import { defaultPortalAccess } from "../services/portalAccessService.js";
 
 const consultantSelect = {
-  id: true, fullName: true, email: true, status: true, phone: true, jobTitle: true,
+  id: true,
+  fullName: true,
+  email: true,
+  status: true,
+  phone: true,
+  jobTitle: true,
   createdAt: true,
-  consultantProfiles: { select: { employeeId: true, specializations: true, masteryLevel: true, maximumActiveCases: true } },
-  memberships: { select: { id: true, role: true, isActive: true, permissions: true, mustChangePassword: true } },
+  consultantProfiles: {
+    select: {
+      employeeId: true,
+      specializations: true,
+      masteryLevel: true,
+      maximumActiveCases: true,
+    },
+  },
+  memberships: {
+    select: {
+      id: true,
+      role: true,
+      isActive: true,
+      permissions: true,
+      mustChangePassword: true,
+    },
+  },
 };
 
 function requiredText(value, name, max = 160) {
   const result = String(value || "").trim();
-  if (!result || result.length > max) throw createHttpError(400, `${name} is required and must be ${max} characters or fewer.`, "VALIDATION_ERROR");
+  if (!result || result.length > max)
+    throw createHttpError(
+      400,
+      `${name} is required and must be ${max} characters or fewer.`,
+      "VALIDATION_ERROR",
+    );
   return result;
 }
 
 function consultantPayload(body) {
   const maximumActiveCases = Number(body.maximumActiveCases ?? 20);
-  if (!Number.isInteger(maximumActiveCases) || maximumActiveCases < 1 || maximumActiveCases > 500) {
-    throw createHttpError(400, "maximumActiveCases must be between 1 and 500.", "VALIDATION_ERROR");
+  if (
+    !Number.isInteger(maximumActiveCases) ||
+    maximumActiveCases < 1 ||
+    maximumActiveCases > 500
+  ) {
+    throw createHttpError(
+      400,
+      "maximumActiveCases must be between 1 and 500.",
+      "VALIDATION_ERROR",
+    );
   }
   return {
     fullName: requiredText(body.fullName, "Full name"),
     email: requiredText(body.email, "Email").toLowerCase(),
-    employeeId: body.employeeId ? requiredText(body.employeeId, "Employee ID", 80) : null,
-    specializations: Array.isArray(body.specializations) ? body.specializations.map((item) => String(item).trim()).filter(Boolean).slice(0, 20) : [],
-    masteryLevel: body.masteryLevel ? String(body.masteryLevel).trim().slice(0, 80) : null,
+    employeeId: body.employeeId
+      ? requiredText(body.employeeId, "Employee ID", 80)
+      : null,
+    specializations: Array.isArray(body.specializations)
+      ? body.specializations
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+          .slice(0, 20)
+      : [],
+    masteryLevel: body.masteryLevel
+      ? String(body.masteryLevel).trim().slice(0, 80)
+      : null,
     maximumActiveCases,
   };
 }
@@ -35,29 +85,65 @@ function consultantPayload(body) {
 function invitationError(error) {
   const message = String(error?.message || "").toLowerCase();
   if (error?.statusCode === 429 || message.includes("rate limit")) {
-    return createHttpError(429, "Invitation email limit reached. Please wait a few minutes and try again.", "INVITATION_RATE_LIMITED");
+    return createHttpError(
+      429,
+      "Invitation email limit reached. Please wait a few minutes and try again.",
+      "INVITATION_RATE_LIMITED",
+    );
   }
-  if (message.includes("already") && (message.includes("registered") || message.includes("exists"))) {
-    return createHttpError(409, "An authentication account with this email already exists. Use a different email or contact support to link the existing account.", "AUTH_ACCOUNT_EXISTS");
+  if (
+    message.includes("already") &&
+    (message.includes("registered") || message.includes("exists"))
+  ) {
+    return createHttpError(
+      409,
+      "An authentication account with this email already exists. Use a different email or contact support to link the existing account.",
+      "AUTH_ACCOUNT_EXISTS",
+    );
   }
   if (message.includes("redirect") || message.includes("url is not allowed")) {
-    return createHttpError(503, "The invitation callback URL is not configured in Supabase Auth.", "INVITATION_REDIRECT_NOT_CONFIGURED");
+    return createHttpError(
+      503,
+      "The invitation callback URL is not configured in Supabase Auth.",
+      "INVITATION_REDIRECT_NOT_CONFIGURED",
+    );
   }
   if (error?.code === "AUTH_NOT_CONFIGURED") return error;
-  return createHttpError(502, "The consultant invitation could not be sent. Please try again shortly.", "AUTH_INVITATION_FAILED");
+  return createHttpError(
+    502,
+    "The consultant invitation could not be sent. Please try again shortly.",
+    "AUTH_INVITATION_FAILED",
+  );
 }
 
 export async function createConsultant(req, res) {
   const input = consultantPayload(req.body || {});
-  const duplicate = await prisma.user.findUnique({ where: { email: input.email }, select: { id: true } });
-  if (duplicate) throw createHttpError(409, "An account with this email already exists.", "ACCOUNT_EXISTS");
+  const duplicate = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true },
+  });
+  if (duplicate)
+    throw createHttpError(
+      409,
+      "An account with this email already exists.",
+      "ACCOUNT_EXISTS",
+    );
 
   let authUser;
   let authUserCreated = false;
   let manualInvitationLink = null;
-  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+  const frontendUrl = String(
+    process.env.FRONTEND_URL || "http://localhost:5173",
+  )
+    .split(",")[0]
+    .trim()
+    .replace(/\/$/, "");
   try {
-    authUser = await inviteAuthUser({ email: input.email, fullName: input.fullName, redirectTo: `${frontendUrl}/auth/accept-invite` });
+    authUser = await inviteAuthUser({
+      email: input.email,
+      fullName: input.fullName,
+      redirectTo: `${frontendUrl}/auth/accept-invite`,
+    });
     authUserCreated = true;
   } catch (error) {
     logger.error("auth.consultant_invitation_failed", {
@@ -67,7 +153,8 @@ export async function createConsultant(req, res) {
       code: error.code,
       error: error.message,
     });
-    const rateLimited = error?.statusCode === 429 || /rate limit/i.test(error?.message || "");
+    const rateLimited =
+      error?.statusCode === 429 || /rate limit/i.test(error?.message || "");
     if (!rateLimited) throw invitationError(error);
     try {
       const existingAuthUser = await findAuthUserByEmail(input.email);
@@ -80,7 +167,8 @@ export async function createConsultant(req, res) {
       authUser = existingAuthUser || generated.user;
       authUserCreated = !existingAuthUser;
       manualInvitationLink = generated.actionLink;
-      if (!authUser?.id || !manualInvitationLink) throw new Error("Supabase did not return an invitation link");
+      if (!authUser?.id || !manualInvitationLink)
+        throw new Error("Supabase did not return an invitation link");
     } catch (fallbackError) {
       logger.error("auth.consultant_invitation_fallback_failed", {
         requestId: req.requestId,
@@ -94,20 +182,53 @@ export async function createConsultant(req, res) {
   }
 
   try {
-    const user = await prisma.$transaction(async (tx) => tx.user.create({
-      data: {
-        agencyId: req.auth.agencyId, authUserId: authUser.id, fullName: input.fullName,
-        email: input.email, role: "consultant", status: "invited", mustChangePassword: false,
-        memberships: { create: { agencyId: req.auth.agencyId, role: "consultant", isActive: true, mustChangePassword: false } },
-        consultantProfiles: { create: { agencyId: req.auth.agencyId, employeeId: input.employeeId, specializations: input.specializations, masteryLevel: input.masteryLevel, maximumActiveCases: input.maximumActiveCases } },
-      },
-      select: consultantSelect,
-    }));
-    await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "CONSULTANT_INVITED", details: `Consultant ${user.fullName} invited` });
+    const user = await prisma.$transaction(async (tx) =>
+      tx.user.create({
+        data: {
+          agencyId: req.auth.agencyId,
+          authUserId: authUser.id,
+          fullName: input.fullName,
+          email: input.email,
+          role: "consultant",
+          status: "invited",
+          mustChangePassword: false,
+          memberships: {
+            create: {
+              agencyId: req.auth.agencyId,
+              role: "consultant",
+              isActive: true,
+              mustChangePassword: false,
+              permissions: {
+                createClientPortal: true,
+                portalAccess: defaultPortalAccess("consultant"),
+              },
+            },
+          },
+          consultantProfiles: {
+            create: {
+              agencyId: req.auth.agencyId,
+              employeeId: input.employeeId,
+              specializations: input.specializations,
+              masteryLevel: input.masteryLevel,
+              maximumActiveCases: input.maximumActiveCases,
+            },
+          },
+        },
+        select: consultantSelect,
+      }),
+    );
+    await recordActivity({
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      action: "CONSULTANT_INVITED",
+      details: `Consultant ${user.fullName} invited`,
+    });
     res.status(201).json({
       success: true,
       data: user,
-      message: manualInvitationLink ? "Consultant created. Copy and send the secure invitation link." : "Consultant invitation sent.",
+      message: manualInvitationLink
+        ? "Consultant created. Copy and send the secure invitation link."
+        : "Consultant invitation sent.",
       manualInvitationLink,
     });
   } catch (error) {
@@ -118,15 +239,27 @@ export async function createConsultant(req, res) {
 
 export async function listConsultants(req, res) {
   const data = await prisma.user.findMany({
-    where: { agencyId: req.auth.agencyId, memberships: { some: { agencyId: req.auth.agencyId, role: "consultant" } } },
-    select: consultantSelect, orderBy: { fullName: "asc" },
+    where: {
+      agencyId: req.auth.agencyId,
+      memberships: {
+        some: { agencyId: req.auth.agencyId, role: "consultant" },
+      },
+    },
+    select: consultantSelect,
+    orderBy: { fullName: "asc" },
   });
   res.json({ success: true, data });
 }
 
 export async function getConsultant(req, res) {
   const data = await prisma.user.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, memberships: { some: { agencyId: req.auth.agencyId, role: "consultant" } } },
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      memberships: {
+        some: { agencyId: req.auth.agencyId, role: "consultant" },
+      },
+    },
     select: consultantSelect,
   });
   if (!data) throw createHttpError(404, "Consultant not found.", "NOT_FOUND");
@@ -139,15 +272,40 @@ export async function updateConsultant(req, res) {
   const data = await prisma.user.update({
     where: { id: req.params.id },
     data: {
-      fullName: profile.fullName, email: profile.email,
-      consultantProfiles: { update: { where: { agencyId_userId: { agencyId: req.auth.agencyId, userId: req.params.id } }, data: { employeeId: profile.employeeId, specializations: profile.specializations, masteryLevel: profile.masteryLevel, maximumActiveCases: profile.maximumActiveCases } } },
-    }, select: consultantSelect,
+      fullName: profile.fullName,
+      email: profile.email,
+      consultantProfiles: {
+        update: {
+          where: {
+            agencyId_userId: {
+              agencyId: req.auth.agencyId,
+              userId: req.params.id,
+            },
+          },
+          data: {
+            employeeId: profile.employeeId,
+            specializations: profile.specializations,
+            masteryLevel: profile.masteryLevel,
+            maximumActiveCases: profile.maximumActiveCases,
+          },
+        },
+      },
+    },
+    select: consultantSelect,
   });
   res.json({ success: true, data });
 }
 
 async function getConsultantRecord(req) {
-  const user = await prisma.user.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId, memberships: { some: { agencyId: req.auth.agencyId, role: "consultant" } } } });
+  const user = await prisma.user.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      memberships: {
+        some: { agencyId: req.auth.agencyId, role: "consultant" },
+      },
+    },
+  });
   if (!user) throw createHttpError(404, "Consultant not found.", "NOT_FOUND");
   return user;
 }
@@ -155,25 +313,61 @@ async function getConsultantRecord(req) {
 export async function disableConsultant(req, res) {
   const user = await getConsultantRecord(req);
   await prisma.$transaction([
-    prisma.user.update({ where: { id: user.id }, data: { status: "disabled" } }),
-    prisma.agencyMember.update({ where: { agencyId_userId: { agencyId: req.auth.agencyId, userId: user.id } }, data: { isActive: false } }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: { status: "disabled" },
+    }),
+    prisma.agencyMember.update({
+      where: {
+        agencyId_userId: { agencyId: req.auth.agencyId, userId: user.id },
+      },
+      data: { isActive: false },
+    }),
   ]);
-  if (user.authUserId) await updateAuthUser(user.authUserId, { ban_duration: "876000h" }).catch(() => {});
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "CONSULTANT_DISABLED", details: `Consultant ${user.fullName} disabled` });
+  if (user.authUserId)
+    await updateAuthUser(user.authUserId, { ban_duration: "876000h" }).catch(
+      () => {},
+    );
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    action: "CONSULTANT_DISABLED",
+    details: `Consultant ${user.fullName} disabled`,
+  });
   res.json({ success: true, message: "Consultant disabled." });
 }
 
 export async function resetConsultantPassword(req, res) {
   const user = await getConsultantRecord(req);
-  if (!user.authUserId) throw createHttpError(409, "Consultant has no authentication account.", "AUTH_ACCOUNT_CREATION_FAILED");
-  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+  if (!user.authUserId)
+    throw createHttpError(
+      409,
+      "Consultant has no authentication account.",
+      "AUTH_ACCOUNT_CREATION_FAILED",
+    );
+  const frontendUrl = String(
+    process.env.FRONTEND_URL || "http://localhost:5173",
+  )
+    .split(",")[0]
+    .trim()
+    .replace(/\/$/, "");
   await sendPasswordRecovery(user.email, `${frontendUrl}/auth/reset-password`);
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "PASSWORD_RESET_REQUESTED", details: `Password reset for ${user.fullName}` });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    action: "PASSWORD_RESET_REQUESTED",
+    details: `Password reset for ${user.fullName}`,
+  });
   res.json({ success: true, message: "Password recovery email sent." });
 }
 
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
-const ACTION_DOCUMENT_STATUSES = ["Requested", "Uploaded", "UnderReview", "ChangesRequested"];
+const ACTION_DOCUMENT_STATUSES = [
+  "Requested",
+  "Uploaded",
+  "UnderReview",
+  "ChangesRequested",
+];
 
 const ownershipUserSelect = {
   id: true,
@@ -196,12 +390,25 @@ const workloadCaseSelect = {
       consultant: { select: ownershipUserSelect },
     },
   },
-  client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
+  client: {
+    select: {
+      id: true,
+      fullName: true,
+      assignedUser: { select: ownershipUserSelect },
+    },
+  },
 };
 
 function activeRole(user, agencyId) {
   if (!user || user.status !== "active") return null;
-  return user.memberships.find((membership) => membership.agencyId === agencyId && membership.isActive && ["admin", "consultant"].includes(membership.role))?.role || null;
+  return (
+    user.memberships.find(
+      (membership) =>
+        membership.agencyId === agencyId &&
+        membership.isActive &&
+        ["admin", "consultant"].includes(membership.role),
+    )?.role || null
+  );
 }
 
 function emptyWorkloadBucket() {
@@ -221,7 +428,13 @@ function emptyWorkloadBucket() {
   };
 }
 
-export function resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser = null, caseItem = null, clientUser = null }) {
+export function resolveWorkOwner({
+  agencyId,
+  activeConsultantIds,
+  explicitUser = null,
+  caseItem = null,
+  clientUser = null,
+}) {
   const explicitRole = activeRole(explicitUser, agencyId);
   if (explicitRole) {
     return activeConsultantIds.has(explicitUser.id)
@@ -234,8 +447,16 @@ export function resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser =
       ? { consultantId: caseItem.assignedUser.id, source: "case_owner" }
       : { consultantId: null, source: "outside_team" };
   }
-  const primaryAssignment = caseItem?.assignments?.find((assignment) => assignment.assignmentType === "primary" && activeConsultantIds.has(assignment.consultant.id));
-  if (primaryAssignment) return { consultantId: primaryAssignment.consultant.id, source: "case_assignment" };
+  const primaryAssignment = caseItem?.assignments?.find(
+    (assignment) =>
+      assignment.assignmentType === "primary" &&
+      activeConsultantIds.has(assignment.consultant.id),
+  );
+  if (primaryAssignment)
+    return {
+      consultantId: primaryAssignment.consultant.id,
+      source: "case_assignment",
+    };
   const clientOwnerRole = activeRole(clientUser, agencyId);
   if (clientOwnerRole) {
     return activeConsultantIds.has(clientUser.id)
@@ -271,15 +492,30 @@ function addWork(bucket, type, item, owner, now) {
 }
 
 function finalizeBucket(bucket, capacity = null) {
-  const byDueDate = (left, right) => new Date(left.dueAt || left.dueDate || left.startsAt || 8640000000000000) - new Date(right.dueAt || right.dueDate || right.startsAt || 8640000000000000);
-  const byUpdatedAt = (left, right) => new Date(left.updatedAt) - new Date(right.updatedAt);
+  const byDueDate = (left, right) =>
+    new Date(left.dueAt || left.dueDate || left.startsAt || 8640000000000000) -
+    new Date(
+      right.dueAt || right.dueDate || right.startsAt || 8640000000000000,
+    );
+  const byUpdatedAt = (left, right) =>
+    new Date(left.updatedAt) - new Date(right.updatedAt);
   return {
     ...bucket,
-    ...(capacity === null ? {} : { capacity, workloadPercentage: Math.min(100, Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100)) }),
+    ...(capacity === null
+      ? {}
+      : {
+          capacity,
+          workloadPercentage: Math.min(
+            100,
+            Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100),
+          ),
+        }),
     activeCaseItems: bucket.activeCaseItems.sort(byUpdatedAt).slice(0, 10),
     pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, 10),
     overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, 10),
-    documentReviewItems: bucket.documentReviewItems.sort(byUpdatedAt).slice(0, 10),
+    documentReviewItems: bucket.documentReviewItems
+      .sort(byUpdatedAt)
+      .slice(0, 10),
     followUpItems: bucket.followUpItems.sort(byDueDate).slice(0, 10),
     appointmentItems: bucket.appointmentItems.sort(byDueDate).slice(0, 10),
   };
@@ -287,95 +523,255 @@ function finalizeBucket(bucket, capacity = null) {
 
 async function loadAgencyWorkloads(agencyId) {
   const now = new Date();
-  const [profiles, cases, tasks, documents, followUps, appointments] = await prisma.$transaction([
-    prisma.consultantProfile.findMany({
-      where: {
-        agencyId,
-        user: { status: "active", memberships: { some: { agencyId, role: "consultant", isActive: true } } },
-      },
-      include: { user: { select: { id: true, fullName: true, email: true } } },
-    }),
-    prisma.case.findMany({
-      where: { agencyId, deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
-      select: workloadCaseSelect,
-    }),
-    prisma.caseWorkflowStep.findMany({
-      where: { agencyId, status: "Pending", isActive: true, case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
-      select: {
-        id: true, title: true, description: true, priority: true, dueAt: true,
-        assignedTo: { select: ownershipUserSelect },
-        case: { select: workloadCaseSelect },
-      },
-    }),
-    prisma.clientDocument.findMany({
-      // Internal-visibility documents are staff-only working files (e.g. the
-      // source copy behind an issued agreement/letter) — counting them here
-      // alongside their client-visible counterpart double-counts the same
-      // requirement. Mirrors dashboardController.js's documentWhere.
-      where: { agencyId, status: { in: ACTION_DOCUMENT_STATUSES }, visibility: "Client", OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
-      select: {
-        id: true, documentName: true, status: true, updatedAt: true,
-        case: { select: workloadCaseSelect },
-        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
-      },
-    }),
-    prisma.followUp.findMany({
-      where: { agencyId, status: { in: ["Pending", "Overdue"] }, OR: [{ caseId: null }, { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } }] },
-      select: {
-        id: true, title: true, description: true, status: true, dueDate: true,
-        assignedUser: { select: ownershipUserSelect },
-        case: { select: workloadCaseSelect },
-        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
-      },
-    }),
-    prisma.appointment.findMany({
-      where: { agencyId, status: "Scheduled", startsAt: { gte: now }, case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
-      select: {
-        id: true, subject: true, startsAt: true, endsAt: true, location: true,
-        assignedTo: { select: ownershipUserSelect },
-        case: { select: workloadCaseSelect },
-        client: { select: { id: true, fullName: true, assignedUser: { select: ownershipUserSelect } } },
-      },
-    }),
-  ]);
+  const [profiles, cases, tasks, documents, followUps, appointments] =
+    await prisma.$transaction([
+      prisma.consultantProfile.findMany({
+        where: {
+          agencyId,
+          user: {
+            status: "active",
+            memberships: {
+              some: { agencyId, role: "consultant", isActive: true },
+            },
+          },
+        },
+        include: {
+          user: { select: { id: true, fullName: true, email: true } },
+        },
+      }),
+      prisma.case.findMany({
+        where: {
+          agencyId,
+          deletedAt: null,
+          status: { in: OPEN_CASE_STATUSES },
+        },
+        select: workloadCaseSelect,
+      }),
+      prisma.caseWorkflowStep.findMany({
+        where: {
+          agencyId,
+          status: "Pending",
+          isActive: true,
+          case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
+        },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          priority: true,
+          dueAt: true,
+          assignedTo: { select: ownershipUserSelect },
+          case: { select: workloadCaseSelect },
+        },
+      }),
+      prisma.clientDocument.findMany({
+        // Internal-visibility documents are staff-only working files (e.g. the
+        // source copy behind an issued agreement/letter) — counting them here
+        // alongside their client-visible counterpart double-counts the same
+        // requirement. Mirrors dashboardController.js's documentWhere.
+        where: {
+          agencyId,
+          status: { in: ACTION_DOCUMENT_STATUSES },
+          visibility: "Client",
+          OR: [
+            { caseId: null },
+            { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+          ],
+        },
+        select: {
+          id: true,
+          documentName: true,
+          status: true,
+          updatedAt: true,
+          case: { select: workloadCaseSelect },
+          client: {
+            select: {
+              id: true,
+              fullName: true,
+              assignedUser: { select: ownershipUserSelect },
+            },
+          },
+        },
+      }),
+      prisma.followUp.findMany({
+        where: {
+          agencyId,
+          status: { in: ["Pending", "Overdue"] },
+          OR: [
+            { caseId: null },
+            { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
+          ],
+        },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          status: true,
+          dueDate: true,
+          assignedUser: { select: ownershipUserSelect },
+          case: { select: workloadCaseSelect },
+          client: {
+            select: {
+              id: true,
+              fullName: true,
+              assignedUser: { select: ownershipUserSelect },
+            },
+          },
+        },
+      }),
+      prisma.appointment.findMany({
+        where: {
+          agencyId,
+          status: "Scheduled",
+          startsAt: { gte: now },
+          case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
+        },
+        select: {
+          id: true,
+          subject: true,
+          startsAt: true,
+          endsAt: true,
+          location: true,
+          assignedTo: { select: ownershipUserSelect },
+          case: { select: workloadCaseSelect },
+          client: {
+            select: {
+              id: true,
+              fullName: true,
+              assignedUser: { select: ownershipUserSelect },
+            },
+          },
+        },
+      }),
+    ]);
 
-  const activeConsultantIds = new Set(profiles.map((profile) => profile.userId));
-  const buckets = new Map(profiles.map((profile) => [profile.userId, emptyWorkloadBucket()]));
+  const activeConsultantIds = new Set(
+    profiles.map((profile) => profile.userId),
+  );
+  const buckets = new Map(
+    profiles.map((profile) => [profile.userId, emptyWorkloadBucket()]),
+  );
   const unassignedBucket = emptyWorkloadBucket();
   const outsideTeamBucket = emptyWorkloadBucket();
-  const route = (type, item, owner) => addWork(owner.consultantId ? buckets.get(owner.consultantId) : owner.source === "outside_team" ? outsideTeamBucket : unassignedBucket, type, item, owner, now);
+  const route = (type, item, owner) =>
+    addWork(
+      owner.consultantId
+        ? buckets.get(owner.consultantId)
+        : owner.source === "outside_team"
+          ? outsideTeamBucket
+          : unassignedBucket,
+      type,
+      item,
+      owner,
+      now,
+    );
 
-  cases.forEach((item) => route("case", item, resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item })));
-  tasks.forEach((item) => route("task", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedTo, caseItem: item.case })));
-  documents.forEach((item) => route("document", item, resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item.case, clientUser: item.client.assignedUser })));
-  followUps.forEach((item) => route("followUp", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedUser, caseItem: item.case, clientUser: item.client.assignedUser })));
-  appointments.forEach((item) => route("appointment", item, resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: item.assignedTo, caseItem: item.case, clientUser: item.client.assignedUser })));
+  cases.forEach((item) =>
+    route(
+      "case",
+      item,
+      resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item }),
+    ),
+  );
+  tasks.forEach((item) =>
+    route(
+      "task",
+      item,
+      resolveWorkOwner({
+        agencyId,
+        activeConsultantIds,
+        explicitUser: item.assignedTo,
+        caseItem: item.case,
+      }),
+    ),
+  );
+  documents.forEach((item) =>
+    route(
+      "document",
+      item,
+      resolveWorkOwner({
+        agencyId,
+        activeConsultantIds,
+        caseItem: item.case,
+        clientUser: item.client.assignedUser,
+      }),
+    ),
+  );
+  followUps.forEach((item) =>
+    route(
+      "followUp",
+      item,
+      resolveWorkOwner({
+        agencyId,
+        activeConsultantIds,
+        explicitUser: item.assignedUser,
+        caseItem: item.case,
+        clientUser: item.client.assignedUser,
+      }),
+    ),
+  );
+  appointments.forEach((item) =>
+    route(
+      "appointment",
+      item,
+      resolveWorkOwner({
+        agencyId,
+        activeConsultantIds,
+        explicitUser: item.assignedTo,
+        caseItem: item.case,
+        clientUser: item.client.assignedUser,
+      }),
+    ),
+  );
 
   const consultants = profiles.map((profile) => ({
     consultant: profile.user,
-    profile: { employeeId: profile.employeeId, specializations: profile.specializations, masteryLevel: profile.masteryLevel },
+    profile: {
+      employeeId: profile.employeeId,
+      specializations: profile.specializations,
+      masteryLevel: profile.masteryLevel,
+    },
     ...finalizeBucket(buckets.get(profile.userId), profile.maximumActiveCases),
   }));
   const summary = {
     activeConsultants: consultants.length,
     activeCases: cases.length,
     pendingTasks: tasks.length,
-    overdueTasks: tasks.filter((item) => item.dueAt && new Date(item.dueAt) < now).length,
+    overdueTasks: tasks.filter(
+      (item) => item.dueAt && new Date(item.dueAt) < now,
+    ).length,
     documentsWaitingReview: documents.length,
     pendingFollowUps: followUps.length,
     upcomingAppointments: appointments.length,
-    overloadedConsultants: consultants.filter((item) => item.workloadPercentage >= 100).length,
+    overloadedConsultants: consultants.filter(
+      (item) => item.workloadPercentage >= 100,
+    ).length,
   };
-  return { summary, consultants, unassigned: finalizeBucket(unassignedBucket), outsideTeam: finalizeBucket(outsideTeamBucket) };
+  return {
+    summary,
+    consultants,
+    unassigned: finalizeBucket(unassignedBucket),
+    outsideTeam: finalizeBucket(outsideTeamBucket),
+  };
 }
 
 export async function myWorkload(req, res) {
   const workload = await loadAgencyWorkloads(req.auth.agencyId);
-  const data = workload.consultants.find((item) => item.consultant.id === req.auth.userId);
-  if (!data) throw createHttpError(404, "Active consultant profile not found.", "NOT_FOUND");
+  const data = workload.consultants.find(
+    (item) => item.consultant.id === req.auth.userId,
+  );
+  if (!data)
+    throw createHttpError(
+      404,
+      "Active consultant profile not found.",
+      "NOT_FOUND",
+    );
   res.json({ success: true, data });
 }
 
 export async function agencyWorkloads(req, res) {
-  res.json({ success: true, data: await loadAgencyWorkloads(req.auth.agencyId) });
+  res.json({
+    success: true,
+    data: await loadAgencyWorkloads(req.auth.agencyId),
+  });
 }

@@ -4,6 +4,7 @@ import {
   AdminRoute,
   HomeRedirect,
   InternalRoute,
+  PortalAccessRoute,
   PortalRoute,
 } from "../auth/AuthRoutes";
 import MainLayout from "../layouts/MainLayout";
@@ -171,8 +172,8 @@ function AppLayout() {
     </InternalRoute>
   );
 }
-function StaffOnly({ children }) {
-  return <InternalRoute>{children}</InternalRoute>;
+function Access({ page, children }) {
+  return <PortalAccessRoute page={page}>{children}</PortalAccessRoute>;
 }
 function Internal({ children, allowFrontdesk = false }) {
   return (
@@ -353,12 +354,19 @@ export default function AppRoutes() {
         <Route
           path="/app/dashboard"
           element={
-            <StaffOnly>
+            <Access page="dashboard">
               <Dashboard />
-            </StaffOnly>
+            </Access>
           }
         />
-        <Route path="/leads" element={<LeadsPage />} />
+        <Route
+          path="/leads"
+          element={
+            <Access page="leads">
+              <LeadsPage />
+            </Access>
+          }
+        />
         <Route
           path="/lead-dashboard"
           element={
@@ -375,79 +383,93 @@ export default function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route path="/lead-intake" element={<LeadIntakePage />} />
+        <Route
+          path="/lead-intake"
+          element={
+            <Access page="leadIntake">
+              <LeadIntakePage />
+            </Access>
+          }
+        />
         <Route path="/app/leads" element={<Navigate to="/leads" replace />} />
         <Route
           path="/app/clients"
           element={
-            <StaffOnly>
+            <Access page="clients">
               <Clients />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/clients/:id"
           element={
-            <StaffOnly>
+            <Access page="clients">
               <ClientProfile />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/cases"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <Cases />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/cases/:id"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <CaseProfile />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/cases/:id/documents/new"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <WriterPage />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/cases/:id/documents/:writtenDocumentId/edit"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <WriterPage />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/follow-ups"
           element={
-            <StaffOnly>
+            <Access page="followUps">
               <FollowUps />
-            </StaffOnly>
+            </Access>
           }
         />
-        <Route path="/app/calendar" element={<CalendarPage />} />
+        <Route
+          path="/app/calendar"
+          element={
+            <Access page="calendar">
+              <CalendarPage />
+            </Access>
+          }
+        />
         <Route
           path="/app/documents"
           element={
-            <StaffOnly>
+            <Access page="documents">
               <Documents />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/app/payments"
           element={
-            <AdminRoute>
+            <Access page="payments">
               <Payments />
-            </AdminRoute>
+            </Access>
           }
         />
         <Route
@@ -461,9 +483,9 @@ export default function AppRoutes() {
         <Route
           path="/app/case-easy-import"
           element={
-            <Internal allowFrontdesk>
+            <Access page="caseEasyImport">
               <CaseEasyImport />
-            </Internal>
+            </Access>
           }
         />
         <Route
@@ -473,9 +495,9 @@ export default function AppRoutes() {
         <Route
           path="/app/workload"
           element={
-            <StaffOnly>
+            <Access page="workload">
               <Workload />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
@@ -489,33 +511,33 @@ export default function AppRoutes() {
         <Route
           path="/clients/:id"
           element={
-            <StaffOnly>
+            <Access page="clients">
               <ClientProfile />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/cases/:id"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <CaseProfile />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/cases/:id/documents/new"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <WriterPage />
-            </StaffOnly>
+            </Access>
           }
         />
         <Route
           path="/cases/:id/documents/:writtenDocumentId/edit"
           element={
-            <StaffOnly>
+            <Access page="cases">
               <WriterPage />
-            </StaffOnly>
+            </Access>
           }
         />
       </Route>

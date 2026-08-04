@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CheckCircle2,
   FileText,
+  FolderLock,
   HeartHandshake,
   History,
   IdCard,
@@ -19,10 +20,12 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { lazyWithRetry } from "../../services/lazyWithRetry";
+import { useAuth } from "../../auth/AuthContext";
+import { canAccessCaseTab, hasCapability } from "../../auth/portalAccess";
 import {
   getCaseInformationWorkspace,
   setCaseInformationSectionEnabled,
@@ -78,9 +81,23 @@ const workspaceTabSlugs = {
   BILLING: "billing",
 };
 
-const workspaceTabFromSlug = (slug) =>
-  caseWorkspaceTabs.find((tab) => workspaceTabSlugs[tab] === slug) ||
-  caseWorkspaceTabs[0];
+const workspaceTabAccessKeys = {
+  PROFILE: "profile",
+  REMINDERS: "reminders",
+  QUESTIONNAIRES: "questionnaires",
+  DOCUMENTS: "documents",
+  FORMS: "forms",
+  TASKS: "tasks",
+  "AGREEMENTS & LETTERS": "agreementsLetters",
+  APPOINTMENTS: "appointments",
+  COMMUNICATION: "communication",
+  BILLING: "billing",
+};
+
+const workspaceTabFromSlug = (slug, availableTabs = caseWorkspaceTabs) =>
+  availableTabs.find((tab) => workspaceTabSlugs[tab] === slug) ||
+  availableTabs[0] ||
+  null;
 
 // sectionKey matches backend/src/modules/case-information/informationSectionCatalog.js
 // 1:1 and in the same order — lets the sidebar below filter out sections
@@ -3661,20 +3678,36 @@ export default function CaseWorkspaceTabs({
   savingApplicantProfile,
   applicantProfileError,
 }) {
+  const { role, membership } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const visibleCaseWorkspaceTabs = useMemo(
+    () =>
+      caseWorkspaceTabs.filter(
+        (tab) =>
+          canAccessCaseTab(
+            role,
+            membership?.permissions,
+            workspaceTabAccessKeys[tab],
+          ) &&
+          (workspaceTabAccessKeys[tab] !== "billing" ||
+            hasCapability(role, membership?.permissions, "financialData")),
+      ),
+    [membership?.permissions, role],
+  );
   const [activeTab, setActiveTab] = useState(() =>
-    workspaceTabFromSlug(searchParams.get("tab")),
+    workspaceTabFromSlug(searchParams.get("tab"), visibleCaseWorkspaceTabs),
   );
   const highlightId = searchParams.get("highlight") || "";
   const [profileSectionRequest, setProfileSectionRequest] = useState(null);
   const workspaceContentRef = useRef(null);
 
   const selectWorkspaceTab = (tab) => {
+    if (!visibleCaseWorkspaceTabs.includes(tab)) return;
     setActiveTab(tab);
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (tab === caseWorkspaceTabs[0]) next.delete("tab");
+        if (tab === visibleCaseWorkspaceTabs[0]) next.delete("tab");
         else next.set("tab", workspaceTabSlugs[tab]);
         return next;
       },
@@ -3688,19 +3721,38 @@ export default function CaseWorkspaceTabs({
   };
 
   useEffect(() => {
-    const tabFromUrl = workspaceTabFromSlug(searchParams.get("tab"));
+    const tabFromUrl = workspaceTabFromSlug(
+      searchParams.get("tab"),
+      visibleCaseWorkspaceTabs,
+    );
     if (tabFromUrl !== activeTab) setActiveTab(tabFromUrl);
-  }, [searchParams]);
+  }, [activeTab, searchParams, visibleCaseWorkspaceTabs]);
 
   useEffect(() => {
     workspaceContentRef.current?.scrollTo({ top: 0, behavior: "instant" });
   }, [activeTab]);
 
+  if (!visibleCaseWorkspaceTabs.length)
+    return (
+      <article className="flex min-h-[28rem] items-center justify-center rounded-[2rem] border border-white/80 bg-white/88 p-8 text-center shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
+        <div>
+          <FolderLock className="mx-auto h-8 w-8 text-slate-300" />
+          <h3 className="mt-4 text-base font-semibold text-slate-900">
+            No case tabs assigned
+          </h3>
+          <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
+            Ask a workspace administrator to enable the case areas needed for
+            your work.
+          </p>
+        </div>
+      </article>
+    );
+
   return (
     <article className="flex h-[calc(100dvh-7rem)] min-h-[36rem] max-h-[56rem] flex-col overflow-hidden rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
       <div className="relative z-10 shrink-0 border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl">
         <div className="scrollbar-hidden flex gap-1 overflow-x-auto pb-0.5">
-          {caseWorkspaceTabs.map((tab) => {
+          {visibleCaseWorkspaceTabs.map((tab) => {
             const isActive = activeTab === tab;
 
             return (

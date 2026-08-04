@@ -1,4 +1,8 @@
-import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
+import {
+  createCrudController,
+  fieldParsers,
+  recordActivity,
+} from "../utils/prismaCrud.js";
 import {
   caseAccessWhere,
   clientAccessWhere,
@@ -64,7 +68,9 @@ const controller = createCrudController({
   buildListWhere: (req) => ({
     ...(req.query.clientId ? { clientId: req.query.clientId } : {}),
     ...(req.query.caseId ? { caseId: req.query.caseId } : {}),
-    ...(req.query.appointmentId ? { appointmentId: req.query.appointmentId } : {}),
+    ...(req.query.appointmentId
+      ? { appointmentId: req.query.appointmentId }
+      : {}),
     ...(req.query.userId ? { userId: req.query.userId } : {}),
   }),
   activityEntity: "note",
@@ -102,11 +108,21 @@ async function manageableNote(req) {
       agencyId: req.auth.agencyId,
       ...noteAccessWhere(req),
     },
-    select: { id: true, userId: true, clientId: true, caseId: true, appointmentId: true },
+    select: {
+      id: true,
+      userId: true,
+      clientId: true,
+      caseId: true,
+      appointmentId: true,
+    },
   });
   if (!note) throw createHttpError(404, "Note not found", "NOT_FOUND");
-  if (req.auth.role === "consultant" && note.userId !== req.auth.userId) {
-    throw createHttpError(403, "You can only change notes that you created.", "FORBIDDEN");
+  if (req.auth.role !== "admin" && note.userId !== req.auth.userId) {
+    throw createHttpError(
+      403,
+      "You can only change notes that you created.",
+      "FORBIDDEN",
+    );
   }
   return note;
 }
@@ -117,10 +133,15 @@ export async function createNote(req, res) {
 
   if (req.body.appointmentId) {
     const appointment = await prisma.appointment.findFirst({
-      where: { id: req.body.appointmentId, agencyId: req.auth.agencyId, ...appointmentProfileAccessWhere(req) },
+      where: {
+        id: req.body.appointmentId,
+        agencyId: req.auth.agencyId,
+        ...appointmentProfileAccessWhere(req),
+      },
       select: { id: true, clientId: true, caseId: true },
     });
-    if (!appointment) throw createHttpError(403, "You do not have access to this appointment");
+    if (!appointment)
+      throw createHttpError(403, "You do not have access to this appointment");
     req.body.clientId = req.body.clientId || appointment.clientId;
     req.body.caseId = req.body.caseId || appointment.caseId;
   } else if (req.body.caseId) {
@@ -132,7 +153,8 @@ export async function createNote(req, res) {
       },
       select: { id: true },
     });
-    if (!caseItem) throw createHttpError(403, "You do not have access to this case");
+    if (!caseItem)
+      throw createHttpError(403, "You do not have access to this case");
   } else if (req.body.clientId) {
     const client = await prisma.client.findFirst({
       where: {
@@ -142,7 +164,8 @@ export async function createNote(req, res) {
       },
       select: { id: true },
     });
-    if (!client) throw createHttpError(403, "You do not have access to this client");
+    if (!client)
+      throw createHttpError(403, "You do not have access to this client");
   }
 
   req.body = {
@@ -156,7 +179,12 @@ export async function createNote(req, res) {
 export async function updateNote(req, res) {
   await manageableNote(req);
   const content = String(req.body?.content || "").trim();
-  if (!content) throw createHttpError(400, "Enter a note before saving", "VALIDATION_ERROR");
+  if (!content)
+    throw createHttpError(
+      400,
+      "Enter a note before saving",
+      "VALIDATION_ERROR",
+    );
   req.body = { content };
   return controller.update(req, res);
 }

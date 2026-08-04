@@ -25,6 +25,7 @@ import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
+import { canAccessCaseTab, hasCapability } from "../auth/portalAccess";
 import {
   buildBlankTemplateStep,
   buildDraftStepFromTemplateStep,
@@ -59,7 +60,11 @@ export default function CaseProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { role } = useAuth();
+  const { role, membership } = useAuth();
+  const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
+  const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
+  const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
+  const canAccessCaseCommunication = canAccessCaseTab(role, membership?.permissions, "communication");
   const [caseItem, setCaseItem] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
@@ -164,8 +169,8 @@ export default function CaseProfile() {
   useEffect(() => {
     if (caseItem?.id !== id) return;
     const params = new URLSearchParams(location.search);
-    if (role !== "frontdesk" && params.get("overlay") === "notes") setNotesOverlayOpen(true);
-  }, [caseItem?.id, id, location.search, role]);
+    if (canAccessInternalNotes && params.get("overlay") === "notes") setNotesOverlayOpen(true);
+  }, [canAccessInternalNotes, caseItem?.id, id, location.search]);
 
   useEffect(() => {
     async function loadCaseProfile() {
@@ -175,9 +180,9 @@ export default function CaseProfile() {
         const results = await Promise.allSettled([
           api.get(`/cases/${id}`),
           fetchAllCaseDocuments(id),
-          api.get(`/cases/${id}/payment-summary`),
+          canAccessFinancialData ? api.get(`/cases/${id}/payment-summary`) : Promise.resolve({ data: { data: null } }),
           api.get(`/follow-ups?caseId=${id}`),
-          role === "frontdesk" ? Promise.resolve({ data: { data: [] } }) : api.get(`/notes?caseId=${id}`),
+          canAccessInternalNotes ? api.get(`/notes?caseId=${id}`) : Promise.resolve({ data: { data: [] } }),
           api.get(`/activity-logs?caseId=${id}`),
           api.get(`/cases/${id}/assessment`),
           api.get(`/cases/${id}/workflow`),
@@ -257,7 +262,7 @@ export default function CaseProfile() {
     }
 
     loadCaseProfile();
-  }, [id, role]);
+  }, [canAccessFinancialData, canAccessInternalNotes, id]);
 
   const outstandingDocuments = useMemo(
     () =>
@@ -1716,6 +1721,9 @@ export default function CaseProfile() {
         <CaseProfileTopSection
           caseItem={caseItem}
           paymentSummary={paymentSummary}
+          showFinancials={canAccessFinancialData}
+          showPortalAccess={canManageClientPortal}
+          showCommunications={canAccessCaseCommunication}
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
           onEditClient={() => setEditingClient(true)}
@@ -1734,7 +1742,7 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setPermissionsOverlayOpen(true);
           }}
-          onOpenNotes={role === "frontdesk" ? null : () => {
+          onOpenNotes={!canAccessInternalNotes ? null : () => {
             setActiveToolbarTray("");
             setNotesOverlayOpen(true);
           }}
@@ -1742,7 +1750,7 @@ export default function CaseProfile() {
             setActiveToolbarTray("");
             setActivitiesOverlayOpen(true);
           }}
-          onOpenStatement={() => {
+          onOpenStatement={!canAccessFinancialData ? null : () => {
             setActiveToolbarTray("");
             setStatementOverlayOpen(true);
           }}

@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { resolveWorkOwner } from "../src/controllers/adminConsultantController.js";
 import {
+  DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS,
   DASHBOARD_HIDDEN_ACTIVITY_ACTIONS,
+  canViewDashboardFinancialData,
   dashboardScopes,
 } from "../src/controllers/dashboardController.js";
 
@@ -31,6 +33,28 @@ test("admin dashboard queues are still constrained to the active agency", () => 
   for (const scope of Object.values(scopes)) assert.equal(scope.agencyId, "agency-1");
 });
 
+test("dashboard financial data follows the team member portal-access capability", async () => {
+  const restricted = request("consultant");
+  restricted.auth.permissions = {
+    portalAccess: { capabilities: { financialData: false } },
+  };
+  const allowed = request("consultant");
+  allowed.auth.permissions = {
+    portalAccess: { capabilities: { financialData: true } },
+  };
+
+  assert.equal(canViewDashboardFinancialData(restricted), false);
+  assert.equal(canViewDashboardFinancialData(allowed), true);
+  assert.equal(canViewDashboardFinancialData(request("admin", "admin-1")), true);
+  assert.ok(DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS.includes("invoice.paid"));
+
+  const controller = await source("../src/controllers/dashboardController.js");
+  assert.match(controller, /canViewFinancialData\s*\? prisma\.payment\.count/);
+  assert.match(controller, /canViewFinancialData\s*\? prisma\.caseInvoice\.count/);
+  assert.match(controller, /canViewFinancialData\s*\? prisma\.bookingPaymentHold\.count/);
+  assert.match(controller, /\.\.\.\(canViewFinancialData[\s\S]*pendingPaymentBalance/);
+});
+
 test("dashboard renders API work queues instead of placeholder arrays and inert actions", async () => {
   const [page, stats, workRow, bottomRow, controller] = await Promise.all([
     source("../../frontend/src/pages/Dashboard.jsx"),
@@ -56,7 +80,10 @@ test("dashboard recent activity hides session authentication noise", async () =>
   const controller = await source("../src/controllers/dashboardController.js");
 
   assert.deepEqual(DASHBOARD_HIDDEN_ACTIVITY_ACTIONS, ["USER_LOGIN", "USER_LOGOUT"]);
-  assert.match(controller, /action: \{ notIn: DASHBOARD_HIDDEN_ACTIVITY_ACTIONS \}/);
+  assert.match(
+    controller,
+    /notIn: canViewFinancialData[\s\S]*DASHBOARD_HIDDEN_ACTIVITY_ACTIONS[\s\S]*DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS/,
+  );
 });
 
 test("my workload exposes actionable records and recovers from API errors", async () => {
@@ -88,8 +115,8 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   ]);
 
   assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
-  assert.match(controller, /return \{ summary, consultants, unassigned: finalizeBucket\(unassignedBucket\), outsideTeam: finalizeBucket\(outsideTeamBucket\) \}/);
-  assert.match(controller, /memberships: \{ some: \{ agencyId, role: "consultant", isActive: true \} \}/);
+  assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned: finalizeBucket\(unassignedBucket\),[\s\S]*outsideTeam: finalizeBucket\(outsideTeamBucket\),?[\s\S]*\}/);
+  assert.match(controller, /memberships: \{[\s\S]*some: \{[\s\S]*agencyId,[\s\S]*role: "consultant",[\s\S]*isActive: true,[\s\S]*\}[\s\S]*\}/);
   assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
   assert.match(controller, /pendingFollowUps: followUps\.length/);
   assert.match(controller, /upcomingAppointments: appointments\.length/);

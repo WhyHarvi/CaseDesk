@@ -5,6 +5,11 @@ import {
 } from "../middleware/authorization.js";
 import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
 import prisma from "../services/prisma/client.js";
+import {
+  hasPortalCapability,
+  hasPortalCaseTabAccess,
+  hasPortalPageAccess,
+} from "../services/portalAccessService.js";
 
 const RESULT_LIMIT = 6;
 
@@ -299,21 +304,38 @@ export async function globalSearch(req, res) {
   }
 
   const digits = query.replace(/\D/g, "");
-  const leadResults = await searchLeads(req, query, digits);
+  const canSearchLeads = hasPortalPageAccess(req, "leads");
+  const canSearchClients = hasPortalPageAccess(req, "clients");
+  const canSearchCases = hasPortalPageAccess(req, "cases");
+  const canSearchDocuments =
+    hasPortalPageAccess(req, "documents") ||
+    hasPortalCaseTabAccess(req, "documents");
+  const canSearchNotes =
+    hasPortalCapability(req, "internalNotes") &&
+    (canSearchClients || canSearchCases);
+  const leadResults = canSearchLeads
+    ? await searchLeads(req, query, digits)
+    : [];
   const internal =
-    req.auth.role === "frontdesk"
-      ? { clients: [], cases: [], documents: [], notes: [] }
-      : await searchInternalRecords(req, query, digits);
+    canSearchClients || canSearchCases || canSearchDocuments || canSearchNotes
+      ? await searchInternalRecords(req, query, digits)
+      : { clients: [], cases: [], documents: [], notes: [] };
   const groups = [
-    ...(req.auth.role === "frontdesk"
+    ...(canSearchClients
+      ? [{ id: "clients", label: "Clients", items: internal.clients }]
+      : []),
+    ...(canSearchCases
+      ? [{ id: "cases", label: "Cases", items: internal.cases }]
+      : []),
+    ...(canSearchDocuments
+      ? [{ id: "documents", label: "Documents", items: internal.documents }]
+      : []),
+    ...(canSearchNotes
+      ? [{ id: "notes", label: "Notes", items: internal.notes }]
+      : []),
+    ...(canSearchLeads
       ? [{ id: "leads", label: "Leads", items: leadResults }]
-      : [
-          { id: "clients", label: "Clients", items: internal.clients },
-          { id: "cases", label: "Cases", items: internal.cases },
-          { id: "documents", label: "Documents", items: internal.documents },
-          { id: "notes", label: "Notes", items: internal.notes },
-          { id: "leads", label: "Leads", items: leadResults },
-        ]),
+      : []),
   ].filter((group) => group.items.length);
 
   return res.json({

@@ -49,7 +49,9 @@ test("global search is authenticated and available only to staff roles", async (
 });
 
 test("record searches retain agency, assignment, and deleted-record scopes", async () => {
-  const controller = await source("../src/controllers/globalSearchController.js");
+  const controller = await source(
+    "../src/controllers/globalSearchController.js",
+  );
 
   assert.match(controller, /agencyId: req\.auth\.agencyId/);
   assert.match(controller, /leadAccessWhere\(req\)/);
@@ -57,10 +59,9 @@ test("record searches retain agency, assignment, and deleted-record scopes", asy
   assert.match(controller, /caseAccessWhere\(req\)/);
   assert.match(controller, /relatedRecordAccessWhere\(req\)/);
   assert.match(controller, /deletedAt: null/);
-  assert.match(
-    controller,
-    /req\.auth\.role === "frontdesk"[\s\S]*clients: \[\], cases: \[\], documents: \[\], notes: \[\]/,
-  );
+  assert.match(controller, /hasPortalPageAccess\(req, "clients"\)/);
+  assert.match(controller, /hasPortalPageAccess\(req, "cases"\)/);
+  assert.match(controller, /hasPortalCapability\(req, "internalNotes"\)/);
 
   for (const model of [
     "lead",
