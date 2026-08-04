@@ -159,7 +159,7 @@ export default function CaseEasyImportSettingsPanel() {
     setError("");
     setResult(null);
     try {
-      const response = await api.post("/case-easy-import/preview", buildFormData());
+      const response = await api.post("/case-easy-import/preview", buildFormData(), { timeout: 300000 });
       setPreview(response.data.data);
     } catch (reason) {
       setError(reason.response?.data?.message || "The files could not be read. Confirm they're real Case Easy Excel exports.");
@@ -173,7 +173,7 @@ export default function CaseEasyImportSettingsPanel() {
     setImporting(true);
     setError("");
     try {
-      const response = await api.post("/case-easy-import/upload", buildFormData());
+      const response = await api.post("/case-easy-import/upload", buildFormData(), { timeout: 300000 });
       setResult(response.data.data);
       setPreview(null);
     } catch (reason) {

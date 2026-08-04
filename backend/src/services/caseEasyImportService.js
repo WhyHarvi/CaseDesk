@@ -143,43 +143,126 @@ export function classifyWorkbookHeaders(headers) {
   return { type: contactScore > caseScore ? "contacts" : "cases", contactScore, caseScore };
 }
 
-async function upsertContact(agencyId, mapped, importBatchId, stats) {
-  const where = mapped.email
-    ? { agencyId, email: mapped.email, sourceCreated: mapped.sourceCreated }
-    : { agencyId, firstName: mapped.firstName, lastName: mapped.lastName, sourceCreated: mapped.sourceCreated };
-  const existing = await prisma.caseEasyImportContact.findFirst({ where });
-  if (existing) {
-    if (existing.importStatus === "converted") {
-      stats.contactsSkippedConverted = (stats.contactsSkippedConverted || 0) + 1;
-      return existing; // never overwrite a converted row — see upsertCase's identical guard
+// Bounded worker pool — runs `task` over `items` with at most `concurrency`
+// calls in flight at once, instead of either fully sequential (slow: each
+// await pays a full DB round trip before the next starts) or fully
+// parallel (risks overwhelming a small connection pool, e.g. a pooled
+// Postgres connection_limit).
+async function runInConcurrentBatches(items, concurrency, task) {
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const current = items[index++];
+      await task(current);
     }
-    const updated = await prisma.caseEasyImportContact.update({ where: { id: existing.id }, data: { ...mapped, importBatchId } });
-    stats.contactsUpdated += 1;
-    return updated;
   }
-  const created = await prisma.caseEasyImportContact.create({ data: { ...mapped, agencyId, importBatchId } });
-  stats.contactsCreated += 1;
-  return created;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+}
+const WRITE_CONCURRENCY = 20;
+
+function dateKeyPart(value) {
+  return value instanceof Date ? value.toISOString() : value == null ? "" : String(value);
 }
 
-async function upsertCase(agencyId, mapped, importBatchId, prospectOrClient, stats) {
-  const data = { ...mapped, prospectOrClient };
-  const where = mapped.caseNumber
-    ? { agencyId, caseNumber: mapped.caseNumber }
-    : { agencyId, email: mapped.email, caseType: mapped.caseType, sourceCreated: mapped.sourceCreated };
-  const existing = await prisma.caseEasyImportCase.findFirst({ where });
-  if (existing) {
-    if (existing.importStatus === "converted") {
-      stats.casesSkippedConverted = (stats.casesSkippedConverted || 0) + 1;
-      return existing; // never overwrite a converted row
-    }
-    const updated = await prisma.caseEasyImportCase.update({ where: { id: existing.id }, data: { ...data, importBatchId } });
-    stats.casesUpdated += 1;
-    return updated;
+// Mirrors upsertContact's old `where` clause exactly (same fields, same
+// exact-match semantics) so a batch of database rows and a batch of
+// mapped file rows can be matched against each other in memory instead of
+// one findFirst() per row.
+function contactMatchKey(record) {
+  const created = dateKeyPart(record.sourceCreated);
+  return record.email
+    ? `email ${record.email} ${created}`
+    : `name ${record.firstName ?? ""} ${record.lastName ?? ""} ${created}`;
+}
+
+function caseMatchKey(record) {
+  const created = dateKeyPart(record.sourceCreated);
+  return record.caseNumber
+    ? `number ${record.caseNumber}`
+    : `fallback ${record.email ?? ""} ${record.caseType ?? ""} ${created}`;
+}
+
+// Builds a create/update/skip plan for a whole file's worth of mapped rows
+// against one upfront snapshot of existing rows, instead of a per-row
+// findFirst+create/update round trip. When two mapped rows in the same
+// file share a match key and neither matches an existing row, the plan
+// keeps only the *last* one as the row to create — matching what the old
+// sequential version did (row 2 would have found row 1's just-created
+// record via findFirst and updated it in place, so only row 2's values
+// survive). The one deliberate behavioral difference: stats.*Updated
+// undercounts in that specific same-file-duplicate-key case, since it's
+// folded into a single create — informational counts only, not worth the
+// extra bookkeeping for what should be a rare edge case in a real export.
+function planUpserts(existingRecords, mappedRecords, matchKey) {
+  const existingByKey = new Map();
+  for (const record of existingRecords) {
+    const key = matchKey(record);
+    if (!existingByKey.has(key)) existingByKey.set(key, record);
   }
-  const created = await prisma.caseEasyImportCase.create({ data: { ...data, agencyId, importBatchId } });
-  stats.casesCreated += 1;
-  return created;
+  const plan = new Map();
+  for (const mapped of mappedRecords) {
+    const key = matchKey(mapped);
+    const existing = existingByKey.get(key);
+    if (existing) {
+      if (existing.importStatus === "converted") plan.set(key, { action: "skip" });
+      else plan.set(key, { action: "update", id: existing.id, mapped });
+      continue;
+    }
+    const pending = plan.get(key);
+    if (pending?.action === "update") plan.set(key, { action: "update", id: pending.id, mapped });
+    else plan.set(key, { action: "create", mapped });
+  }
+  return [...plan.values()];
+}
+
+async function batchUpsertContacts(agencyId, mappedContacts, importBatchId, stats) {
+  if (!mappedContacts.length) return;
+  const existing = await prisma.caseEasyImportContact.findMany({ where: { agencyId } });
+  const plan = planUpserts(existing, mappedContacts, contactMatchKey);
+
+  const toCreate = plan.filter((entry) => entry.action === "create");
+  const toUpdate = plan.filter((entry) => entry.action === "update");
+  const skipped = plan.filter((entry) => entry.action === "skip");
+
+  if (toCreate.length) {
+    await prisma.caseEasyImportContact.createMany({
+      data: toCreate.map((entry) => ({ ...entry.mapped, agencyId, importBatchId })),
+    });
+  }
+  await runInConcurrentBatches(toUpdate, WRITE_CONCURRENCY, (entry) =>
+    prisma.caseEasyImportContact.update({ where: { id: entry.id }, data: { ...entry.mapped, importBatchId } }),
+  );
+
+  stats.contactsCreated += toCreate.length;
+  stats.contactsUpdated += toUpdate.length;
+  stats.contactsSkippedConverted = (stats.contactsSkippedConverted || 0) + skipped.length;
+}
+
+async function batchUpsertCases(agencyId, mappedCases, importBatchId, stats) {
+  if (!mappedCases.length) return;
+  const existing = await prisma.caseEasyImportCase.findMany({ where: { agencyId } });
+  const plan = planUpserts(
+    existing,
+    mappedCases.map(({ mapped, prospectOrClient }) => ({ ...mapped, prospectOrClient })),
+    caseMatchKey,
+  );
+
+  const toCreate = plan.filter((entry) => entry.action === "create");
+  const toUpdate = plan.filter((entry) => entry.action === "update");
+  const skipped = plan.filter((entry) => entry.action === "skip");
+
+  if (toCreate.length) {
+    await prisma.caseEasyImportCase.createMany({
+      data: toCreate.map((entry) => ({ ...entry.mapped, agencyId, importBatchId })),
+    });
+  }
+  await runInConcurrentBatches(toUpdate, WRITE_CONCURRENCY, (entry) =>
+    prisma.caseEasyImportCase.update({ where: { id: entry.id }, data: { ...entry.mapped, importBatchId } }),
+  );
+
+  stats.casesCreated += toCreate.length;
+  stats.casesUpdated += toUpdate.length;
+  stats.casesSkippedConverted = (stats.casesSkippedConverted || 0) + skipped.length;
 }
 
 function normalizeToggle(raw) {
@@ -318,9 +401,14 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
       }),
     ),
   ];
-  for (let offset = 0; offset < operations.length; offset += 100) {
-    await prisma.$transaction(operations.slice(offset, offset + 100));
-  }
+  // Each 100-row chunk touches disjoint rows (keyed by id), so unlike the
+  // per-row upsert loop above this doesn't need to stay sequential — running
+  // several chunks at once cuts wall-clock time by roughly the concurrency
+  // factor, since the bottleneck here is round-trip count, not statement
+  // cost (each is a trivial primary-key update).
+  const chunks = [];
+  for (let offset = 0; offset < operations.length; offset += 100) chunks.push(operations.slice(offset, offset + 100));
+  await runInConcurrentBatches(chunks, 8, (chunk) => prisma.$transaction(chunk));
 }
 
 /**
@@ -423,8 +511,8 @@ export async function importCaseEasyExports({ agencyId, contactsWorkbook, casesW
   const importBatchId = `case-easy-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 
   if (apply) {
-    for (const mapped of mappedContacts) await upsertContact(agencyId, mapped, importBatchId, stats);
-    for (const { mapped, prospectOrClient } of mappedCases) await upsertCase(agencyId, mapped, importBatchId, prospectOrClient, stats);
+    await batchUpsertContacts(agencyId, mappedContacts, importBatchId, stats);
+    await batchUpsertCases(agencyId, mappedCases, importBatchId, stats);
     await resolveCaseEasyLinks(agencyId, stats);
   }
 

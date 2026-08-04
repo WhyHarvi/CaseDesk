@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { AuthShell, fieldClass, FormField, FormMessage } from "../components/auth/AuthShell";
 import api from "../services/api";
-import { requireSupabase } from "../services/supabase";
+import { establishAuthLinkSession } from "../services/authLinkSession";
 
 export default function AcceptInvite() {
   const navigate = useNavigate();
@@ -17,25 +17,7 @@ export default function AcceptInvite() {
     let active = true;
     async function load() {
       try {
-        // Supabase redirects here with the session in the URL hash on
-        // success, or with #error=...&error_code=... if the link was
-        // already used or has expired (e.g. a stale link from an earlier
-        // invite/resend email still sitting in the inbox). Check for that
-        // explicitly — otherwise it looks identical to "no session at all"
-        // below and shows a confusing "open the link" message to someone
-        // who just did.
-        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-        const hashErrorCode = hashParams.get("error_code");
-        if (hashErrorCode) {
-          throw new Error(
-            hashErrorCode === "otp_expired"
-              ? "This link has already been used or has expired. Ask us to send you a new one."
-              : "This link is no longer valid. Ask us to send you a new one.",
-          );
-        }
-        const client = requireSupabase();
-        const { data } = await client.auth.getSession();
-        if (!data.session) throw new Error("Open the secure link from your invitation email to continue.");
+        await establishAuthLinkSession();
         const invitation = (await api.get("/auth/invitation")).data.data;
         let agency = {};
         if (invitation.requiresAgencySetup) agency = (await api.get("/onboarding/status")).data.data.agency;
@@ -61,8 +43,8 @@ export default function AcceptInvite() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <AuthShell title="Opening your invitation" description="Verifying your secure setup link…" compact><div className="mx-auto mt-10 h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /></AuthShell>;
-  if (!context) return <AuthShell title="Invitation unavailable" description="The setup link could not be opened." backTo="/login" compact><div className="mt-8"><FormMessage error>{error}</FormMessage></div></AuthShell>;
+  if (loading) return <AuthShell title="Opening your secure link" description="Verifying your account link…" compact><div className="mx-auto mt-10 h-8 w-8 animate-spin rounded-full border-4 border-sky-100 border-t-sky-600" /></AuthShell>;
+  if (!context) return <AuthShell title="Secure link unavailable" description="The account link could not be opened." backTo="/login" compact><div className="mt-8"><FormMessage error>{error}</FormMessage></div></AuthShell>;
 
   return <AuthShell title={context.requiresAgencySetup ? "Set up your workspace" : context.alreadyActive ? "Reset your password" : "Finish your account"} description={context.requiresAgencySetup ? "Choose a password and confirm the workspace details CaseDesk will use in your templates." : context.alreadyActive ? `Choose a new password for your ${context.agencyName} account.` : `You’re joining ${context.agencyName}. Choose a secure password to continue.`} backTo="/login">
     <form onSubmit={submit} className="mt-8 grid gap-5 sm:grid-cols-2">
