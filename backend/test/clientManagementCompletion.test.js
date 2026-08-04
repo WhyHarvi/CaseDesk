@@ -24,6 +24,9 @@ test("client management stores searchable identity fields and archives without d
   assert.doesNotMatch(routes, /router\.delete/);
   assert.match(page, /archive-impact/);
   assert.match(page, /client\.clientNumber/);
+  assert.match(page, /directoryOrder === "recentlyAdded"/);
+  assert.match(page, /new Date\(right\.createdAt \|\| 0\)/);
+  assert.match(page, /Recently added/);
   assert.match(profile, /Preferred language/);
   assert.match(profile, /Identification/);
 });

@@ -1361,7 +1361,7 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
     if (status === "Completed") await ensureAppointmentCompletionFollowUp(tx, result);
     if (["Completed", "NoShow"].includes(status)) {
       await sendBookingStaffNotification({ agencyId, appointment: result, kind: status === "Completed" ? "attended" : "no_show", actorUserId, db: tx });
-    } else {
+    } else if (status === "Cancelled") {
       await sendBookingMessages({ agencyId, appointment: result, kind: "cancelled", actorUserId, db: tx });
       if (result.meetingProvider === "Zoom" && result.meetingProviderId) {
         await enqueueAppointmentMeetingJob(tx, {
@@ -1372,6 +1372,10 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
         });
       }
     }
+    // status === "Scheduled" (unmark): no client- or staff-facing
+    // notification — the admin doing it already knows, and there's nothing
+    // for the client to be told since nothing about their appointment
+    // actually changed from their perspective.
     return result;
   });
   await recordActivity({ agencyId, userId: actorUserId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
@@ -1388,17 +1392,30 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
 
 export async function updateBookingAppointmentStatus(req, res) {
   const status = String(req.body?.status || "");
-  if (!["Completed", "Cancelled", "NoShow"].includes(status)) throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
+  if (!["Completed", "Cancelled", "NoShow", "Scheduled"].includes(status)) throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
   const existing = await prisma.appointment.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  if (existing.status !== "Scheduled") {
-    throw createHttpError(409, "Only a scheduled appointment can be completed, cancelled, or marked no-show.", "ALREADY_DONE");
+
+  if (status === "Scheduled") {
+    // "Unmark attended" — reverses a Completed appointment back to
+    // Scheduled. Admin-only, and only from Completed: no legitimate reason
+    // to "unmark" a Cancelled/NoShow appointment through this endpoint.
+    if (req.auth.role !== "admin") throw createHttpError(403, "Only an admin can unmark an appointment.", "FORBIDDEN");
+    if (existing.status !== "Completed") throw createHttpError(409, "Only an appointment marked attended can be unmarked.", "ALREADY_DONE");
+  } else {
+    if (existing.status !== "Scheduled") {
+      throw createHttpError(409, "Only a scheduled appointment can be completed, cancelled, or marked no-show.", "ALREADY_DONE");
+    }
+    if (status === "Completed" && req.auth.role === "frontdesk") {
+      throw createHttpError(403, "Frontdesk cannot mark an appointment attended.", "FORBIDDEN");
+    }
+    if (["Completed", "NoShow"].includes(status) && new Date(existing.startsAt) > new Date()) {
+      throw createHttpError(409, "An appointment cannot be marked attended or no-show before it starts.", "TOO_EARLY");
+    }
   }
-  if (["Completed", "NoShow"].includes(status) && new Date(existing.startsAt) > new Date()) {
-    throw createHttpError(409, "An appointment cannot be marked attended or no-show before it starts.", "TOO_EARLY");
-  }
+
   const data = await applyAppointmentStatusChange({
     agencyId: req.auth.agencyId,
     existing,

@@ -24,7 +24,7 @@ test("Case Easy contacts and cases exports are classified from their real header
   assert.equal(classifyWorkbookHeaders(caseHeaders).type, "cases");
 });
 
-test("Case Easy raw fields map without moving UCI or marital status onto Client", () => {
+test("Case Easy raw fields preserve UCI and marital status for conversion", () => {
   const errors = [];
   const contact = mapRow(
     {
@@ -57,6 +57,7 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
     /profileQuestionnaires = \{ canadianStatus: \{ uci \} \}/,
   );
   assert.match(controller, /formData\.profile = \{ maritalStatus \}/);
+  assert.match(controller, /maritalStatus: importedMaritalStatus/);
   assert.match(
     controller,
     /agencyId,[\s\S]*status: "active"[\s\S]*role: \{ in: \["admin", "consultant"\] \}/,

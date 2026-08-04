@@ -640,6 +640,7 @@ export default function Clients() {
   const [caseTypeFilter, setCaseTypeFilter] = useState("All Case Types");
   const [staffFilter, setStaffFilter] = useState("All Staff");
   const [activeView, setActiveView] = useState("All Clients");
+  const [directoryOrder, setDirectoryOrder] = useState("alphabetical");
   const [activeTabStyle, setActiveTabStyle] = useState(null);
   const [activeActionMenuId, setActiveActionMenuId] = useState(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
@@ -698,7 +699,7 @@ export default function Clients() {
   );
 
   const filteredClients = useMemo(() => {
-    return enrichedClients.filter((client) => {
+    const matchingClients = enrichedClients.filter((client) => {
       const searchHaystack = [
         client.fullName,
         client.email,
@@ -723,7 +724,17 @@ export default function Clients() {
 
       return matchesSearch && matchesStatus && matchesCaseType && matchesStaff && matchesActiveView;
     });
-  }, [activeView, caseTypeFilter, enrichedClients, searchQuery, staffFilter, statusFilter]);
+
+    if (directoryOrder === "recentlyAdded") {
+      return [...matchingClients].sort(
+        (left, right) =>
+          new Date(right.createdAt || 0).getTime() -
+          new Date(left.createdAt || 0).getTime(),
+      );
+    }
+
+    return matchingClients;
+  }, [activeView, caseTypeFilter, directoryOrder, enrichedClients, searchQuery, staffFilter, statusFilter]);
 
   const summary = useMemo(() => {
     const activeCases = enrichedClients.filter((client) => client.normalizedStatus === "Active").length;
@@ -928,6 +939,18 @@ export default function Clients() {
     setStaffFilter("All Staff");
   }
 
+  function toggleRecentlyAdded() {
+    if (directoryOrder === "recentlyAdded") {
+      setDirectoryOrder("alphabetical");
+      return;
+    }
+
+    clearFilters();
+    setActiveView("All Clients");
+    setActiveActionMenuId(null);
+    setDirectoryOrder("recentlyAdded");
+  }
+
   return (
     <section className="space-y-6">
       <div className="space-y-5">
@@ -1118,13 +1141,20 @@ export default function Clients() {
 
               <div className="flex items-center gap-2">
                 <div className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                  Focused daily ops
+                  {directoryOrder === "recentlyAdded" ? "Newest clients first" : "Focused daily ops"}
                 </div>
                 <button
                   type="button"
-                  className="inline-flex h-9 items-center rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-500 transition hover:bg-slate-50"
+                  onClick={toggleRecentlyAdded}
+                  aria-pressed={directoryOrder === "recentlyAdded"}
+                  className={`inline-flex h-9 items-center gap-2 rounded-2xl border px-3 text-sm font-medium transition ${
+                    directoryOrder === "recentlyAdded"
+                      ? "border-slate-950 bg-slate-950 text-white shadow-[0_8px_20px_rgba(15,23,42,0.18)]"
+                      : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                  }`}
                 >
-                  Recently updated
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  Recently added
                 </button>
               </div>
             </div>

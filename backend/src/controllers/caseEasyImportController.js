@@ -15,6 +15,7 @@ import {
   refreshCaseEasyReportProductionLinks,
 } from "../services/caseEasyReportImportService.js";
 import { calculateCrsScore } from "./caseAssessmentController.js";
+import { normalizeMaritalStatus } from "../services/clientProfileSyncService.js";
 
 const caseInclude = { resolvedAssignee: { select: { id: true, fullName: true } } };
 const caseDetailInclude = {
@@ -505,7 +506,8 @@ export async function convertCaseEasyImportContact(req, res) {
     }
   }
 
-  let fullName, dateOfBirth, contactNormalized, clientInput;
+  let fullName, dateOfBirth, contactNormalized;
+  let clientInput = {};
   if (!alreadyConverted) {
     clientInput = isPlainObject(req.body.client) ? req.body.client : {};
     fullName = String(clientInput.fullName || `${contact.firstName || ""} ${contact.lastName || ""}`).trim();
@@ -517,6 +519,19 @@ export async function convertCaseEasyImportContact(req, res) {
       phone: clientInput.phone ?? contact.phone,
       email: clientInput.email ?? contact.email,
     });
+  }
+  const importedMaritalStatusValue =
+    clientInput.maritalStatus ??
+    casesInput.find((caseInput) => caseInput.maritalStatus)?.maritalStatus ??
+    contact.maritalStatus;
+  const importedMaritalStatus = normalizeMaritalStatus(
+    importedMaritalStatusValue,
+  );
+  if (
+    String(importedMaritalStatusValue || "").trim() &&
+    !importedMaritalStatus
+  ) {
+    throw createHttpError(400, "Marital status is invalid.", "VALIDATION_ERROR");
   }
 
   try {
@@ -556,10 +571,17 @@ export async function convertCaseEasyImportContact(req, res) {
             fullName,
             ...contactNormalized,
             dateOfBirth,
+            maritalStatus: importedMaritalStatus,
             address: clientInput.address || null,
             preferredLanguage: clientInput.preferredLanguage || null,
             status: "Active",
           },
+        });
+      }
+      if (!client.maritalStatus && importedMaritalStatus) {
+        client = await tx.client.update({
+          where: { id: client.id },
+          data: { maritalStatus: importedMaritalStatus },
         });
       }
 
@@ -594,15 +616,14 @@ export async function convertCaseEasyImportContact(req, res) {
           },
         });
 
-        // UCI and Marital Status are case-scoped in CaseDesk, not on Client
-        // — see docs/production/case-easy-import-prompt.md's confirmed
-        // mapping. Written at the exact paths the rest of the app reads
-        // (profileQuestionnaires.canadianStatus.uci / profile.maritalStatus).
+        // UCI remains case-scoped. Marital status is copied from the
+        // canonical client profile into each case assessment so official
+        // forms and questionnaires reuse the same answer.
         const uci =
           caseInput.uci ??
           stagingCase.reportRows?.[0]?.uci ??
           contact.uci;
-        const maritalStatus = caseInput.maritalStatus ?? contact.maritalStatus;
+        const maritalStatus = client.maritalStatus || importedMaritalStatus;
         const formData = {};
         if (uci) formData.profileQuestionnaires = { canadianStatus: { uci } };
         if (maritalStatus) formData.profile = { maritalStatus };

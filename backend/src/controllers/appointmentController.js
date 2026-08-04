@@ -181,6 +181,9 @@ export async function updateAppointment(req, res) {
   const assignedToId = req.body.assignedToId === undefined ? existing.assignedToId : await validateAssignee(req, req.body.assignedToId);
   const status = req.body.status === undefined ? existing.status : req.body.status;
   if (!statuses.has(status)) throw createHttpError(400, "Invalid appointment status");
+  if (status === "Completed" && existing.status !== "Completed" && req.user.role === "frontdesk") {
+    throw createHttpError(403, "Frontdesk cannot mark an appointment attended.", "FORBIDDEN");
+  }
   const settings = await getOrCreateBookingSettings(req.user.agencyId);
   const timeChanged = startsAt.getTime() !== new Date(existing.startsAt).getTime()
     || endsAt.getTime() !== new Date(existing.endsAt).getTime();

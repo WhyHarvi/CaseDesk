@@ -247,7 +247,19 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                   <h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{appointment?.subject || "Loading appointment…"}</h2>
                   {appointment?.status ? <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${statusTone[appointment.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{appointment.status === "NoShow" ? "No-show" : appointment.status}</span> : null}
                 </div>
-                <p className="mt-1 text-sm text-slate-500">{person?.fullName || "Appointment visitor"}{appointment?.referenceCode ? ` · ${appointment.referenceCode}` : ""}</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {appointment?.client?.id ? (
+                    <Link
+                      to={`/app/clients/${appointment.client.id}`}
+                      className="font-medium text-slate-700 transition hover:text-sky-700 hover:underline hover:decoration-sky-300 hover:underline-offset-4"
+                    >
+                      {person?.fullName || "Appointment visitor"}
+                    </Link>
+                  ) : (
+                    person?.fullName || "Appointment visitor"
+                  )}
+                  {appointment?.referenceCode ? ` · ${appointment.referenceCode}` : ""}
+                </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {onEditScheduling && appointment ? <button type="button" onClick={() => onEditScheduling(appointment)} className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700">Edit schedule</button> : null}
@@ -277,12 +289,13 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
                 <h3 className="text-sm font-semibold text-slate-900">Connected records</h3>
                 <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                  <div><p className="text-xs text-slate-400">Contact</p><p className="mt-1 font-semibold text-slate-800">{person?.fullName || "Visitor"}</p>{person?.email ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Mail className="h-3.5 w-3.5" />{person.email}</p> : null}{person?.phone ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Phone className="h-3.5 w-3.5" />{person.phone}</p> : null}</div>
+                  <div><p className="text-xs text-slate-400">Contact</p>{appointment.client?.id ? <Link to={`/app/clients/${appointment.client.id}`} className="mt-1 inline-flex font-semibold text-slate-800 transition hover:text-sky-700 hover:underline hover:decoration-sky-300 hover:underline-offset-4">{person?.fullName || "Visitor"}</Link> : <p className="mt-1 font-semibold text-slate-800">{person?.fullName || "Visitor"}</p>}{person?.email ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Mail className="h-3.5 w-3.5" />{person.email}</p> : null}{person?.phone ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Phone className="h-3.5 w-3.5" />{person.phone}</p> : null}</div>
                   <div><p className="text-xs text-slate-400">Matter</p>{appointment.case ? <Link to={`/app/cases/${appointment.case.id}`} target="_blank" className="mt-1 inline-flex items-center gap-1.5 font-semibold text-sky-700"><Link2 className="h-3.5 w-3.5" />{appointment.case.caseType}</Link> : appointment.lead ? <p className="mt-1 font-semibold text-slate-800">{appointment.lead.leadNumber}</p> : <p className="mt-1 text-slate-500">Not linked to a case</p>}</div>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2"><Link to={calendarUrl} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700"><CalendarDays className="h-3.5 w-3.5" />Open in calendar</Link>{appointment.meetingUrl ? <a href={appointment.meetingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white"><Video className="h-3.5 w-3.5" />Join meeting</a> : null}{appointment.location ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs text-slate-600"><MapPin className="h-3.5 w-3.5" />{appointment.location}</span> : null}</div>
               </section>
-              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={saving} onClick={() => setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button><button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className="rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700">Mark no-show</button></div></section> : null}
+              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
+              {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
               {canWrite && appointment.status === "Completed" && !appointment.client ? <button type="button" disabled={saving} onClick={convertGuest} className="w-full rounded-full bg-emerald-600 px-4 py-3 text-sm font-semibold text-white">Save visitor as client</button> : null}
             </div> : null}
 

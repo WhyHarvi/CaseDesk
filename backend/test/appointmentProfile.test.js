@@ -1,10 +1,28 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   appointmentProfileAccessWhere,
   ensureAppointmentCompletionFollowUp,
   requireAppointmentProfile,
 } from "../src/services/appointmentProfileService.js";
+
+const source = (relativePath) =>
+  readFile(new URL(relativePath, import.meta.url), "utf8");
+
+test("calendar client identity opens the connected client profile", async () => {
+  const [calendar, profile] = await Promise.all([
+    source("../../frontend/src/pages/CalendarPage.jsx"),
+    source(
+      "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",
+    ),
+  ]);
+
+  assert.match(calendar, /clientProfilePath = effectiveClient\?\.id/);
+  assert.match(calendar, /to=\{clientProfilePath\}/);
+  assert.match(calendar, /Open \$\{person\}'s client profile/);
+  assert.match(profile, /`\/app\/clients\/\$\{appointment\.client\.id\}`/);
+});
 
 test("appointment profile limits consultants to assigned or related appointments", () => {
   const where = appointmentProfileAccessWhere({ auth: { role: "consultant", userId: "user-1" } });

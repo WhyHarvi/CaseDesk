@@ -2,12 +2,14 @@ import { Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
+import { maritalStatusOptions } from "../case-profile/applicantProfileOptions";
 
 const defaultFormState = {
   fullName: "",
   email: "",
   phone: "",
   dateOfBirth: "",
+  maritalStatus: "",
   address: "",
   preferredLanguage: "",
   identificationType: "",
@@ -29,6 +31,7 @@ function clientToFormState(client) {
     email: client.email || "",
     phone: client.phone || "",
     dateOfBirth: formatDateForInput(client.dateOfBirth),
+    maritalStatus: client.maritalStatus || "",
     address: client.address || "",
     preferredLanguage: client.preferredLanguage || "",
     identificationType: client.identificationType || "",
@@ -170,6 +173,13 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">Date of birth</span>
                   <input type="date" name="dateOfBirth" value={formState.dateOfBirth} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Marital status</span>
+                  <select name="maritalStatus" value={formState.maritalStatus} onChange={handleInputChange} className="select-field h-12 w-full py-0">
+                    {maritalStatusOptions.map((maritalStatus) => <option key={maritalStatus || "not-set"} value={maritalStatus}>{maritalStatus || "Not set"}</option>)}
+                  </select>
                 </label>
 
                 <label className="block">

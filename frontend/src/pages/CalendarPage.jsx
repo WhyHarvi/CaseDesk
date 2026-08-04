@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   cancelBookingAppointment,
@@ -60,6 +60,11 @@ const EVENT_TONES = [
   { chip: "bg-indigo-500", block: "border-indigo-400 bg-indigo-50/90 hover:bg-indigo-100/90", title: "text-indigo-900", meta: "text-indigo-600" },
 ];
 const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-50/90 hover:bg-slate-100/90", title: "text-slate-800", meta: "text-slate-500" };
+// Frontdesk-booked (walk-in) appointments get this fixed color regardless
+// of who they're assigned to, instead of the per-staff rotation below — a
+// distinct, at-a-glance "this came from the front desk" signal.
+const WALK_IN_TONE = { chip: "bg-fuchsia-500", block: "border-fuchsia-400 bg-fuchsia-50/90 hover:bg-fuchsia-100/90", title: "text-fuchsia-900", meta: "text-fuchsia-600" };
+const MEETING_MODE_ICON = { InPerson: MapPin, Phone: Phone, Online: Video, Zoom: Video };
 const APPOINTMENT_STATUS_TONE = {
   Scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
   Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
@@ -225,6 +230,9 @@ function DetailRow({ icon: Icon, children }) {
 function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onOpenNotes, onStatus, role, settings }) {
   const start = new Date(appointment.startsAt);
   const effectiveClient = appointment.client || appointment.matchedClient || null;
+  const clientProfilePath = effectiveClient?.id
+    ? `/app/clients/${effectiveClient.id}`
+    : null;
   const person = effectiveClient?.fullName || appointment.guestName || "No contact";
   const initials = person.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const [resched, setResched] = useState(false);
@@ -463,11 +471,32 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       ) : null}
 
       <div className="mt-4 flex items-center gap-3 rounded-2xl bg-slate-50/90 px-3.5 py-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-950 text-xs font-semibold text-white">
-          {initials}
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{person}</p>
+        {clientProfilePath ? (
+          <Link
+            to={clientProfilePath}
+            aria-label={`Open ${person}'s client profile`}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-950 text-xs font-semibold text-white shadow-sm transition hover:scale-105 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
+          >
+            {initials}
+          </Link>
+        ) : (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-950 text-xs font-semibold text-white">
+            {initials}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          {clientProfilePath ? (
+            <Link
+              to={clientProfilePath}
+              className="group inline-flex max-w-full items-center rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
+            >
+              <span className="truncate text-sm font-semibold text-slate-900 transition group-hover:text-sky-700 group-hover:underline group-hover:decoration-sky-300 group-hover:underline-offset-4">
+                {person}
+              </span>
+            </Link>
+          ) : (
+            <p className="truncate text-sm font-semibold text-slate-900">{person}</p>
+          )}
           <p className="text-xs text-slate-400">{effectiveClient ? "Client" : "Walk-in guest"}{appointment.case ? ` · ${appointment.case.caseType}` : ""}</p>
           {!effectiveClient ? (
             <button type="button" disabled={converting} onClick={linkGuestToClient} className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-sky-300 disabled:opacity-50">
@@ -634,12 +663,17 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           </button></> : null}
           {appointment.status === "Scheduled" && start > new Date() && appointment.seriesKey ? <div className="col-span-2 flex rounded-xl bg-slate-100 p-1">{[["single", "Only this appointment"], ["series", "This and future appointments"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
           {appointment.status === "Scheduled" && start <= new Date() ? <>
-            <button type="button" onClick={() => onStatus("Completed")} className="h-10 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">Mark attended</button>
-            <button type="button" onClick={() => onStatus("NoShow")} className="h-10 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700 transition hover:bg-amber-100">Mark no-show</button>
+            {role !== "frontdesk" ? <button type="button" onClick={() => onStatus("Completed")} className="h-10 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">Mark attended</button> : null}
+            <button type="button" onClick={() => onStatus("NoShow")} className={`h-10 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button>
           </> : null}
           {appointment.status !== "Scheduled" ? (
-            <div className={`col-span-2 rounded-2xl px-4 py-3 text-center text-xs font-semibold ${appointment.status === "Completed" ? "bg-emerald-50 text-emerald-700" : appointment.status === "Cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
-              {appointment.status === "Completed" ? "This appointment was marked attended." : appointment.status === "Cancelled" ? "This appointment was cancelled." : "This appointment was marked no-show."}
+            <div className="col-span-2 space-y-2">
+              <div className={`rounded-2xl px-4 py-3 text-center text-xs font-semibold ${appointment.status === "Completed" ? "bg-emerald-50 text-emerald-700" : appointment.status === "Cancelled" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                {appointment.status === "Completed" ? "This appointment was marked attended." : appointment.status === "Cancelled" ? "This appointment was cancelled." : "This appointment was marked no-show."}
+              </div>
+              {appointment.status === "Completed" && role === "admin" ? (
+                <button type="button" onClick={() => onStatus("Scheduled")} className="h-10 w-full rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">Unmark attended</button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -1082,7 +1116,7 @@ export default function CalendarPage() {
   useEffect(() => {
     if (role === "consultant") return;
     api.get("/leads/staff").then((response) => {
-      setStaff((response.data.data || []).filter((member) => ["admin", "consultant"].includes(member.role)));
+      setStaff((response.data.data || []).filter((member) => ["admin", "consultant"].includes(member.role) && member.schedulingPreference?.acceptsAppointments !== false));
     }).catch(() => {});
   }, [role]);
 
@@ -1093,7 +1127,7 @@ export default function CalendarPage() {
   }, [staff]);
 
   const toneFor = useCallback(
-    (item) => (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
+    (item) => item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
     [staffTone, role],
   );
 
@@ -1269,6 +1303,7 @@ export default function CalendarPage() {
                         const isSelected = selected?.id === item.id;
                         const isDone = item.status === "Completed";
                         const displayName = item.client?.fullName || item.guestName || item.subject;
+                        const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                         const outerGutter = 5;
                         const columnGap = 4;
                         const horizontalStyle = columns === 1
@@ -1288,6 +1323,7 @@ export default function CalendarPage() {
                             style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
                             <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
+                              <ModeIcon className="h-3 w-3 shrink-0" />
                               {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
                               <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
                             </p>
@@ -1304,6 +1340,24 @@ export default function CalendarPage() {
                   );
                 })}
               </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-slate-100 px-5 py-3.5 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-3">
+              {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Video"], ["Zoom", "Zoom"]].map(([modeId, label]) => {
+                const Icon = MEETING_MODE_ICON[modeId];
+                return <span key={modeId} className="flex items-center gap-1.5"><Icon className="h-3.5 w-3.5 text-slate-400" />{label}</span>;
+              })}
+            </div>
+            <div className="h-3.5 w-px bg-slate-200" />
+            <div className="flex flex-wrap items-center gap-3">
+              {staff.length ? staff.map((member, index) => (
+                <span key={member.id} className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${EVENT_TONES[index % EVENT_TONES.length].chip}`} />{member.fullName}</span>
+              )) : role === "consultant" ? (
+                <span className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${EVENT_TONES[0].chip}`} />Your appointments</span>
+              ) : null}
+              <span className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${WALK_IN_TONE.chip}`} />Frontdesk booked (walk-in)</span>
             </div>
           </div>
         </div>
@@ -1370,11 +1424,12 @@ export default function CalendarPage() {
                   <div className="mt-3 space-y-2.5">
                     {upcoming.map((item) => {
                       const tone = toneFor(item);
+                      const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                       return (
                         <button key={item.id} type="button" onClick={() => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); }} className="flex w-full items-center gap-3 rounded-2xl px-2 py-1.5 text-left transition hover:bg-slate-50">
                           <span className={`h-2 w-2 shrink-0 rounded-full ${tone.chip}`} />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-slate-800">{item.client?.fullName || item.guestName || item.subject}</span>
+                            <span className="flex items-center gap-1 truncate text-sm font-medium text-slate-800"><ModeIcon className="h-3 w-3 shrink-0 text-slate-400" />{item.client?.fullName || item.guestName || item.subject}</span>
                             <span className="block text-xs text-slate-400">
                               {new Date(item.startsAt).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" })} · {formatTime(item.startsAt)}
                             </span>

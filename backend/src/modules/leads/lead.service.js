@@ -219,7 +219,11 @@ export async function listLeadStaff(req) {
       memberships: { some: { agencyId: req.auth.agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } },
     },
     orderBy: { fullName: "asc" },
-    select: { id: true, fullName: true, email: true, role: true, zoomHostMapping: { select: { status: true } } },
+    // schedulingPreference is included (not filtered on here) — this list
+    // is shared by non-booking consumers too (e.g. lead-owner assignment),
+    // where someone who's turned off accepting appointments should still
+    // be assignable. Booking-specific UI (the calendar) filters on it itself.
+    select: { id: true, fullName: true, email: true, role: true, zoomHostMapping: { select: { status: true } }, schedulingPreference: { select: { acceptsAppointments: true } } },
   });
 }
 

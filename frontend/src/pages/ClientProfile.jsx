@@ -24,6 +24,7 @@ import ClientAppointmentsCard from "../components/appointments/ClientAppointment
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import ClientBillingCard from "../components/clients/ClientBillingCard";
 import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
+import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
 import { hasCapability } from "../auth/portalAccess";
 
@@ -301,6 +302,7 @@ export default function ClientProfile() {
   const [deletingNoteId, setDeletingNoteId] = useState("");
   const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
   const [statementOpen, setStatementOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState(false);
   const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
 
   const isEditingNote = Boolean(editingNote);
@@ -499,6 +501,14 @@ export default function ClientProfile() {
             <Plus className="h-4 w-4" />
             Add note
           </button>
+          <button
+            type="button"
+            onClick={() => setEditingClient(true)}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          >
+            <Pencil className="h-4 w-4" />
+            Edit profile
+          </button>
           {currentCase ? (
             <Link
               to={`/cases/${currentCase.id}`}
@@ -525,6 +535,16 @@ export default function ClientProfile() {
         <StatementOfAccountOverlay
           clientId={id}
           onClose={() => setStatementOpen(false)}
+        />
+      ) : null}
+      {editingClient ? (
+        <ClientEditDrawer
+          client={client}
+          onClose={() => setEditingClient(false)}
+          onSaved={async () => {
+            setEditingClient(false);
+            await loadClient();
+          }}
         />
       ) : null}
       {selectedNoteAppointmentId ? (
@@ -781,6 +801,14 @@ export default function ClientProfile() {
                   </p>
                   <p className="mt-1 text-sm text-slate-700">
                     {client.status || "Not set"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Marital status
+                  </p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    {client.maritalStatus || "Not set"}
                   </p>
                 </div>
                 <div>

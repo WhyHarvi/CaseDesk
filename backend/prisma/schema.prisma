@@ -869,7 +869,7 @@ model AgencyQuickBooksSettings {
   // reads it off their QuickBooks Payments account rate. Applied twice
   // when estimating a refund (original charge's fee, never returned, plus
   // a new fee on the refund itself) — see refundFeeEstimateService.js.
-  refundFeeRatePercent  Decimal  @default(2.99) @db.Decimal(5, 3) @map("refund_fee_rate_percent")
+  refundFeeRatePercent  Decimal  @default(2.99) @map("refund_fee_rate_percent") @db.Decimal(5, 3)
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
   agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1252,6 +1252,7 @@ model Client {
   email                      String?
   emailNormalized            String?                      @map("email_normalized")
   dateOfBirth                DateTime?                    @map("date_of_birth")
+  maritalStatus              String?                      @map("marital_status")
   address                    String?
   preferredLanguage          String?                      @map("preferred_language")
   identificationType         String?                      @map("identification_type")

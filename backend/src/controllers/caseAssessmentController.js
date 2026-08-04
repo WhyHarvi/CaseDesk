@@ -3,6 +3,11 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { syncQuestionnaireAssignments } from "../services/questionnaireAssignmentService.js";
 import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
+import {
+  formDataWithMaritalStatus,
+  normalizeMaritalStatus,
+  syncClientMaritalStatus,
+} from "../services/clientProfileSyncService.js";
 
 async function findScopedCase(req) {
   const data = await prisma.case.findFirst({
@@ -14,6 +19,9 @@ async function findScopedCase(req) {
       id: true,
       clientId: true,
       caseType: true,
+      client: {
+        select: { maritalStatus: true },
+      },
     },
   });
 
@@ -720,7 +728,9 @@ function emptyAssessment(scopedCase) {
     clientId: scopedCase.clientId,
     caseId: scopedCase.id,
     userId: null,
-    formData: {},
+    formData: scopedCase.client?.maritalStatus
+      ? formDataWithMaritalStatus({}, scopedCase.client.maritalStatus)
+      : {},
     crsScore: null,
     crsBreakdown: null,
     declaredComplete: false,
@@ -739,41 +749,93 @@ export async function getCaseAssessment(req, res) {
     },
   });
 
-  res.json({ data: data || emptyAssessment(scopedCase) });
+  if (!data) {
+    res.json({ data: emptyAssessment(scopedCase) });
+    return;
+  }
+
+  res.json({
+    data: scopedCase.client?.maritalStatus
+      ? {
+          ...data,
+          formData: formDataWithMaritalStatus(
+            data.formData,
+            scopedCase.client.maritalStatus,
+          ),
+        }
+      : data,
+  });
 }
 
 export async function saveCaseAssessment(req, res) {
   const scopedCase = await findScopedCase(req);
-  const formData = asObject(req.body.formData);
+  const requestedFormData = asObject(req.body.formData);
   const declaredComplete = Boolean(req.body.declaredComplete);
+  const submittedProfile = asObject(requestedFormData.profile);
+  const submittedMaritalStatus = Object.hasOwn(submittedProfile, "maritalStatus")
+    ? normalizeMaritalStatus(submittedProfile.maritalStatus)
+    : undefined;
+  if (
+    Object.hasOwn(submittedProfile, "maritalStatus") &&
+    String(submittedProfile.maritalStatus || "").trim() &&
+    !submittedMaritalStatus
+  ) {
+    throw createHttpError(400, "Marital status is invalid.");
+  }
+  const canonicalMaritalStatus = submittedMaritalStatus !== undefined
+    ? submittedMaritalStatus
+    : scopedCase.client?.maritalStatus;
+  const formData = canonicalMaritalStatus
+    ? formDataWithMaritalStatus(requestedFormData, canonicalMaritalStatus)
+    : requestedFormData;
   const { score, breakdown } = calculateCrsScore(formData);
 
-  const data = await prisma.caseAssessment.upsert({
-    where: {
-      agencyId_caseId: {
-        agencyId: req.user.agencyId,
-        caseId: scopedCase.id,
+  const data = await prisma.$transaction(async (tx) => {
+    const assessment = await tx.caseAssessment.upsert({
+      where: {
+        agencyId_caseId: {
+          agencyId: req.user.agencyId,
+          caseId: scopedCase.id,
+        },
       },
-    },
-    create: {
-      agencyId: req.user.agencyId,
-      clientId: scopedCase.clientId,
-      caseId: scopedCase.id,
-      userId: req.user.id,
-      formData,
-      crsScore: score,
-      crsBreakdown: breakdown,
-      declaredComplete,
-      declaredAt: declaredComplete ? new Date() : null,
-    },
-    update: {
-      userId: req.user.id,
-      formData,
-      crsScore: score,
-      crsBreakdown: breakdown,
-      declaredComplete,
-      declaredAt: declaredComplete ? new Date() : null,
-    },
+      create: {
+        agencyId: req.user.agencyId,
+        clientId: scopedCase.clientId,
+        caseId: scopedCase.id,
+        userId: req.user.id,
+        formData,
+        crsScore: score,
+        crsBreakdown: breakdown,
+        declaredComplete,
+        declaredAt: declaredComplete ? new Date() : null,
+      },
+      update: {
+        userId: req.user.id,
+        formData,
+        crsScore: score,
+        crsBreakdown: breakdown,
+        declaredComplete,
+        declaredAt: declaredComplete ? new Date() : null,
+      },
+    });
+
+    if (submittedMaritalStatus !== undefined) {
+      await syncClientMaritalStatus(tx, {
+        agencyId: req.user.agencyId,
+        clientId: scopedCase.clientId,
+        maritalStatus: submittedMaritalStatus,
+        excludeAssessmentId: assessment.id,
+        assessmentPatch: (nextFormData) => {
+          const nextScore = calculateCrsScore(nextFormData);
+          return {
+            crsScore: nextScore.score,
+            crsBreakdown: nextScore.breakdown,
+          };
+        },
+      });
+    }
+
+    return assessment;
   });
 
   const questionnaireSync = await syncQuestionnaireAssignments({

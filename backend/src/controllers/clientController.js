@@ -22,6 +22,11 @@ import {
   hasPortalCapability,
   portalDataScope,
 } from "../services/portalAccessService.js";
+import {
+  normalizeMaritalStatus,
+  syncClientMaritalStatus,
+} from "../services/clientProfileSyncService.js";
+import { calculateCrsScore } from "./caseAssessmentController.js";
 
 const include = {
   assignedUser: {
@@ -74,6 +79,7 @@ const clientIdentitySelect = {
   phone: true,
   email: true,
   dateOfBirth: true,
+  maritalStatus: true,
   address: true,
   preferredLanguage: true,
   identificationType: true,
@@ -715,6 +721,16 @@ function clientPayload(body, existing = null) {
   const address = Object.hasOwn(body, "address")
     ? String(body.address || "").trim() || null
     : existing?.address || null;
+  const maritalStatus = Object.hasOwn(body, "maritalStatus")
+    ? normalizeMaritalStatus(body.maritalStatus)
+    : existing?.maritalStatus || null;
+  if (
+    Object.hasOwn(body, "maritalStatus") &&
+    String(body.maritalStatus || "").trim() &&
+    !maritalStatus
+  ) {
+    throw createHttpError(400, "Marital status is invalid.", "VALIDATION_ERROR");
+  }
   const text = (field, max) => {
     const value = Object.hasOwn(body, field)
       ? String(body[field] || "").trim() || null
@@ -744,6 +760,7 @@ function clientPayload(body, existing = null) {
     fullName,
     ...contact,
     dateOfBirth,
+    maritalStatus,
     address,
     status,
     preferredLanguage: text("preferredLanguage", 100),
@@ -843,11 +860,24 @@ export async function updateClient(req, res) {
         ...payload,
         excludeClientId: existing.id,
       });
-      return tx.client.update({
+      const updatedClient = await tx.client.update({
         where: { id: existing.id },
         data: payload,
         include: scopedInclude(req),
       });
+      if (Object.hasOwn(req.body, "maritalStatus")) {
+        await syncClientMaritalStatus(tx, {
+          agencyId: req.auth.agencyId,
+          clientId: existing.id,
+          maritalStatus: payload.maritalStatus,
+          updateClient: false,
+          assessmentPatch: (nextFormData) => {
+            const { score, breakdown } = calculateCrsScore(nextFormData);
+            return { crsScore: score, crsBreakdown: breakdown };
+          },
+        });
+      }
+      return updatedClient;
     });
     await recordActivity({
       agencyId: req.auth.agencyId,
