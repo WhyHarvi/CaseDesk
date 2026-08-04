@@ -69,28 +69,45 @@ function parseDateValue(value) {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+// Large Case Easy exports are sometimes split across multiple sheet tabs in
+// the same workbook (a 45k-row Cases export, for instance) rather than one
+// giant sheet — reading only worksheets[0] silently drops every row after
+// the first tab with no error, which looks like a much smaller successful
+// import rather than a failure. Every non-empty sheet is read here, each
+// against its own header row (tabs from the same export normally share
+// identical columns, but this doesn't assume that — a sheet with a
+// genuinely different layout just maps against its own headers instead of
+// misreading through the first sheet's column positions).
 export function readSheetRowsFromWorkbook(workbook, sourceLabel) {
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) throw new Error(`${sourceLabel}: no worksheet found`);
+  const worksheets = workbook.worksheets.filter((sheet) => sheet.rowCount > 0);
+  if (!worksheets.length) throw new Error(`${sourceLabel}: no worksheet found`);
 
-  const headerRow = worksheet.getRow(1);
-  const headers = [];
-  headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    headers[colNumber] = String(cell.value ?? "").trim();
+  const primaryHeaders = [];
+  worksheets[0].getRow(1).eachCell({ includeEmpty: false }, (cell, colNumber) => {
+    primaryHeaders[colNumber] = String(cell.value ?? "").trim();
   });
 
   const rows = [];
-  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1) return;
-    const raw = {};
-    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      const header = headers[colNumber];
-      if (header) raw[header] = cell.value && typeof cell.value === "object" && "result" in cell.value ? cell.value.result : cell.value;
+  for (const worksheet of worksheets) {
+    const headers = [];
+    worksheet.getRow(1).eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      headers[colNumber] = String(cell.value ?? "").trim();
     });
-    if (Object.keys(raw).length) rows.push({ rowNumber, raw });
-  });
+    worksheet.eachRow({ includeEmpty: false }, (row, sheetRowNumber) => {
+      if (sheetRowNumber === 1) return;
+      const raw = {};
+      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+        const header = headers[colNumber];
+        if (header) raw[header] = cell.value && typeof cell.value === "object" && "result" in cell.value ? cell.value.result : cell.value;
+      });
+      if (Object.keys(raw).length) {
+        const rowNumber = worksheets.length > 1 ? `${worksheet.name}!${sheetRowNumber}` : sheetRowNumber;
+        rows.push({ rowNumber, raw });
+      }
+    });
+  }
 
-  return { headers: headers.filter(Boolean), rows };
+  return { headers: primaryHeaders.filter(Boolean), rows };
 }
 
 export function mapRow({ raw, rowNumber }, headerMap, dateFields, sheetLabel, errors) {
@@ -431,9 +448,9 @@ export async function importCaseEasyExports({ agencyId, contactsWorkbook, casesW
 
   const contactsSheet = contactsWorkbook ? readSheetRowsFromWorkbook(contactsWorkbook, "contacts") : null;
   const casesSheet = casesWorkbook ? readSheetRowsFromWorkbook(casesWorkbook, "cases") : null;
-  if ((contactsSheet?.rows.length || 0) > 10_000 || (casesSheet?.rows.length || 0) > 10_000) {
+  if ((contactsSheet?.rows.length || 0) > 100_000 || (casesSheet?.rows.length || 0) > 100_000) {
     const error = new Error(
-      "Case Easy Contacts and Cases imports are limited to 10,000 rows per file.",
+      "Case Easy Contacts and Cases imports are limited to 100,000 rows per file.",
     );
     error.code = "IMPORT_TOO_LARGE";
     throw error;
