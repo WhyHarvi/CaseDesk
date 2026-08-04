@@ -50,19 +50,27 @@ function CashPaymentRow({ invoice, onPaid }) {
   const [amount, setAmount] = useState(String(Number(invoice.balance)));
   const [note, setNote] = useState("");
   const [method, setMethod] = useState("Cash");
+  const [transactionReference, setTransactionReference] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [idempotencyKey, setIdempotencyKey] = useState(() => globalThis.crypto?.randomUUID?.() || String(Date.now()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event) {
     event.preventDefault();
+    if (method === "ETransfer" && !transactionReference.trim()) {
+      setError("Enter the e-transfer transaction number.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const updated = await recordCaseInvoiceManualPayment(invoice.caseId, invoice.id, { amount: Number(amount), method, note: note.trim() || undefined, idempotencyKey });
+      const updated = await recordCaseInvoiceManualPayment(invoice.caseId, invoice.id, { amount: Number(amount), method, transactionReference: transactionReference.trim() || undefined, paymentDate, note: note.trim() || undefined, idempotencyKey });
       onPaid(updated);
       setOpen(false);
       setNote("");
+      setTransactionReference("");
+      setPaymentDate(new Date().toISOString().slice(0, 10));
       setIdempotencyKey(globalThis.crypto?.randomUUID?.() || String(Date.now()));
     } catch (reason) {
       setError(reason.response?.data?.message || "That payment could not be recorded.");
@@ -93,9 +101,21 @@ function CashPaymentRow({ invoice, onPaid }) {
     >
       <div className="mb-3 grid grid-cols-2 gap-2 rounded-xl bg-white p-1 ring-1 ring-slate-200/80">
         {[["Cash", "Cash"], ["ETransfer", "E-transfer"]].map(([value, label]) => (
-          <button key={value} type="button" onClick={() => setMethod(value)} className={`h-8 rounded-lg text-xs font-semibold transition ${method === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>
+          <button key={value} type="button" onClick={() => { setMethod(value); setError(""); }} className={`h-8 rounded-lg text-xs font-semibold transition ${method === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>
         ))}
       </div>
+      {method === "ETransfer" ? (
+        <label className="mb-2.5 block text-xs font-medium text-slate-600">Transaction number
+          <input required maxLength={100} value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="Enter the bank transaction number" />
+        </label>
+      ) : (
+        <label className="mb-2.5 block text-xs font-medium text-slate-600">Receipt / reference (optional)
+          <input maxLength={100} value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="Receipt or internal reference" />
+        </label>
+      )}
+      <label className="mb-2.5 block text-xs font-medium text-slate-600">Payment date
+        <input required type="date" max={new Date().toISOString().slice(0, 10)} value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" />
+      </label>
       <div className="grid grid-cols-2 gap-2.5">
         <label className="block text-xs font-medium text-slate-600">Amount received
           <input
@@ -176,6 +196,7 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
               {invoice.qbInvoiceNumber ? ` · Invoice #${invoice.qbInvoiceNumber}` : ""}
               {invoice.dueDate ? ` · Due ${formatDate(invoice.dueDate)}` : ""}
             </p>
+            {invoice.lastPaymentReference ? <p className="mt-1 text-[11px] font-medium text-emerald-700">Latest payment · Transaction #{invoice.lastPaymentReference}</p> : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">

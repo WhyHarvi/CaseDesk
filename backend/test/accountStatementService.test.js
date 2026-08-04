@@ -95,6 +95,28 @@ test("uses exact QuickBooks payment allocations without duplicating the cached i
   assert.equal(result.transactions.find((entry) => entry.type === "Payment").reference, "QBP-43");
 });
 
+test("shows the entered e-transfer number for an ordinary case invoice payment", () => {
+  const result = buildUnifiedClientLedger({
+    caseInvoices: [{
+      id: "case-invoice-transfer", caseId: "case-1", qbInvoiceId: "52", qbInvoiceNumber: "1052",
+      description: "Government filing fee", amount: 255, balance: 0, status: "Paid",
+      lastPaymentMethod: "ETransfer", lastPaymentReference: "CASEDESK-ETR-42",
+      createdAt: new Date("2026-08-04T18:00:00Z"), updatedAt: new Date("2026-08-04T18:05:00Z"),
+    }],
+    quickBooksPayments: [{
+      id: "53", totalAmount: 255, paymentReference: "CASEDESK-ETR-42", methodName: "E-transfer",
+      createdAt: new Date("2026-08-04T18:05:00Z"), transactionDate: "2026-08-02", allocations: [{ invoiceId: "52", amount: 255 }],
+    }],
+  }, { caseReferences: { "case-1": "Study Permit" } });
+
+  const paymentEntry = result.transactions.find((entry) => entry.type === "Payment");
+  assert.equal(paymentEntry.reference, "CASEDESK-ETR-42");
+  assert.match(paymentEntry.description, /transaction CASEDESK-ETR-42/);
+  assert.equal(paymentEntry.date, "2026-08-02");
+  assert.equal(result.summary.totalPayments, 255);
+  assert.equal(result.summary.closingBalance, 0);
+});
+
 test("reports a consultation payment and refund without reopening the paid invoice balance", () => {
   const result = buildUnifiedClientLedger({
     bookingPayments: [{
@@ -113,4 +135,37 @@ test("reports a consultation payment and refund without reopening the paid invoi
   assert.equal(result.summary.netCollected, 0);
   assert.equal(result.summary.closingBalance, 0);
   assert.equal(result.transactions.find((entry) => entry.type === "Refund").refund, 100);
+});
+
+test("keeps an e-transfer transaction number in the client billing ledger", () => {
+  const result = buildUnifiedClientLedger({
+    bookingPayments: [{
+      id: "hold-transfer-1",
+      qbInvoiceId: "invoice-transfer-1",
+      qbInvoiceNumber: "1042",
+      amount: 100,
+      status: "Paid",
+      paymentMethod: "ETransfer",
+      manualPaymentReference: "ETR-2026-88421",
+      createdAt: new Date("2026-08-04T18:00:00Z"),
+      paidAt: new Date("2026-08-04T18:01:00Z"),
+      updatedAt: new Date("2026-08-04T18:01:00Z"),
+      appointment: {
+        subject: "Initial Consultation",
+        startsAt: new Date("2026-08-05T14:00:00Z"),
+      },
+    }],
+  });
+
+  assert.equal(result.summary.totalCharges, 100);
+  assert.equal(result.summary.totalPayments, 100);
+  assert.equal(result.summary.closingBalance, 0);
+  assert.match(
+    result.transactions.find((entry) => entry.type === "Invoice").description,
+    /transaction ETR-2026-88421/,
+  );
+  assert.match(
+    result.transactions.find((entry) => entry.type === "Payment").description,
+    /E-transfer/,
+  );
 });

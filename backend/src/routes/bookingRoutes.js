@@ -31,6 +31,7 @@ import {
   resendBookingPaymentHoldRequest,
   cancelBookingPaymentHoldRequest,
   getAppointmentRefundEstimate,
+  updatePaidAppointmentPaymentDetails,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -67,5 +68,6 @@ router.patch("/appointments/:id/status", asyncHandler(updateBookingAppointmentSt
 router.post("/appointments/:id/convert-client", asyncHandler(convertAppointmentToClient));
 router.post("/appointments/:id/pay-now-link", asyncHandler(createWalkInPayNowLink));
 router.post("/appointments/:id/manual-payment", asyncHandler(recordWalkInManualPayment));
+router.patch("/appointments/:id/payment-details", asyncHandler(updatePaidAppointmentPaymentDetails));
 
 export default router;

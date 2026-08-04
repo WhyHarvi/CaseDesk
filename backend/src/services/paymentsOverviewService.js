@@ -17,7 +17,7 @@ export function normalizeCaseInvoiceStatus(status) {
 }
 
 function normalizeBookingStatus(status) {
-  if (status === "AwaitingPayment" || status === "Confirming") return "Open";
+  if (["AwaitingPayment", "Confirming", "RecordingPayment", "PaymentFailed"].includes(status)) return "Open";
   if (["Expired", "Cancelled", "Failed"].includes(status)) return "Voided";
   return status; // Paid | Voided already match
 }
@@ -59,6 +59,9 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       qbInvoiceNumber: row.qbInvoiceNumber,
       qbInvoiceLink: row.qbInvoiceLink,
       qbRefundUrl: quickBooksAppUrl("invoice", row.qbInvoiceId),
+      paymentMethod: row.lastPaymentMethod === "ETransfer" ? "E-transfer" : row.lastPaymentMethod,
+      paymentReference: row.lastPaymentReference,
+      qbPaymentId: row.lastQbPaymentId,
       createdAt: row.createdAt,
       paidAt: status === "Paid" ? row.updatedAt : null,
       dueDate: row.dueDate,
@@ -128,6 +131,9 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     qbRefundUrl: quickBooksAppUrl("recvpayment", row.qbPaymentId) || quickBooksAppUrl("invoice", row.qbInvoiceId),
     paymentMethod: row.paymentMethod === "ETransfer" ? "E-transfer" : row.paymentMethod,
     paymentNote: row.manualPaymentNote,
+    paymentReference: row.manualPaymentReference,
+    paymentError: row.paymentError,
+    paymentFailed: row.status === "PaymentFailed",
     createdAt: row.createdAt,
     paidAt: row.paidAt,
     dueDate: null,

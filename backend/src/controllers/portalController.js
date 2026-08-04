@@ -9,6 +9,7 @@ import {
   updateAuthUser,
 } from "../services/supabaseAuth.js";
 import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
+import { publicAppUrl } from "../utils/publicAppUrl.js";
 import {
   removeDocumentFile,
   requireDocumentFile,
@@ -140,10 +141,7 @@ export async function createPortalAccount(req, res) {
       "ACCOUNT_EXISTS",
     );
 
-  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173")
-    .split(",")[0]
-    .trim()
-    .replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   const existingAuthUser = await findAuthUserByEmail(email).catch(() => null);
   let generated;
   try {
@@ -263,7 +261,7 @@ export async function sendPortalAccessLink(req, res) {
     throw createHttpError(409, "An account with this email already exists.", "ACCOUNT_EXISTS");
   }
 
-  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   const hasAuthUser = existingLink ? Boolean(existingLink.user.authUserId) : Boolean(await findAuthUserByEmail(email).catch(() => null));
   const kind = hasAuthUser ? "recovery" : "invite";
   const generated = await generateAuthLink({ type: kind, email, fullName, redirectTo: `${frontendUrl}/auth/accept-invite` }).catch(() => null);

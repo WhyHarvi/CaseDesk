@@ -722,6 +722,9 @@ export default function Payments() {
                           {row.paymentMethod ? (
                             <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-100">{row.paymentMethod}</span>
                           ) : null}
+                          {row.paymentReference ? (
+                            <p className="mt-1 text-[11px] font-medium text-slate-500">Transaction #{row.paymentReference}</p>
+                          ) : null}
                           {row.qbInvoiceNumber ? (
                             <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.qbInvoiceNumber}</p>
                           ) : null}
@@ -742,6 +745,14 @@ export default function Payments() {
                             <span className={cx("inline-flex h-7 items-center rounded-full px-3 text-[11px] font-semibold ring-1", STATUS_TONE[row.status] || STATUS_TONE.Open)}>
                               {STATUS_LABEL[row.status] || row.status}
                             </span>
+                            {row.paymentFailed ? (
+                              <span
+                                title={row.paymentError || "The payment could not be recorded in QuickBooks. Open the appointment and retry."}
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
+                              >
+                                <ShieldAlert className="h-3 w-3" /> Recording failed
+                              </span>
+                            ) : null}
                             {row.refundOwed ? (
                               <span
                                 title="The consultation was cancelled after this payment was collected — QuickBooks does not refund automatically, this needs to be actioned manually."

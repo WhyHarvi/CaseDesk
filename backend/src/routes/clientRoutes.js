@@ -27,7 +27,9 @@ import {
   generateAccountStatement,
   getAccountStatementOptions,
   getClientBillingOverview,
+  getClientManualBillingOptions,
   getGeneratedAccountStatement,
+  createClientManualBillingEntry,
 } from "../controllers/accountStatementController.js";
 
 const router = Router();
@@ -66,6 +68,19 @@ router.get(
   "/:id/billing",
   requirePortalCapability("financialData"),
   asyncHandler(getClientBillingOverview),
+);
+router.get(
+  "/:id/billing/manual-entry-options",
+  requirePortalCapability("financialData"),
+  requireRole("admin", "consultant"),
+  asyncHandler(getClientManualBillingOptions),
+);
+router.post(
+  "/:id/billing/manual-entry",
+  requirePortalCapability("financialData"),
+  requireRole("admin", "consultant"),
+  rateLimit({ windowMs: 60_000, max: 20 }),
+  asyncHandler(createClientManualBillingEntry),
 );
 router.get("/:id/appointments", asyncHandler(listClientAppointments));
 router.post(

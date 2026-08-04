@@ -472,7 +472,37 @@ export async function getQuickBooksPayment(agencyId, id) {
     .flatMap((line) => line.LinkedTxn || [])
     .filter((txn) => txn.TxnType === "Invoice")
     .map((txn) => txn.TxnId);
-  return { id: payment.Id, totalAmount: Number(payment.TotalAmt ?? 0), invoiceIds: [...new Set(invoiceIds)] };
+  return {
+    id: payment.Id,
+    syncToken: payment.SyncToken,
+    totalAmount: Number(payment.TotalAmt ?? 0),
+    invoiceIds: [...new Set(invoiceIds)],
+    paymentReference: payment.PaymentRefNum || null,
+    methodId: payment.PaymentMethodRef?.value || null,
+    transactionDate: payment.TxnDate || null,
+  };
+}
+
+export async function updateQuickBooksPaymentDetails(agencyId, {
+  id,
+  paymentReference,
+  paymentMethodId,
+  transactionDate,
+}) {
+  const current = await getQuickBooksPayment(agencyId, id);
+  const payload = await qboRequest(agencyId, {
+    method: "POST",
+    path: "/payment",
+    body: {
+      Id: current.id,
+      SyncToken: current.syncToken,
+      sparse: true,
+      ...(paymentReference ? { PaymentRefNum: String(paymentReference).slice(0, 21) } : {}),
+      ...(paymentMethodId ? { PaymentMethodRef: { value: paymentMethodId } } : {}),
+      ...(transactionDate ? { TxnDate: transactionDate } : {}),
+    },
+  });
+  return mapQuickBooksPaymentForLedger(payload.Payment);
 }
 
 function mapQuickBooksRefundReceipt(receipt) {
@@ -634,6 +664,7 @@ export async function createQuickBooksReceivePayment(agencyId, {
   amount,
   paymentMethodId,
   paymentReference,
+  transactionDate,
   privateNote,
   requestId,
 }) {
@@ -646,6 +677,7 @@ export async function createQuickBooksReceivePayment(agencyId, {
       TotalAmt: amount,
       ...(paymentMethodId ? { PaymentMethodRef: { value: paymentMethodId } } : {}),
       ...(paymentReference ? { PaymentRefNum: String(paymentReference).slice(0, 21) } : {}),
+      ...(transactionDate ? { TxnDate: transactionDate } : {}),
       ...(privateNote ? { PrivateNote: String(privateNote).slice(0, 4000) } : {}),
       Line: [{ Amount: amount, LinkedTxn: [{ TxnId: invoiceId, TxnType: "Invoice" }] }],
     },

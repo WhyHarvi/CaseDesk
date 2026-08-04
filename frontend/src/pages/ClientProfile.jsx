@@ -972,7 +972,7 @@ export default function ClientProfile() {
 
             {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
 
-            {canAccessFinancialData ? <ClientBillingCard clientId={client.id} onOpenStatement={() => setStatementOpen(true)} /> : null}
+            {canAccessFinancialData ? <ClientBillingCard clientId={client.id} clientName={client.fullName} onOpenStatement={() => setStatementOpen(true)} /> : null}
 
             {canAccessInternalNotes ? <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-3">

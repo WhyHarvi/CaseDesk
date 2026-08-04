@@ -8,6 +8,7 @@ import {
 import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { publicAppUrl } from "../utils/publicAppUrl.js";
 import { logger } from "../services/logger.js";
 import {
   normalizePortalAccess,
@@ -185,12 +186,7 @@ export async function createTeamMember(req, res) {
       "ACCOUNT_EXISTS",
     );
 
-  const frontendUrl = String(
-    process.env.FRONTEND_URL || "http://localhost:5173",
-  )
-    .split(",")[0]
-    .trim()
-    .replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   let authUser;
   let authUserCreated = false;
   let manualInvitationLink = null;
@@ -541,12 +537,7 @@ export async function resetTeamMemberPassword(req, res) {
       "Team member has no authentication account.",
       "AUTH_ACCOUNT_CREATION_FAILED",
     );
-  const frontendUrl = String(
-    process.env.FRONTEND_URL || "http://localhost:5173",
-  )
-    .split(",")[0]
-    .trim()
-    .replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   let generated;
   try {
     generated = await generateAuthLink({

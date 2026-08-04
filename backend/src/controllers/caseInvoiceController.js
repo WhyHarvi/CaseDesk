@@ -42,6 +42,8 @@ export async function createManualPayment(req, res) {
     invoiceId: req.params.invoiceId,
     amount: req.body?.amount,
     method: req.body?.method,
+    transactionReference: req.body?.transactionReference,
+    paymentDate: req.body?.paymentDate,
     note: req.body?.note,
     idempotencyKey: req.body?.idempotencyKey,
     actorUserId: req.auth.userId,

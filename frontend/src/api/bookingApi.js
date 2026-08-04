@@ -193,8 +193,18 @@ export async function createWalkInPayNowLink(id) {
   return response.data.data;
 }
 
-export async function recordWalkInManualPayment(id, { method, note }) {
-  const response = await api.post(`/booking/appointments/${id}/manual-payment`, { method, note });
+export async function recordWalkInManualPayment(id, { method, transactionReference, paymentDate, note }) {
+  const response = await api.post(`/booking/appointments/${id}/manual-payment`, {
+    method,
+    transactionReference,
+    paymentDate,
+    note,
+  });
+  return response.data.data;
+}
+
+export async function updatePaidAppointmentPaymentDetails(id, values) {
+  const response = await api.patch(`/booking/appointments/${id}/payment-details`, values);
   return response.data.data;
 }
 

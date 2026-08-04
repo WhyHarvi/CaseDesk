@@ -28,7 +28,7 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
+import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, updatePaidAppointmentPaymentDetails as updatePaidAppointmentPaymentDetailsService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -556,6 +556,9 @@ const calendarInclude = {
       qbInvoiceLink: true,
       paidAt: true,
       expiresAt: true,
+      paymentMethod: true,
+      manualPaymentReference: true,
+      paymentError: true,
     },
   },
 };
@@ -722,6 +725,14 @@ export async function createBookingAppointment(req, res) {
   // so there's nothing to wait on.
   const paymentMethod = ["Card", "Cash", "ETransfer"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
   const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
+  const paymentReference = String(body.paymentReference || "").trim().slice(0, 100) || null;
+  if (paymentMethod === "ETransfer" && feeApplies && !paymentReference) {
+    throw createHttpError(
+      400,
+      "Enter the e-transfer transaction number before booking the appointment.",
+      "VALIDATION_ERROR",
+    );
+  }
 
   if (paymentMethod === "Card" && feeApplies) {
     if (startDates.length > 1) {
@@ -880,15 +891,45 @@ export async function createBookingAppointment(req, res) {
   // fee recorded — a consult fee belongs to the initial visit, not every
   // future occurrence in the series.
   let manualPaymentWarning = null;
+  let manualPaymentHold = null;
   if ((paymentMethod === "Cash" || paymentMethod === "ETransfer") && feeApplies) {
     try {
-      await recordWalkInManualPaymentService(req.auth.agencyId, { appointmentId: data.id, method: paymentMethod, note: null, actorUserId: req.auth.userId });
+      manualPaymentHold = await recordWalkInManualPaymentService(req.auth.agencyId, {
+        appointmentId: data.id,
+        method: paymentMethod,
+        transactionReference: paymentReference,
+        note: null,
+        actorUserId: req.auth.userId,
+      });
     } catch (error) {
       manualPaymentWarning = error.message || "Could not record the payment automatically.";
+      manualPaymentHold = await prisma.bookingPaymentHold.findUnique({
+        where: { appointmentId: data.id },
+      }).catch(() => null);
     }
   }
 
-  res.status(201).json({ data: { ...data, manualPaymentWarning, series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null } });
+  res.status(201).json({
+    data: {
+      ...data,
+      ...(manualPaymentHold ? {
+        paymentHold: {
+          id: manualPaymentHold.id,
+          status: manualPaymentHold.status,
+          amount: manualPaymentHold.amount,
+          qbInvoiceNumber: manualPaymentHold.qbInvoiceNumber,
+          qbInvoiceLink: manualPaymentHold.qbInvoiceLink,
+          paidAt: manualPaymentHold.paidAt,
+          expiresAt: manualPaymentHold.expiresAt,
+          paymentMethod: manualPaymentHold.paymentMethod,
+          manualPaymentReference: manualPaymentHold.manualPaymentReference,
+          paymentError: manualPaymentHold.paymentError,
+        },
+      } : {}),
+      manualPaymentWarning,
+      series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null,
+    },
+  });
 }
 
 // Lets the new-appointment form preview whether this visitor still qualifies
@@ -955,6 +996,10 @@ export async function getBookingPaymentHoldById(req, res) {
       guestPhone: latest.guestPhone,
       startsAt: latest.startsAt,
       endsAt: latest.endsAt,
+      paymentMethod: latest.paymentMethod,
+      paymentReference: latest.manualPaymentReference,
+      paymentError: latest.paymentError,
+      qbInvoiceNumber: latest.qbInvoiceNumber,
       delivery,
     },
   });
@@ -1014,9 +1059,50 @@ export async function createWalkInPayNowLink(req, res) {
 // through a card charge that never happened.
 export async function recordWalkInManualPayment(req, res) {
   const method = String(req.body?.method || "");
+  const transactionReference = String(req.body?.transactionReference || "").trim().slice(0, 100) || null;
   const note = String(req.body?.note || "").trim().slice(0, 500) || null;
-  const hold = await recordWalkInManualPaymentService(req.auth.agencyId, { appointmentId: req.params.id, method, note, actorUserId: req.auth.userId });
-  res.status(201).json({ data: { id: hold.id, status: hold.status, amount: hold.amount, paidAt: hold.paidAt } });
+  const hold = await recordWalkInManualPaymentService(req.auth.agencyId, {
+    appointmentId: req.params.id,
+    method,
+    transactionReference,
+    paymentDate: req.body?.paymentDate,
+    note,
+    actorUserId: req.auth.userId,
+  });
+  res.status(201).json({
+    data: {
+      id: hold.id,
+      status: hold.status,
+      amount: hold.amount,
+      paidAt: hold.paidAt,
+      paymentMethod: hold.paymentMethod,
+      paymentReference: hold.manualPaymentReference,
+      invoiceNumber: hold.qbInvoiceNumber,
+      paymentError: hold.paymentError,
+    },
+  });
+}
+
+export async function updatePaidAppointmentPaymentDetails(req, res) {
+  const hold = await updatePaidAppointmentPaymentDetailsService(req.auth.agencyId, {
+    appointmentId: req.params.id,
+    method: req.body?.method,
+    transactionReference: req.body?.transactionReference,
+    paymentDate: req.body?.paymentDate,
+    actorUserId: req.auth.userId,
+  });
+  res.json({
+    data: {
+      id: hold.id,
+      status: hold.status,
+      amount: hold.amount,
+      paidAt: hold.paidAt,
+      paymentMethod: hold.paymentMethod,
+      paymentReference: hold.manualPaymentReference,
+      invoiceNumber: hold.qbInvoiceNumber,
+      paymentError: hold.paymentError,
+    },
+  });
 }
 
 // Feeds the "Amount paid" / refund-fee disclosure into the booked and

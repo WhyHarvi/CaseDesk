@@ -15,6 +15,10 @@ export default {
           700: "#3d5578",
           800: "#364864",
           900: "#313d54"
+        },
+        chk: {
+          DEFAULT: "#0067b8",
+          light: "#3fa1e8"
         }
       },
       boxShadow: {
@@ -22,7 +26,8 @@ export default {
       },
       fontFamily: {
         heading: ["Instrument Serif", "serif"],
-        body: ["Barlow", "sans-serif"]
+        body: ["Barlow", "sans-serif"],
+        sans: ["Inter", "sans-serif"]
       },
       borderRadius: {
         card: "32px"

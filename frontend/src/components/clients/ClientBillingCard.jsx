@@ -7,10 +7,13 @@ import {
   ReceiptText,
   RefreshCw,
   RotateCcw,
+  Plus,
   WalletCards,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../../services/api";
+import { useAuth } from "../../auth/AuthContext";
+import ClientManualBillingEntrySheet from "./ClientManualBillingEntrySheet";
 
 function money(value, currency) {
   return new Intl.NumberFormat("en-CA", {
@@ -41,11 +44,14 @@ function Metric({ label, value, tone = "text-slate-950" }) {
   );
 }
 
-export default function ClientBillingCard({ clientId, onOpenStatement }) {
+export default function ClientBillingCard({ clientId, clientName, onOpenStatement }) {
+  const { role } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [entryOpen, setEntryOpen] = useState(false);
+  const canRecord = ["admin", "consultant"].includes(role);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     try {
@@ -68,7 +74,7 @@ export default function ClientBillingCard({ clientId, onOpenStatement }) {
 
   return (
     <article className="overflow-hidden rounded-[2rem] border border-white/70 bg-white/85 shadow-panel backdrop-blur">
-      <div className="flex items-start justify-between gap-4 px-6 pb-5 pt-6">
+      <div className="flex flex-col items-start justify-between gap-4 px-6 pb-5 pt-6 sm:flex-row">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_9px_22px_rgba(15,23,42,0.16)]">
             <WalletCards className="h-4 w-4" />
@@ -78,7 +84,8 @@ export default function ClientBillingCard({ clientId, onOpenStatement }) {
             <p className="mt-0.5 text-sm text-slate-500">Every case, appointment, payment and refund.</p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {canRecord ? <button type="button" onClick={() => setEntryOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50"><Plus className="h-3.5 w-3.5" /> Add entry</button> : null}
           <button type="button" onClick={() => load({ quiet: true })} disabled={refreshing} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-950 disabled:opacity-50" aria-label="Refresh billing">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
@@ -135,6 +142,7 @@ export default function ClientBillingCard({ clientId, onOpenStatement }) {
           </div>
         </>
       )}
+      {canRecord ? <ClientManualBillingEntrySheet open={entryOpen} clientId={clientId} clientName={clientName || data?.client?.fullName || "Client"} onClose={() => setEntryOpen(false)} onSaved={() => load({ quiet: true })} /> : null}
     </article>
   );
 }

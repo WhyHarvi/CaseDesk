@@ -8,6 +8,7 @@ import {
 import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { publicAppUrl } from "../utils/publicAppUrl.js";
 import { logger } from "../services/logger.js";
 import { defaultPortalAccess } from "../services/portalAccessService.js";
 
@@ -132,12 +133,7 @@ export async function createConsultant(req, res) {
   let authUserCreated = false;
   let manualInvitationLink = null;
   let generated;
-  const frontendUrl = String(
-    process.env.FRONTEND_URL || "http://localhost:5173",
-  )
-    .split(",")[0]
-    .trim()
-    .replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   try {
     const existingAuthUser = await findAuthUserByEmail(input.email);
     generated = await generateAuthLink({
@@ -346,12 +342,7 @@ export async function resetConsultantPassword(req, res) {
       "Consultant has no authentication account.",
       "AUTH_ACCOUNT_CREATION_FAILED",
     );
-  const frontendUrl = String(
-    process.env.FRONTEND_URL || "http://localhost:5173",
-  )
-    .split(",")[0]
-    .trim()
-    .replace(/\/$/, "");
+  const frontendUrl = publicAppUrl();
   try {
     const generated = await generateAuthLink({
       type: "recovery",

@@ -412,6 +412,90 @@ test("front-desk card reservations use durable delivery and remain recoverable a
   assert.match(migration, /booking_message_deliveries_parent_check/);
 });
 
+test("front-desk non-card payments preserve references and failed attempts for retry", async () => {
+  const [controller, holdService, calendarPage, paymentsPage, migration] = await Promise.all([
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260804220000_manual_payment_reference_and_recovery/migration.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(controller, /Enter the e-transfer transaction number before booking/);
+  assert.match(controller, /manualPaymentHold = await prisma\.bookingPaymentHold\.findUnique/);
+  assert.match(holdService, /status: "RecordingPayment"/);
+  assert.match(holdService, /status: "PaymentFailed"/);
+  assert.match(holdService, /manualPaymentReference: paymentReference/);
+  assert.match(holdService, /paymentReference: paymentReference \|\| `CD-/);
+  assert.match(holdService, /\["Scheduled", "Completed", "NoShow", "Cancelled"\]/);
+  assert.match(calendarPage, /E-transfer transaction number \*/);
+  assert.match(calendarPage, /No consultation payment is recorded/);
+  assert.match(paymentsPage, /Recording failed/);
+  assert.match(migration, /manual_payment_reference/);
+  assert.match(migration, /payment_error/);
+  assert.match(migration, /ALTER COLUMN "guest_email" DROP NOT NULL/);
+});
+
+test("case invoice e-transfers require and retain their bank transaction number", async () => {
+  const [controller, service, workspace, overview, migration] = await Promise.all([
+    readFile(new URL("../src/controllers/caseInvoiceController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/caseInvoiceService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/paymentsOverviewService.js", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260804223000_case_invoice_manual_payment_reference/migration.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(controller, /transactionReference: req\.body\?\.transactionReference/);
+  assert.match(service, /Enter the e-transfer transaction number before recording the payment/);
+  assert.match(service, /paymentReference: paymentReference \|\| undefined/);
+  assert.match(service, /lastPaymentReference: paymentReference/);
+  assert.match(workspace, /Transaction number/);
+  assert.match(workspace, /transactionReference: transactionReference\.trim\(\)/);
+  assert.match(overview, /paymentReference: row\.lastPaymentReference/);
+  assert.match(migration, /last_payment_reference/);
+  assert.match(migration, /last_qb_payment_id/);
+});
+
+test("client billing can record agency fee categories and repair paid appointment references", async () => {
+  const [controller, clientRoutes, bookingRoutes, holdService, quickBooks, billingCard, entrySheet, calendar] = await Promise.all([
+    readFile(new URL("../src/controllers/accountStatementController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/clientRoutes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/bookingRoutes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/quickbooksService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/clients/ClientBillingCard.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(clientRoutes, /billing\/manual-entry-options/);
+  assert.match(clientRoutes, /billing\/manual-entry/);
+  assert.match(clientRoutes, /requireRole\("admin", "consultant"\)/);
+  assert.match(controller, /listFeeCategories\(req\.auth\.agencyId\)/);
+  assert.match(controller, /entryType === "invoice_payment"/);
+  assert.match(controller, /entryType === "appointment_payment"/);
+  assert.match(controller, /entryType === "new_charge_payment"/);
+  assert.doesNotMatch(controller, /clientId: client\.id,\s*isFreeConsultation: false/);
+  assert.match(controller, /identityMatched/);
+  assert.match(controller, /appointment\.client_linked_for_billing/);
+  assert.match(controller, /overrideFreeConsultation: req\.body\?\.overrideFreeConsultation === true/);
+  assert.match(controller, /paymentWarning/);
+  assert.match(bookingRoutes, /appointments\/:id\/payment-details/);
+  assert.match(holdService, /updatePaidAppointmentPaymentDetails/);
+  assert.match(holdService, /findQuickBooksPaymentIdForInvoice/);
+  assert.match(holdService, /FREE_CONSULTATION_CONFIRMATION_REQUIRED/);
+  assert.match(holdService, /payment\.free_consultation_overridden/);
+  assert.match(quickBooks, /updateQuickBooksPaymentDetails/);
+  assert.match(quickBooks, /sparse: true/);
+  assert.match(billingCard, /Add entry/);
+  assert.match(entrySheet, /Agency fee category/);
+  assert.match(entrySheet, /New charge \+ payment/);
+  assert.match(entrySheet, /add missing transaction #/);
+  assert.match(entrySheet, /Convert this free appointment to paid/);
+  assert.match(entrySheet, /matched by contact/);
+  assert.match(calendar, /Add missing transaction number/);
+});
+
 test("public paid and Zoom formats cannot be enabled with incomplete provider setup", async () => {
   const controller = await readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8");
   assert.match(controller, /activatingPaidPublicBooking/);

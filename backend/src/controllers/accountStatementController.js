@@ -4,14 +4,53 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { buildAccountStatement, buildClientBillingLedger, createStatementGeneration } from "../services/accountStatementService.js";
 import { generateAccountStatementPdf } from "../services/accountStatementPdfService.js";
+import { listFeeCategories } from "../services/feeCategoryService.js";
+import { createCaseInvoice, recordManualPayment as recordCaseInvoiceManualPayment } from "../services/caseInvoiceService.js";
+import { recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "../services/bookingPaymentHoldService.js";
+import { normalizeContact } from "../services/contactDuplicateService.js";
 
 async function getScopedClient(req) {
   const client = await prisma.client.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...clientAccessWhere(req) },
-    select: { id: true, fullName: true, emailNormalized: true, qbCustomerId: true },
+    select: { id: true, fullName: true, email: true, emailNormalized: true, phone: true, phoneNormalized: true, qbCustomerId: true },
   });
   if (!client) throw createHttpError(404, "Client not found");
   return client;
+}
+
+function normalizedEmail(value) {
+  return String(value || "").trim().toLowerCase() || null;
+}
+
+function normalizedPhone(value) {
+  if (!value) return null;
+  try {
+    return normalizeContact({ phone: value }).phoneNormalized;
+  } catch {
+    return null;
+  }
+}
+
+function clientAppointmentContactWhere(client) {
+  const email = normalizedEmail(client.emailNormalized || client.email);
+  const phone = normalizedPhone(client.phoneNormalized || client.phone);
+  const phoneValues = [...new Set([client.phone, client.phoneNormalized, phone].filter(Boolean))];
+  return [
+    { clientId: client.id },
+    ...(email ? [{ clientId: null, guestEmailNormalized: email }] : []),
+    ...(phoneValues.length ? [{ clientId: null, guestPhone: { in: phoneValues } }] : []),
+  ];
+}
+
+function appointmentContactMatchesClient(appointment, client) {
+  const clientEmail = normalizedEmail(client.emailNormalized || client.email);
+  const clientPhone = normalizedPhone(client.phoneNormalized || client.phone);
+  const guestEmail = normalizedEmail(appointment.guestEmailNormalized || appointment.guestEmail);
+  const guestPhone = normalizedPhone(appointment.guestPhone);
+  return Boolean(
+    (clientEmail && clientEmail === guestEmail)
+    || (clientPhone && clientPhone === guestPhone),
+  );
 }
 
 async function getAvailableOptions(req, client) {
@@ -54,6 +93,182 @@ export async function getClientBillingOverview(req, res) {
       refreshedAt: new Date(),
     },
   });
+}
+
+export async function getClientManualBillingOptions(req, res) {
+  const client = await getScopedClient(req);
+  const [categories, cases, invoices, appointments, bookingSettings] = await Promise.all([
+    listFeeCategories(req.auth.agencyId),
+    prisma.case.findMany({
+      where: { agencyId: req.auth.agencyId, clientId: client.id, deletedAt: null },
+      select: { id: true, caseType: true, stage: true, status: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.caseInvoice.findMany({
+      where: { agencyId: req.auth.agencyId, clientId: client.id, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] } },
+      select: { id: true, caseId: true, description: true, paymentType: true, qbInvoiceNumber: true, amount: true, balance: true, status: true, dueDate: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.appointment.findMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        OR: clientAppointmentContactWhere(client),
+        status: { in: ["Scheduled", "Completed", "NoShow", "Cancelled"] },
+      },
+      select: {
+        id: true,
+        clientId: true,
+        subject: true,
+        startsAt: true,
+        status: true,
+        isFreeConsultation: true,
+        guestEmail: true,
+        guestEmailNormalized: true,
+        guestPhone: true,
+        caseId: true,
+        case: { select: { caseType: true } },
+        sessionType: { select: { name: true } },
+        paymentHold: { select: { id: true, status: true, amount: true, paymentMethod: true, manualPaymentReference: true, paidAt: true } },
+      },
+      orderBy: { startsAt: "desc" },
+      take: 100,
+    }),
+    prisma.bookingSettings.findUnique({ where: { agencyId: req.auth.agencyId }, select: { consultFeeAmount: true } }),
+  ]);
+  const visibleAppointments = appointments.filter((item) => {
+    if (item.paymentHold?.status === "Refunded") return false;
+    if (item.paymentHold?.status !== "Paid") return true;
+    return item.paymentHold.paymentMethod === "ETransfer" && !item.paymentHold.manualPaymentReference;
+  });
+  res.json({
+    data: {
+      client: { id: client.id, fullName: client.fullName },
+      categories: categories.map((item) => ({ id: item.id, code: item.code, name: item.name, kind: item.kind, description: item.description, mapped: Boolean(item.qboItemId) })),
+      cases,
+      invoices,
+      appointments: visibleAppointments.map(({ guestEmail, guestEmailNormalized, guestPhone, ...item }) => ({
+        ...item,
+        identityMatched: !item.clientId && appointmentContactMatchesClient({ guestEmail, guestEmailNormalized, guestPhone }, client),
+      })),
+      consultationFee: Number(bookingSettings?.consultFeeAmount || 0),
+      today: new Date().toISOString().slice(0, 10),
+    },
+  });
+}
+
+export async function createClientManualBillingEntry(req, res) {
+  const client = await getScopedClient(req);
+  const entryType = String(req.body?.entryType || "");
+  const commonPayment = {
+    method: req.body?.method,
+    transactionReference: req.body?.transactionReference,
+    paymentDate: req.body?.paymentDate,
+    note: req.body?.note,
+    actorUserId: req.auth.userId,
+  };
+
+  if (entryType === "invoice_payment") {
+    const invoice = await prisma.caseInvoice.findFirst({
+      where: { id: req.body?.invoiceId, agencyId: req.auth.agencyId, clientId: client.id },
+      select: { id: true, caseId: true },
+    });
+    if (!invoice) throw createHttpError(404, "Invoice not found for this client.", "NOT_FOUND");
+    const updated = await recordCaseInvoiceManualPayment(req.auth.agencyId, {
+      ...commonPayment,
+      caseId: invoice.caseId,
+      invoiceId: invoice.id,
+      amount: req.body?.amount,
+      idempotencyKey: req.body?.idempotencyKey,
+    });
+    return res.json({ data: { entryType, paymentRecorded: true, invoice: updated } });
+  }
+
+  if (entryType === "appointment_payment") {
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        id: req.body?.appointmentId,
+        agencyId: req.auth.agencyId,
+        OR: clientAppointmentContactWhere(client),
+      },
+      select: {
+        id: true,
+        clientId: true,
+        guestEmail: true,
+        guestEmailNormalized: true,
+        guestPhone: true,
+        paymentHold: { select: { status: true } },
+      },
+    });
+    if (!appointment) throw createHttpError(404, "Appointment not found for this client.", "NOT_FOUND");
+    if (!appointment.clientId) {
+      if (!appointmentContactMatchesClient(appointment, client)) {
+        throw createHttpError(409, "This guest appointment does not match the client's email or phone.", "CONTACT_MISMATCH");
+      }
+      await prisma.$transaction([
+        prisma.appointment.update({ where: { id: appointment.id }, data: { clientId: client.id } }),
+        prisma.bookingPaymentHold.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: client.id } }),
+      ]);
+      await recordActivity({
+        agencyId: req.auth.agencyId,
+        userId: req.auth.userId,
+        clientId: client.id,
+        action: "appointment.client_linked_for_billing",
+        details: `Appointment linked to ${client.fullName} after its email or phone matched.`,
+        entityType: "appointment",
+        entityId: appointment.id,
+      }).catch(() => {});
+    }
+    const hold = appointment.paymentHold?.status === "Paid"
+      ? await updatePaidAppointmentPaymentDetails(req.auth.agencyId, { ...commonPayment, appointmentId: appointment.id })
+      : await recordWalkInManualPayment(req.auth.agencyId, {
+          ...commonPayment,
+          appointmentId: appointment.id,
+          overrideFreeConsultation: req.body?.overrideFreeConsultation === true,
+        });
+    return res.json({ data: { entryType, paymentRecorded: true, appointmentId: appointment.id, paymentHold: hold } });
+  }
+
+  if (entryType === "new_charge_payment") {
+    const caseItem = await prisma.case.findFirst({
+      where: { id: req.body?.caseId, agencyId: req.auth.agencyId, clientId: client.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!caseItem) throw createHttpError(404, "Choose one of this client's active cases.", "NOT_FOUND");
+    const chargeAmount = Number(req.body?.chargeAmount);
+    const receivedAmount = Number(req.body?.amount);
+    if (!Number.isFinite(receivedAmount) || receivedAmount <= 0 || receivedAmount > chargeAmount) {
+      throw createHttpError(400, "The amount received must be greater than $0 and cannot exceed the charge.", "VALIDATION_ERROR");
+    }
+    const invoice = await createCaseInvoice(req.auth.agencyId, {
+      caseId: caseItem.id,
+      paymentType: req.body?.paymentType,
+      description: req.body?.description,
+      amount: chargeAmount,
+      dueDate: req.body?.paymentDate || undefined,
+      actorUserId: req.auth.userId,
+    });
+    try {
+      const updated = await recordCaseInvoiceManualPayment(req.auth.agencyId, {
+        ...commonPayment,
+        caseId: caseItem.id,
+        invoiceId: invoice.id,
+        amount: receivedAmount,
+        idempotencyKey: req.body?.idempotencyKey,
+      });
+      return res.status(201).json({ data: { entryType, paymentRecorded: true, invoice: updated } });
+    } catch (error) {
+      return res.status(201).json({
+        data: {
+          entryType,
+          paymentRecorded: false,
+          invoice,
+          paymentWarning: `The charge was created, but the payment still needs to be recorded: ${error.message}`,
+        },
+      });
+    }
+  }
+
+  throw createHttpError(400, "Choose an existing charge, appointment, or new case charge.", "VALIDATION_ERROR");
 }
 
 export async function generateAccountStatement(req, res) {

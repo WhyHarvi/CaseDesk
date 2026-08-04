@@ -17,6 +17,22 @@ export default function AcceptInvite() {
     let active = true;
     async function load() {
       try {
+        // Supabase redirects here with the session in the URL hash on
+        // success, or with #error=...&error_code=... if the link was
+        // already used or has expired (e.g. a stale link from an earlier
+        // invite/resend email still sitting in the inbox). Check for that
+        // explicitly — otherwise it looks identical to "no session at all"
+        // below and shows a confusing "open the link" message to someone
+        // who just did.
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const hashErrorCode = hashParams.get("error_code");
+        if (hashErrorCode) {
+          throw new Error(
+            hashErrorCode === "otp_expired"
+              ? "This link has already been used or has expired. Ask us to send you a new one."
+              : "This link is no longer valid. Ask us to send you a new one.",
+          );
+        }
         const client = requireSupabase();
         const { data } = await client.auth.getSession();
         if (!data.session) throw new Error("Open the secure link from your invitation email to continue.");

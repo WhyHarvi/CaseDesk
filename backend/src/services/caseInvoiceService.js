@@ -211,9 +211,13 @@ export async function getClientInvoicePdf(agencyId, { clientId, invoiceId }) {
   return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
 }
 
-export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", note, idempotencyKey, actorUserId }) {
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId }) {
   const methodName = method === "ETransfer" ? "E-transfer" : method === "Cash" ? "Cash" : null;
   if (!methodName) throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
+  if (method === "ETransfer" && !paymentReference) {
+    throw createHttpError(400, "Enter the e-transfer transaction number before recording the payment.", "VALIDATION_ERROR");
+  }
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     throw createHttpError(400, "Enter a payment amount greater than $0.", "VALIDATION_ERROR");
@@ -223,16 +227,28 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   if (numericAmount > Number(row.balance) + 0.01) {
     throw createHttpError(400, `That's more than the outstanding balance of $${Number(row.balance).toFixed(2)}.`, "VALIDATION_ERROR");
   }
+  const transactionDate = normalizeCasePaymentDate(paymentDate);
+  if (paymentReference) {
+    const [invoiceDuplicate, appointmentDuplicate] = await Promise.all([
+      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+      prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference }, select: { id: true } }),
+    ]);
+    if (invoiceDuplicate || appointmentDuplicate) {
+      throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
+    }
+  }
   const client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { qbCustomerId: true } });
   if (!client?.qbCustomerId) throw createHttpError(409, "This client is not linked to QuickBooks.", "QBO_CLIENT_NOT_LINKED");
 
   const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
-  await createQuickBooksReceivePayment(agencyId, {
+  const payment = await createQuickBooksReceivePayment(agencyId, {
     customerId: client.qbCustomerId,
     invoiceId: row.qbInvoiceId,
     amount: numericAmount,
     paymentMethodId: qboMethod.id,
-    privateNote: `CaseDesk ${methodName} payment${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
+    paymentReference: paymentReference || undefined,
+    transactionDate: transactionDate?.qboDate,
+    privateNote: `CaseDesk ${methodName} payment${paymentReference ? ` — transaction ${paymentReference}` : ""}${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
     requestId: `case-pay-${row.id.slice(0, 8)}-${String(idempotencyKey || Date.now()).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 24)}`,
   });
 
@@ -244,6 +260,10 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
       balance: newBalance,
       status: deriveCaseInvoiceStatus({ balance: newBalance, amount: row.amount, dueDate: refreshed?.dueDate || row.dueDate }),
       qbSyncToken: refreshed?.syncToken || row.qbSyncToken,
+      lastPaymentMethod: method,
+      lastPaymentReference: paymentReference,
+      lastPaymentAt: transactionDate?.paidAt || new Date(),
+      lastQbPaymentId: payment.id,
       lastSyncedAt: new Date(),
     },
   });
@@ -254,12 +274,29 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     clientId: row.clientId,
     caseId,
     action: "invoice.manual_payment_recorded",
-    details: `${methodName} payment of $${numericAmount.toFixed(2)} recorded against ${row.description}${note ? ` — ${note}` : ""}`,
+    details: `${methodName} payment of $${numericAmount.toFixed(2)} recorded against ${row.description}${paymentReference ? ` — transaction ${paymentReference}` : ""}${note ? ` — ${note}` : ""}`,
     entityType: "caseInvoice",
     entityId: row.id,
+    metadata: { method, transactionReference: paymentReference, paymentDate: transactionDate?.qboDate || null, qboPaymentId: payment.id, note: note || null },
   });
 
   return updated;
+}
+
+function normalizeCasePaymentDate(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw createHttpError(400, "Choose a valid payment date.", "VALIDATION_ERROR");
+  const [, year, month, day] = match.map(Number);
+  const paidAt = new Date(Date.UTC(year, month - 1, day, 12));
+  if (paidAt.getUTCFullYear() !== year || paidAt.getUTCMonth() !== month - 1 || paidAt.getUTCDate() !== day) {
+    throw createHttpError(400, "Choose a valid payment date.", "VALIDATION_ERROR");
+  }
+  if (text > new Date().toISOString().slice(0, 10)) {
+    throw createHttpError(400, "The payment date cannot be in the future.", "VALIDATION_ERROR");
+  }
+  return { qboDate: text, paidAt };
 }
 
 export async function recordCashPayment(agencyId, values) {

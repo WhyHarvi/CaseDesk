@@ -3,6 +3,7 @@ import prisma from "../services/prisma/client.js";
 import { deleteAuthUser, inviteAuthUser, updateAuthenticatedUser } from "../services/supabaseAuth.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { publicAppUrl } from "../utils/publicAppUrl.js";
 
 const invitationLifetimeMs = 24 * 60 * 60 * 1000;
 
@@ -98,7 +99,7 @@ export async function registerAgency(req, res) {
 
   let authUser;
   try {
-    const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+    const frontendUrl = publicAppUrl();
     authUser = await inviteAuthUser({
       email: input.workEmail,
       fullName: input.fullName,

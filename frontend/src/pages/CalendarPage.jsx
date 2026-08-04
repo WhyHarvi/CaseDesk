@@ -42,6 +42,7 @@ import {
   resendBookingPaymentHoldRequest,
   rescheduleBookingAppointment,
   updateBookingAppointmentStatus,
+  updatePaidAppointmentPaymentDetails,
 } from "../api/bookingApi";
 import PageContainer from "../components/layout/PageContainer";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
@@ -261,11 +262,21 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     amount: appointment.paymentHold.amount,
     payNowUrl: appointment.paymentHold.status === "AwaitingPayment" ? appointment.paymentHold.qbInvoiceLink : null,
     paidAt: appointment.paymentHold.paidAt,
+    paymentMethod: appointment.paymentHold.paymentMethod,
+    paymentReference: appointment.paymentHold.manualPaymentReference,
+    paymentError: appointment.paymentHold.paymentError,
+    invoiceNumber: appointment.paymentHold.qbInvoiceNumber,
   } : null);
   const [payNowBusy, setPayNowBusy] = useState(false);
   const [payNowError, setPayNowError] = useState("");
   const [payNowCopied, setPayNowCopied] = useState(false);
+  const [manualReference, setManualReference] = useState(
+    appointment.paymentHold?.manualPaymentReference || "",
+  );
   const [manualNote, setManualNote] = useState("");
+  const [manualPaymentDate, setManualPaymentDate] = useState(appointment.paymentHold?.paidAt ? dateKey(new Date(appointment.paymentHold.paidAt)) : dateKey(new Date()));
+  const [paidDetailsOpen, setPaidDetailsOpen] = useState(false);
+  const [paidDetailsMethod, setPaidDetailsMethod] = useState(appointment.paymentHold?.paymentMethod || "ETransfer");
   const [manualBusy, setManualBusy] = useState("");
   const [manualError, setManualError] = useState("");
   const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
@@ -319,14 +330,45 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   }
 
   async function recordManualPayment(method) {
+    if (method === "ETransfer" && !manualReference.trim()) {
+      setManualError("Enter the e-transfer transaction number first.");
+      return;
+    }
     setManualBusy(method);
     setManualError("");
     try {
-      const result = await recordWalkInManualPayment(appointment.id, { method, note: manualNote.trim() || undefined });
+      const result = await recordWalkInManualPayment(appointment.id, {
+        method,
+        transactionReference: manualReference.trim() || undefined,
+        paymentDate: manualPaymentDate,
+        note: manualNote.trim() || undefined,
+      });
       setPayNow(result);
       setManualNote("");
     } catch (reason) {
       setManualError(reason.response?.data?.message || "Could not record this payment.");
+    } finally {
+      setManualBusy("");
+    }
+  }
+
+  async function savePaidPaymentDetails() {
+    if (paidDetailsMethod === "ETransfer" && !manualReference.trim()) {
+      setManualError("Enter the e-transfer transaction number first.");
+      return;
+    }
+    setManualBusy("details");
+    setManualError("");
+    try {
+      const result = await updatePaidAppointmentPaymentDetails(appointment.id, {
+        method: paidDetailsMethod,
+        transactionReference: manualReference.trim() || undefined,
+        paymentDate: manualPaymentDate,
+      });
+      setPayNow(result);
+      setPaidDetailsOpen(false);
+    } catch (reason) {
+      setManualError(reason.response?.data?.message || "Could not update the payment details.");
     } finally {
       setManualBusy("");
     }
@@ -345,7 +387,15 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       amount: paymentHold.amount,
       payNowUrl: paymentHold.status === "AwaitingPayment" ? paymentHold.qbInvoiceLink : null,
       paidAt: paymentHold.paidAt,
+      paymentMethod: paymentHold.paymentMethod,
+      paymentReference: paymentHold.manualPaymentReference,
+      paymentError: paymentHold.paymentError,
+      invoiceNumber: paymentHold.qbInvoiceNumber,
     });
+    setManualReference(paymentHold.manualPaymentReference || "");
+    setManualPaymentDate(paymentHold.paidAt ? dateKey(new Date(paymentHold.paidAt)) : dateKey(new Date()));
+    setPaidDetailsMethod(paymentHold.paymentMethod || "ETransfer");
+    setPaidDetailsOpen(false);
   }, [appointment.id, appointment.paymentHold]);
 
   useEffect(() => {
@@ -536,13 +586,33 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         <p className="mt-4 flex items-center gap-2 rounded-2xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Free consultation — no fee due</p>
       ) : null}
 
-      {appointment.status === "Scheduled" && !appointment.isFreeConsultation ? (
+      {!appointment.isFreeConsultation ? (
         <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5">
           {payNow ? (
             payNow.status === "Paid" ? (
-              <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Consultation fee paid</p>
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><Check className="h-4 w-4" /> Consultation fee paid{payNow.paymentMethod ? ` by ${payNow.paymentMethod === "ETransfer" ? "e-transfer" : payNow.paymentMethod.toLowerCase()}` : ""}</p>
+                {payNow.paymentReference ? <p className="mt-1 text-xs font-medium text-slate-500">Transaction #{payNow.paymentReference}</p> : null}
+                {payNow.invoiceNumber ? <p className="mt-1 text-xs text-slate-400">QuickBooks invoice #{payNow.invoiceNumber}</p> : null}
+                {payNow.paymentMethod === "ETransfer" && !payNow.paymentReference ? (
+                  paidDetailsOpen ? (
+                    <div className="mt-3 space-y-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
+                      <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/80 p-1">{[["ETransfer", "E-transfer"], ["Cash", "Cash"]].map(([value, label]) => <button key={value} type="button" onClick={() => setPaidDetailsMethod(value)} className={`h-8 rounded-lg text-[11px] font-semibold ${paidDetailsMethod === value ? "bg-slate-950 text-white" : "text-slate-500"}`}>{label}</button>)}</div>
+                      <input value={manualReference} onChange={(event) => setManualReference(event.target.value)} maxLength={100} placeholder={paidDetailsMethod === "ETransfer" ? "Transaction number" : "Receipt / reference (optional)"} className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-sky-400" />
+                      <input type="date" max={dateKey(new Date())} value={manualPaymentDate} onChange={(event) => setManualPaymentDate(event.target.value)} className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-sky-400" />
+                      <div className="flex gap-2"><button type="button" disabled={Boolean(manualBusy)} onClick={() => setPaidDetailsOpen(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Cancel</button><button type="button" disabled={Boolean(manualBusy) || (paidDetailsMethod === "ETransfer" && !manualReference.trim())} onClick={savePaidPaymentDetails} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-slate-950 text-xs font-semibold text-white">{manualBusy === "details" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Save details</button></div>
+                      {manualError ? <p className="text-xs text-rose-600">{manualError}</p> : null}
+                    </div>
+                  ) : <button type="button" onClick={() => setPaidDetailsOpen(true)} className="mt-2 text-xs font-semibold text-amber-700 underline decoration-amber-300 underline-offset-4">Add missing transaction number</button>
+                ) : null}
+              </div>
             ) : payNow.status === "Confirming" ? (
               <p className="flex items-center gap-2 text-sm font-semibold text-sky-700"><Loader2 className="h-4 w-4 animate-spin" /> Confirming card payment…</p>
+            ) : payNow.status === "PaymentFailed" ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
+                <p className="text-xs font-semibold text-rose-700">Payment record needs attention</p>
+                <p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "QuickBooks could not record this payment. Correct the issue and retry below."}</p>
+              </div>
             ) : payNow.status === "AwaitingPayment" && payNow.payNowUrl ? (
               <>
                 <p className="text-xs font-semibold text-slate-700">Consultation fee — {Number(payNow.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
@@ -556,15 +626,26 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             ) : (
               <p className="text-xs leading-5 text-amber-700">Invoice created in QuickBooks, but online card payment isn't available on this company yet. Collect payment via cash or e-transfer instead.</p>
             )
-          ) : (
+          ) : appointment.status === "Scheduled" ? (
             <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
               {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
             </button>
+          ) : (
+            <p className="text-xs leading-5 text-slate-500">No consultation payment is recorded. If payment was received previously, record it below to restore the billing history.</p>
           )}
           {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
           {!["Paid", "Confirming"].includes(payNow?.status) ? (
             <div className="mt-3 border-t border-slate-200/70 pt-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Already paid another way?</p>
+              <input
+                type="text"
+                value={manualReference}
+                onChange={(event) => setManualReference(event.target.value)}
+                maxLength={100}
+                placeholder="Transaction / receipt number (required for e-transfer)"
+                className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+              />
+              <input type="date" max={dateKey(new Date())} value={manualPaymentDate} onChange={(event) => setManualPaymentDate(event.target.value)} className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
               <input
                 type="text"
                 value={manualNote}
@@ -576,7 +657,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                 <button type="button" disabled={Boolean(manualBusy)} onClick={() => recordManualPayment("Cash")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
                   {manualBusy === "Cash" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record cash
                 </button>
-                <button type="button" disabled={Boolean(manualBusy)} onClick={() => recordManualPayment("ETransfer")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
+                <button type="button" disabled={Boolean(manualBusy) || !manualReference.trim()} onClick={() => recordManualPayment("ETransfer")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
                   {manualBusy === "ETransfer" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record e-transfer
                 </button>
               </div>
@@ -688,7 +769,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 
 function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "" });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "" });
   const [selectedClient, setSelectedClient] = useState(null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -709,7 +790,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   useEffect(() => {
     if (!open) return;
-    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "", clientId: "" }));
+    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "", paymentReference: "", clientId: "" }));
     setSelectedClient(null);
     setError("");
     setPendingHold(null);
@@ -848,6 +929,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     event.preventDefault();
     if (!form.startsAt) { setError("Pick an available time."); return; }
     if (showsPaymentStep && !form.paymentMethod) { setError("Choose how the client will pay."); return; }
+    if (showsPaymentStep && form.paymentMethod === "ETransfer" && !form.paymentReference.trim()) { setError("Enter the e-transfer transaction number."); return; }
     setSaving(true);
     setError("");
     try {
@@ -866,6 +948,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         source: form.mode === "guest" ? "WalkIn" : "Internal",
         recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
         paymentMethod: showsPaymentStep && form.paymentMethod !== "Skip" ? form.paymentMethod : undefined,
+        paymentReference: showsPaymentStep && ["Cash", "ETransfer"].includes(form.paymentMethod) ? form.paymentReference.trim() || undefined : undefined,
       });
       if (created.pending) {
         setPendingHold({ ...created, holdId: created.holdId });
@@ -1018,11 +1101,24 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                   <p className="text-xs font-medium text-slate-600">How will they pay? — {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
                   <div className="mt-1.5 grid grid-cols-4 gap-1.5">
                     {[["Card", "Card"], ["Cash", "Cash"], ["ETransfer", "E-transfer"], ["Skip", "Skip"]].map(([value, label]) => (
-                      <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
+                      <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value, paymentReference: ["Cash", "ETransfer"].includes(value) ? c.paymentReference : "" }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
                         {label}
                       </button>
                     ))}
                   </div>
+                  {["Cash", "ETransfer"].includes(form.paymentMethod) ? (
+                    <label className="mt-2 block text-xs font-medium text-slate-600">
+                      {form.paymentMethod === "ETransfer" ? "E-transfer transaction number *" : "Cash receipt / reference (optional)"}
+                      <input
+                        value={form.paymentReference}
+                        onChange={(event) => setForm((current) => ({ ...current, paymentReference: event.target.value }))}
+                        maxLength={100}
+                        required={form.paymentMethod === "ETransfer"}
+                        placeholder={form.paymentMethod === "ETransfer" ? "Enter bank transaction number" : "Receipt or internal reference"}
+                        className={`mt-1.5 ${input}`}
+                      />
+                    </label>
+                  ) : null}
                   {form.paymentMethod === "Card" ? (
                     <p className="mt-1.5 text-xs leading-5 text-slate-500">The slot is held and a payment link is sent right away — the appointment is confirmed the moment they pay.</p>
                   ) : null}

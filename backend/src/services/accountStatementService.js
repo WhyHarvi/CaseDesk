@@ -156,6 +156,9 @@ export function buildUnifiedClientLedger({
       caseReference: caseReferences[row.caseId] || row.case?.caseType || null,
       voided: ["Void", "Voided"].includes(row.status),
       expectedPaidCents: ["Void", "Voided"].includes(row.status) ? 0 : Math.max(0, cents(row.amount) - cents(row.balance)),
+      paidAt: row.lastPaymentAt,
+      paymentMethod: row.lastPaymentMethod === "ETransfer" ? "E-transfer" : row.lastPaymentMethod,
+      paymentReference: row.lastPaymentReference,
     };
     addInvoiceLifecycle(entries, item);
     if (row.qbInvoiceId) invoiceMeta.set(String(row.qbInvoiceId), item);
@@ -168,7 +171,7 @@ export function buildUnifiedClientLedger({
       key: `booking:${row.id}`, id: row.id, source: "appointment",
       amount: row.amount, createdAt: row.createdAt, updatedAt: row.updatedAt,
       reference: invoiceReference(row.qbInvoiceNumber, row.id),
-      description: `${appointmentLabel}${row.appointment?.startsAt ? ` — ${new Date(row.appointment.startsAt).toLocaleDateString("en-CA")}` : ""}`,
+      description: `${appointmentLabel}${row.appointment?.startsAt ? ` — ${new Date(row.appointment.startsAt).toLocaleDateString("en-CA")}` : ""}${row.manualPaymentReference ? ` — transaction ${row.manualPaymentReference}` : ""}`,
       caseReference: caseReferences[row.appointment?.caseId] || row.appointment?.case?.caseType || "Appointment",
       voided,
       expectedPaidCents: ["Paid", "Refunded"].includes(row.status) ? cents(row.amount) : 0,
@@ -209,8 +212,8 @@ export function buildUnifiedClientLedger({
       if (allocated <= 0) continue;
       entries.push({
         id: `qbo-payment:${payment.id}:${allocation.invoiceId}`, sourceId: payment.id, source: "quickbooks",
-        date: payment.createdAt || payment.transactionDate, reference: `QBP-${payment.id}`, type: "Payment",
-        description: `Payment received${payment.methodName ? ` by ${payment.methodName}` : meta.paymentMethod ? ` by ${meta.paymentMethod}` : ""} — ${meta.description}`, caseReference: meta.caseReference,
+        date: payment.transactionDate || payment.createdAt, reference: payment.paymentReference || `QBP-${payment.id}`, type: "Payment",
+        description: `Payment received${payment.methodName ? ` by ${payment.methodName}` : meta.paymentMethod ? ` by ${meta.paymentMethod}` : ""}${payment.paymentReference ? ` — transaction ${payment.paymentReference}` : ""} — ${meta.description}`, caseReference: meta.caseReference,
         deltaCents: -allocated, chargeCents: 0, creditCents: allocated, refundCents: 0,
       });
       representedByInvoice.set(String(allocation.invoiceId), (representedByInvoice.get(String(allocation.invoiceId)) || 0) + allocated);
@@ -224,8 +227,8 @@ export function buildUnifiedClientLedger({
     if (!missing) continue;
     entries.push({
       id: `${meta.key}-cached-payment`, sourceId: meta.id, source: meta.source,
-      date: meta.paidAt || meta.updatedAt || meta.createdAt, reference: meta.reference, type: "Payment",
-      description: `Payment received${meta.paymentMethod ? ` by ${meta.paymentMethod}` : ""} — ${meta.description}`, caseReference: meta.caseReference,
+      date: meta.paidAt || meta.updatedAt || meta.createdAt, reference: meta.paymentReference || meta.reference, type: "Payment",
+      description: `Payment received${meta.paymentMethod ? ` by ${meta.paymentMethod}` : ""}${meta.paymentReference ? ` — transaction ${meta.paymentReference}` : ""} — ${meta.description}`, caseReference: meta.caseReference,
       deltaCents: -missing, chargeCents: 0, creditCents: missing, refundCents: 0,
     });
   }
@@ -236,8 +239,8 @@ export function buildUnifiedClientLedger({
       if (!unrepresented) continue;
       entries.push({
         id: `qbo-payment:${payment.id}:other`, sourceId: payment.id, source: "quickbooks",
-        date: payment.createdAt || payment.transactionDate, reference: `QBP-${payment.id}`, type: "Payment",
-        description: "QuickBooks payment not attached to a CaseDesk invoice", caseReference: null,
+        date: payment.transactionDate || payment.createdAt, reference: payment.paymentReference || `QBP-${payment.id}`, type: "Payment",
+        description: `QuickBooks payment not attached to a CaseDesk invoice${payment.paymentReference ? ` — transaction ${payment.paymentReference}` : ""}`, caseReference: null,
         deltaCents: -unrepresented, chargeCents: 0, creditCents: unrepresented, refundCents: 0,
       });
     }

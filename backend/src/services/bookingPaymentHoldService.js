@@ -9,9 +9,11 @@ import {
   createQuickBooksInvoice,
   createQuickBooksReceivePayment,
   findOrCreateQuickBooksPaymentMethod,
+  findQuickBooksPaymentIdForInvoice,
   findQuickBooksCustomerByEmail,
   getQuickBooksInvoice,
   isQuickBooksDuplicateNameError,
+  updateQuickBooksPaymentDetails,
   voidQuickBooksInvoice,
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
@@ -53,7 +55,11 @@ export async function resolveOrCreateQuickBooksCustomer(agencyId, { name, email,
     // name instead of attaching this booking to the same-name stranger.
     const raced = await findQuickBooksCustomerByEmail(agencyId, email);
     if (raced) return raced.id;
-    const suffix = ` (${String(email || "CaseDesk").trim().toLowerCase()})`;
+    const identitySuffix = String(email || phone || "CaseDesk")
+      .trim()
+      .toLowerCase()
+      .slice(-40);
+    const suffix = ` (${identitySuffix})`;
     const uniqueName = `${String(name || "Client").trim().slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;
     try {
       const created = await createQuickBooksCustomer(agencyId, { displayName: uniqueName, email, phone });
@@ -501,17 +507,38 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
 // e-transfer). The money still belongs in the same accounting trail as card
 // payments, so this creates/reuses the consultation invoice and applies a
 // real QuickBooks Payment before CaseDesk marks the hold paid.
-export async function recordWalkInManualPayment(agencyId, { appointmentId, method, note, actorUserId }) {
+export async function recordWalkInManualPayment(agencyId, {
+  appointmentId,
+  method,
+  transactionReference,
+  paymentDate,
+  note,
+  actorUserId,
+  overrideFreeConsultation = false,
+}) {
   if (!["Cash", "ETransfer"].includes(method)) {
     throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
   }
-  const appointment = await prisma.appointment.findFirst({
+  const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
+  const transactionDate = normalizeManualPaymentDate(paymentDate);
+  if (method === "ETransfer" && !paymentReference) {
+    throw createHttpError(
+      400,
+      "Enter the e-transfer transaction number before recording the payment.",
+      "VALIDATION_ERROR",
+    );
+  }
+  let appointment = await prisma.appointment.findFirst({
     where: { id: appointmentId, agencyId },
     include: { client: { select: { id: true, fullName: true, email: true, phone: true } } },
   });
   if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  if (appointment.status !== "Scheduled") throw createHttpError(409, "Only a scheduled appointment can be marked paid.", "INVALID_STATE");
-  if (appointment.isFreeConsultation) throw createHttpError(409, "This is a free consultation — no payment is needed.", "FREE_CONSULTATION");
+  if (!["Scheduled", "Completed", "NoShow", "Cancelled"].includes(appointment.status)) {
+    throw createHttpError(409, "This appointment cannot accept a payment record.", "INVALID_STATE");
+  }
+  if (appointment.isFreeConsultation && !overrideFreeConsultation) {
+    throw createHttpError(409, "Confirm that this free consultation should be converted to a paid appointment before recording payment.", "FREE_CONSULTATION_CONFIRMATION_REQUIRED");
+  }
 
   let existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
   if (existingHold?.status === "Paid") throw createHttpError(409, "This consultation is already marked as paid.", "ALREADY_PAID");
@@ -521,22 +548,63 @@ export async function recordWalkInManualPayment(agencyId, { appointmentId, metho
     existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
     if (existingHold?.status === "Paid") throw createHttpError(409, "QuickBooks already shows this consultation as paid.", "ALREADY_PAID");
   }
+  if (paymentReference) {
+    const [duplicateReference, duplicateInvoiceReference] = await Promise.all([
+      prisma.bookingPaymentHold.findFirst({
+        where: {
+          agencyId,
+          manualPaymentReference: paymentReference,
+          ...(existingHold ? { id: { not: existingHold.id } } : {}),
+        },
+        select: { id: true },
+      }),
+      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+    ]);
+    if (duplicateReference || duplicateInvoiceReference) {
+      throw createHttpError(
+        409,
+        "This transaction number is already attached to another payment.",
+        "DUPLICATE_PAYMENT_REFERENCE",
+      );
+    }
+  }
 
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   const amount = Number(existingHold?.amount || settings?.consultFeeAmount || 0);
   if (!amount) throw createHttpError(409, "Set a consultation fee in Settings before recording a payment.", "VALIDATION_ERROR");
+  if (appointment.isFreeConsultation) {
+    const [updatedAppointment] = await prisma.$transaction([
+      prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { isFreeConsultation: false },
+        include: { client: { select: { id: true, fullName: true, email: true, phone: true } } },
+      }),
+      prisma.appointmentEvent.create({
+        data: {
+          agencyId,
+          appointmentId: appointment.id,
+          actorUserId: actorUserId || null,
+          type: "payment.free_consultation_overridden",
+          summary: "Free consultation converted to a paid appointment",
+          metadata: { source: "client_billing_manual_entry" },
+        },
+      }),
+    ]);
+    appointment = updatedAppointment;
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: appointment.clientId,
+      caseId: appointment.caseId,
+      action: "appointment.free_consultation_overridden",
+      details: "Free consultation converted to a paid appointment before manual payment was recorded.",
+      entityType: "appointment",
+      entityId: appointment.id,
+    }).catch(() => {});
+  }
   const name = appointment.client?.fullName || appointment.guestName;
   const email = appointment.client?.email || appointment.guestEmail;
   const phone = appointment.client?.phone || appointment.guestPhone;
-  if (!email) throw createHttpError(409, "This appointment has no email on file — add one before recording payment.", "VALIDATION_ERROR");
-
-  const itemId = await requireConsultFeeItem(agencyId);
-  const qbCustomerId = existingHold?.qbCustomerId || await resolveQuickBooksCustomerForBooking(agencyId, {
-    clientId: appointment.clientId,
-    name,
-    email,
-    phone,
-  });
   let hold = existingHold;
   if (!hold) {
     hold = await prisma.bookingPaymentHold.create({
@@ -547,94 +615,237 @@ export async function recordWalkInManualPayment(agencyId, { appointmentId, metho
         startsAt: appointment.startsAt,
         endsAt: appointment.endsAt,
         guestName: name,
-        guestEmail: email,
-        guestEmailNormalized: email.toLowerCase(),
+        guestEmail: email || null,
+        guestEmailNormalized: email?.toLowerCase() || null,
         guestPhone: phone || null,
         meetingMode: appointment.meetingMode,
         meetingPhoneNumber: appointment.meetingPhoneNumber,
         meetingProvider: appointment.meetingProvider,
         amount,
-        qbCustomerId,
-        status: "AwaitingPayment",
+        status: "RecordingPayment",
         source: "WalkIn",
         expiresAt: null,
         appointmentId: appointment.id,
         clientId: appointment.clientId || null,
         createdById: actorUserId,
+        paymentMethod: method,
+        manualPaymentReference: paymentReference,
+        manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
       },
     });
-  }
-
-  let invoice = null;
-  if (hold.qbInvoiceId && !hold.voidedAt) {
-    invoice = await getQuickBooksInvoice(agencyId, hold.qbInvoiceId).catch(() => null);
-    if (invoice?.isVoided) invoice = null;
-  }
-  if (!invoice) {
-    invoice = await createQuickBooksInvoice(agencyId, {
-      customerId: qbCustomerId,
-      itemId,
-      description: `Consultation — ${name}`,
-      amount,
-      requestId: `manual-consult-invoice-${hold.id}`,
-    });
+  } else {
     hold = await prisma.bookingPaymentHold.update({
       where: { id: hold.id },
       data: {
-        qbCustomerId,
-        qbInvoiceId: invoice.id,
-        qbInvoiceNumber: invoice.docNumber,
-        qbInvoiceLink: invoice.invoiceLink,
-        qbSyncToken: invoice.syncToken,
-        voidedAt: null,
+        status: "RecordingPayment",
+        paymentMethod: method,
+        manualPaymentReference: paymentReference,
+        manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
+        paymentError: null,
+        clientId: appointment.clientId || hold.clientId,
       },
     });
   }
-  if (Number(invoice.balance) <= 0) {
-    throw createHttpError(409, "QuickBooks already shows this consultation invoice as paid. Refresh payments before recording another payment.", "ALREADY_PAID");
-  }
-  const paymentAmount = Number(invoice.balance);
 
+  try {
+    const itemId = await requireConsultFeeItem(agencyId);
+    const qbCustomerId = hold.qbCustomerId || await resolveQuickBooksCustomerForBooking(agencyId, {
+      clientId: appointment.clientId,
+      name,
+      email,
+      phone,
+    });
+    hold = await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: { qbCustomerId },
+    });
+
+    let invoice = null;
+    if (hold.qbInvoiceId && !hold.voidedAt) {
+      invoice = await getQuickBooksInvoice(agencyId, hold.qbInvoiceId).catch(() => null);
+      if (invoice?.isVoided) invoice = null;
+    }
+    if (!invoice) {
+      invoice = await createQuickBooksInvoice(agencyId, {
+        customerId: qbCustomerId,
+        itemId,
+        description: `Consultation — ${name}`,
+        amount,
+        requestId: `manual-consult-invoice-${hold.id}`,
+      });
+      hold = await prisma.bookingPaymentHold.update({
+        where: { id: hold.id },
+        data: {
+          qbCustomerId,
+          qbInvoiceId: invoice.id,
+          qbInvoiceNumber: invoice.docNumber,
+          qbInvoiceLink: invoice.invoiceLink,
+          qbSyncToken: invoice.syncToken,
+          voidedAt: null,
+        },
+      });
+    }
+    if (Number(invoice.balance) <= 0) {
+      throw createHttpError(409, "QuickBooks already shows this consultation invoice as paid. Refresh payments before recording another payment.", "ALREADY_PAID");
+    }
+    const paymentAmount = Number(invoice.balance);
+    const methodName = method === "Cash" ? "Cash" : "E-transfer";
+    const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
+    const payment = await createQuickBooksReceivePayment(agencyId, {
+      customerId: qbCustomerId,
+      invoiceId: invoice.id,
+      amount: paymentAmount,
+      paymentMethodId: qboMethod.id,
+      paymentReference: paymentReference || `CD-${hold.id.slice(0, 8)}`,
+      transactionDate: transactionDate?.qboDate,
+      privateNote: `CaseDesk consultation payment — ${methodName}${paymentReference ? ` — transaction ${paymentReference}` : ""}${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
+      requestId: `manual-consult-pay-${hold.id}`,
+    });
+
+    hold = await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: {
+        status: "Paid",
+        paidAt: transactionDate?.paidAt || new Date(),
+        qbPaymentId: payment.id,
+        paymentMethod: method,
+        manualPaymentReference: paymentReference,
+        manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
+        paymentError: null,
+        clientId: appointment.clientId || hold.clientId,
+        qbCustomerId,
+        voidedAt: null,
+      },
+    });
+
+    const methodLabel = method === "Cash" ? "cash" : "e-transfer";
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: appointment.clientId,
+      caseId: null,
+      action: "invoice.manual_payment_recorded",
+      details: `Consultation payment ($${paymentAmount.toFixed(2)}) recorded by ${methodLabel} for ${hold.guestName}${paymentReference ? ` — transaction ${paymentReference}` : ""}${note ? ` — ${note}` : ""}`,
+      entityType: "bookingPaymentHold",
+      entityId: hold.id,
+      metadata: { method, transactionReference: paymentReference, note: note || null },
+    }).catch(() => {});
+
+    return hold;
+  } catch (error) {
+    const paymentError = String(error?.message || "Could not record this payment.").slice(0, 1000);
+    await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: {
+        status: "PaymentFailed",
+        paymentMethod: method,
+        manualPaymentReference: paymentReference,
+        paymentError,
+      },
+    }).catch(() => {});
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: appointment.clientId,
+      caseId: null,
+      action: "invoice.manual_payment_failed",
+      details: `Consultation payment could not be recorded for ${hold.guestName}: ${paymentError}`,
+      entityType: "bookingPaymentHold",
+      entityId: hold.id,
+      metadata: { method, transactionReference: paymentReference },
+    }).catch(() => {});
+    throw error;
+  }
+}
+
+function normalizeManualPaymentDate(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw createHttpError(400, "Choose a valid payment date.", "VALIDATION_ERROR");
+  const [, year, month, day] = match.map(Number);
+  const paidAt = new Date(Date.UTC(year, month - 1, day, 12));
+  if (paidAt.getUTCFullYear() !== year || paidAt.getUTCMonth() !== month - 1 || paidAt.getUTCDate() !== day) {
+    throw createHttpError(400, "Choose a valid payment date.", "VALIDATION_ERROR");
+  }
+  if (text > new Date().toISOString().slice(0, 10)) {
+    throw createHttpError(400, "The payment date cannot be in the future.", "VALIDATION_ERROR");
+  }
+  return { qboDate: text, paidAt };
+}
+
+export async function updatePaidAppointmentPaymentDetails(agencyId, {
+  appointmentId,
+  method,
+  transactionReference,
+  paymentDate,
+  actorUserId,
+}) {
+  if (!["Cash", "ETransfer"].includes(method)) {
+    throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  }
+  const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
+  if (method === "ETransfer" && !paymentReference) {
+    throw createHttpError(400, "Enter the e-transfer transaction number.", "VALIDATION_ERROR");
+  }
+  const transactionDate = normalizeManualPaymentDate(paymentDate);
+  const appointment = await prisma.appointment.findFirst({
+    where: { id: appointmentId, agencyId },
+    include: { paymentHold: true },
+  });
+  if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+  const hold = appointment.paymentHold;
+  if (!hold) {
+    throw createHttpError(409, "Record the appointment payment before adding its transaction details.", "PAYMENT_NOT_RECORDED");
+  }
+  if (hold.status === "Refunded") throw createHttpError(409, "Refunded payment details cannot be changed.", "ALREADY_REFUNDED");
+  if (hold.status !== "Paid") {
+    throw createHttpError(409, "Record the appointment payment before adding its transaction details.", "PAYMENT_NOT_RECORDED");
+  }
+
+  if (paymentReference) {
+    const [bookingDuplicate, invoiceDuplicate] = await Promise.all([
+      prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference, id: { not: hold.id } }, select: { id: true } }),
+      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+    ]);
+    if (bookingDuplicate || invoiceDuplicate) {
+      throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
+    }
+  }
+
+  const qbPaymentId = hold.qbPaymentId || await findQuickBooksPaymentIdForInvoice(agencyId, hold.qbCustomerId, hold.qbInvoiceId);
+  if (!qbPaymentId) {
+    throw createHttpError(409, "The matching QuickBooks payment could not be found. Refresh billing and try again.", "QBO_PAYMENT_NOT_FOUND");
+  }
   const methodName = method === "Cash" ? "Cash" : "E-transfer";
   const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
-  const payment = await createQuickBooksReceivePayment(agencyId, {
-    customerId: qbCustomerId,
-    invoiceId: invoice.id,
-    amount: paymentAmount,
+  await updateQuickBooksPaymentDetails(agencyId, {
+    id: qbPaymentId,
+    paymentReference,
     paymentMethodId: qboMethod.id,
-    paymentReference: `CD-${hold.id.slice(0, 8)}`,
-    privateNote: `CaseDesk consultation payment — ${methodName}${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
-    requestId: `manual-consult-pay-${hold.id}`,
+    transactionDate: transactionDate?.qboDate,
   });
-
-  hold = await prisma.bookingPaymentHold.update({
+  const updated = await prisma.bookingPaymentHold.update({
     where: { id: hold.id },
     data: {
-      status: "Paid",
-      paidAt: new Date(),
-      qbPaymentId: payment.id,
+      qbPaymentId,
       paymentMethod: method,
-      manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
-      clientId: appointment.clientId || hold.clientId,
-      qbCustomerId,
-      voidedAt: null,
+      manualPaymentReference: paymentReference,
+      ...(transactionDate ? { paidAt: transactionDate.paidAt } : {}),
     },
   });
-
-  const methodLabel = method === "Cash" ? "cash" : "e-transfer";
   await recordActivity({
     agencyId,
     userId: actorUserId,
     clientId: appointment.clientId,
-    caseId: null,
-    action: "invoice.manual_payment_recorded",
-    details: `Consultation payment ($${paymentAmount.toFixed(2)}) recorded by ${methodLabel} for ${hold.guestName}${note ? ` — ${note}` : ""}`,
+    caseId: appointment.caseId,
+    action: "invoice.manual_payment_details_updated",
+    details: `${methodName} details updated for ${appointment.subject}${paymentReference ? ` — transaction ${paymentReference}` : ""}`,
     entityType: "bookingPaymentHold",
     entityId: hold.id,
-    metadata: { method, note: note || null },
-  }).catch(() => {});
-
-  return hold;
+    metadata: { method, transactionReference: paymentReference, paymentDate: transactionDate?.qboDate || null, qbPaymentId },
+  });
+  return updated;
 }
 
 // Cancelling or no-showing an appointment that still has a pending
