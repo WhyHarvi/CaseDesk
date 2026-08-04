@@ -1,6 +1,9 @@
 import {
   ArrowUpRight,
   BriefcaseBusiness,
+  Check,
+  ChevronDown,
+  Loader2,
   Mail,
   MessageSquareText,
   Pencil,
@@ -9,6 +12,7 @@ import {
   ShieldCheck,
   Smartphone,
   Trash2,
+  UserRoundCheck,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -304,6 +308,7 @@ export default function ClientProfile() {
   const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
   const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
   const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
+  const canReassignClient = ["admin", "frontdesk"].includes(role);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -317,6 +322,11 @@ export default function ClientProfile() {
   const [statementOpen, setStatementOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
   const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
+  const [assignmentUsers, setAssignmentUsers] = useState([]);
+  const [assignmentUserId, setAssignmentUserId] = useState("");
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentFeedback, setAssignmentFeedback] = useState(null);
   const initialChatConversationId = new URLSearchParams(location.search).get("conversation");
   const [chatOpen, setChatOpen] = useState(Boolean(initialChatConversationId));
 
@@ -358,6 +368,18 @@ export default function ClientProfile() {
       ),
     [cases],
   );
+  const assignmentOptions = useMemo(() => {
+    const consultants = assignmentUsers.filter((user) =>
+      ["admin", "consultant"].includes(user.role),
+    );
+    if (
+      client?.assignedUser?.id &&
+      !consultants.some((user) => user.id === client.assignedUser.id)
+    ) {
+      return [...consultants, client.assignedUser];
+    }
+    return consultants;
+  }, [assignmentUsers, client?.assignedUser]);
 
   async function loadClient() {
     try {
@@ -378,6 +400,27 @@ export default function ClientProfile() {
   useEffect(() => {
     loadClient();
   }, [id]);
+
+  useEffect(() => {
+    setAssignmentUserId(client?.assignedUser?.id || "");
+  }, [client?.assignedUser?.id]);
+
+  useEffect(() => {
+    if (!canReassignClient) return undefined;
+    let active = true;
+    setAssignmentLoading(true);
+    api.get("/leads/staff")
+      .then((response) => {
+        if (active) setAssignmentUsers(response.data.data || []);
+      })
+      .catch(() => {
+        if (active) setAssignmentFeedback({ tone: "error", message: "Consultants could not be loaded." });
+      })
+      .finally(() => {
+        if (active) setAssignmentLoading(false);
+      });
+    return () => { active = false; };
+  }, [canReassignClient]);
 
   useEffect(() => {
     if (!highlightedNoteId || loading) return;
@@ -465,6 +508,34 @@ export default function ClientProfile() {
       );
     } finally {
       setDeletingNoteId("");
+    }
+  }
+
+  async function handleAssignmentChange(event) {
+    const nextAssignedUserId = event.target.value;
+    const previousAssignedUserId = client.assignedUser?.id || "";
+    if (nextAssignedUserId === previousAssignedUserId) return;
+
+    try {
+      setAssignmentUserId(nextAssignedUserId);
+      setAssignmentSaving(true);
+      setAssignmentFeedback(null);
+      const response = await api.patch(`/clients/${client.id}`, {
+        assignedUserId: nextAssignedUserId,
+      });
+      setProfile((current) => ({
+        ...current,
+        client: { ...current.client, ...response.data.data },
+      }));
+      setAssignmentFeedback({ tone: "success", message: "Assignment updated." });
+    } catch (requestError) {
+      setAssignmentUserId(previousAssignedUserId);
+      setAssignmentFeedback({
+        tone: "error",
+        message: requestError.response?.data?.message || "Assignment could not be updated.",
+      });
+    } finally {
+      setAssignmentSaving(false);
     }
   }
 
@@ -806,9 +877,40 @@ export default function ClientProfile() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                     Assigned
                   </p>
-                  <p className="mt-1 text-sm text-slate-700">
-                    {client.assignedUser?.fullName || "Unassigned"}
-                  </p>
+                  {canReassignClient ? (
+                    <div className="mt-1.5">
+                      <div className="relative">
+                        <UserRoundCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        <select
+                          aria-label="Assigned consultant"
+                          value={assignmentUserId}
+                          onChange={handleAssignmentChange}
+                          disabled={assignmentLoading || assignmentSaving}
+                          className="h-10 w-full appearance-none rounded-xl border border-slate-200 bg-white py-0 pl-9 pr-9 text-sm font-medium text-slate-700 outline-none transition hover:border-slate-300 focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:cursor-wait disabled:bg-slate-50 disabled:text-slate-400"
+                        >
+                          <option value="">Unassigned</option>
+                          {assignmentOptions.map((user) => (
+                            <option key={user.id} value={user.id}>{user.fullName}</option>
+                          ))}
+                        </select>
+                        {assignmentLoading || assignmentSaving ? (
+                          <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-sky-600" />
+                        ) : (
+                          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                        )}
+                      </div>
+                      {assignmentFeedback ? (
+                        <p className={`mt-1.5 flex items-center gap-1 text-[11px] font-medium ${assignmentFeedback.tone === "success" ? "text-emerald-600" : "text-rose-600"}`}>
+                          {assignmentFeedback.tone === "success" ? <Check className="h-3 w-3" /> : null}
+                          {assignmentFeedback.message}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-700">
+                      {client.assignedUser?.fullName || "Unassigned"}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">

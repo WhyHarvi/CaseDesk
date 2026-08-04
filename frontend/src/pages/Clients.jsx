@@ -2,9 +2,11 @@ import {
   BriefcaseBusiness,
   Archive,
   CalendarClock,
+  ChevronDown,
   Download,
   FileWarning,
   FilterX,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -15,6 +17,7 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 
 const defaultFormState = {
@@ -624,6 +627,8 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 }
 
 export default function Clients() {
+  const { role } = useAuth();
+  const canReassignClients = ["admin", "frontdesk"].includes(role);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -633,6 +638,7 @@ export default function Clients() {
   const [formState, setFormState] = useState(defaultFormState);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [assigningClientIds, setAssigningClientIds] = useState([]);
   const [deletingId, setDeletingId] = useState("");
   const [drawerClosing, setDrawerClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -891,6 +897,51 @@ export default function Clients() {
       setFormError(requestError.response?.data?.message || "Unable to save client.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDirectoryAssignment(client, assignedUserId) {
+    const previousAssignedUser = client.assignedUser || null;
+    const nextAssignedUser =
+      users.find((user) => user.id === assignedUserId) || null;
+
+    setAssigningClientIds((current) => [...new Set([...current, client.id])]);
+    setError("");
+    setClients((current) =>
+      current.map((item) =>
+        item.id === client.id
+          ? { ...item, assignedUser: nextAssignedUser }
+          : item,
+      ),
+    );
+
+    try {
+      const response = await api.patch(`/clients/${client.id}`, {
+        assignedUserId,
+      });
+      setClients((current) =>
+        current.map((item) =>
+          item.id === client.id
+            ? { ...item, ...response.data.data }
+            : item,
+        ),
+      );
+    } catch (requestError) {
+      setClients((current) =>
+        current.map((item) =>
+          item.id === client.id
+            ? { ...item, assignedUser: previousAssignedUser }
+            : item,
+        ),
+      );
+      setError(
+        requestError.response?.data?.message ||
+          "Unable to update the client assignment.",
+      );
+    } finally {
+      setAssigningClientIds((current) =>
+        current.filter((clientId) => clientId !== client.id),
+      );
     }
   }
 
@@ -1241,12 +1292,57 @@ export default function Clients() {
                           </span>
                         </td>
                         <td className="px-4 py-5">
-                          <div className="flex items-center gap-2">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-                              {getInitials(client.assignedName)}
+                          {canReassignClients ? (
+                            <div className="relative inline-flex max-w-[190px] items-center rounded-full border border-slate-200/90 bg-white shadow-sm transition hover:border-sky-200 hover:shadow-md focus-within:border-sky-300 focus-within:ring-4 focus-within:ring-sky-100">
+                              <span className="pointer-events-none ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-800 to-sky-700 text-[10px] font-bold text-white shadow-sm">
+                                {getInitials(client.assignedName)}
+                              </span>
+                              <select
+                                aria-label={`Assign ${client.fullName} to a consultant`}
+                                value={client.assignedUser?.id || ""}
+                                onChange={(event) =>
+                                  handleDirectoryAssignment(client, event.target.value)
+                                }
+                                disabled={assigningClientIds.includes(client.id)}
+                                className="h-9 min-w-0 max-w-[150px] appearance-none rounded-full bg-transparent py-0 pl-2 pr-8 text-xs font-semibold text-slate-700 outline-none disabled:cursor-wait disabled:text-slate-400"
+                              >
+                                <option value="">Unassigned</option>
+                                {client.assignedUser?.id &&
+                                !users.some(
+                                  (user) => user.id === client.assignedUser.id,
+                                ) ? (
+                                  <option value={client.assignedUser.id}>
+                                    {client.assignedUser.fullName}
+                                  </option>
+                                ) : null}
+                                {users
+                                  .filter(
+                                    (user) =>
+                                      ["admin", "consultant"].includes(user.role) ||
+                                      user.id === client.assignedUser?.id,
+                                  )
+                                  .map((user) => (
+                                    <option key={user.id} value={user.id}>
+                                      {user.fullName}
+                                    </option>
+                                  ))}
+                              </select>
+                              {assigningClientIds.includes(client.id) ? (
+                                <Loader2 className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 animate-spin text-sky-600" />
+                              ) : (
+                                <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-slate-400" />
+                              )}
                             </div>
-                            <span className="font-medium text-slate-700">{client.assignedName}</span>
-                          </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-1.5 py-1 pr-3 shadow-sm">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">
+                                {getInitials(client.assignedName)}
+                              </div>
+                              <span className="max-w-[130px] truncate text-xs font-semibold text-slate-700">
+                                {client.assignedName}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-5 font-medium text-slate-600">{client.lastUpdatedLabel}</td>
                         <td className="px-6 py-5">

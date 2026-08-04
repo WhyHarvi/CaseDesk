@@ -861,6 +861,17 @@ export function processBookingMessageDeliveries() {
   return processBookingDeliveryPass();
 }
 
+export function reminderWasAlreadyDueWhenScheduled(appointment, dueAt) {
+  const timestamps = [
+    appointment?.createdAt,
+    ...(appointment?.events || []).map((event) => event.createdAt),
+  ]
+    .map((value) => new Date(value || 0).getTime())
+    .filter(Number.isFinite);
+  if (!timestamps.length) return false;
+  return Number(dueAt) <= Math.max(...timestamps);
+}
+
 async function runReminderPass() {
   const now = new Date();
   const horizon = new Date(now.getTime() + 7 * 86_400_000);
@@ -878,7 +889,15 @@ async function runReminderPass() {
           ],
         } : {}),
       },
-      include: { client: { select: { fullName: true, email: true, phone: true } } },
+      include: {
+        client: { select: { fullName: true, email: true, phone: true } },
+        events: {
+          where: { type: { in: ["RESCHEDULED", "SERIES_RESCHEDULED"] } },
+          select: { createdAt: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
       take: 500,
     });
@@ -904,6 +923,11 @@ async function runReminderPass() {
       for (const leadMinutes of scheduleByAgency.get(appointment.agencyId)) {
         const dueAt = new Date(appointment.startsAt).getTime() - Number(leadMinutes) * 60_000;
         if (dueAt > now.getTime()) continue;
+        // A confirmation already tells the client about a newly booked or
+        // rescheduled appointment. Never follow it immediately with a stale
+        // reminder whose configured send time had passed before that schedule
+        // was established. Shorter, still-future reminders remain eligible.
+        if (reminderWasAlreadyDueWhenScheduled(appointment, dueAt)) continue;
         if (appointment.reminderSentAt && dueAt <= new Date(appointment.reminderSentAt).getTime()) continue;
         await sendBookingMessages({ agencyId: appointment.agencyId, appointment, kind: "reminder", dedupeSuffix: `${leadMinutes}m` }).catch((error) => {
           logger.warn("booking.reminder_failed", { appointmentId: appointment.id, leadMinutes, reason: error.message });

@@ -3,20 +3,15 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { intersectWorkingHours, localDateTimeToUtc, mergeStaffAvailability, slotsForDay, validateAvailabilityRange } from "../src/services/bookingAvailabilityService.js";
 import { chooseAppointmentAssignee } from "../src/services/schedulingAssignmentService.js";
-import { bookingDeliveryIsCurrent, bookingMessageRevision, icsForAppointment } from "../src/services/bookingNotificationService.js";
+import { bookingDeliveryIsCurrent, bookingMessageRevision, icsForAppointment, reminderWasAlreadyDueWhenScheduled } from "../src/services/bookingNotificationService.js";
 import { delayedZoomNotificationKind } from "../src/services/appointmentMeetingService.js";
 import { MEETING_MODES, meetingModesInSameCapacityGroup } from "../src/services/bookingMeetingModeService.js";
 
-test("phone bookings run on a separate capacity track from in-person/video", () => {
-  assert.deepEqual(meetingModesInSameCapacityGroup(MEETING_MODES.PHONE), [MEETING_MODES.PHONE]);
-  const attended = meetingModesInSameCapacityGroup(MEETING_MODES.IN_PERSON);
-  assert.ok(attended.includes(MEETING_MODES.IN_PERSON));
-  assert.ok(attended.includes(MEETING_MODES.JITSI));
-  assert.ok(attended.includes(MEETING_MODES.ZOOM));
-  assert.ok(!attended.includes(MEETING_MODES.PHONE));
-  // Jitsi and Zoom both still fully block each other and in-person — only
-  // phone is split out.
-  assert.deepEqual(meetingModesInSameCapacityGroup(MEETING_MODES.JITSI), meetingModesInSameCapacityGroup(MEETING_MODES.ZOOM));
+test("phone, in-person, Jitsi, and Zoom bookings share consultant capacity", () => {
+  const allModes = [MEETING_MODES.IN_PERSON, MEETING_MODES.PHONE, MEETING_MODES.JITSI, MEETING_MODES.ZOOM];
+  for (const mode of allModes) {
+    assert.deepEqual(meetingModesInSameCapacityGroup(mode), allModes);
+  }
 });
 
 test("pooled availability preserves one seat per free consultant", () => {
@@ -198,6 +193,28 @@ test("cancelled appointments suppress queued and retrying reminders", async () =
   assert.match(service, /bookingDeliveryAllowed\(deliveryId, appointment\.id\)/);
   assert.match(service, /where: \{ id: job\.id, status: "processing" \},[\s\S]*if \(!failed\.count\) continue/);
   assert.match(service, /let reminderCursor = null[\s\S]*orderBy: \[\{ startsAt: "asc" \}, \{ id: "asc" \}\][\s\S]*reminderCursor = \{ startsAt: lastAppointment\.startsAt, id: lastAppointment\.id \}/);
+});
+
+test("reminders already overdue when an appointment is booked or rescheduled are skipped", () => {
+  const appointment = {
+    createdAt: "2026-08-04T18:53:44.984Z",
+    events: [],
+  };
+  assert.equal(
+    reminderWasAlreadyDueWhenScheduled(appointment, new Date("2026-08-04T16:00:00.000Z").getTime()),
+    true,
+  );
+  assert.equal(
+    reminderWasAlreadyDueWhenScheduled(appointment, new Date("2026-08-05T14:00:00.000Z").getTime()),
+    false,
+  );
+  assert.equal(
+    reminderWasAlreadyDueWhenScheduled({
+      createdAt: "2026-08-01T12:00:00.000Z",
+      events: [{ createdAt: "2026-08-04T18:53:44.984Z" }],
+    }, new Date("2026-08-04T16:00:00.000Z").getTime()),
+    true,
+  );
 });
 
 test("queued appointment messages are suppressed after state or time changes", () => {

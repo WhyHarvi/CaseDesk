@@ -270,9 +270,8 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
   // exposes the same shape regardless of source.
   const flattenedHolds = activeHolds.map((hold) => ({ ...hold, meetingMode: hold.waitlistEntry?.meetingMode || null }));
   const busy = [...busyAppointments, ...flattenedHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
-  // Phone runs on its own capacity track (see meetingModesInSameCapacityGroup)
-  // — entries with no meetingMode at all (scheduling blocks) still block
-  // every mode, same as before this existed.
+  // Every appointment format consumes the same consultant capacity. Entries
+  // with no meeting mode (such as scheduling blocks) also block every format.
   const relevantBusy = meetingMode
     ? busy.filter((item) => !item.meetingMode || meetingModesInSameCapacityGroup(meetingMode).includes(item.meetingMode))
     : busy;
@@ -320,10 +319,8 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
  */
 export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt, endsAt, bufferMinutes = 0, excludeAppointmentId = null, excludeAppointmentIds = null, excludeHoldToken = null, excludePaymentHoldId = null, meetingMode = null }) {
   const buffer = bufferMinutes * 60_000;
-  // Phone runs on its own capacity track — see meetingModesInSameCapacityGroup.
-  // meetingMode is optional (null) for callers that don't know/care about
-  // it (e.g. a generic block check), which preserves the old
-  // blocks-everything behavior rather than silently narrowing it.
+  // Every appointment format consumes the same consultant capacity.
+  // meetingMode remains optional for generic callers and scheduling blocks.
   const sameGroup = meetingMode ? { meetingMode: { in: meetingModesInSameCapacityGroup(meetingMode) } } : {};
   const conflict = await tx.appointment.findFirst({
     where: {

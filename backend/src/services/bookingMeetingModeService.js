@@ -21,16 +21,11 @@ export function isRemoteMeetingMode(mode) {
   return [MEETING_MODES.PHONE, MEETING_MODES.JITSI, MEETING_MODES.ZOOM].includes(mode);
 }
 
-// A phone call needs a few minutes of a consultant's attention, not the
-// same full, undivided block an in-person/video meeting does — so it runs
-// on its own capacity track and never conflicts with (or is blocked by)
-// InPerson/Jitsi/Zoom bookings for the same consultant. Those three still
-// fully block each other, since a consultant can only actually be in one
-// place/call at a time for those.
-export function meetingModesInSameCapacityGroup(mode) {
-  return mode === MEETING_MODES.PHONE
-    ? [MEETING_MODES.PHONE]
-    : [MEETING_MODES.IN_PERSON, MEETING_MODES.JITSI, MEETING_MODES.ZOOM];
+// Every appointment format occupies the assigned consultant's complete time
+// slot. A phone call therefore conflicts with in-person, Jitsi, and Zoom
+// appointments just as those formats conflict with one another.
+export function meetingModesInSameCapacityGroup(_mode) {
+  return MEETING_MODE_VALUES;
 }
 
 export function meetingModeLabel(mode) {
