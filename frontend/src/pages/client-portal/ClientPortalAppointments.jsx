@@ -1,6 +1,7 @@
-import { CalendarDays, CheckCircle2, CircleAlert, Clock3, MapPin, Phone, UserRound, Video } from "lucide-react";
+import { CalendarDays, CalendarPlus, CheckCircle2, CircleAlert, Clock3, Loader2, MapPin, Phone, UserRound, Video } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getPortalAppointments, portalErrorMessage } from "../../api/clientPortalApi";
+import { useNavigate } from "react-router-dom";
+import { createPortalBookingSession, getPortalAppointments, portalErrorMessage } from "../../api/clientPortalApi";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
@@ -87,9 +88,32 @@ function AppointmentCard({ appointment }) {
 
 export default function ClientPortalAppointments() {
   const { overview } = usePortalData();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [booking, setBooking] = useState(false);
+  const [bookingError, setBookingError] = useState("");
+
+  async function beginBooking() {
+    try {
+      setBooking(true);
+      setBookingError("");
+      const session = await createPortalBookingSession();
+      navigate(session.path, {
+        state: {
+          bookingClient: session.client,
+          bookingVerificationToken: session.verificationToken,
+          bookingSessionExpiresAt: session.expiresAt,
+          portalReturnTo: "/client-portal/appointments",
+        },
+      });
+    } catch (reason) {
+      setBookingError(portalErrorMessage(reason, "Appointment booking could not be opened."));
+    } finally {
+      setBooking(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -105,6 +129,29 @@ export default function ClientPortalAppointments() {
   return (
     <div className="space-y-5">
       <ClientPortalHeader title="Appointments" subtitle="Your upcoming visits and complete appointment history" client={overview?.client} agency={overview?.agency} />
+      {overview?.booking?.enabled && overview.booking.path ? (
+        <section className="flex flex-col gap-4 rounded-3xl border border-white/80 bg-gradient-to-br from-white/90 via-sky-50/80 to-indigo-50/70 p-5 shadow-[0_16px_45px_rgba(56,130,246,0.1)] backdrop-blur-xl sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3.5">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-[0_10px_24px_rgba(2,132,199,0.25)]">
+              <CalendarPlus className="h-5 w-5" />
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-950">Need another appointment?</h2>
+              <p className="mt-1 text-[13px] leading-5 text-slate-500">Choose an available service, consultant, and time.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={booking}
+            onClick={beginBooking}
+            className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.2)] transition hover:bg-slate-800 active:scale-[0.98]"
+          >
+            {booking ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
+            {booking ? "Opening…" : "Book appointment"}
+          </button>
+          {bookingError ? <p className="text-sm text-rose-600 sm:basis-full sm:text-right">{bookingError}</p> : null}
+        </section>
+      ) : null}
       {error ? <ClientPortalEmptyState icon={CircleAlert} title="We couldn't load your appointments" copy={error} /> : null}
       {!error && !data?.total ? <ClientPortalEmptyState icon={CalendarDays} title="No appointments yet" copy="When an appointment is booked with your agency, it will appear here." /> : null}
       {!error && data?.upcoming?.length ? (

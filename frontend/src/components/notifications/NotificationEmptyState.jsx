@@ -7,12 +7,14 @@ export default function NotificationEmptyState({ filter }) {
         <BellOff className="h-6 w-6" />
       </span>
       <p className="mt-4 text-sm font-semibold text-slate-800">
-        {filter === "unread" ? "You’re all caught up" : "No notifications"}
+        {filter === "action" ? "You’re all caught up" : filter === "updates" ? "No recent updates" : "No notifications"}
       </p>
       <p className="mt-1 max-w-[240px] text-[13px] leading-5 text-slate-500">
-        {filter === "unread"
-          ? "Everything here has been read. New activity will appear the moment it happens."
-          : "Updates about your cases, documents, and messages will show up here."}
+        {filter === "action"
+          ? "Nothing needs your attention right now."
+          : filter === "updates"
+            ? "Quiet progress updates will appear here without increasing the urgent badge."
+            : "Important actions and quieter progress updates will appear here."}
       </p>
     </div>
   );

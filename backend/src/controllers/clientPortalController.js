@@ -373,10 +373,14 @@ function buildTimeline({ caseItem, documents, invoices, assessment, agreements }
 
 async function portalData(req) {
   const link = await linkedClient(req);
-  const [agency, caseItem, documents, agreements] = await Promise.all([
+  const [agency, bookingSettings, caseItem, documents, agreements] = await Promise.all([
     prisma.agency.findUnique({
       where: { id: req.auth.agencyId },
       select: { name: true, email: true, phone: true, address: true, city: true, province: true, country: true, postalCode: true, logoUrl: true, paymentInstructions: true, defaultCurrency: true },
+    }),
+    prisma.bookingSettings.findUnique({
+      where: { agencyId: req.auth.agencyId },
+      select: { publicSlug: true, publicBookingEnabled: true },
     }),
     prisma.case.findFirst({
       where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
@@ -413,7 +417,7 @@ async function portalData(req) {
       : Promise.resolve([]),
   ]);
   const paymentSummary = paymentSummaryFromLedger(billingLedger);
-  return { link, agency, caseItem, documents, paymentSummary, invoices, agreements, assessment };
+  return { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment };
 }
 
 function agencyAddress(agency) {
@@ -421,7 +425,7 @@ function agencyAddress(agency) {
 }
 
 export async function getPortalOverview(req, res) {
-  const { link, agency, caseItem, documents, paymentSummary, invoices, agreements, assessment } = await portalData(req);
+  const { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment } = await portalData(req);
   const payment = withPaymentDisplay(paymentSummary, agency);
   const nameParts = String(link.client.fullName || "").trim().split(/\s+/);
   const shared = sharedAssignments(assessment?.formData || {});
@@ -444,6 +448,15 @@ export async function getPortalOverview(req, res) {
         phone: agency?.phone || null,
         address: agencyAddress(agency),
         logoUrl: agency?.logoUrl || null,
+      },
+      booking: {
+        enabled: Boolean(
+          bookingSettings?.publicBookingEnabled && bookingSettings?.publicSlug,
+        ),
+        path:
+          bookingSettings?.publicBookingEnabled && bookingSettings?.publicSlug
+            ? `/b/${encodeURIComponent(bookingSettings.publicSlug)}`
+            : null,
       },
       case: caseItem
         ? {
@@ -629,6 +642,67 @@ export async function getPortalAppointments(req, res) {
     .filter((item) => !upcoming.some((upcomingItem) => upcomingItem.id === item.id))
     .sort((a, b) => new Date(b.startsAt) - new Date(a.startsAt));
   res.json({ success: true, data: { upcoming, history, total: rows.length } });
+}
+
+export async function createPortalBookingSession(req, res) {
+  const link = await linkedClient(req);
+  const emailNormalized = String(link.client.email || "").trim().toLowerCase();
+  if (!emailNormalized) {
+    throw createHttpError(
+      400,
+      "Add an email address to your profile before booking an appointment.",
+      "CLIENT_EMAIL_REQUIRED",
+    );
+  }
+
+  const settings = await prisma.bookingSettings.findUnique({
+    where: { agencyId: req.auth.agencyId },
+    select: { publicSlug: true, publicBookingEnabled: true },
+  });
+  if (!settings?.publicBookingEnabled || !settings.publicSlug) {
+    throw createHttpError(
+      409,
+      "Online appointment booking is not currently available.",
+      "BOOKING_UNAVAILABLE",
+    );
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 60_000);
+  const verificationToken = randomUUID();
+  await prisma.$transaction(async (tx) => {
+    await tx.bookingVerificationCode.deleteMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        emailNormalized,
+        expiresAt: { lt: now },
+      },
+    });
+    await tx.bookingVerificationCode.create({
+      data: {
+        agencyId: req.auth.agencyId,
+        emailNormalized,
+        codeHash: randomUUID().replaceAll("-", ""),
+        expiresAt,
+        verifiedAt: now,
+        verificationToken,
+      },
+    });
+  });
+
+  res.status(201).json({
+    success: true,
+    data: {
+      path: `/b/${encodeURIComponent(settings.publicSlug)}`,
+      verificationToken,
+      expiresAt,
+      client: {
+        fullName: link.client.fullName,
+        email: link.client.email,
+        phone: link.client.phone,
+      },
+    },
+  });
 }
 
 export async function downloadPortalInvoicePdf(req, res) {

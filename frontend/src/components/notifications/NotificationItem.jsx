@@ -20,7 +20,7 @@ export default function NotificationItem({ notification, onOpen, onDismiss }) {
       <button
         type="button"
         onClick={() => onOpen(notification)}
-        title={formatFullTime(notification.createdAt)}
+        title={formatFullTime(notification.lastOccurredAt || notification.createdAt)}
         className={`w-full rounded-[1.35rem] border p-3.5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl transition active:scale-[0.99] ${
           unread
             ? "border-white/80 bg-white/90 hover:bg-white"
@@ -38,13 +38,18 @@ export default function NotificationItem({ notification, onOpen, onDismiss }) {
               <p className={`truncate text-[13px] ${unread ? "font-semibold text-slate-950" : "font-medium text-slate-700"}`}>
                 {notification.title}
               </p>
-              <span className="shrink-0 text-[11px] text-slate-400">{formatRelativeTime(notification.createdAt)}</span>
+              <span className="shrink-0 text-[11px] text-slate-400">{formatRelativeTime(notification.lastOccurredAt || notification.createdAt)}</span>
             </div>
             {notification.body ? (
               <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-5 text-slate-500">{notification.body}</p>
             ) : null}
             {notification.actor?.fullName ? (
               <p className="mt-1 text-[11px] text-slate-400">{notification.actor.fullName}</p>
+            ) : null}
+            {notification.occurrenceCount > 1 ? (
+              <span className="mt-1.5 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                {notification.occurrenceCount} related updates
+              </span>
             ) : null}
           </div>
           {unread ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-label="Unread" /> : null}

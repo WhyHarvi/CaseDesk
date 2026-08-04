@@ -84,7 +84,7 @@ function PanelBody({ view, setView, isClient }) {
 
         <div className="mt-3 flex items-center justify-between gap-2">
           <div className="flex rounded-full border border-white/70 bg-white/60 p-0.5 backdrop-blur">
-            {["all", "unread"].map((key) => (
+            {["action", "updates", "all"].map((key) => (
               <button
                 key={key}
                 type="button"
@@ -93,7 +93,7 @@ function PanelBody({ view, setView, isClient }) {
                   filter === key ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
-                {key}
+                {key === "action" ? "Action required" : key === "updates" ? "Updates" : "All"}
               </button>
             ))}
           </div>

@@ -43,10 +43,7 @@ const CLIENT_ACTIONS = [
   "client_document.status_changed",
   "client_document.finalized",
   "case.document_checklist.created",
-  "case.document.reassigned",
-  "case.document.unassigned",
   "correspondence.status_updated",
-  "appointment.created",
   "appointment.updated",
   "appointment.deleted",
   "CLIENT_PORTAL_ACCESS_RESTORED",
@@ -140,6 +137,20 @@ export async function schedulingCoordinatorRecipientIds(agencyId) {
   return users.map((item) => item.id);
 }
 
+export async function frontDeskRecipientIds(agencyId) {
+  const users = await prisma.user.findMany({
+    where: {
+      agencyId,
+      status: "active",
+      memberships: {
+        some: { agencyId, isActive: true, role: "frontdesk" },
+      },
+    },
+    select: { id: true },
+  });
+  return users.map((item) => item.id);
+}
+
 async function preferencesFor(agencyId, recipientIds, category) {
   const preferences = await prisma.notificationPreference.findMany({
     where: { agencyId, userId: { in: recipientIds }, category: { in: ["all", category] } },
@@ -170,13 +181,21 @@ export async function notifyUsers({
   includeActor = false,
   channels = null,
   scheduledFor = null,
+  attentionLevel = null,
+  aggregate = false,
+  expiresAt = undefined,
 }) {
   const uniqueRecipients = [...new Set((recipientIds || []).filter(Boolean))]
     .filter((id) => includeActor || id !== actorUserId);
   if (!uniqueRecipients.length) return [];
 
   const validUsers = await prisma.user.findMany({
-    where: { id: { in: uniqueRecipients }, agencyId },
+    where: {
+      id: { in: uniqueRecipients },
+      agencyId,
+      status: "active",
+      memberships: { some: { agencyId, isActive: true } },
+    },
     select: { id: true },
   });
   const validIds = validUsers.map((item) => item.id);
@@ -190,49 +209,155 @@ export async function notifyUsers({
       const dueSoonMinutes = preference?.dueSoonMinutes || 1440;
       if (dueAt.getTime() > Date.now() + dueSoonMinutes * 60_000) continue;
     }
-    const enabledChannels = channels || [
+    let enabledChannels = channels || [
       ...(preference?.inAppEnabled === false ? [] : ["in_app"]),
       ...(preference?.emailEnabled ? ["email"] : []),
       ...(preference?.smsEnabled ? ["sms"] : []),
     ];
+    const occurredAt = new Date();
+    const resolvedAttentionLevel =
+      attentionLevel === "action_required" || attentionLevel === "update"
+        ? attentionLevel
+        : ["critical", "warning"].includes(severity)
+          ? "action_required"
+          : "update";
+    if (
+      preference?.deliveryMode === "daily_digest" &&
+      resolvedAttentionLevel === "update"
+    ) {
+      enabledChannels = enabledChannels.filter((channel) => channel === "in_app");
+    }
     if (!enabledChannels.length) continue;
-
-    const notification = await prisma.notification.upsert({
-      where: {
-        agencyId_recipientUserId_dedupeKey: { agencyId, recipientUserId, dedupeKey },
-      },
-      create: {
+    const resolvedExpiry =
+      expiresAt === null
+        ? null
+        : expiresAt
+          ? new Date(expiresAt)
+          : new Date(
+              occurredAt.getTime() +
+                (resolvedAttentionLevel === "action_required" ? 90 : 30) *
+                  24 *
+                  60 *
+                  60_000,
+            );
+    const createData = {
+      agencyId,
+      recipientUserId,
+      actorUserId: actorUserId === recipientUserId ? null : actorUserId,
+      type: clean(type, 120),
+      category: clean(category, 80),
+      title: clean(title, 180),
+      body: clean(body, 2000) || null,
+      severity: clean(severity, 30) || "info",
+      entityType: clean(entityType, 80) || null,
+      entityId: clean(entityId, 120) || null,
+      actionUrl: clean(actionUrl, 500) || null,
+      metadata,
+      dedupeKey: clean(dedupeKey, 300),
+      attentionLevel: resolvedAttentionLevel,
+      lastOccurredAt: occurredAt,
+      expiresAt: resolvedExpiry,
+    };
+    const notificationKey = {
+      agencyId_recipientUserId_dedupeKey: {
         agencyId,
         recipientUserId,
-        actorUserId: actorUserId === recipientUserId ? null : actorUserId,
-        type: clean(type, 120),
-        category: clean(category, 80),
-        title: clean(title, 180),
-        body: clean(body, 2000) || null,
-        severity: clean(severity, 30) || "info",
-        entityType: clean(entityType, 80) || null,
-        entityId: clean(entityId, 120) || null,
-        actionUrl: clean(actionUrl, 500) || null,
-        metadata,
-        dedupeKey: clean(dedupeKey, 300),
+        dedupeKey,
       },
-      update: {},
+    };
+    const priorNotification = aggregate
+      ? await prisma.notification.findUnique({
+          where: notificationKey,
+          select: { id: true, readAt: true, resolvedAt: true },
+        })
+      : null;
+    const notification = await prisma.notification.upsert({
+      where: notificationKey,
+      create: createData,
+      update: aggregate
+        ? {
+            actorUserId: createData.actorUserId,
+            type: createData.type,
+            title: createData.title,
+            body: createData.body,
+            severity: createData.severity,
+            actionUrl: createData.actionUrl,
+            metadata,
+            attentionLevel: resolvedAttentionLevel,
+            occurrenceCount: { increment: 1 },
+            lastOccurredAt: occurredAt,
+            expiresAt: resolvedExpiry,
+            resolvedAt: null,
+            dismissedAt: null,
+            readAt: null,
+          }
+        : {},
     });
     const deliveryChannels = enabledChannels.filter((channel) => channel !== "in_app");
     if (deliveryChannels.length) {
-      await prisma.notificationDelivery.createMany({
-        data: deliveryChannels.map((channel) => ({
-          agencyId,
-          notificationId: notification.id,
-          recipientUserId,
-          channel,
-        })),
-        skipDuplicates: true,
-      });
+      const rearmDelivery = Boolean(
+        aggregate && priorNotification &&
+          (priorNotification.readAt || priorNotification.resolvedAt),
+      );
+      await Promise.all(
+        deliveryChannels.map((channel) =>
+          prisma.notificationDelivery.upsert({
+            where: {
+              notificationId_channel: {
+                notificationId: notification.id,
+                channel,
+              },
+            },
+            create: {
+              agencyId,
+              notificationId: notification.id,
+              recipientUserId,
+              channel,
+            },
+            update: rearmDelivery
+              ? {
+                  status: "pending",
+                  attempts: 0,
+                  availableAt: occurredAt,
+                  sentAt: null,
+                  deliveredAt: null,
+                  failedAt: null,
+                  providerId: null,
+                  lastError: null,
+                }
+              : {},
+          }),
+        ),
+      );
     }
     created.push(notification);
   }
   return created;
+}
+
+export async function resolveNotifications({
+  agencyId,
+  entityType,
+  entityId,
+  types = null,
+  dedupeKeys = null,
+  resolvedAt = new Date(),
+}) {
+  if (!agencyId) return 0;
+  const result = await prisma.notification.updateMany({
+    where: {
+      agencyId,
+      resolvedAt: null,
+      ...(entityType ? { entityType } : {}),
+      ...(entityId ? { entityId } : {}),
+      ...(Array.isArray(types) && types.length ? { type: { in: types } } : {}),
+      ...(Array.isArray(dedupeKeys) && dedupeKeys.length
+        ? { dedupeKey: { in: dedupeKeys } }
+        : {}),
+    },
+    data: { resolvedAt, readAt: resolvedAt },
+  });
+  return result.count;
 }
 
 export async function dispatchActivityNotification(activity) {
@@ -261,11 +386,26 @@ export async function dispatchActivityNotification(activity) {
   }
   const clientEventAllowed = action !== "correspondence.status_updated" || /marked (issued|finalized)/i.test(details || "");
   if (clientId && clientEventAllowed && isAllowed(action, CLIENT_ACTIONS)) {
+    const documentEvent = action.includes("document");
     operations.push(notifyUsers({
       ...common,
       recipientIds: await clientRecipientIds(agencyId, clientId),
       actionUrl: "/client-portal",
-      dedupeKey: `activity:${id}:client`,
+      ...(documentEvent
+        ? {
+            title: "Your document checklist was updated",
+            body: "Open Documents to review the latest requirements and statuses.",
+            actionUrl: "/client-portal/documents",
+            entityType: "client",
+            entityId: clientId,
+            dedupeKey: `client:${clientId}:document-checklist`,
+            aggregate: true,
+            attentionLevel: action.includes("created") ? "action_required" : "update",
+          }
+        : {
+            dedupeKey: `activity:${id}:client`,
+            attentionLevel: action.includes("updated") ? "action_required" : "update",
+          }),
     }));
   }
   if (isAllowed(action, ADMIN_ACTIONS)) {
@@ -297,14 +437,14 @@ export async function dispatchCommunicationAuditNotification(event) {
       : caseId
         ? await internalCaseRecipientIds(event.agencyId, caseId)
         : await adminRecipientIds(event.agencyId);
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, dedupeKey: `communication-audit:${event.id}:internal` });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, dedupeKey: `conversation:${event.conversationId}:unread:staff`, aggregate: true, attentionLevel: "action_required" });
   }
   if (failed) {
     const recipients = [...new Set([message?.senderUserId, ...(await adminRecipientIds(event.agencyId))].filter(Boolean))];
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients, type: event.action, category: "communications", title: "Communication delivery failed", body: event.details, severity: "critical", entityType: "message", entityId: event.messageId, actionUrl: caseId ? `/app/cases/${caseId}` : "/app/dashboard", dedupeKey: `communication-audit:${event.id}:failure` });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients, type: event.action, category: "communications", title: "Communication delivery failed", body: event.details, severity: "critical", entityType: "conversation", entityId: event.conversationId, actionUrl: caseId ? `/app/cases/${caseId}` : "/app/dashboard", dedupeKey: `conversation:${event.conversationId}:delivery-failed`, aggregate: true, attentionLevel: "action_required" });
   }
   if (outbound && message?.channel === "Chat" && message.direction === "Outbound" && clientId) {
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: await clientRecipientIds(event.agencyId, clientId), actorUserId: event.userId, type: "communication.staff_reply", category: "communications", title: "New message from your case team", body: event.details, severity: "info", entityType: "message", entityId: event.messageId, actionUrl: "/client-portal/chat", dedupeKey: `communication-audit:${event.id}:client` });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: await clientRecipientIds(event.agencyId, clientId), actorUserId: event.userId, type: "communication.staff_reply", category: "communications", title: "New message from your case team", body: event.details, severity: "info", entityType: "conversation", entityId: event.conversationId, actionUrl: "/client-portal/chat", dedupeKey: `conversation:${event.conversationId}:unread:client`, aggregate: true, attentionLevel: "action_required" });
   }
 }
 

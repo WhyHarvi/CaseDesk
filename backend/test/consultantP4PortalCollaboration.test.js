@@ -55,20 +55,77 @@ test("portal messages expose chat only and never internal communication", async 
   assert.match(routes, /router\.post\("\/messages", rateLimit/);
 });
 
+test("staff can answer portal chats from the client-profile side curtain", async () => {
+  const [profile, drawer, controller, routes, portalAccess] = await Promise.all([
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+    source("../../frontend/src/components/clients/ClientCommunicationCard.jsx"),
+    source("../src/controllers/communicationController.js"),
+    source("../src/routes/communicationRoutes.js"),
+    source("../../frontend/src/components/clients/PortalAccessCard.jsx"),
+  ]);
+  assert.match(profile, /label="Portal chat"/);
+  assert.match(profile, /setChatOpen\(true\)/);
+  assert.match(profile, /initialConversationId=\{initialChatConversationId\}/);
+  assert.match(drawer, /fixed inset-0[\s\S]*justify-end/);
+  assert.match(drawer, /bg-\[#d9fdd3\]/);
+  assert.match(drawer, /\/communications\/conversations\/\$\{conversationId\}/);
+  assert.match(drawer, /conversationId: conversation\.id/);
+  assert.match(drawer, /channel: "Chat"/);
+  assert.match(drawer, /direction: "Outbound"/);
+  assert.match(drawer, /Type a reply/);
+  assert.match(controller, /if \(!caseItem && !conversationContext && !clientItem\)/);
+  assert.match(controller, /const clientId = caseItem\?\.clientId \|\| conversationContext\?\.clientId \|\| clientItem\.id/);
+  assert.match(controller, /clientAccessWhere\(req\)/);
+  assert.match(controller, /if \(!conversation && channel === "Chat"\)/);
+  assert.match(drawer, /New portal message/);
+  assert.match(drawer, /Start a portal conversation/);
+  assert.match(drawer, /Send first portal message/);
+  assert.match(drawer, /clientId,/);
+  assert.match(drawer, /caseId: targetCaseId \|\| undefined/);
+  assert.match(drawer, /portalAudience: true/);
+  assert.match(drawer, /portal-chat-status/);
+  assert.match(drawer, /Portal access is required/);
+  assert.match(profile, /canManagePortal=\{canManageClientPortal\}/);
+  assert.match(profile, /client-portal-access/);
+  assert.match(portalAccess, /id="client-portal-access"/);
+  assert.match(routes, /clients\/:clientId\/portal-chat-status/);
+  assert.match(controller, /export async function getPortalChatStatus/);
+  assert.match(controller, /status: "active"/);
+  assert.match(controller, /PORTAL_ACCESS_REQUIRED/);
+  assert.match(controller, /provider: "AuthenticatedPortal"/);
+});
+
 test("portal exposes the complete client appointment and billing history", async () => {
-  const [controller, routes, api, appointments, payments] = await Promise.all([
+  const [controller, routes, api, appointments, payments, publicBooking, publicBookingController, paymentHolds] = await Promise.all([
     source("../src/controllers/clientPortalController.js"),
     source("../src/routes/clientPortalRoutes.js"),
     source("../../frontend/src/api/clientPortalApi.js"),
     source("../../frontend/src/pages/client-portal/ClientPortalAppointments.jsx"),
     source("../../frontend/src/pages/client-portal/ClientPortalPayments.jsx"),
+    source("../../frontend/src/pages/PublicBookingPage.jsx"),
+    source("../src/controllers/publicBookingController.js"),
+    source("../src/services/bookingPaymentHoldService.js"),
   ]);
   assert.match(controller, /buildClientBillingLedger/);
   assert.match(controller, /transactions: \[\.\.\.ledger\.transactions\]\.reverse\(\)/);
   assert.match(controller, /export async function getPortalAppointments/);
   assert.match(routes, /router\.get\("\/appointments", asyncHandler\(getPortalAppointments\)\)/);
+  assert.match(routes, /appointments\/booking-session/);
   assert.match(api, /client-portal\/appointments/);
   assert.match(appointments, /Your upcoming visits and complete appointment history/);
+  assert.match(controller, /publicBookingEnabled/);
+  assert.match(controller, /\/b\/\$\{encodeURIComponent\(bookingSettings\.publicSlug\)\}/);
+  assert.match(appointments, /Book appointment/);
+  assert.match(appointments, /portalReturnTo: "\/client-portal\/appointments"/);
+  assert.match(appointments, /createPortalBookingSession/);
+  assert.match(controller, /export async function createPortalBookingSession/);
+  assert.match(controller, /verifiedAt: now/);
+  assert.match(controller, /verificationToken/);
+  assert.match(publicBooking, /portalBookingClient/);
+  assert.match(publicBooking, /Back to client portal/);
+  assert.match(publicBookingController, /clientId: existingClient\?\.id \|\| null/);
+  assert.match(paymentHolds, /clientId,/);
+  assert.match(paymentHolds, /resolveQuickBooksCustomerForBooking\(agencyId, \{/);
   assert.match(payments, /data\.transactions\.map/);
 });
 

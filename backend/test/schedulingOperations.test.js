@@ -279,7 +279,7 @@ test("paid public bookings resume from QuickBooks and expose the confirmed appoi
   assert.match(controller, /appointment: hold\.status === "Paid" && hold\.appointment/);
   assert.match(controller, /requiresStaffResolution: hold\.status === "Paid" && !hold\.appointmentId/);
   assert.match(page, /casedesk:booking-payment:/);
-  assert.match(page, /getPublicBookingPaymentHoldStatus\(token, claimToken\)/);
+  assert.match(page, /getPublicBookingPaymentHoldStatus\(\s*token,\s*claimToken,?\s*\)/);
   assert.match(page, /result\.appointment/);
 
   const paidBookingStart = controller.indexOf("export async function createPublicBookingPaymentHold");
@@ -393,6 +393,22 @@ test("returning clients prefer their consultant without reducing pooled capacity
   assert.match(paymentService, /preferredUserId: preferredConsultantId/);
 });
 
+test("standalone client profiles are not automatically assigned without a case", async () => {
+  const [bookingController, clientController, clientDrawer] = await Promise.all([
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/clientController.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/clients/ClientEditDrawer.jsx", import.meta.url), "utf8"),
+  ]);
+  const conversionStart = bookingController.indexOf("export async function convertAppointmentToClient");
+  const conversionEnd = bookingController.indexOf("export async function applyAppointmentStatusChange", conversionStart);
+  const conversionSource = bookingController.slice(conversionStart, conversionEnd);
+  assert.match(conversionSource, /assignedUserId: null/);
+  assert.doesNotMatch(conversionSource, /assignedUserId: appointment\.assignedToId/);
+  assert.match(clientController, /req\.auth\.role === "consultant" && req\.body\.assignedUserId/);
+  assert.match(clientDrawer, /Clients without a case stay unassigned by default/);
+  assert.match(clientDrawer, /Direct profile access/);
+});
+
 test("the public booking flow asks attendance format before service, office, or time", async () => {
   const page = await readFile(new URL("../../frontend/src/pages/PublicBookingPage.jsx", import.meta.url), "utf8");
   const formatStart = page.indexOf('step === "format"');
@@ -401,7 +417,7 @@ test("the public booking flow asks attendance format before service, office, or 
   assert.ok(formatStart >= 0 && serviceStart > formatStart);
   assert.match(formatSource, /How would you like to meet\?/);
   assert.doesNotMatch(formatSource, /What would you like to book\?/);
-  assert.match(page, /matchingTypes\.length > 1 \? "service" : mode === "InPerson" \? "location" : "time"/);
+  assert.match(page, /matchingTypes\.length > 1\s*\? "service"\s*:\s*mode === "InPerson"\s*\? "location"\s*:\s*"time"/);
   assert.match(page, /step === "service"[\s\S]*What would you like to book\?/);
   assert.match(page, /sessionTypesForMode\("InPerson"\)\.some\(sessionTypeHasLocation\)/);
 });

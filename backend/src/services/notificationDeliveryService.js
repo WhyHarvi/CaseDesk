@@ -1,6 +1,10 @@
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import {
+  adminRecipientIds,
+  notifyUsers,
+  resolveNotifications,
+} from "./notificationService.js";
 import prisma from "./prisma/client.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_DELIVERY_INTERVAL_MS) || 15_000, 5_000);
@@ -91,6 +95,12 @@ export async function processNotificationDeliveries(now = new Date()) {
           where: { id: job.id },
           data: { status: "delivered", providerId, sentAt: new Date(), deliveredAt: new Date(), lastError: null },
         });
+        await resolveNotifications({
+          agencyId: job.agencyId,
+          entityType: "integration",
+          entityId: `notification-${job.channel}`,
+          types: ["notification.delivery_failed"],
+        });
       } catch (error) {
         const attempts = job.attempts + 1;
         const final = attempts >= job.maxAttempts;
@@ -112,11 +122,13 @@ export async function processNotificationDeliveries(now = new Date()) {
             title: "Notification delivery failed",
             body: `${job.channel} delivery failed after ${attempts} attempts: ${String(error?.message || "Unknown error").slice(0, 500)}`,
             severity: "warning",
-            entityType: "notification",
-            entityId: job.notificationId,
+            entityType: "integration",
+            entityId: `notification-${job.channel}`,
             actionUrl: "/app/settings",
             channels: ["in_app"],
-            dedupeKey: `delivery:${job.id}:failed`,
+            dedupeKey: `notification-delivery:${job.channel}:failed`,
+            aggregate: true,
+            attentionLevel: "action_required",
           });
         }
       }

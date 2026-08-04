@@ -3,10 +3,9 @@ import {
   deleteAuthUser,
   findAuthUserByEmail,
   generateAuthLink,
-  inviteAuthUser,
-  sendPasswordRecovery,
   updateAuthUser,
 } from "../services/supabaseAuth.js";
+import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { logger } from "../services/logger.js";
@@ -126,7 +125,7 @@ function defaultPermissions(role) {
   return { createClientPortal: true, portalAccess: defaultPortalAccess(role) };
 }
 
-function invitationError(error) {
+function invitationError(error, action = "invitation") {
   const message = String(error?.message || "").toLowerCase();
   if (error?.statusCode === 429 || message.includes("rate limit"))
     return createHttpError(
@@ -152,7 +151,7 @@ function invitationError(error) {
   if (error?.code === "AUTH_NOT_CONFIGURED") return error;
   return createHttpError(
     502,
-    "The team member invitation could not be sent. Please try again shortly.",
+    `The team member ${action} could not be sent. Please try again shortly.`,
     "AUTH_INVITATION_FAILED",
   );
 }
@@ -195,13 +194,19 @@ export async function createTeamMember(req, res) {
   let authUser;
   let authUserCreated = false;
   let manualInvitationLink = null;
+  let generated;
   try {
-    authUser = await inviteAuthUser({
+    const existingAuthUser = await findAuthUserByEmail(input.email);
+    generated = await generateAuthLink({
+      type: existingAuthUser ? "recovery" : "invite",
       email: input.email,
       fullName: input.fullName,
       redirectTo: `${frontendUrl}/auth/accept-invite`,
     });
-    authUserCreated = true;
+    authUser = existingAuthUser || generated.user;
+    authUserCreated = !existingAuthUser;
+    if (!authUser?.id || !generated.actionLink)
+      throw new Error("Supabase did not return an invitation link");
   } catch (error) {
     logger.error("auth.team_member_invitation_failed", {
       requestId: req.requestId,
@@ -210,26 +215,28 @@ export async function createTeamMember(req, res) {
       code: error.code,
       error: error.message,
     });
-    if (!(
-      error?.statusCode === 429 || /rate limit/i.test(error?.message || "")
-    ))
-      throw invitationError(error);
-    try {
-      const existingAuthUser = await findAuthUserByEmail(input.email);
-      const generated = await generateAuthLink({
-        type: existingAuthUser ? "recovery" : "invite",
-        email: input.email,
-        fullName: input.fullName,
-        redirectTo: `${frontendUrl}/auth/accept-invite`,
-      });
-      authUser = existingAuthUser || generated.user;
-      authUserCreated = !existingAuthUser;
-      manualInvitationLink = generated.actionLink;
-      if (!authUser?.id || !manualInvitationLink)
-        throw new Error("Supabase did not return an invitation link");
-    } catch {
-      throw invitationError(error);
-    }
+    throw invitationError(error);
+  }
+
+  // Best-effort: if the agency's mailbox isn't reachable, still create the
+  // account and hand staff the link to send manually rather than failing
+  // the whole invite.
+  try {
+    await sendAccountAccessEmail({
+      agencyId: req.auth.agencyId,
+      email: input.email,
+      fullName: input.fullName,
+      actionLink: generated.actionLink,
+      kind: authUserCreated ? "onboarding" : "reset",
+      audience: "staff",
+    });
+  } catch (mailError) {
+    logger.warn("auth.team_member_invitation_email_failed", {
+      requestId: req.requestId,
+      agencyId: req.auth.agencyId,
+      error: mailError.message,
+    });
+    manualInvitationLink = generated.actionLink;
   }
 
   try {
@@ -540,10 +547,33 @@ export async function resetTeamMemberPassword(req, res) {
     .split(",")[0]
     .trim()
     .replace(/\/$/, "");
-  await sendPasswordRecovery(
-    existing.email,
-    `${frontendUrl}/auth/reset-password`,
-  );
+  let generated;
+  try {
+    generated = await generateAuthLink({
+      type: "recovery",
+      email: existing.email,
+      fullName: existing.fullName,
+      redirectTo: `${frontendUrl}/auth/reset-password`,
+    });
+    if (!generated?.actionLink) throw new Error("Supabase did not return a recovery link");
+    await sendAccountAccessEmail({
+      agencyId: req.auth.agencyId,
+      email: existing.email,
+      fullName: existing.fullName,
+      actionLink: generated.actionLink,
+      kind: "reset",
+      audience: "staff",
+    });
+  } catch (error) {
+    logger.error("auth.team_member_password_reset_failed", {
+      requestId: req.requestId,
+      agencyId: req.auth.agencyId,
+      statusCode: error.statusCode,
+      code: error.code,
+      error: error.message,
+    });
+    throw invitationError(error, "password reset link");
+  }
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,

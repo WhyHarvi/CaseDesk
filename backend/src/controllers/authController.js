@@ -96,11 +96,27 @@ export async function acceptMemberInvitation(req, res) {
   if (membership.agency.onboardingStatus !== "active") {
     throw createHttpError(409, "Complete workspace onboarding before activating this account.", "AGENCY_SETUP_REQUIRED");
   }
-  if (user.status !== "invited") throw createHttpError(409, "This invitation has already been completed.", "INVITATION_COMPLETED");
+  // Same link + form is used for two cases: first-time onboarding
+  // ("invited" -> "active") and a staff-triggered password reset on an
+  // account that's already active — see sendPortalAccessLink in
+  // portalController.js, which emails a Supabase "recovery" link that
+  // lands here too. Only a genuinely unavailable account (e.g. "disabled")
+  // should be rejected.
+  const isFirstActivation = user.status === "invited";
+  if (!isFirstActivation && user.status !== "active") {
+    throw createHttpError(409, "This account is not available for a password reset.", "ACCOUNT_UNAVAILABLE");
+  }
   await updateAuthenticatedUser(req.accessToken, { password, data: { full_name: user.fullName } });
-  await prisma.user.update({ where: { id: user.id }, data: { status: "active", mustChangePassword: false } });
-  await recordActivity({ agencyId: membership.agencyId, userId: user.id, action: "MEMBER_INVITATION_ACCEPTED", details: `${membership.role} account activated` });
-  res.json({ success: true, message: "Your CaseDesk account is ready." });
+  if (isFirstActivation) {
+    await prisma.user.update({ where: { id: user.id }, data: { status: "active", mustChangePassword: false } });
+  }
+  await recordActivity({
+    agencyId: membership.agencyId,
+    userId: user.id,
+    action: isFirstActivation ? "MEMBER_INVITATION_ACCEPTED" : "MEMBER_PASSWORD_RESET",
+    details: isFirstActivation ? `${membership.role} account activated` : `${membership.role} account password reset`,
+  });
+  res.json({ success: true, message: isFirstActivation ? "Your CaseDesk account is ready." : "Your password has been updated." });
 }
 
 export default { getMe, logout, changePassword, getInvitation, acceptMemberInvitation };

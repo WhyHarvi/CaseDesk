@@ -493,7 +493,7 @@ export async function createPublicBookingPaymentHold(req, res) {
   }) : null;
   const existingClient = verification ? await prisma.client.findFirst({
     where: { agencyId: settings.agencyId, email: { equals: email, mode: "insensitive" } },
-    select: { assignedUserId: true },
+    select: { id: true, assignedUserId: true },
   }) : null;
 
   // Re-validate that the requested slot really is offered — never trust the widget.
@@ -521,6 +521,7 @@ export async function createPublicBookingPaymentHold(req, res) {
     endsAt,
     requestedConsultantId,
     preferredConsultantId: existingClient?.assignedUserId || null,
+    clientId: existingClient?.id || null,
     meetingMode,
     settings,
     location,

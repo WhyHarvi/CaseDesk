@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   createPublicBooking,
   createPublicBookingPaymentHold,
@@ -81,6 +81,36 @@ function clearPendingPayment(token) {
     sessionStorage.removeItem(paymentHoldStorageKey(token));
   } catch {
     /* No-op when browser storage is unavailable. */
+  }
+}
+
+function portalBookingSessionStorageKey(token) {
+  return `casedesk:portal-booking:${token}`;
+}
+
+function readPortalBookingSession(token) {
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem(portalBookingSessionStorageKey(token)) || "null",
+    );
+    if (!value?.verificationToken || new Date(value.expiresAt).getTime() <= Date.now()) {
+      sessionStorage.removeItem(portalBookingSessionStorageKey(token));
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function savePortalBookingSession(token, session) {
+  try {
+    sessionStorage.setItem(
+      portalBookingSessionStorageKey(token),
+      JSON.stringify(session),
+    );
+  } catch {
+    /* The booking can still continue in the current navigation. */
   }
 }
 
@@ -825,8 +855,21 @@ function CalendlyTimeStep({
 
 export default function PublicBookingPage() {
   const { token } = useParams();
+  const routeLocation = useLocation();
   const [searchParams] = useSearchParams();
   const offerToken = searchParams.get("offer") || "";
+  const portalSessionAtLoad = useRef(
+    routeLocation.state?.bookingVerificationToken
+      ? {
+          bookingClient: routeLocation.state.bookingClient,
+          verificationToken: routeLocation.state.bookingVerificationToken,
+          expiresAt: routeLocation.state.bookingSessionExpiresAt,
+          portalReturnTo: routeLocation.state.portalReturnTo,
+        }
+      : readPortalBookingSession(token),
+  ).current;
+  const portalBookingClient = portalSessionAtLoad?.bookingClient || null;
+  const portalReturnTo = portalSessionAtLoad?.portalReturnTo || "";
   const pendingPaymentAtLoad = useRef(readPendingPayment(token)).current;
   const [info, setInfo] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -837,9 +880,9 @@ export default function PublicBookingPage() {
   const [consultantId, setConsultantId] = useState("");
   const [slot, setSlot] = useState(null);
   const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
+    name: String(portalBookingClient?.fullName || ""),
+    email: String(portalBookingClient?.email || ""),
+    phone: String(portalBookingClient?.phone || ""),
     notes: "",
     website: "",
   });
@@ -859,12 +902,18 @@ export default function PublicBookingPage() {
   const [verification, setVerification] = useState({
     id: "",
     code: "",
-    token: "",
+    token: portalSessionAtLoad?.verificationToken || "",
     sending: false,
-    recognized: false,
+    recognized: Boolean(portalSessionAtLoad?.verificationToken),
     consultant: null,
   });
   const [cookieInfoOpen, setCookieInfoOpen] = useState(false);
+
+  useEffect(() => {
+    if (portalSessionAtLoad?.verificationToken) {
+      savePortalBookingSession(token, portalSessionAtLoad);
+    }
+  }, [portalSessionAtLoad, token]);
   // Persisted per booking-page token so a reload/new-tab resend reuses the
   // same key instead of minting a fresh one — otherwise the backend's
   // idempotency check (agencyId + idempotencyKey) never catches a
@@ -931,11 +980,22 @@ export default function PublicBookingPage() {
       if (saved.meetingMode) setMeetingMode(saved.meetingMode);
       if (saved.locationId) setLocationId(saved.locationId);
       if (saved.form)
-        setForm((current) => ({ ...current, ...saved.form, website: "" }));
+        setForm((current) => ({
+          ...current,
+          ...saved.form,
+          ...(portalBookingClient
+            ? {
+                name: String(portalBookingClient.fullName || saved.form.name || ""),
+                email: String(portalBookingClient.email || saved.form.email || ""),
+                phone: String(portalBookingClient.phone || saved.form.phone || ""),
+              }
+            : {}),
+          website: "",
+        }));
     } catch {
       /* Ignore an invalid browser draft. */
     }
-  }, [token, offerToken]);
+  }, [token, offerToken, portalBookingClient]);
 
   useEffect(() => {
     if (["done", "payment"].includes(step)) return;
@@ -1824,6 +1884,7 @@ export default function PublicBookingPage() {
                         required
                         type="email"
                         value={form.email}
+                        readOnly={Boolean(portalSessionAtLoad?.verificationToken)}
                         onChange={(e) => {
                           setForm((c) => ({ ...c, email: e.target.value }));
                           setVerification({
@@ -2541,6 +2602,16 @@ export default function PublicBookingPage() {
                       >
                         Manage this booking →
                       </motion.a>
+                    ) : null}
+                    {portalReturnTo ? (
+                      <motion.div variants={listItem} className="mt-5">
+                        <Link
+                          to={portalReturnTo}
+                          className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#E5E7EB] bg-white px-5 text-sm font-semibold text-[#1A1F36] transition-colors hover:border-[#006BFF] hover:text-[#006BFF]"
+                        >
+                          <ArrowLeft className="h-4 w-4" /> Back to client portal
+                        </Link>
+                      </motion.div>
                     ) : null}
                   </motion.div>
                 </motion.div>

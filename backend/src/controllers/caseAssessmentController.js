@@ -845,27 +845,35 @@ export async function saveCaseAssessment(req, res) {
     clientId: scopedCase.clientId,
     formData,
   });
-  const clientUsers = questionnaireSync.changes.some(({ current }) => current.sharing === "Shared")
+  const sharedQuestionnaireChanges = questionnaireSync.changes.filter(
+    ({ current }) => current.sharing === "Shared",
+  );
+  const clientUsers = sharedQuestionnaireChanges.length
     ? await clientRecipientIds(req.user.agencyId, scopedCase.clientId)
     : [];
-  for (const { previous, current } of questionnaireSync.changes) {
-    if (current.sharing !== "Shared") continue;
-    const type = !previous
-      ? "questionnaire.assigned"
-      : current.locked ? "questionnaire.locked" : previous.locked ? "questionnaire.reopened" : "questionnaire.updated";
+  if (sharedQuestionnaireChanges.length) {
+    const newlyAssigned = sharedQuestionnaireChanges.filter(({ previous }) => !previous).length;
+    const reopened = sharedQuestionnaireChanges.filter(
+      ({ previous, current }) => previous?.locked && !current.locked,
+    ).length;
+    const attentionRequired = newlyAssigned > 0 || reopened > 0;
     await notifyUsers({
       agencyId: req.user.agencyId,
       recipientIds: clientUsers,
       actorUserId: req.user.id,
-      type,
+      type: attentionRequired ? "questionnaire.assigned" : "questionnaire.updated",
       category: "questionnaires",
-      title: !previous ? `Questionnaire assigned: ${current.name}` : `Questionnaire updated: ${current.name}`,
-      body: current.dueAt ? `Due ${current.dueAt.toISOString()}` : null,
-      severity: current.locked ? "warning" : "info",
-      entityType: "questionnaire_assignment",
-      entityId: current.id,
+      title: attentionRequired
+        ? `${sharedQuestionnaireChanges.length} questionnaire ${sharedQuestionnaireChanges.length === 1 ? "item needs" : "items need"} your attention`
+        : "Your questionnaires were updated",
+      body: "Open Questionnaires to review the latest sections and due dates.",
+      severity: attentionRequired ? "warning" : "info",
+      attentionLevel: attentionRequired ? "action_required" : "update",
+      entityType: "questionnaire_collection",
+      entityId: scopedCase.id,
       actionUrl: "/client-portal/questionnaires",
-      dedupeKey: `questionnaire:${current.id}:${type}:${current.updatedAt.toISOString()}`,
+      dedupeKey: `case:${scopedCase.id}:questionnaire-collection`,
+      aggregate: true,
     });
   }
 

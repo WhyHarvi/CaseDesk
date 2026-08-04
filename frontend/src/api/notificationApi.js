@@ -1,7 +1,8 @@
 import api from "../services/api";
 
-export async function getNotifications({ page = 1, limit = 25, unread = false } = {}) {
+export async function getNotifications({ page = 1, limit = 25, unread = false, view = "action" } = {}) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  params.set("view", view);
   if (unread) params.set("unread", "true");
   const response = await api.get(`/notifications?${params.toString()}`);
   return response.data;

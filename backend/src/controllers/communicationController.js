@@ -18,6 +18,8 @@ import {
 } from "../services/communicationSlaService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { clientAccessWhere } from "../middleware/authorization.js";
+import { resolveNotifications } from "../services/notificationService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const directions = new Set(["Inbound", "Outbound", "Internal"]);
@@ -306,6 +308,48 @@ export async function getCommunicationProviders(req, res) {
   res.json({ data: providers, meta: { permissions } });
 }
 
+export async function getPortalChatStatus(req, res) {
+  await requireCommunicationPermission(req, "canView");
+  const client = await prisma.client.findFirst({
+    where: {
+      id: req.params.clientId,
+      agencyId: req.user.agencyId,
+      ...clientAccessWhere(req),
+    },
+    select: { id: true, email: true },
+  });
+  if (!client) throw createHttpError(404, "Client not found");
+
+  const link = await prisma.clientUser.findFirst({
+    where: { agencyId: req.user.agencyId, clientId: client.id },
+    select: {
+      createdAt: true,
+      user: {
+        select: {
+          email: true,
+          status: true,
+          memberships: {
+            where: { agencyId: req.user.agencyId, role: "client" },
+            select: { isActive: true },
+            take: 1,
+          },
+        },
+      },
+    },
+    orderBy: { isPrimary: "desc" },
+  });
+  const membershipActive = link?.user.memberships?.[0]?.isActive === true;
+  res.json({
+    data: {
+      hasPortal: Boolean(link),
+      active: Boolean(link && link.user.status === "active" && membershipActive),
+      status: link?.user.status || null,
+      email: link?.user.email || client.email || null,
+      invitedAt: link?.createdAt || null,
+    },
+  });
+}
+
 export async function getCommunicationRealtimeConfig(req, res) {
   await requireCommunicationPermission(req, "canUseChat");
   const caseItem = await scopedCase(req, req.params.caseId);
@@ -547,15 +591,33 @@ export async function createCommunicationMessage(req, res) {
   const conversationContext = requestedConversationId
     ? await prisma.communicationConversation.findFirst({
         where: { id: requestedConversationId, agencyId: req.user.agencyId, deletedAt: null },
-        select: { id: true, clientId: true, caseId: true, assignedToId: true },
+        select: { id: true, clientId: true, caseId: true, assignedToId: true, provider: true },
       })
     : null;
   if (requestedConversationId && !conversationContext) throw createHttpError(404, "Conversation not found");
   const requestedCaseId = clean(req.body.caseId, 80) || conversationContext?.caseId || "";
   const caseItem = requestedCaseId ? await scopedCase(req, requestedCaseId) : null;
-  if (!caseItem && !conversationContext) throw createHttpError(400, "A case or existing client conversation is required");
+  const requestedClientId = clean(req.body.clientId, 80);
+  const clientItem = requestedClientId
+    ? await prisma.client.findFirst({
+        where: {
+          id: requestedClientId,
+          agencyId: req.user.agencyId,
+          ...clientAccessWhere(req),
+        },
+        select: { id: true, assignedUserId: true },
+      })
+    : null;
+  if (requestedClientId && !clientItem)
+    throw createHttpError(404, "Client not found");
+  if (!caseItem && !conversationContext && !clientItem)
+    throw createHttpError(400, "A case, client, or existing conversation is required");
   if (caseItem && conversationContext && conversationContext.clientId !== caseItem.clientId) throw createHttpError(409, "The conversation does not belong to this case");
-  const clientId = caseItem?.clientId || conversationContext.clientId;
+  if (caseItem && clientItem && caseItem.clientId !== clientItem.id)
+    throw createHttpError(409, "The selected case does not belong to this client");
+  if (conversationContext && clientItem && conversationContext.clientId !== clientItem.id)
+    throw createHttpError(409, "The conversation does not belong to this client");
+  const clientId = caseItem?.clientId || conversationContext?.clientId || clientItem.id;
   const channel = channels.has(req.body.channel) ? req.body.channel : null;
   const direction = directions.has(req.body.direction)
     ? req.body.direction
@@ -567,6 +629,37 @@ export async function createCommunicationMessage(req, res) {
       ? sendPermission(channel)
       : "canView",
   );
+
+  const authenticatedPortalChat =
+    channel === "Chat" &&
+    (req.body.portalAudience === true ||
+      conversationContext?.provider === "AuthenticatedPortal");
+  if (authenticatedPortalChat) {
+    const activePortal = await prisma.clientUser.findFirst({
+      where: {
+        agencyId: req.user.agencyId,
+        clientId,
+        user: {
+          status: "active",
+          memberships: {
+            some: {
+              agencyId: req.user.agencyId,
+              role: "client",
+              isActive: true,
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!activePortal) {
+      throw createHttpError(
+        409,
+        "Activate this client's portal access before sending a portal message.",
+        "PORTAL_ACCESS_REQUIRED",
+      );
+    }
+  }
 
   const bodyText = clean(req.body.bodyText, 20000);
   const bodyHtml = clean(req.body.bodyHtml, 100000) || null;
@@ -636,7 +729,9 @@ export async function createCommunicationMessage(req, res) {
   );
   const provider =
     channel === "Chat"
-      ? "Supabase"
+      ? authenticatedPortalChat
+        ? "AuthenticatedPortal"
+        : "Supabase"
       : channel === "Email"
         ? "SMTP"
         : ["Sms", "Call"].includes(channel)
@@ -670,6 +765,22 @@ export async function createCommunicationMessage(req, res) {
             where: { id: parent.conversationId },
           })
         : null;
+    if (!conversation && channel === "Chat") {
+      conversation = await tx.communicationConversation.findFirst({
+        where: {
+          agencyId: req.user.agencyId,
+          clientId,
+          caseId: caseItem?.id || null,
+          channel: "Chat",
+          ...(authenticatedPortalChat
+            ? { provider: "AuthenticatedPortal" }
+            : {}),
+          state: { not: "Closed" },
+          deletedAt: null,
+        },
+        orderBy: { lastMessageAt: "desc" },
+      });
+    }
     if (!conversation) {
       conversation = await tx.communicationConversation.create({
         data: {
@@ -681,7 +792,7 @@ export async function createCommunicationMessage(req, res) {
           provider,
           providerThreadId: clean(req.body.providerThreadId, 300) || null,
           assignedToId:
-            req.body.assignedToId || caseItem?.assignedUserId || conversationContext?.assignedToId || req.user.id,
+            req.body.assignedToId || caseItem?.assignedUserId || clientItem?.assignedUserId || conversationContext?.assignedToId || req.user.id,
           state: nextConversationState(direction),
           lastMessageAt: occurredAt,
           lastInboundAt: direction === "Inbound" ? occurredAt : null,
@@ -841,6 +952,20 @@ export async function createCommunicationMessage(req, res) {
       metadata: { status: data.status },
     }),
   ]);
+  if (direction === "Outbound" && data.conversationId) {
+    await resolveNotifications({
+      agencyId: req.user.agencyId,
+      entityType: "conversation",
+      entityId: data.conversationId,
+      types: [
+        "communication.inbound_received",
+        "communication.client_chat_received",
+        "communication.portal_message_received",
+        "communication.response_due",
+        "communication.response_breached",
+      ],
+    });
+  }
   if (channel === "Chat" && caseItem) {
     await broadcastCaseCommunication({
       agencyId: req.user.agencyId,

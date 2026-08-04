@@ -94,6 +94,7 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
   endsAt,
   requestedConsultantId,
   preferredConsultantId = null,
+  clientId = null,
   meetingMode,
   settings,
   location,
@@ -162,6 +163,7 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
         startsAt,
         endsAt,
         idempotencyKey,
+        clientId,
         guestName: name,
         guestEmail: email,
         guestEmailNormalized: email,
@@ -196,7 +198,12 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
   let createdInvoice = null;
   let invoiceVoided = false;
   try {
-    const qbCustomerId = await resolveOrCreateQuickBooksCustomer(agencyId, { name, email, phone });
+    const qbCustomerId = await resolveQuickBooksCustomerForBooking(agencyId, {
+      clientId,
+      name,
+      email,
+      phone,
+    });
     const invoice = await createQuickBooksInvoice(agencyId, {
       customerId: qbCustomerId,
       itemId,

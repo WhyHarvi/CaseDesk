@@ -43,16 +43,27 @@ export async function listNotifications(req, res) {
   const page = positiveInteger(req.query.page, 1, 100000);
   const limit = positiveInteger(req.query.limit, 25, 100);
   const unreadOnly = req.query.unread === "1" || req.query.unread === "true";
+  const view = ["all", "action", "updates"].includes(req.query.view)
+    ? req.query.view
+    : "action";
+  const now = new Date();
   const where = {
     agencyId: req.auth.agencyId,
     recipientUserId: req.auth.userId,
     dismissedAt: null,
+    resolvedAt: null,
+    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    ...(view === "action"
+      ? { attentionLevel: "action_required" }
+      : view === "updates"
+        ? { attentionLevel: "update" }
+        : {}),
     ...(unreadOnly ? { readAt: null } : {}),
   };
   const [data, total, unread] = await Promise.all([
     prisma.notification.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: { lastOccurredAt: "desc" },
       skip: (page - 1) * limit,
       take: limit,
       select: {
@@ -66,6 +77,9 @@ export async function listNotifications(req, res) {
         entityId: true,
         actionUrl: true,
         metadata: true,
+        attentionLevel: true,
+        occurrenceCount: true,
+        lastOccurredAt: true,
         readAt: true,
         createdAt: true,
         actor: { select: { id: true, fullName: true } },
@@ -78,6 +92,9 @@ export async function listNotifications(req, res) {
         recipientUserId: req.auth.userId,
         dismissedAt: null,
         readAt: null,
+        resolvedAt: null,
+        attentionLevel: "action_required",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
     }),
   ]);
@@ -85,12 +102,16 @@ export async function listNotifications(req, res) {
 }
 
 export async function getUnreadNotificationCount(req, res) {
+  const now = new Date();
   const unread = await prisma.notification.count({
     where: {
       agencyId: req.auth.agencyId,
       recipientUserId: req.auth.userId,
       dismissedAt: null,
       readAt: null,
+      resolvedAt: null,
+      attentionLevel: "action_required",
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
   });
   res.json({ data: { unread } });
@@ -98,9 +119,19 @@ export async function getUnreadNotificationCount(req, res) {
 
 export async function markNotificationRead(req, res) {
   const notification = await ownNotification(req);
+  const read = req.body?.read !== false;
+  const resolvesOnOpen =
+    read &&
+    req.auth.role === "client" &&
+    (notification.type === "communication.staff_reply" ||
+      (notification.category === "documents" &&
+        notification.entityType === "client"));
   const data = await prisma.notification.update({
     where: { id: notification.id },
-    data: { readAt: req.body?.read === false ? null : notification.readAt || new Date() },
+    data: {
+      readAt: read ? notification.readAt || new Date() : null,
+      ...(resolvesOnOpen ? { resolvedAt: new Date() } : {}),
+    },
   });
   res.json({ data });
 }
@@ -112,6 +143,7 @@ export async function markAllNotificationsRead(req, res) {
       recipientUserId: req.auth.userId,
       dismissedAt: null,
       readAt: null,
+      resolvedAt: null,
     },
     data: { readAt: new Date() },
   });
@@ -142,6 +174,8 @@ export async function getNotificationPreferences(req, res) {
       quietHoursStart: null,
       quietHoursEnd: null,
       timezone: req.membership?.agency?.timezone || "America/Toronto",
+      deliveryMode: "immediate",
+      digestHour: 9,
     }],
   });
 }
@@ -154,6 +188,16 @@ export async function updateNotificationPreferences(req, res) {
     throw createHttpError(400, "dueSoonMinutes must be between 5 and 10080.", "VALIDATION_ERROR");
   }
   const timezone = req.body?.timezone === undefined ? undefined : String(req.body.timezone || "").trim().slice(0, 80);
+  const deliveryMode = req.body?.deliveryMode === undefined
+    ? undefined
+    : String(req.body.deliveryMode || "").trim();
+  if (deliveryMode !== undefined && !["immediate", "daily_digest"].includes(deliveryMode)) {
+    throw createHttpError(400, "Notification delivery mode is invalid.", "VALIDATION_ERROR");
+  }
+  const digestHour = req.body?.digestHour === undefined ? undefined : Number(req.body.digestHour);
+  if (digestHour !== undefined && (!Number.isInteger(digestHour) || digestHour < 0 || digestHour > 23)) {
+    throw createHttpError(400, "Digest hour must be between 0 and 23.", "VALIDATION_ERROR");
+  }
   if (timezone !== undefined) {
     try { new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date()); }
     catch { throw createHttpError(400, "Timezone is invalid.", "VALIDATION_ERROR"); }
@@ -164,6 +208,8 @@ export async function updateNotificationPreferences(req, res) {
     ...(typeof req.body?.smsEnabled === "boolean" ? { smsEnabled: req.body.smsEnabled } : {}),
     ...(dueSoonMinutes !== undefined ? { dueSoonMinutes } : {}),
     ...(timezone !== undefined ? { timezone } : {}),
+    ...(deliveryMode !== undefined ? { deliveryMode } : {}),
+    ...(digestHour !== undefined ? { digestHour } : {}),
     ...(req.body?.quietHoursStart !== undefined ? { quietHoursStart: validTime(req.body.quietHoursStart, "quietHoursStart") } : {}),
     ...(req.body?.quietHoursEnd !== undefined ? { quietHoursEnd: validTime(req.body.quietHoursEnd, "quietHoursEnd") } : {}),
   };

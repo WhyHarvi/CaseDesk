@@ -26,7 +26,7 @@ test("notifications are durable, tenant scoped, deduplicated, and user owned", a
   assert.match(server, /app\.use\("\/api\/notifications", requireAuth, notificationRoutes\)/);
 });
 
-test("deadline scheduler covers non-payment work and leaves payments untouched", async () => {
+test("deadline scheduler covers actionable work without duplicating appointment reminders", async () => {
   const [scheduler, delivery, service] = await Promise.all([
     source("../src/services/notificationScheduler.js"),
     source("../src/services/notificationDeliveryService.js"),
@@ -35,7 +35,8 @@ test("deadline scheduler covers non-payment work and leaves payments untouched",
 
   assert.match(scheduler, /taskNotifications/);
   assert.match(scheduler, /followUpNotifications/);
-  assert.match(scheduler, /appointmentNotifications/);
+  assert.doesNotMatch(scheduler, /async function appointmentNotifications/);
+  assert.match(scheduler, /dedicated[\s\S]*booking email\/SMS pipeline/);
   assert.match(scheduler, /documentNotifications/);
   assert.match(scheduler, /questionnaireNotifications/);
   assert.match(scheduler, /leadNotifications/);
@@ -46,6 +47,40 @@ test("deadline scheduler covers non-payment work and leaves payments untouched",
   assert.match(delivery, /status: "Consented"/);
   assert.match(service, /agencyId_recipientUserId_dedupeKey/);
   assert.match(service, /id !== actorUserId/);
+});
+
+test("notification policy groups incidents, separates actions, expires noise, and sends daily summaries", async () => {
+  const [schema, migration, service, scheduler, controller, panel, item, booking, inbound] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260804190000_quieter_notification_lifecycle/migration.sql"),
+    source("../src/services/notificationService.js"),
+    source("../src/services/notificationScheduler.js"),
+    source("../src/controllers/notificationController.js"),
+    source("../../frontend/src/components/notifications/NotificationPanel.jsx"),
+    source("../../frontend/src/components/notifications/NotificationItem.jsx"),
+    source("../src/services/bookingNotificationService.js"),
+    source("../src/services/inboundMailSyncService.js"),
+  ]);
+  assert.match(schema, /attentionLevel\s+String/);
+  assert.match(schema, /occurrenceCount\s+Int/);
+  assert.match(schema, /resolvedAt\s+DateTime\?/);
+  assert.match(schema, /expiresAt\s+DateTime\?/);
+  assert.match(schema, /deliveryMode\s+String/);
+  assert.match(migration, /ROW_NUMBER\(\) OVER/);
+  assert.match(service, /aggregate = false/);
+  assert.match(service, /occurrenceCount: \{ increment: 1 \}/);
+  assert.match(service, /export async function resolveNotifications/);
+  assert.match(controller, /attentionLevel: "action_required"/);
+  assert.match(controller, /resolvedAt: null/);
+  assert.match(panel, /Action required/);
+  assert.match(panel, /Updates/);
+  assert.match(item, /related updates/);
+  assert.match(scheduler, /sendDailyDigests/);
+  assert.match(scheduler, /resolveCompletedAndExpiredNotifications/);
+  assert.match(booking, /kind === "attended"/);
+  assert.match(booking, /frontDeskRecipientIds/);
+  assert.match(inbound, /aggregate: true/);
+  assert.match(inbound, /resolveNotifications/);
 });
 
 test("document, reminder, and questionnaire notification gaps are normalized", async () => {

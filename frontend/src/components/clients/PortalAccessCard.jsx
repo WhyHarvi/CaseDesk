@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, Copy, Loader2, ShieldCheck, ShieldOff, Smartphone, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Loader2, Mail, ShieldCheck, ShieldOff, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
@@ -28,10 +28,12 @@ export function usePortalAccess(clientId) {
   return { account, loading, error, reload: load };
 }
 
-function InviteDialog({ clientId, clientEmail, clientName, onClose, onInvited }) {
+function InviteDialog({ clientId, clientEmail, clientName, onClose, onInvited, reload }) {
   const [email, setEmail] = useState(clientEmail || "");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [manualLink, setManualLink] = useState("");
+  const [copied, setCopied] = useState(false);
 
   async function invite(event) {
     event.preventDefault();
@@ -39,7 +41,12 @@ function InviteDialog({ clientId, clientEmail, clientName, onClose, onInvited })
     setError("");
     try {
       const { data } = await api.post(`/clients/${clientId}/portal-account`, { email });
-      onInvited(data.message || "Portal invitation sent.");
+      reload();
+      if (data.manualInvitationLink) {
+        setManualLink(data.manualInvitationLink);
+      } else {
+        onInvited(data.message || "Portal invitation sent.");
+      }
     } catch (reason) {
       setError(reason.response?.data?.message || "The portal invitation could not be sent.");
     } finally {
@@ -49,25 +56,41 @@ function InviteDialog({ clientId, clientEmail, clientName, onClose, onInvited })
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/25 px-5 py-10 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) onClose(); }}>
-      <form onSubmit={invite} role="dialog" aria-modal="true" aria-labelledby="portal-invite-title" className="w-full max-w-md rounded-[1.8rem] border border-white bg-white p-6 shadow-2xl sm:p-7">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white"><Smartphone className="h-5 w-5" /></div>
-            <h2 id="portal-invite-title" className="text-xl font-semibold tracking-tight text-slate-950">Invite to client portal</h2>
-            <p className="mt-1.5 text-sm leading-6 text-slate-500">{clientName || "This client"} will receive a secure link to set a password and open their portal.</p>
+      {manualLink ? (
+        <section role="dialog" aria-modal="true" aria-labelledby="portal-invite-title" className="w-full max-w-md rounded-[1.8rem] border border-white bg-white p-6 shadow-2xl sm:p-7">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white"><Smartphone className="h-5 w-5" /></div>
+              <h2 id="portal-invite-title" className="text-xl font-semibold tracking-tight text-slate-950">Account created</h2>
+              <p className="mt-1.5 text-sm leading-6 text-slate-500">Email delivery is temporarily unavailable. Send this one-time setup link directly to {clientName || "the client"}.</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
-        </div>
-        <label className="mt-5 block text-sm font-medium text-slate-700">
-          Portal login email
-          <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="client@email.com" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" />
-        </label>
-        {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
-        <div className="mt-6 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="h-10 rounded-full px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
-          <button disabled={sending} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{sending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{sending ? "Sending…" : "Send invitation"}</button>
-        </div>
-      </form>
+          <div className="mt-5 break-all rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-600">{manualLink}</div>
+          <button type="button" onClick={async () => { await navigator.clipboard.writeText(manualLink); setCopied(true); }} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-800">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? "Copied" : "Copy secure link"}</button>
+          <p className="mt-4 text-center text-xs leading-5 text-slate-400">Treat this link like a password. Share it only with the intended client.</p>
+        </section>
+      ) : (
+        <form onSubmit={invite} role="dialog" aria-modal="true" aria-labelledby="portal-invite-title" className="w-full max-w-md rounded-[1.8rem] border border-white bg-white p-6 shadow-2xl sm:p-7">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white"><Smartphone className="h-5 w-5" /></div>
+              <h2 id="portal-invite-title" className="text-xl font-semibold tracking-tight text-slate-950">Invite to client portal</h2>
+              <p className="mt-1.5 text-sm leading-6 text-slate-500">{clientName || "This client"} will receive a secure link to set a password and open their portal.</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
+          </div>
+          <label className="mt-5 block text-sm font-medium text-slate-700">
+            Portal login email
+            <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="client@email.com" className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100" />
+          </label>
+          {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
+          <div className="mt-6 flex justify-end gap-2">
+            <button type="button" onClick={onClose} className="h-10 rounded-full px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
+            <button disabled={sending} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{sending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{sending ? "Sending…" : "Send invitation"}</button>
+          </div>
+        </form>
+      )}
     </div>,
     document.body,
   );
@@ -135,8 +158,12 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
   const [manageOpen, setManageOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
+  const [sendingLink, setSendingLink] = useState(false);
+  const [sendLinkError, setSendLinkError] = useState("");
 
   const portalUrl = `${window.location.origin}/client-portal`;
+  const isActive = account?.hasAccess && account.status === "active";
+  const linkLabel = !account?.hasAccess ? "Send onboarding link" : isActive ? "Send reset link" : "Resend onboarding link";
 
   async function copyPortalLink() {
     await navigator.clipboard.writeText(portalUrl);
@@ -144,8 +171,23 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
     setTimeout(() => setCopied(false), 1600);
   }
 
+  async function sendLink() {
+    setSendingLink(true);
+    setSendLinkError("");
+    setNotice("");
+    try {
+      const { data } = await api.post(`/clients/${clientId}/portal-account/send-link`);
+      setNotice(data.message || "Link emailed.");
+      reload();
+    } catch (reason) {
+      setSendLinkError(reason.response?.data?.message || "The link could not be sent.");
+    } finally {
+      setSendingLink(false);
+    }
+  }
+
   return (
-    <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+    <article id="client-portal-access" className="scroll-mt-24 rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Portal</p>
@@ -177,6 +219,7 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
 
       {notice ? <p className="mt-3 rounded-xl bg-emerald-50 px-3.5 py-2.5 text-sm font-medium text-emerald-700">{notice}</p> : null}
       {error && !loading ? <p className="mt-3 rounded-xl bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800">{error}</p> : null}
+      {sendLinkError ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{sendLinkError}</p> : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
         {account?.hasAccess ? (
@@ -200,6 +243,12 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
             <ArrowUpRight className="h-4 w-4" />
           </button>
         )}
+        {!loading && account?.status !== "disabled" ? (
+          <button type="button" disabled={sendingLink} onClick={sendLink} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:opacity-50">
+            {sendingLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+            {sendingLink ? "Sending…" : linkLabel}
+          </button>
+        ) : null}
       </div>
 
       {inviteOpen ? (
@@ -209,6 +258,7 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
           clientName={clientName}
           onClose={() => setInviteOpen(false)}
           onInvited={(message) => { setInviteOpen(false); setNotice(message); reload(); }}
+          reload={reload}
         />
       ) : null}
       {manageOpen && account?.hasAccess ? (
@@ -262,6 +312,7 @@ export function PortalAccessButton({ clientId, clientEmail, clientName }) {
           clientName={clientName}
           onClose={() => setInviteOpen(false)}
           onInvited={(message) => { setInviteOpen(false); setNotice(message); reload(); }}
+          reload={reload}
         />
       ) : null}
     </>

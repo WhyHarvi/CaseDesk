@@ -3,10 +3,9 @@ import {
   deleteAuthUser,
   findAuthUserByEmail,
   generateAuthLink,
-  inviteAuthUser,
-  sendPasswordRecovery,
   updateAuthUser,
 } from "../services/supabaseAuth.js";
+import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { logger } from "../services/logger.js";
@@ -82,7 +81,7 @@ function consultantPayload(body) {
   };
 }
 
-function invitationError(error) {
+function invitationError(error, action = "invitation") {
   const message = String(error?.message || "").toLowerCase();
   if (error?.statusCode === 429 || message.includes("rate limit")) {
     return createHttpError(
@@ -111,7 +110,7 @@ function invitationError(error) {
   if (error?.code === "AUTH_NOT_CONFIGURED") return error;
   return createHttpError(
     502,
-    "The consultant invitation could not be sent. Please try again shortly.",
+    `The consultant ${action} could not be sent. Please try again shortly.`,
     "AUTH_INVITATION_FAILED",
   );
 }
@@ -132,6 +131,7 @@ export async function createConsultant(req, res) {
   let authUser;
   let authUserCreated = false;
   let manualInvitationLink = null;
+  let generated;
   const frontendUrl = String(
     process.env.FRONTEND_URL || "http://localhost:5173",
   )
@@ -139,12 +139,17 @@ export async function createConsultant(req, res) {
     .trim()
     .replace(/\/$/, "");
   try {
-    authUser = await inviteAuthUser({
+    const existingAuthUser = await findAuthUserByEmail(input.email);
+    generated = await generateAuthLink({
+      type: existingAuthUser ? "recovery" : "invite",
       email: input.email,
       fullName: input.fullName,
       redirectTo: `${frontendUrl}/auth/accept-invite`,
     });
-    authUserCreated = true;
+    authUser = existingAuthUser || generated.user;
+    authUserCreated = !existingAuthUser;
+    if (!authUser?.id || !generated.actionLink)
+      throw new Error("Supabase did not return an invitation link");
   } catch (error) {
     logger.error("auth.consultant_invitation_failed", {
       requestId: req.requestId,
@@ -153,32 +158,28 @@ export async function createConsultant(req, res) {
       code: error.code,
       error: error.message,
     });
-    const rateLimited =
-      error?.statusCode === 429 || /rate limit/i.test(error?.message || "");
-    if (!rateLimited) throw invitationError(error);
-    try {
-      const existingAuthUser = await findAuthUserByEmail(input.email);
-      const generated = await generateAuthLink({
-        type: existingAuthUser ? "recovery" : "invite",
-        email: input.email,
-        fullName: input.fullName,
-        redirectTo: `${frontendUrl}/auth/accept-invite`,
-      });
-      authUser = existingAuthUser || generated.user;
-      authUserCreated = !existingAuthUser;
-      manualInvitationLink = generated.actionLink;
-      if (!authUser?.id || !manualInvitationLink)
-        throw new Error("Supabase did not return an invitation link");
-    } catch (fallbackError) {
-      logger.error("auth.consultant_invitation_fallback_failed", {
-        requestId: req.requestId,
-        agencyId: req.auth.agencyId,
-        statusCode: fallbackError.statusCode,
-        code: fallbackError.code,
-        error: fallbackError.message,
-      });
-      throw invitationError(error);
-    }
+    throw invitationError(error);
+  }
+
+  // Best-effort: if the agency's mailbox isn't reachable, still create the
+  // account and hand staff the link to send manually rather than failing
+  // the whole invite.
+  try {
+    await sendAccountAccessEmail({
+      agencyId: req.auth.agencyId,
+      email: input.email,
+      fullName: input.fullName,
+      actionLink: generated.actionLink,
+      kind: authUserCreated ? "onboarding" : "reset",
+      audience: "staff",
+    });
+  } catch (mailError) {
+    logger.warn("auth.consultant_invitation_email_failed", {
+      requestId: req.requestId,
+      agencyId: req.auth.agencyId,
+      error: mailError.message,
+    });
+    manualInvitationLink = generated.actionLink;
   }
 
   try {
@@ -351,7 +352,32 @@ export async function resetConsultantPassword(req, res) {
     .split(",")[0]
     .trim()
     .replace(/\/$/, "");
-  await sendPasswordRecovery(user.email, `${frontendUrl}/auth/reset-password`);
+  try {
+    const generated = await generateAuthLink({
+      type: "recovery",
+      email: user.email,
+      fullName: user.fullName,
+      redirectTo: `${frontendUrl}/auth/reset-password`,
+    });
+    if (!generated?.actionLink) throw new Error("Supabase did not return a recovery link");
+    await sendAccountAccessEmail({
+      agencyId: req.auth.agencyId,
+      email: user.email,
+      fullName: user.fullName,
+      actionLink: generated.actionLink,
+      kind: "reset",
+      audience: "staff",
+    });
+  } catch (error) {
+    logger.error("auth.consultant_password_reset_failed", {
+      requestId: req.requestId,
+      agencyId: req.auth.agencyId,
+      statusCode: error.statusCode,
+      code: error.code,
+      error: error.message,
+    });
+    throw invitationError(error, "password reset link");
+  }
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,

@@ -5,7 +5,11 @@ import { resolveAgencyImapConfig } from "./agencyMailService.js";
 import { ingestInboundCommunication } from "../controllers/communicationWebhookController.js";
 import { storeInboundCommunicationAttachments } from "../controllers/communicationAttachmentController.js";
 import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
-import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import {
+  adminRecipientIds,
+  notifyUsers,
+  resolveNotifications,
+} from "./notificationService.js";
 import {
   agencyMicrosoftGraphClient,
   microsoftGraphClient,
@@ -140,6 +144,12 @@ async function syncAgencyMailbox(settings) {
           lastInboundSyncStatus: "Connected",
           lastInboundSyncMessage: "Mailbox checked; no new messages.",
         });
+      await resolveNotifications({
+        agencyId: settings.agencyId,
+        entityType: "agency_mail_settings",
+        entityId: settings.id,
+        types: ["settings.inbound_mail_sync_failed"],
+      });
     } finally {
       lock.release();
     }
@@ -164,7 +174,9 @@ async function syncAgencyMailbox(settings) {
       entityId: settings.id,
       actionUrl: "/app/settings",
       channels: ["in_app"],
-      dedupeKey: `inbound-mail-sync:${settings.id}:${new Date().toISOString().slice(0, 10)}`,
+      dedupeKey: `inbound-mail-sync:${settings.id}`,
+      aggregate: true,
+      attentionLevel: "action_required",
     }).catch(() => {});
   } finally {
     await client.logout().catch(() => {});
@@ -264,6 +276,12 @@ async function syncPersonalMicrosoftMailbox(connection) {
         lastError: null,
       },
     });
+    await resolveNotifications({
+      agencyId: connection.agencyId,
+      entityType: "user_mailbox_connection",
+      entityId: connection.id,
+      types: ["settings.personal_mail_sync_failed"],
+    });
   } catch (error) {
     const message = String(error.message || "Microsoft mailbox synchronization failed.").slice(0, 500);
     await prisma.userMailboxConnection.update({
@@ -282,7 +300,9 @@ async function syncPersonalMicrosoftMailbox(connection) {
       entityId: connection.id,
       actionUrl: "/app/settings?section=personal-email",
       channels: ["in_app"],
-      dedupeKey: `personal-mail-sync:${connection.id}:${new Date().toISOString().slice(0, 10)}`,
+      dedupeKey: `personal-mail-sync:${connection.id}`,
+      aggregate: true,
+      attentionLevel: "action_required",
     }).catch(() => {});
   }
 }
@@ -403,6 +423,12 @@ async function syncAgencyMicrosoftMailbox(connection) {
         lastError: null,
       },
     });
+    await resolveNotifications({
+      agencyId: connection.agencyId,
+      entityType: "agency_microsoft_mailbox_connection",
+      entityId: connection.id,
+      types: ["settings.system_mail_sync_failed"],
+    });
   } catch (error) {
     const message = String(error.message || "System Microsoft mailbox synchronization failed.").slice(0, 500);
     await prisma.agencyMicrosoftMailboxConnection.update({
@@ -426,7 +452,9 @@ async function syncAgencyMicrosoftMailbox(connection) {
       entityId: connection.id,
       actionUrl: "/app/settings?section=agency-email",
       channels: ["in_app"],
-      dedupeKey: `system-mail-sync:${connection.id}:${new Date().toISOString().slice(0, 10)}`,
+      dedupeKey: `system-mail-sync:${connection.id}`,
+      aggregate: true,
+      attentionLevel: "action_required",
     }).catch(() => {});
   }
 }

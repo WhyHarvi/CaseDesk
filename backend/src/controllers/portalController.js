@@ -4,9 +4,11 @@ import prisma from "../services/prisma/client.js";
 import { hasPortalCapability } from "../services/portalAccessService.js";
 import {
   deleteAuthUser,
-  inviteAuthUser,
+  findAuthUserByEmail,
+  generateAuthLink,
   updateAuthUser,
 } from "../services/supabaseAuth.js";
+import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
 import {
   removeDocumentFile,
   requireDocumentFile,
@@ -138,19 +140,21 @@ export async function createPortalAccount(req, res) {
       "ACCOUNT_EXISTS",
     );
 
-  let authUser;
+  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173")
+    .split(",")[0]
+    .trim()
+    .replace(/\/$/, "");
+  const existingAuthUser = await findAuthUserByEmail(email).catch(() => null);
+  let generated;
   try {
-    const frontendUrl = String(
-      process.env.FRONTEND_URL || "http://localhost:5173",
-    )
-      .split(",")[0]
-      .trim()
-      .replace(/\/$/, "");
-    authUser = await inviteAuthUser({
+    generated = await generateAuthLink({
+      type: existingAuthUser ? "recovery" : "invite",
       email,
       fullName,
       redirectTo: `${frontendUrl}/auth/accept-invite`,
     });
+    if (!generated?.actionLink || !generated?.user?.id)
+      throw new Error("Supabase did not return an invitation link");
   } catch {
     throw createHttpError(
       502,
@@ -158,6 +162,26 @@ export async function createPortalAccount(req, res) {
       "AUTH_INVITATION_FAILED",
     );
   }
+  const authUser = existingAuthUser || generated.user;
+  const authUserCreated = !existingAuthUser;
+
+  // Best-effort: if the agency's mailbox isn't reachable, still create the
+  // account and hand staff the link to send manually rather than failing
+  // the whole invite (mirrors createTeamMember/createConsultant).
+  let manualInvitationLink = null;
+  try {
+    await sendAccountAccessEmail({
+      agencyId: req.auth.agencyId,
+      email,
+      fullName,
+      actionLink: generated.actionLink,
+      kind: existingAuthUser ? "reset" : "onboarding",
+      audience: "client",
+    });
+  } catch {
+    manualInvitationLink = generated.actionLink;
+  }
+
   try {
     const user = await prisma.user.create({
       data: {
@@ -199,12 +223,79 @@ export async function createPortalAccount(req, res) {
       .json({
         success: true,
         data: user,
-        message: "Client portal invitation sent.",
+        message: manualInvitationLink
+          ? "Account created. Copy and send the secure invitation link."
+          : "Client portal invitation sent.",
+        manualInvitationLink,
       });
   } catch (error) {
-    await deleteAuthUser(authUser.id).catch(() => {});
+    if (authUserCreated) await deleteAuthUser(authUser.id).catch(() => {});
     throw error;
   }
+}
+
+// Staff-triggered, from the client's own profile — regenerates and emails
+// a fresh Supabase link on demand, using the agency's own mailbox instead
+// of relying on Supabase's invite-email sending. Doubles as "send
+// onboarding link" (no portal account yet) and "send password reset link"
+// (account already exists, any status) depending on what's already there.
+export async function sendPortalAccessLink(req, res) {
+  if (req.auth.role !== "admin" && !hasPortalCapability(req, "manageClientPortal")) {
+    throw createHttpError(403, "You do not have permission to manage portal access.", "FORBIDDEN");
+  }
+  const client = await prisma.client.findFirst({
+    where: { id: req.params.clientId, agencyId: req.auth.agencyId },
+    select: { id: true, fullName: true, email: true },
+  });
+  if (!client) throw createHttpError(404, "Client not found.", "NOT_FOUND");
+
+  const existingLink = await prisma.clientUser.findFirst({
+    where: { agencyId: req.auth.agencyId, clientId: client.id },
+    select: { userId: true, user: { select: { id: true, email: true, fullName: true, authUserId: true } } },
+    orderBy: { isPrimary: "desc" },
+  });
+
+  const email = String(existingLink?.user?.email || client.email || "").trim().toLowerCase();
+  const fullName = existingLink?.user?.fullName || client.fullName;
+  if (!email || !email.includes("@")) throw createHttpError(400, "This client has no email on file.", "VALIDATION_ERROR");
+
+  if (!existingLink && await prisma.user.findUnique({ where: { email }, select: { id: true } })) {
+    throw createHttpError(409, "An account with this email already exists.", "ACCOUNT_EXISTS");
+  }
+
+  const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+  const hasAuthUser = existingLink ? Boolean(existingLink.user.authUserId) : Boolean(await findAuthUserByEmail(email).catch(() => null));
+  const kind = hasAuthUser ? "recovery" : "invite";
+  const generated = await generateAuthLink({ type: kind, email, fullName, redirectTo: `${frontendUrl}/auth/accept-invite` }).catch(() => null);
+  if (!generated?.actionLink || !generated?.user?.id) {
+    throw createHttpError(502, "The portal link could not be generated.", "AUTH_LINK_FAILED");
+  }
+
+  if (!existingLink) {
+    await prisma.user.create({
+      data: {
+        agencyId: req.auth.agencyId,
+        authUserId: generated.user.id,
+        email,
+        fullName,
+        role: "client",
+        status: "invited",
+        mustChangePassword: false,
+        memberships: { create: { agencyId: req.auth.agencyId, role: "client", isActive: true, mustChangePassword: false } },
+        clientUsers: { create: { agencyId: req.auth.agencyId, clientId: client.id, relationship: "self", isPrimary: true } },
+      },
+    });
+  }
+
+  await sendAccountAccessEmail({ agencyId: req.auth.agencyId, email, fullName, actionLink: generated.actionLink, kind: hasAuthUser ? "reset" : "onboarding", audience: "client" });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: client.id,
+    action: hasAuthUser ? "CLIENT_PORTAL_LINK_RESENT" : "CLIENT_PORTAL_INVITED",
+    details: `${hasAuthUser ? "Password reset" : "Onboarding"} link emailed to ${client.fullName}`,
+  });
+  res.json({ success: true, message: hasAuthUser ? "Reset link emailed." : "Onboarding link emailed." });
 }
 
 export async function getPortalAccountStatus(req, res) {

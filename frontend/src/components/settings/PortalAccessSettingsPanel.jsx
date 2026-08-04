@@ -43,7 +43,11 @@ const caseTabOptions = [
 
 const dataOptions = [
   ["leads", "Lead records", "Controls which inquiries appear"],
-  ["clients", "Client records", "Controls which client profiles appear"],
+  [
+    "clients",
+    "Client access",
+    "Assigned includes direct profile assignments and clients connected to an assigned case",
+  ],
   ["cases", "Case records", "Controls which case files appear"],
 ];
 
@@ -396,8 +400,8 @@ export default function PortalAccessSettingsPanel() {
                 </Section>
                 <Section
                   icon={Users}
-                  title="Which records they can see"
-                  detail="Assigned means records connected to that team member; All means every agency record."
+                  title="Client and record access"
+                  detail="Assigned clients are inherited from case access or an intentional direct profile assignment. A client without either stays private to administrators."
                 >
                   <div className="divide-y divide-slate-100">
                     {dataOptions.map(([key, label, detail]) => (

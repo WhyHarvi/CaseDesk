@@ -10,6 +10,7 @@ import {
   exportCommunication,
   getCommunicationConversation,
   getCommunicationProviders,
+  getPortalChatStatus,
   getCommunicationRealtimeConfig,
   getCommunicationRetentionPolicy,
   getCurrentCommunicationPermissions,
@@ -59,6 +60,10 @@ import {
 const router = Router();
 
 router.get("/providers", asyncHandler(getCommunicationProviders));
+router.get(
+  "/clients/:clientId/portal-chat-status",
+  asyncHandler(getPortalChatStatus),
+);
 router.get(
   "/realtime/case/:caseId",
   asyncHandler(getCommunicationRealtimeConfig),

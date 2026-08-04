@@ -14,6 +14,7 @@ import { asyncHandler } from "../utils/http.js";
 import {
   createPortalAccount,
   getPortalAccountStatus,
+  sendPortalAccessLink,
   setPortalAccountAccess,
 } from "../controllers/portalController.js";
 import {
@@ -48,6 +49,12 @@ router.post(
   requirePortalCapability("manageClientPortal"),
   rateLimit({ windowMs: 60_000, max: 15 }),
   asyncHandler(setPortalAccountAccess),
+);
+router.post(
+  "/:clientId/portal-account/send-link",
+  requirePortalCapability("manageClientPortal"),
+  rateLimit({ windowMs: 15 * 60_000, max: 20 }),
+  asyncHandler(sendPortalAccessLink),
 );
 router.use("/:id", requireClientAccess());
 router.get(

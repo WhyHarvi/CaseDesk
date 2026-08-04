@@ -34,12 +34,12 @@ test("agency onboarding activation updates identity and tenant state atomically"
 
 test("consultants use secure invitations instead of temporary passwords", async () => {
   const controller = await source("../src/controllers/adminConsultantController.js");
-  assert.match(controller, /inviteAuthUser/);
+  assert.match(controller, /generateAuthLink/);
   assert.match(controller, /status: "invited"/);
   const createSection = controller.slice(controller.indexOf("export async function createConsultant"), controller.indexOf("export async function listConsultants"));
   assert.doesNotMatch(createSection, /temporaryPassword|createAuthUser/);
   assert.doesNotMatch(controller, /temporaryPassword/);
-  assert.match(controller, /sendPasswordRecovery/);
+  assert.match(controller, /sendAccountAccessEmail/);
   assert.match(controller, /INVITATION_RATE_LIMITED/);
   assert.match(controller, /INVITATION_REDIRECT_NOT_CONFIGURED/);
   assert.match(controller, /generateAuthLink/);
@@ -58,7 +58,8 @@ test("safe operational auth errors are not replaced with a generic 500 message",
 test("client portal members use the same secure invitation activation", async () => {
   const controller = await source("../src/controllers/portalController.js");
   const createSection = controller.slice(controller.indexOf("export async function createPortalAccount"), controller.indexOf("export async function portalMe"));
-  assert.match(createSection, /inviteAuthUser/);
+  assert.match(createSection, /generateAuthLink/);
+  assert.match(createSection, /sendAccountAccessEmail/);
   assert.match(createSection, /status: "invited"/);
   assert.doesNotMatch(createSection, /temporaryPassword|createAuthUser/);
 });

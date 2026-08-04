@@ -773,7 +773,11 @@ function clientPayload(body, existing = null) {
 
 export async function createClient(req, res) {
   req.body = { ...(req.body || {}) };
-  if (req.auth.role === "consultant") req.body.assignedUserId = req.auth.userId;
+  // A standalone client profile has no work owner yet. Consultants may not
+  // assign it to another staff member, while administrators can still make
+  // an explicit Client Access assignment when one is actually required.
+  if (req.auth.role === "consultant" && req.body.assignedUserId)
+    req.body.assignedUserId = req.auth.userId;
   await validateAssignedUser(req);
   const payload = clientPayload(req.body);
   payload.assignedUserId = req.body.assignedUserId || null;
@@ -855,11 +859,15 @@ export async function updateClient(req, res) {
   try {
     const data = await prisma.$transaction(async (tx) => {
       await lockAgencyContactIntake(tx, req.auth.agencyId);
-      await assertNoContactDuplicate(tx, {
-        agencyId: req.auth.agencyId,
-        ...payload,
-        excludeClientId: existing.id,
-      });
+      const contactChanged =
+        payload.phoneNormalized !== existing.phoneNormalized ||
+        payload.emailNormalized !== existing.emailNormalized;
+      if (contactChanged)
+        await assertNoContactDuplicate(tx, {
+          agencyId: req.auth.agencyId,
+          ...payload,
+          excludeClientId: existing.id,
+        });
       const updatedClient = await tx.client.update({
         where: { id: existing.id },
         data: payload,
@@ -1093,7 +1101,7 @@ async function validateAssignedUser(req) {
       memberships: {
         some: {
           agencyId: req.auth.agencyId,
-          role: { in: ["admin", "consultant"] },
+          role: { in: ["admin", "consultant", "frontdesk"] },
           isActive: true,
         },
       },

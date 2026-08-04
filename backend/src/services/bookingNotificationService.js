@@ -3,7 +3,12 @@ import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
-import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import {
+  adminRecipientIds,
+  frontDeskRecipientIds,
+  notifyUsers,
+  resolveNotifications,
+} from "./notificationService.js";
 import { releaseExpiredWaitlistHolds } from "./bookingWaitlistService.js";
 import { publicBookingManageUrl, publicBookingPageUrl } from "./bookingPublicLinkService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
@@ -420,6 +425,8 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
   }
 
   if (!channel || channel === "staff") try {
+    // Attendance is recorded in the appointment history. It is not an alert.
+    if (kind === "attended") return { suppressed: true };
     if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
     const paidHold = kind === "cancelled"
       ? await prisma.bookingPaymentHold.findFirst({
@@ -427,11 +434,13 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
         select: { id: true, amount: true, qbInvoiceId: true },
       })
       : null;
-    const coordinatorIds = await schedulingCoordinatorRecipientIds(agencyId);
-    const recipients = new Set(coordinatorIds);
+    const operationalIds = await frontDeskRecipientIds(agencyId);
+    const recipients = new Set(operationalIds);
     if (appointment.assignedToId) recipients.add(appointment.assignedToId);
-    const actorIsCoordinator = actorUserId ? coordinatorIds.includes(actorUserId) : false;
-    if (actorUserId && !actorIsCoordinator) recipients.delete(actorUserId);
+    if (!recipients.size) {
+      (await adminRecipientIds(agencyId)).forEach((id) => recipients.add(id));
+    }
+    if (actorUserId) recipients.delete(actorUserId);
     if (recipients.size) {
       await notifyUsers({
         agencyId,
@@ -442,6 +451,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
         title: paidHold ? `Paid appointment cancelled — review refund: ${appointment.subject}` : `${copy.title}: ${appointment.subject}`,
         body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when} · ${meetingModeLabel(appointmentMeetingMode(appointment))}${appointment.location && appointmentMeetingMode(appointment) === MEETING_MODES.IN_PERSON ? ` · ${appointment.location}` : ""}${paidHold ? ` · $${Number(paidHold.amount).toFixed(2)} was paid${paidHold.qbInvoiceId ? ` on QuickBooks invoice ${paidHold.qbInvoiceId}` : ""}. Review the cancellation terms and issue a QuickBooks refund when required.` : ""}`,
         severity: ["cancelled", "no_show"].includes(kind) ? "warning" : "info",
+        attentionLevel: paidHold || kind === "no_show" ? "action_required" : "update",
         entityType: "appointment",
         entityId: appointment.id,
         actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}`,
@@ -455,7 +465,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
           qbInvoiceId: paidHold?.qbInvoiceId || null,
         },
         dedupeKey: `appointment:${appointment.id}:${kind}:${deliveryId || `${new Date(appointment.startsAt).toISOString()}:${dedupeSuffix || "base"}`}:staff`,
-        includeActor: actorIsCoordinator,
+        includeActor: false,
       });
     }
   } catch (error) {
@@ -507,6 +517,7 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
 }
 
 export async function sendBookingStaffNotification({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma }) {
+  if (kind === "attended") return { skipped: true };
   const startsAtVersion = new Date(appointment.startsAt).toISOString();
   const revision = bookingMessageRevision(appointment);
   await db.bookingMessageDelivery.createMany({
@@ -522,6 +533,7 @@ export async function sendBookingStaffNotification({ agencyId, appointment, kind
     skipDuplicates: true,
   });
   if (db === prisma) void processBookingDeliveryPass();
+  return { skipped: false };
 }
 
 // A BookingPaymentHold that expires/voids unpaid never became a real
@@ -690,6 +702,12 @@ async function processBookingDeliveryPass() {
           data: { status: "sent", sentAt: new Date(), lastError: null },
         });
         if (!sent.count) continue;
+        await resolveNotifications({
+          agencyId: job.agencyId,
+          entityType: "integration",
+          entityId: `appointment-${job.channel}`,
+          types: ["appointment.delivery_failed"],
+        });
         if (job.kind === "reminder") {
           const remaining = await prisma.bookingMessageDelivery.count({ where: { appointmentId: job.appointmentId, kind: "reminder", status: { not: "sent" } } });
           if (!remaining) await prisma.appointment.update({ where: { id: job.appointmentId }, data: { reminderSentAt: new Date() } });
@@ -710,17 +728,19 @@ async function processBookingDeliveryPass() {
         if (exhausted) {
           await notifyUsers({
             agencyId: job.agencyId,
-            recipientIds: await schedulingCoordinatorRecipientIds(job.agencyId),
+            recipientIds: await adminRecipientIds(job.agencyId),
             type: "appointment.delivery_failed",
             category: "appointments",
             title: "Appointment message delivery failed",
             body: `${job.channel.toUpperCase()} delivery failed after ${attempts} attempts.`,
             severity: "critical",
-            entityType: "appointment",
-            entityId: job.appointmentId,
+            entityType: "integration",
+            entityId: `appointment-${job.channel}`,
             actionUrl: "/app/calendar",
-            dedupeKey: `appointment:${job.appointmentId}:delivery:${job.id}:failed`,
+            dedupeKey: `appointment-delivery:${job.channel}:failed`,
             channels: ["in_app"],
+            aggregate: true,
+            attentionLevel: "action_required",
           }).catch(() => {});
         }
       }

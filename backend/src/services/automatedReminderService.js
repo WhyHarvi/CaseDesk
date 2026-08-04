@@ -231,14 +231,16 @@ async function deliverReminder({ policy, delivery, target, agencyName, effective
         recipientIds: recipients,
         type: `automated_reminder.${policy.kind.toLowerCase()}`,
         category: policy.kind === "Questionnaire" ? "questionnaires" : policy.kind === "Invoice" ? "cases" : "documents",
-        title: `${labelFor[policy.kind]} reminder: ${target.itemName}`,
-        body: `Reminder ${delivery.sequence} of ${policy.maxReminders} · due ${values.dueDate}`,
+        title: `${labelFor[policy.kind]} items need your attention`,
+        body: `Latest reminder: ${target.itemName} · due ${values.dueDate}`,
         severity: "warning",
-        entityType: policy.kind.toLowerCase(),
-        entityId: target.id,
+        entityType: "client",
+        entityId: target.clientId,
         actionUrl: portalPath[policy.kind],
         channels: ["in_app"],
-        dedupeKey: `automated-reminder:${policy.id}:${target.id}:${delivery.sequence}:portal`,
+        dedupeKey: `client:${target.clientId}:${policy.kind.toLowerCase()}-reminders`,
+        aggregate: true,
+        attentionLevel: "action_required",
       });
       update.portalSentAt = new Date();
       successes.push("portal");

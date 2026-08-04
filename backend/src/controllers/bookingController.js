@@ -1319,7 +1319,10 @@ export async function convertAppointmentToClient(req, res) {
       fullName: appointment.guestName,
       ...contact,
       status: "Active",
-      assignedUserId: appointment.assignedToId,
+      // Saving an appointment guest creates a client profile, not a case.
+      // Keep that profile unassigned until a case grants access or an admin
+      // deliberately assigns the client through Client Access.
+      assignedUserId: null,
     } });
     await tx.appointment.update({ where: { id: appointment.id }, data: { clientId: created.id } });
     await tx.note.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });

@@ -62,6 +62,9 @@ test("page middleware and data scopes enforce the membership policy", () => {
   assert.equal(hasPortalCapability(req, "financialData"), false);
   assert.equal(portalDataScope(req, "clients"), "assigned");
   assert.deepEqual(clientAccessWhere(req).OR[0], { assignedUserId: "staff-1" });
+  assert.deepEqual(clientAccessWhere(req).OR[1].cases.some.OR[0], {
+    assignedUserId: "staff-1",
+  });
   assert.ok(Array.isArray(caseAccessWhere(req).OR));
   assert.deepEqual(leadAccessWhere(req), {});
 
@@ -106,7 +109,8 @@ test("Portal Access is admin-only and wired to both UI and server routes", async
   assert.match(settings, /isAdmin && activeSection === "portal-access"/);
   assert.match(panel, /Workspace pages/);
   assert.match(panel, /Case workspace tabs/);
-  assert.match(panel, /Which records they can see/);
+  assert.match(panel, /Client and record access/);
+  assert.match(panel, /clients connected to an assigned case/);
   assert.match(appRoutes, /PortalAccessRoute page=\{page\}/);
   assert.match(sidebar, /access\.pages\[item\.accessKey\]/);
   assert.match(server, /requirePortalPage\("clients"\)/);

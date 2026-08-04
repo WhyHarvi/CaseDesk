@@ -39,7 +39,7 @@ export function NotificationProvider({ children }) {
   const [items, setItems] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [meta, setMeta] = useState({ page: 1, total: 0 });
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("action");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -57,7 +57,7 @@ export function NotificationProvider({ children }) {
       try {
         const response = await getNotifications({
           page,
-          unread: activeFilter === "unread",
+          view: activeFilter,
         });
         setItems((current) =>
           append ? [...current, ...response.data] : response.data,
@@ -195,7 +195,7 @@ export function NotificationProvider({ children }) {
         };
       }),
     );
-    const wasUnread = previous && !previous.readAt;
+    const wasUnread = previous && !previous.readAt && previous.attentionLevel === "action_required";
     if (read && wasUnread) setUnreadCount((count) => Math.max(0, count - 1));
     if (!read && previous?.readAt) setUnreadCount((count) => count + 1);
     try {
@@ -206,7 +206,7 @@ export function NotificationProvider({ children }) {
           current.map((item) => (item.id === id ? previous : item)),
         );
       if (read && wasUnread) setUnreadCount((count) => count + 1);
-      if (!read && previous?.readAt)
+      if (!read && previous?.readAt && previous.attentionLevel === "action_required")
         setUnreadCount((count) => Math.max(0, count - 1));
     } finally {
       pendingRef.current.delete(id);
@@ -240,7 +240,7 @@ export function NotificationProvider({ children }) {
       removed = current[removedIndex];
       return current.filter((item) => item.id !== id);
     });
-    const wasUnread = removed && !removed.readAt;
+    const wasUnread = removed && !removed.readAt && removed.attentionLevel === "action_required";
     if (wasUnread) setUnreadCount((count) => Math.max(0, count - 1));
     try {
       await dismissNotification(id);

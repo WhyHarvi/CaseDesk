@@ -34,6 +34,33 @@ test("duplicate checks cover both existing clients and active leads", async () =
   );
 });
 
+test("a converted lead does not block edits to its own client", async () => {
+  let leadWhere;
+  const db = {
+    client: { findFirst: async () => null },
+    lead: {
+      findFirst: async ({ where }) => {
+        leadWhere = where;
+        return null;
+      },
+    },
+  };
+  await assertNoContactDuplicate(db, {
+    agencyId: "agency-1",
+    phoneNormalized: "+14165550100",
+    excludeClientId: "client-1",
+  });
+  assert.deepEqual(leadWhere.AND[1], {
+    OR: [
+      { convertedClientId: null },
+      { convertedClientId: { not: "client-1" } },
+    ],
+  });
+  assert.deepEqual(leadWhere.AND[2], {
+    appointments: { none: { clientId: "client-1" } },
+  });
+});
+
 test("database constraints and transactions protect client intake from races", async () => {
   const [schema, migration, clientController, leadService] = await Promise.all([
     source("../prisma/schema.prisma"),
@@ -46,6 +73,8 @@ test("database constraints and transactions protect client intake from races", a
   assert.match(migration, /CREATE UNIQUE INDEX "clients_agency_id_phone_normalized_key"/);
   assert.match(clientController, /lockAgencyContactIntake/);
   assert.match(clientController, /assertNoContactDuplicate/);
+  assert.match(clientController, /const contactChanged =/);
+  assert.match(clientController, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
   assert.match(leadService, /excludeLeadId: lead\.id/);
   assert.match(leadService, /phoneNormalized: lead\.phoneNormalized/);
 });

@@ -216,13 +216,13 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
 
             <section className="rounded-[1.75rem] border border-white/80 bg-white/75 p-5 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
               <div className="mb-5">
-                <h3 className="text-sm font-semibold text-slate-950">File ownership</h3>
-                <p className="mt-1 text-sm text-slate-500">Assign the client to a staff member for follow-ups and daily work.</p>
+                <h3 className="text-sm font-semibold text-slate-950">Client access</h3>
+                <p className="mt-1 text-sm text-slate-500">Clients without a case stay unassigned by default. An assigned case automatically gives its team access, or you can add a direct profile assignment here.</p>
               </div>
               <label className="block">
-                <span className="mb-2 block text-sm font-medium text-slate-700">Assigned consultant</span>
+                <span className="mb-2 block text-sm font-medium text-slate-700">Direct profile access</span>
                 <select name="assignedUserId" value={formState.assignedUserId} onChange={handleInputChange} className="select-field h-12 w-full py-0">
-                  <option value="">Unassigned</option>
+                  <option value="">No direct assignment</option>
                   {users.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}
                 </select>
               </label>

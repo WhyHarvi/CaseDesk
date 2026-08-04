@@ -96,7 +96,7 @@ function EmptyState({ message }) {
   );
 }
 
-function QuickActionLink({ href, icon: Icon, label, disabled = false }) {
+function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false }) {
   const sharedClassName =
     "inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition";
 
@@ -106,6 +106,19 @@ function QuickActionLink({ href, icon: Icon, label, disabled = false }) {
         type="button"
         disabled
         className={`${sharedClassName} cursor-not-allowed opacity-50`}
+      >
+        <Icon className="h-4 w-4" />
+        {label}
+      </button>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`${sharedClassName} hover:border-slate-300 hover:text-slate-950`}
       >
         <Icon className="h-4 w-4" />
         {label}
@@ -304,6 +317,12 @@ export default function ClientProfile() {
   const [statementOpen, setStatementOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
   const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
+  const initialChatConversationId = new URLSearchParams(location.search).get("conversation");
+  const [chatOpen, setChatOpen] = useState(Boolean(initialChatConversationId));
+
+  useEffect(() => {
+    if (initialChatConversationId) setChatOpen(true);
+  }, [initialChatConversationId]);
 
   const isEditingNote = Boolean(editingNote);
   const client = profile?.client || null;
@@ -547,6 +566,23 @@ export default function ClientProfile() {
           }}
         />
       ) : null}
+      <ClientCommunicationCard
+        clientId={client.id}
+        clientName={client.fullName}
+        cases={cases}
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        initialConversationId={initialChatConversationId}
+        canManagePortal={canManageClientPortal}
+        onManagePortalAccess={() => {
+          window.setTimeout(() => {
+            document.getElementById("client-portal-access")?.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            });
+          }, 80);
+        }}
+      />
       {selectedNoteAppointmentId ? (
         <AppointmentProfileOverlay
           appointmentId={selectedNoteAppointmentId}
@@ -687,9 +723,9 @@ export default function ClientProfile() {
                   disabled={!client.phone}
                 />
                 <QuickActionLink
-                  href="#client-communications"
+                  onClick={() => setChatOpen(true)}
                   icon={MessageSquareText}
-                  label="Client chat"
+                  label="Portal chat"
                 />
               </div>
             </div>
@@ -720,11 +756,6 @@ export default function ClientProfile() {
         </section>
 
         <ClientAppointmentsCard clientId={client.id} />
-
-        <ClientCommunicationCard
-          clientId={client.id}
-          initialConversationId={new URLSearchParams(location.search).get("conversation")}
-        />
 
         <section className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
           <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">

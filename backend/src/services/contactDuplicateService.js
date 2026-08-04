@@ -48,7 +48,27 @@ export async function assertNoContactDuplicate(tx, {
         agencyId,
         deletedAt: null,
         status: { notIn: ["DUPLICATE", "ARCHIVED"] },
-        ...contact,
+        // A converted lead and its resulting Client deliberately share the
+        // same contact details. When editing that Client, exclude only the
+        // lead already linked to it while continuing to catch every other
+        // active lead with the same phone or email.
+        AND: [
+          contact,
+          ...(excludeClientId
+            ? [
+                {
+                  OR: [
+                    { convertedClientId: null },
+                    { convertedClientId: { not: excludeClientId } },
+                  ],
+                },
+                // "Save as client" links the appointment to both records
+                // without formally converting the lead. That appointment is
+                // still authoritative proof that this is the same person.
+                { appointments: { none: { clientId: excludeClientId } } },
+              ]
+            : []),
+        ],
         ...(excludeLeadId ? { id: { not: excludeLeadId } } : {}),
       },
       select: { id: true, leadNumber: true, firstName: true, lastName: true, phoneNormalized: true, emailNormalized: true },

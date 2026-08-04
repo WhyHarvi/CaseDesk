@@ -38,6 +38,8 @@ const DEFAULT_PREFERENCE = {
   quietHoursStart: "",
   quietHoursEnd: "",
   timezone: "America/Toronto",
+  deliveryMode: "immediate",
+  digestHour: 9,
 };
 
 function Toggle({ checked, onChange, label }) {
@@ -95,6 +97,8 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
       quietHoursStart: base.quietHoursStart || "",
       quietHoursEnd: base.quietHoursEnd || "",
       timezone: base.timezone || "America/Toronto",
+      deliveryMode: base.deliveryMode || "immediate",
+      digestHour: base.digestHour ?? 9,
     });
     setSaved(false);
     setError("");
@@ -113,6 +117,8 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
         quietHoursStart: form.quietHoursStart || null,
         quietHoursEnd: form.quietHoursEnd || null,
         timezone: form.timezone,
+        deliveryMode: form.deliveryMode,
+        digestHour: Number(form.digestHour),
       };
       const updated = await updateNotificationPreference(category, payload);
       setPreferences((current) => {
@@ -192,6 +198,37 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
         </div>
 
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {category === "all" ? (
+            <>
+              <label className="block">
+                <span className="text-[12px] font-medium text-slate-600">Routine updates</span>
+                <select
+                  value={form.deliveryMode}
+                  onChange={(event) => set("deliveryMode")(event.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2.5 text-sm outline-none focus:border-sky-400"
+                >
+                  <option value="immediate">Send immediately</option>
+                  <option value="daily_digest">Daily email summary</option>
+                </select>
+                <span className="mt-1 block text-[11px] leading-4 text-slate-400">Action-required alerts remain immediate.</span>
+              </label>
+              {form.deliveryMode === "daily_digest" ? (
+                <label className="block">
+                  <span className="text-[12px] font-medium text-slate-600">Summary time</span>
+                  <select
+                    value={form.digestHour}
+                    onChange={(event) => set("digestHour")(Number(event.target.value))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-200/80 bg-white/90 px-3 py-2.5 text-sm outline-none focus:border-sky-400"
+                  >
+                    {Array.from({ length: 13 }, (_, index) => index + 6).map((hour) => (
+                      <option key={hour} value={hour}>{new Date(2000, 0, 1, hour).toLocaleTimeString("en-CA", { hour: "numeric" })}</option>
+                    ))}
+                  </select>
+                  {!form.emailEnabled ? <span className="mt-1 block text-[11px] leading-4 text-amber-600">Turn on Email above to receive the summary.</span> : null}
+                </label>
+              ) : null}
+            </>
+          ) : null}
           <label className="block">
             <span className="text-[12px] font-medium text-slate-600">Notify me before due dates</span>
             <select
