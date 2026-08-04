@@ -8,6 +8,8 @@ import {
   Clock3,
   Copy,
   Loader2,
+  Mail,
+  MessageSquare,
   MapPin,
   NotebookPen,
   Phone,
@@ -25,6 +27,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   cancelBookingAppointment,
+  cancelBookingPaymentHoldRequest,
   convertAppointmentToClient,
   createBookingAppointment,
   createWalkInPayNowLink,
@@ -36,6 +39,7 @@ import {
   getFreeConsultationEligibility,
   lookupBookingClients,
   recordWalkInManualPayment,
+  resendBookingPaymentHoldRequest,
   rescheduleBookingAppointment,
   updateBookingAppointmentStatus,
 } from "../api/bookingApi";
@@ -693,6 +697,10 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   const [freeEligibility, setFreeEligibility] = useState(null);
   const [pendingHold, setPendingHold] = useState(null);
   const [bookedWarning, setBookedWarning] = useState(null);
+  const [paymentAction, setPaymentAction] = useState("");
+  const [paymentActionError, setPaymentActionError] = useState("");
+  const [paymentRecipient, setPaymentRecipient] = useState("");
+  const [confirmPaymentCancel, setConfirmPaymentCancel] = useState(false);
 
   const searchClients = useCallback((query) => role === "frontdesk"
     ? lookupBookingClients({ search: query })
@@ -706,6 +714,10 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setError("");
     setPendingHold(null);
     setBookedWarning(null);
+    setPaymentAction("");
+    setPaymentActionError("");
+    setPaymentRecipient("");
+    setConfirmPaymentCancel(false);
   }, [open, role, userId, initialDate]);
 
   useEffect(() => {
@@ -722,7 +734,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   }, [open, form.mode, form.clientId, form.guestEmail]);
 
   useEffect(() => {
-    if (!pendingHold || pendingHold.status !== "AwaitingPayment") return;
+    if (!pendingHold || !["AwaitingPayment", "Confirming"].includes(pendingHold.status)) return;
     const timer = setInterval(async () => {
       try {
         const latest = await getBookingPaymentHoldStatus(pendingHold.holdId);
@@ -738,6 +750,35 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     }, 4000);
     return () => clearInterval(timer);
   }, [pendingHold?.holdId, pendingHold?.status, onRefresh, onClose]);
+
+  async function resendPaymentRequest() {
+    setPaymentAction("resend");
+    setPaymentActionError("");
+    try {
+      const latest = await resendBookingPaymentHoldRequest(pendingHold.holdId, { email: paymentRecipient || pendingHold.guestEmail });
+      setPendingHold((current) => ({ ...current, ...latest, holdId: current.holdId }));
+      setPaymentRecipient(latest.guestEmail || "");
+    } catch (reason) {
+      setPaymentActionError(reason.response?.data?.message || "The payment request could not be resent.");
+    } finally {
+      setPaymentAction("");
+    }
+  }
+
+  async function cancelPaymentRequest() {
+    setPaymentAction("cancel");
+    setPaymentActionError("");
+    try {
+      const latest = await cancelBookingPaymentHoldRequest(pendingHold.holdId);
+      setPendingHold((current) => ({ ...current, ...latest, holdId: current.holdId, payNowUrl: null }));
+      setConfirmPaymentCancel(false);
+      onRefresh?.();
+    } catch (reason) {
+      setPaymentActionError(reason.response?.data?.message || "The reservation could not be cancelled.");
+    } finally {
+      setPaymentAction("");
+    }
+  }
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
@@ -827,7 +868,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         paymentMethod: showsPaymentStep && form.paymentMethod !== "Skip" ? form.paymentMethod : undefined,
       });
       if (created.pending) {
-        setPendingHold({ holdId: created.holdId, status: created.status, amount: created.amount, payNowUrl: created.payNowUrl, expiresAt: created.expiresAt });
+        setPendingHold({ ...created, holdId: created.holdId });
+        setPaymentRecipient(created.guestEmail || (form.mode === "client" ? selectedClient?.email : form.guestEmail) || "");
         return;
       }
       onCreated(created);
@@ -846,6 +888,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   if (typeof document === "undefined") return null;
   const input = "w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm shadow-sm outline-none transition hover:border-slate-300 focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
+  const emailDelivery = pendingHold?.delivery?.find((item) => item.channel === "email") || null;
+  const smsDelivery = pendingHold?.delivery?.find((item) => item.channel === "sms") || null;
+  const paymentTerminal = ["Expired", "Voided", "Failed"].includes(pendingHold?.status);
+  const paymentOrphaned = pendingHold?.status === "Paid" && !pendingHold?.appointmentId;
+  const paymentConfirming = pendingHold?.status === "Confirming";
 
   return createPortal(
     <AnimatePresence>
@@ -858,17 +905,38 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
             </header>
             {pendingHold ? (
               <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-                <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-sky-600" />
-                  <p className="mt-3 text-sm font-semibold text-slate-800">Slot reserved — waiting for payment</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">The appointment will confirm automatically the moment the {Number(pendingHold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} payment goes through.</p>
+                <div className={`rounded-2xl border p-4 text-center ${paymentTerminal || paymentOrphaned ? "border-amber-200 bg-amber-50/70" : "border-sky-200 bg-sky-50/70"}`}>
+                  {!paymentTerminal && !paymentOrphaned ? <Loader2 className="mx-auto h-6 w-6 animate-spin text-sky-600" /> : <X className="mx-auto h-6 w-6 text-amber-600" />}
+                  <p className="mt-3 text-sm font-semibold text-slate-800">
+                    {paymentConfirming ? "Payment received — confirming appointment" : paymentTerminal ? "This payment request is no longer active" : paymentOrphaned ? "Payment received — staff action required" : "Slot reserved — waiting for payment"}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {paymentConfirming ? "QuickBooks has reported the payment. CaseDesk is safely creating the appointment now." : paymentTerminal ? "The slot has been released. Choose a new available time before sending another request." : paymentOrphaned ? "The payment was collected, but the slot could not be converted into an appointment. Open Payments and follow the urgent recovery steps." : `The appointment will confirm automatically the moment the ${Number(pendingHold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} payment goes through.`}
+                  </p>
                 </div>
-                {pendingHold.payNowUrl ? (
-                  <button type="button" onClick={() => navigator.clipboard.writeText(pendingHold.payNowUrl)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50">
-                    <Copy className="h-3.5 w-3.5" /> Copy pay-now link
-                  </button>
+                {!paymentTerminal && !paymentOrphaned ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Mail className="h-4 w-4 shrink-0 text-slate-400" />
+                        <div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{pendingHold.guestEmail || paymentRecipient}</p><p className="text-[11px] text-slate-400">{emailDelivery?.status === "sent" ? "Payment email sent" : emailDelivery?.status === "failed" ? "Delivery failed" : emailDelivery?.lastError ? "Retrying after a delivery error…" : "Sending payment email…"}</p></div>
+                      </div>
+                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${emailDelivery?.status === "sent" ? "bg-emerald-500" : emailDelivery?.status === "failed" ? "bg-rose-500" : "animate-pulse bg-amber-400"}`} />
+                    </div>
+                    {emailDelivery?.lastError ? <p className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-4 text-rose-600">{emailDelivery.lastError}</p> : null}
+                    {pendingHold.guestPhone ? <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3"><MessageSquare className="h-4 w-4 text-slate-400" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-700">{pendingHold.guestPhone}</p><p className="text-[11px] text-slate-400">{smsDelivery?.status === "sent" ? "Payment SMS sent" : smsDelivery?.status === "failed" ? "SMS delivery failed" : smsDelivery?.lastError ? "Retrying SMS…" : smsDelivery ? "Sending payment SMS…" : "SMS not queued"}</p></div><span className={`h-2.5 w-2.5 rounded-full ${smsDelivery?.status === "sent" ? "bg-emerald-500" : smsDelivery?.status === "failed" || !smsDelivery ? "bg-slate-300" : "animate-pulse bg-amber-400"}`} /></div> : null}
+                    <input type="email" value={paymentRecipient} onChange={(event) => setPaymentRecipient(event.target.value.replace(/\s/g, ""))} aria-label="Payment request email" className="mt-3 h-9 w-full rounded-xl border border-slate-200 px-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                    <button type="button" disabled={Boolean(paymentAction) || paymentConfirming} onClick={resendPaymentRequest} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
+                      {paymentAction === "resend" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Resend payment request
+                    </button>
+                  </div>
                 ) : null}
+                {pendingHold.payNowUrl && !paymentTerminal ? <button type="button" onClick={() => navigator.clipboard.writeText(pendingHold.payNowUrl)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50"><Copy className="h-3.5 w-3.5" /> Copy pay-now link</button> : null}
                 {pendingHold.expiresAt ? <p className="text-center text-xs text-slate-400">Reservation expires at {new Date(pendingHold.expiresAt).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })} if unpaid.</p> : null}
+                {paymentActionError ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{paymentActionError}</p> : null}
+                {!paymentTerminal && !paymentOrphaned && !paymentConfirming && !confirmPaymentCancel ? <button type="button" disabled={Boolean(paymentAction)} onClick={() => setConfirmPaymentCancel(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Cancel payment request</button> : null}
+                {!paymentTerminal && !paymentOrphaned && !paymentConfirming && confirmPaymentCancel ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4"><p className="text-sm font-semibold text-rose-900">Release this slot?</p><p className="mt-1 text-xs leading-5 text-rose-700">The QuickBooks invoice will be voided and the payment link will stop working.</p><div className="mt-3 flex gap-2"><button type="button" disabled={Boolean(paymentAction)} onClick={() => setConfirmPaymentCancel(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Keep it</button><button type="button" disabled={Boolean(paymentAction)} onClick={cancelPaymentRequest} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-rose-600 text-xs font-semibold text-white">{paymentAction === "cancel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Release slot</button></div></div> : null}
+                <Link to={`/app/payments?source=booking_payment&hold=${encodeURIComponent(pendingHold.holdId)}`} onClick={onClose} className="flex h-10 w-full items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800">Open in Payments</Link>
                 <button type="button" onClick={onClose} className="flex h-10 w-full items-center justify-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100">Close and check later</button>
               </div>
             ) : bookedWarning ? (

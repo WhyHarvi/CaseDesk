@@ -731,12 +731,13 @@ export async function confirmPaymentHold(agencyId, holdId) {
         include: { assignedTo: { select: { id: true, fullName: true } }, client: { select: { fullName: true, email: true, phone: true } } },
       });
       await recordAppointmentEvent(tx, { agencyId, appointmentId: created.id, type: "BOOKED", summary: "Paid consultation confirmed after payment", metadata: { holdId: hold.id, meetingMode: created.meetingMode } });
-      // Staff-initiated (front-desk) holds never generate a Lead — none of
-      // the other staff-booking paths do either, and a front-desk visitor
-      // is either an existing client already (clientId is set) or a
-      // walk-in staff is handling directly, not a lead to work.
-      if (hold.source !== "WalkIn") {
-        await createOrLinkLeadForConsultation(tx, {
+      // Any paid visitor who is not already linked to a Client becomes (or
+      // links to) a Lead. This keeps front-desk guest bookings from becoming
+      // disconnected calendar-only records while preserving existing-client
+      // bookings exactly as they are.
+      let linkedLeadId = null;
+      if (!hold.clientId) {
+        const linkedLead = await createOrLinkLeadForConsultation(tx, {
           agencyId,
           appointment: created,
           guestName: hold.guestName,
@@ -746,13 +747,22 @@ export async function confirmPaymentHold(agencyId, holdId) {
           fee: hold.amount,
           holdId: hold.id,
         });
+        linkedLeadId = linkedLead?.leadId || null;
       }
       if (hold.meetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, { appointment: created, action: "SYNC", notifyKind: "booked", dedupeSuffix: `paid-${hold.id}`, amount: Number(hold.amount), invoiceUrl: hold.qbInvoiceLink });
       } else {
         await sendBookingMessages({ agencyId, appointment: created, kind: "booked", db: tx, amount: Number(hold.amount), invoiceUrl: hold.qbInvoiceLink });
       }
-      await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id, paymentMethod: hold.paymentMethod || "Online", ...(qbPaymentId ? { qbPaymentId } : {}) } });
+      await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), appointmentId: created.id, paymentMethod: hold.paymentMethod || "Online", ...(linkedLeadId ? { leadId: linkedLeadId } : {}), ...(qbPaymentId ? { qbPaymentId } : {}) } });
+      await tx.bookingMessageDelivery.updateMany({
+        where: { paymentHoldId: hold.id },
+        data: { appointmentId: created.id },
+      });
+      await tx.bookingMessageDelivery.updateMany({
+        where: { paymentHoldId: hold.id, kind: "payment_requested", status: { in: ["pending", "processing"] } },
+        data: { status: "cancelled", failedAt: null, lastError: null },
+      });
       if (offerHold) {
         // Only now — payment genuinely confirmed and the appointment
         // genuinely created — is the waitlist offer actually fulfilled.

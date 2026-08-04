@@ -17,8 +17,8 @@ export function normalizeCaseInvoiceStatus(status) {
 }
 
 function normalizeBookingStatus(status) {
-  if (status === "AwaitingPayment") return "Open";
-  if (status === "Expired" || status === "Cancelled") return "Voided";
+  if (status === "AwaitingPayment" || status === "Confirming") return "Open";
+  if (["Expired", "Cancelled", "Failed"].includes(status)) return "Voided";
   return status; // Paid | Voided already match
 }
 
@@ -95,6 +95,7 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     amount: Number(row.amount),
     balance: ["Paid", "Refunded"].includes(row.status) ? 0 : Number(row.amount),
     status: normalizeBookingStatus(row.status),
+    bookingStatus: row.status,
     // The hold's own status only tracks money collected/refunded — it has
     // no idea the linked appointment was later cancelled. Cancelling never
     // touches this row (refunding is a manual QuickBooks action, see

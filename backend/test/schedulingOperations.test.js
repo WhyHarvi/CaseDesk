@@ -367,6 +367,34 @@ test("active QuickBooks polling rotates through every unpaid booking hold", asyn
   assert.match(service, /where: \{ id: hold\.id, status: "AwaitingPayment" \},[\s\S]*data: \{ updatedAt: new Date\(\) \}/);
 });
 
+test("front-desk card reservations use durable delivery and remain recoverable after the sheet closes", async () => {
+  const [controller, routes, holdService, notificationService, webhookService, calendarPage, paymentsPage, migration] = await Promise.all([
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/bookingRoutes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingNotificationService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/quickbooksWebhookService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260804210000_payment_hold_message_delivery/migration.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(holdService, /queuePaymentHoldMessages/);
+  assert.doesNotMatch(holdService.slice(holdService.indexOf("createPaymentHoldForStaffBooking"), holdService.indexOf("getPaymentHoldStatus")), /deliverBookingMessages/);
+  assert.match(notificationService, /paymentHoldId: hold\.id/);
+  assert.match(notificationService, /job\.paymentHoldId && job\.kind === "payment_requested"/);
+  assert.match(routes, /payment-holds\/:id\/resend/);
+  assert.match(routes, /payment-holds\/:id\/cancel/);
+  assert.match(controller, /body\.source === "WalkIn" && submittedEmail/);
+  assert.match(calendarPage, /\["AwaitingPayment", "Confirming"\]\.includes\(pendingHold\.status\)/);
+  assert.match(calendarPage, /Resend payment request/);
+  assert.match(paymentsPage, /function PaymentHoldDrawer/);
+  assert.match(paymentsPage, /Release this slot\?/);
+  assert.match(webhookService, /if \(!hold\.clientId\)/);
+  assert.match(webhookService, /paymentHoldId: hold\.id[\s\S]*appointmentId: created\.id/);
+  assert.match(migration, /ALTER COLUMN "appointment_id" DROP NOT NULL/);
+  assert.match(migration, /booking_message_deliveries_parent_check/);
+});
+
 test("public paid and Zoom formats cannot be enabled with incomplete provider setup", async () => {
   const controller = await readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8");
   assert.match(controller, /activatingPaidPublicBooking/);
@@ -420,6 +448,18 @@ test("the public booking flow asks attendance format before service, office, or 
   assert.match(page, /matchingTypes\.length > 1\s*\? "service"\s*:\s*mode === "InPerson"\s*\? "location"\s*:\s*"time"/);
   assert.match(page, /step === "service"[\s\S]*What would you like to book\?/);
   assert.match(page, /sessionTypesForMode\("InPerson"\)\.some\(sessionTypeHasLocation\)/);
+});
+
+test("the compact public booking flow scrolls forward and back without changing desktop confirmation", async () => {
+  const page = await readFile(new URL("../../frontend/src/pages/PublicBookingPage.jsx", import.meta.url), "utf8");
+  assert.match(page, /matchMedia\("\(max-width: 767px\)"\)/);
+  assert.match(page, /bookingStepRef/);
+  assert.match(page, /previousStepRef/);
+  assert.match(page, /scrollMobileBookingElement\(bookingStepRef\.current/);
+  assert.match(page, /scrollMobileBookingElement\(timeColumnRef\.current/);
+  assert.match(page, /if \(isSmallBookingViewport\(\)\)[\s\S]*onConfirm\(slot\)/);
+  assert.match(page, /Back[\s\S]*md:hidden/);
+  assert.match(page, /hidden rounded-md[\s\S]*sm:block/);
 });
 
 test("scheduling settings expose the real pooled and Zoom capacity", async () => {

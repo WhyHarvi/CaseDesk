@@ -178,6 +178,16 @@ export async function getBookingPaymentHoldStatus(id) {
   return response.data.data;
 }
 
+export async function resendBookingPaymentHoldRequest(id, values = {}) {
+  const response = await api.post(`/booking/payment-holds/${id}/resend`, values);
+  return response.data.data;
+}
+
+export async function cancelBookingPaymentHoldRequest(id) {
+  const response = await api.post(`/booking/payment-holds/${id}/cancel`);
+  return response.data.data;
+}
+
 export async function createWalkInPayNowLink(id) {
   const response = await api.post(`/booking/appointments/${id}/pay-now-link`);
   return response.data.data;

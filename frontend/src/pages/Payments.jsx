@@ -8,13 +8,20 @@ import {
   HandCoins,
   Landmark,
   Loader2,
+  Mail,
+  MessageSquare,
+  Copy,
+  RefreshCw,
   Search,
   ShieldAlert,
   TrendingUp,
   Wallet,
+  X,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { cancelBookingPaymentHoldRequest, getBookingPaymentHoldStatus, resendBookingPaymentHoldRequest } from "../api/bookingApi";
 import { getPaymentsOverview, getPaymentsOverviewSummary } from "../api/paymentsOverviewApi";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
@@ -68,6 +75,9 @@ function formatDate(value) {
 // exact thing it's for" ask.
 function paymentLink(row) {
   if (row.source === "booking_payment") {
+    if (["AwaitingPayment", "Confirming", "Expired", "Voided", "Failed"].includes(row.bookingStatus)) {
+      return `/app/payments?source=booking_payment&hold=${encodeURIComponent(row.recordId)}`;
+    }
     if (row.appointmentId) {
       const date = row.appointmentStartsAt ? new Date(row.appointmentStartsAt).toISOString().slice(0, 10) : "";
       return `/app/calendar?appointment=${row.appointmentId}${date ? `&date=${date}` : ""}`;
@@ -79,6 +89,90 @@ function paymentLink(row) {
   }
   if (row.caseId) return `/app/cases/${row.caseId}?tab=billing`;
   return row.clientId ? `/app/clients/${row.clientId}` : null;
+}
+
+function PaymentHoldDrawer({ holdId, onClose, onChanged }) {
+  const navigate = useNavigate();
+  const [hold, setHold] = useState(null);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let timer;
+    async function refresh() {
+      try {
+        const latest = await getBookingPaymentHoldStatus(holdId);
+        if (!active) return;
+        setHold(latest);
+        setEmail((current) => current || latest.guestEmail || "");
+        if (["AwaitingPayment", "Confirming"].includes(latest.status)) timer = window.setTimeout(refresh, 4000);
+      } catch (reason) {
+        if (active) setError(reason.response?.data?.message || "This payment reservation could not be loaded.");
+      }
+    }
+    refresh();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [holdId]);
+
+  const emailDelivery = hold?.delivery?.find((item) => item.channel === "email") || null;
+  const smsDelivery = hold?.delivery?.find((item) => item.channel === "sms") || null;
+  const active = hold?.status === "AwaitingPayment";
+
+  async function resend() {
+    setBusy("resend"); setError("");
+    try {
+      const latest = await resendBookingPaymentHoldRequest(holdId, { email });
+      setHold((current) => ({ ...current, ...latest }));
+      setEmail(latest.guestEmail || email);
+      onChanged?.();
+    } catch (reason) { setError(reason.response?.data?.message || "The payment request could not be resent."); }
+    finally { setBusy(""); }
+  }
+
+  async function cancel() {
+    setBusy("cancel"); setError("");
+    try {
+      const latest = await cancelBookingPaymentHoldRequest(holdId);
+      setHold((current) => ({ ...current, ...latest, payNowUrl: null }));
+      setConfirmCancel(false);
+      onChanged?.();
+    } catch (reason) { setError(reason.response?.data?.message || "The payment request could not be cancelled."); }
+    finally { setBusy(""); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[420] flex justify-end bg-slate-950/25 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <motion.aside initial={{ x: 70, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 70, opacity: 0 }} transition={spring} className="flex h-full w-full max-w-[440px] flex-col border-l border-white/70 bg-white/95 shadow-[-30px_0_90px_rgba(15,23,42,0.2)] backdrop-blur-2xl">
+        <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4"><div><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">Consultation payment</p><h2 className="mt-1 text-lg font-semibold text-slate-950">Payment reservation</h2></div><button type="button" onClick={onClose} aria-label="Close" className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"><X className="h-5 w-5" /></button></header>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          {!hold && !error ? <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : null}
+          {hold ? <>
+            <div className={`rounded-2xl border p-4 ${hold.status === "Paid" ? "border-emerald-200 bg-emerald-50" : active || hold.status === "Confirming" ? "border-sky-200 bg-sky-50" : "border-amber-200 bg-amber-50"}`}>
+              <p className="text-sm font-semibold text-slate-900">{hold.guestName}</p>
+              <p className="mt-1 text-xs text-slate-500">{new Date(hold.startsAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}</p>
+              <div className="mt-3 flex items-end justify-between"><span className="text-2xl font-semibold tracking-tight text-slate-950">{money.format(Number(hold.amount))}</span><span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">{hold.status === "AwaitingPayment" ? "Awaiting payment" : hold.status}</span></div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2"><Mail className="h-4 w-4 text-slate-400" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-700">{hold.guestEmail}</p><p className="text-[11px] text-slate-400">{emailDelivery?.status === "sent" ? `Sent${emailDelivery.sentAt ? ` ${new Date(emailDelivery.sentAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}` : ""}` : emailDelivery?.status === "failed" ? "Delivery failed" : emailDelivery?.lastError ? "Retrying after a delivery error…" : emailDelivery ? "Sending…" : "No delivery recorded"}</p></div><span className={`h-2.5 w-2.5 rounded-full ${emailDelivery?.status === "sent" ? "bg-emerald-500" : emailDelivery?.status === "failed" || !emailDelivery ? "bg-rose-500" : "animate-pulse bg-amber-400"}`} /></div>
+              {emailDelivery?.lastError ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-4 text-rose-600">{emailDelivery.lastError}</p> : null}
+              {hold.guestPhone ? <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3"><MessageSquare className="h-4 w-4 text-slate-400" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-700">{hold.guestPhone}</p><p className="text-[11px] text-slate-400">{smsDelivery?.status === "sent" ? "Payment SMS sent" : smsDelivery?.status === "failed" ? "SMS delivery failed" : smsDelivery?.lastError ? "Retrying SMS…" : smsDelivery ? "Sending payment SMS…" : "SMS not queued"}</p></div><span className={`h-2.5 w-2.5 rounded-full ${smsDelivery?.status === "sent" ? "bg-emerald-500" : smsDelivery?.status === "failed" || !smsDelivery ? "bg-slate-300" : "animate-pulse bg-amber-400"}`} /></div> : null}
+              {active ? <><input type="email" value={email} onChange={(event) => setEmail(event.target.value.replace(/\s/g, ""))} className="mt-3 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" /><button type="button" disabled={Boolean(busy)} onClick={resend} className="mt-2 flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">{busy === "resend" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Resend payment request</button></> : null}
+            </div>
+            {hold.payNowUrl && active ? <button type="button" onClick={async () => { await navigator.clipboard.writeText(hold.payNowUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white"><Copy className="h-4 w-4" /> {copied ? "Link copied" : "Copy payment link"}</button> : null}
+            {hold.expiresAt ? <p className="text-center text-xs text-slate-400">{active ? "Slot held until" : "Reservation expired"} {new Date(hold.expiresAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}</p> : null}
+            {hold.appointmentId ? <button type="button" onClick={() => navigate(`/app/calendar?appointment=${hold.appointmentId}&date=${new Date(hold.startsAt).toISOString().slice(0, 10)}`)} className="flex h-11 w-full items-center justify-center rounded-full border border-slate-200 text-sm font-semibold text-slate-700">Open appointment</button> : null}
+            {active && !confirmCancel ? <button type="button" onClick={() => setConfirmCancel(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Cancel payment request</button> : null}
+            {active && confirmCancel ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4"><p className="text-sm font-semibold text-rose-900">Release this slot?</p><p className="mt-1 text-xs leading-5 text-rose-700">The QuickBooks invoice will be voided and the payment link will stop working.</p><div className="mt-3 flex gap-2"><button type="button" disabled={Boolean(busy)} onClick={() => setConfirmCancel(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Keep it</button><button type="button" disabled={Boolean(busy)} onClick={cancel} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-rose-600 text-xs font-semibold text-white">{busy === "cancel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Release slot</button></div></div> : null}
+          </> : null}
+          {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm leading-5 text-rose-700">{error}</p> : null}
+        </div>
+      </motion.aside>
+    </div>
+  );
 }
 
 function paymentBalanceLabel(row) {
@@ -447,22 +541,25 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
 
 export default function Payments() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedHoldId = searchParams.get("hold") || "";
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [status, setStatus] = useState("");
-  const [source, setSource] = useState("");
+  const [source, setSource] = useState(() => searchParams.get("source") || "");
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     getPaymentsOverviewSummary().catch(() => null).then((data) => data && setSummary(data));
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     let active = true;
@@ -477,11 +574,17 @@ export default function Payments() {
       .catch((reason) => active && setError(reason.response?.data?.message || "Payments could not be loaded."))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [status, source, query, from, to, page]);
+  }, [status, source, query, from, to, page, refreshKey]);
 
   useEffect(() => { setPage(1); }, [status, source, query, from, to]);
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  function closePaymentHold() {
+    const next = new URLSearchParams(searchParams);
+    next.delete("hold");
+    setSearchParams(next, { replace: true });
+  }
 
   const monthDelta = useMemo(() => {
     if (!summary) return null;
@@ -706,6 +809,7 @@ export default function Payments() {
           ) : null}
         </motion.section>
       </div>
+      <AnimatePresence>{selectedHoldId ? <PaymentHoldDrawer key={selectedHoldId} holdId={selectedHoldId} onClose={closePaymentHold} onChanged={() => setRefreshKey((value) => value + 1)} /> : null}</AnimatePresence>
     </main>
   );
 }

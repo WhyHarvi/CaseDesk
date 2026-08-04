@@ -1,4 +1,4 @@
-import { ArrowRight, CircleAlert, FileText } from "lucide-react";
+import { ArrowRight, CircleAlert, Clock3, FileText, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton from "../../components/client-portal/ClientPortalSkeleton";
@@ -8,6 +8,7 @@ import ClientDocumentCard from "../../components/client-portal/ClientDocumentCar
 import ClientPaymentCard from "../../components/client-portal/ClientPaymentCard";
 import ClientTimeline from "../../components/client-portal/ClientTimeline";
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
+import usePortalFreeAppointmentOffer from "../../components/client-portal/usePortalFreeAppointmentOffer";
 
 function SectionHeading({ title, to = null, linkLabel = "View all" }) {
   return (
@@ -25,6 +26,7 @@ function SectionHeading({ title, to = null, linkLabel = "View all" }) {
 
 export default function ClientPortalHome() {
   const { overview, loading, error, refresh } = usePortalData();
+  const freeBookingOffer = usePortalFreeAppointmentOffer(overview?.booking);
 
   if (loading) return <ClientPortalSkeleton rows={4} />;
 
@@ -54,6 +56,28 @@ export default function ClientPortalHome() {
       />
 
       <ClientNextActionCard nextAction={overview.nextAction} />
+      {freeBookingOffer ? (
+        <Link
+          to="/client-portal/appointments"
+          className="group flex items-center gap-3.5 rounded-3xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50/95 via-white/90 to-sky-50/80 p-5 shadow-[0_16px_45px_rgba(16,185,129,0.1)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_20px_50px_rgba(16,185,129,0.14)] active:scale-[0.99]"
+        >
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-[0_10px_24px_rgba(5,150,105,0.24)]">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-slate-950">Free appointment available</span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-white/80 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-700">
+                <Clock3 className="h-3 w-3" /> 15 minutes only
+              </span>
+            </span>
+            <span className="mt-1 block text-[13px] leading-5 text-slate-500">
+              {freeBookingOffer.sessionName} is complimentary. Choose an available time to book.
+            </span>
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0 text-emerald-700 transition group-hover:translate-x-0.5" />
+        </Link>
+      ) : null}
       <ClientStatusCard caseInfo={overview.case} />
 
       <section>

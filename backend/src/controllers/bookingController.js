@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   bookingTemplatePreview,
   processBookingMessageDeliveries,
+  paymentHoldDeliverySummary,
   sendBookingMessages,
   sendBookingStaffNotification,
   sendBookingTemplateTest,
@@ -27,7 +28,7 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
+import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -726,8 +727,15 @@ export async function createBookingAppointment(req, res) {
     if (startDates.length > 1) {
       throw createHttpError(400, "Card payment isn't available for recurring appointments yet — choose cash, e-transfer, or skip payment for now.", "VALIDATION_ERROR");
     }
-    const holdEmail = client?.email || String(body.guestEmail || "").trim().slice(0, 254);
+    const submittedEmail = String(body.guestEmail || "").trim().toLowerCase().slice(0, 254);
+    const submittedPhone = String(body.guestPhone || "").trim().slice(0, 40) || null;
+    // In guest mode, use exactly what front desk just confirmed instead of
+    // silently replacing it with a possibly stale email from an auto-matched
+    // client profile. Existing-client mode has no submitted guest contact and
+    // therefore correctly falls back to the profile.
+    const holdEmail = body.source === "WalkIn" && submittedEmail ? submittedEmail : client?.email || submittedEmail;
     if (!holdEmail) throw createHttpError(400, "An email is required to send the card payment link.", "VALIDATION_ERROR");
+    if (!/^\S+@\S+\.\S+$/.test(holdEmail)) throw createHttpError(400, "Enter a valid email address for the card payment link.", "VALIDATION_ERROR");
     const hold = await createPaymentHoldForStaffBooking(req.auth.agencyId, {
       sessionTypeId: sessionType?.id || null,
       sessionTypeName: sessionType?.name || null,
@@ -741,7 +749,7 @@ export async function createBookingAppointment(req, res) {
       clientId: client?.id || null,
       name: client?.fullName || guestName,
       email: holdEmail,
-      phone: client?.phone || String(body.guestPhone || "").trim().slice(0, 40) || null,
+      phone: body.source === "WalkIn" && submittedPhone ? submittedPhone : client?.phone || submittedPhone,
       notes: String(body.description || "").trim().slice(0, 2000) || null,
       amount: Number(settings.consultFeeAmount),
       bufferMinutes: effectiveBuffer,
@@ -756,6 +764,11 @@ export async function createBookingAppointment(req, res) {
         invoiceNumber: hold.qbInvoiceNumber,
         payNowUrl: hold.qbInvoiceLink,
         expiresAt: hold.expiresAt,
+        guestName: hold.guestName,
+        guestEmail: hold.guestEmail,
+        guestPhone: hold.guestPhone,
+        startsAt: hold.startsAt,
+        endsAt: hold.endsAt,
       },
     });
     return;
@@ -927,6 +940,7 @@ export async function getBookingPaymentHoldById(req, res) {
     });
   }
   const latest = await prisma.bookingPaymentHold.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId } });
+  const delivery = await paymentHoldDeliverySummary(latest.id);
   res.json({
     data: {
       id: latest.id,
@@ -936,8 +950,45 @@ export async function getBookingPaymentHoldById(req, res) {
       payNowUrl: latest.status === "AwaitingPayment" ? latest.qbInvoiceLink : null,
       expiresAt: latest.expiresAt,
       appointmentId: latest.appointmentId,
+      guestName: latest.guestName,
+      guestEmail: latest.guestEmail,
+      guestPhone: latest.guestPhone,
+      startsAt: latest.startsAt,
+      endsAt: latest.endsAt,
+      delivery,
     },
   });
+}
+
+export async function resendBookingPaymentHoldRequest(req, res) {
+  const email = req.body?.email == null ? null : String(req.body.email).trim().toLowerCase();
+  if (email != null && !/^\S+@\S+\.\S+$/.test(email)) {
+    throw createHttpError(400, "Enter a valid email address.", "VALIDATION_ERROR");
+  }
+  const data = await resendPaymentHoldRequestService(req.auth.agencyId, req.params.id, {
+    email,
+    phone: req.body?.phone,
+    actorUserId: req.auth.userId,
+  });
+  res.json({ data: {
+    id: data.id,
+    status: data.status,
+    amount: data.amount,
+    payNowUrl: data.qbInvoiceLink,
+    expiresAt: data.expiresAt,
+    appointmentId: data.appointmentId,
+    guestName: data.guestName,
+    guestEmail: data.guestEmail,
+    guestPhone: data.guestPhone,
+    startsAt: data.startsAt,
+    endsAt: data.endsAt,
+    delivery: data.delivery,
+  } });
+}
+
+export async function cancelBookingPaymentHoldRequest(req, res) {
+  const data = await cancelPaymentHoldRequestService(req.auth.agencyId, req.params.id, { actorUserId: req.auth.userId });
+  res.json({ data: { id: data.id, status: data.status, expiresAt: data.expiresAt, appointmentId: data.appointmentId, delivery: data.delivery } });
 }
 
 // Front-desk "on the spot" flow: appointment already exists (booked

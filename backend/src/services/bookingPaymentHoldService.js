@@ -18,7 +18,7 @@ import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
 import { captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { paymentHoldMeetingFields } from "./bookingMeetingModeService.js";
-import { deliverBookingMessages, sendBookingMessages } from "./bookingNotificationService.js";
+import { paymentHoldDeliverySummary, queuePaymentHoldMessages, sendBookingMessages } from "./bookingNotificationService.js";
 import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import { requireFeeCategory } from "./feeCategoryService.js";
 
@@ -361,36 +361,9 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
         qbSyncToken: invoice.syncToken,
       },
     });
-    // Best-effort, same as the walk-in pay-now-link flow — the client's own
-    // follow-through on the QuickBooks link is what actually matters; staff
-    // can also read the link off the screen and share it directly.
-    await deliverBookingMessages({
-      agencyId,
-      appointment: {
-        id: updated.id,
-        subject: sessionTypeName || subject || "Consultation",
-        startsAt: updated.startsAt,
-        endsAt: updated.endsAt,
-        guestName: updated.guestName,
-        guestEmail: updated.guestEmail,
-        guestPhone: updated.guestPhone,
-        meetingMode: updated.meetingMode,
-        meetingUrl: null,
-        meetingPhoneNumber: updated.meetingPhoneNumber,
-        location: updated.location,
-        locationMapsUrl: updated.locationMapsUrl,
-        manageToken: null,
-        status: "AwaitingPayment",
-        assignedToId: updated.assignedToId,
-      },
-      kind: "payment_requested",
-      actorUserId,
-      payNowUrl: updated.qbInvoiceLink,
-      amount,
-      includeIcs: false,
-    }).catch((error) => {
-      logger.warn("booking_payment_hold.staff_payment_request_message_failed", { agencyId, holdId: updated.id, reason: error.message });
-    });
+    // This is queued rather than sent inline so mailbox/Ooma outages are
+    // visible to staff, retried, and recoverable with an explicit resend.
+    await queuePaymentHoldMessages({ agencyId, hold: updated, actorUserId });
     return updated;
   } catch (error) {
     if (createdInvoice?.id && !invoiceVoided) {
@@ -682,6 +655,82 @@ export async function voidOpenPaymentHoldForAppointment(agencyId, appointmentId)
     });
   }
   return prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Voided", voidedAt: new Date() } });
+}
+
+export async function resendPaymentHoldRequest(agencyId, holdId, { email = null, phone = undefined, actorUserId = null } = {}) {
+  let hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  if (!hold) throw createHttpError(404, "This payment reservation was not found.", "NOT_FOUND");
+  if (hold.status === "AwaitingPayment" && hold.qbInvoiceId) {
+    // Never send a second "please pay" message while QuickBooks is
+    // unreachable: the invoice may already be paid and awaiting sync.
+    await reconcilePaymentHold(agencyId, hold.id, { force: true });
+    hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  }
+  if (hold.status !== "AwaitingPayment") {
+    throw createHttpError(409, hold.status === "Paid" ? "This reservation is already paid and confirmed." : "This payment request is no longer active.", "INVALID_STATE");
+  }
+  if (hold.expiresAt && hold.expiresAt <= new Date()) {
+    throw createHttpError(409, "This reservation has expired. Choose a new available time instead.", "HOLD_EXPIRED");
+  }
+  if (!hold.qbInvoiceLink) throw createHttpError(409, "This reservation does not have an active payment link.", "PAYMENT_LINK_UNAVAILABLE");
+
+  const nextEmail = email == null ? hold.guestEmail : String(email).trim().toLowerCase().slice(0, 254);
+  const nextPhone = phone === undefined ? hold.guestPhone : String(phone || "").trim().slice(0, 40) || null;
+  if (!nextEmail) throw createHttpError(400, "Enter an email address for the payment request.", "VALIDATION_ERROR");
+
+  await prisma.bookingMessageDelivery.updateMany({
+    where: { paymentHoldId: hold.id, kind: "payment_requested", status: { in: ["pending", "processing"] } },
+    data: { status: "cancelled", failedAt: null, lastError: null },
+  });
+  hold = await prisma.bookingPaymentHold.update({
+    where: { id: hold.id },
+    data: { guestEmail: nextEmail, guestEmailNormalized: nextEmail, guestPhone: nextPhone },
+  });
+  const delivery = await queuePaymentHoldMessages({ agencyId, hold, actorUserId, dedupeSuffix: `resend-${Date.now()}` });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: hold.clientId,
+    action: "appointment.payment_request_resent",
+    details: `Consultation payment request resent to ${nextEmail}`,
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+  }).catch(() => {});
+  return { ...hold, delivery };
+}
+
+export async function cancelPaymentHoldRequest(agencyId, holdId, { actorUserId = null } = {}) {
+  let hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  if (!hold) throw createHttpError(404, "This payment reservation was not found.", "NOT_FOUND");
+  if (hold.status === "AwaitingPayment" && hold.qbInvoiceId) {
+    await reconcilePaymentHold(agencyId, hold.id, { force: true });
+    hold = await prisma.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId } });
+  }
+  if (hold.status !== "AwaitingPayment") {
+    throw createHttpError(409, hold.status === "Paid" ? "Payment has already completed, so this reservation cannot be cancelled." : "This payment request is no longer active.", "INVALID_STATE");
+  }
+  if (hold.qbInvoiceId) {
+    await voidQuickBooksInvoice(agencyId, { id: hold.qbInvoiceId, syncToken: hold.qbSyncToken });
+  }
+  const changed = await prisma.bookingPaymentHold.updateMany({
+    where: { id: hold.id, status: "AwaitingPayment" },
+    data: { status: "Voided", voidedAt: new Date() },
+  });
+  if (changed.count !== 1) throw createHttpError(409, "The payment status changed while cancelling. Refresh and check it again.", "STATE_CHANGED");
+  await prisma.bookingMessageDelivery.updateMany({
+    where: { paymentHoldId: hold.id, kind: "payment_requested", status: { in: ["pending", "processing"] } },
+    data: { status: "cancelled", failedAt: null, lastError: null },
+  });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: hold.clientId,
+    action: "appointment.payment_request_cancelled",
+    details: `Consultation payment reservation cancelled for ${hold.guestName}`,
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+  }).catch(() => {});
+  return { ...(await prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } })), delivery: await paymentHoldDeliverySummary(hold.id) };
 }
 
 // ---------- Active-hold reconciliation ----------

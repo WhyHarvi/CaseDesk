@@ -50,6 +50,23 @@ const listItem = {
   transition: springy,
 };
 
+function isSmallBookingViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+}
+
+function scrollMobileBookingElement(element, { delay = 0, block = "start" } = {}) {
+  if (!element || !isSmallBookingViewport()) return undefined;
+  const run = () => element.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block,
+  });
+  if (!delay) {
+    window.requestAnimationFrame(run);
+    return undefined;
+  }
+  return window.setTimeout(run, delay);
+}
+
 function paymentHoldStorageKey(token) {
   return `casedesk:booking-payment:${token}`;
 }
@@ -475,9 +492,9 @@ const inputClass =
 
 /**
  * Step 1 of the public flow: a month calendar beside a time-slot list
- * that slides in once a date is picked. Picking a slot doesn't advance
- * immediately — it highlights and reveals a "Next" button beside it,
- * so the guest gets one deliberate confirmation tap before moving on.
+ * that slides in once a date is picked. Desktop keeps a deliberate Next
+ * confirmation; compact screens move directly from a chosen time to details
+ * and automatically bring the next control into view.
  */
 function CalendlyTimeStep({
   fetchAvailability,
@@ -504,10 +521,28 @@ function CalendlyTimeStep({
   const [pendingSlot, setPendingSlot] = useState(initialSlot || null);
   const [tzPopoverOpen, setTzPopoverOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const calendarColumnRef = useRef(null);
+  const timeColumnRef = useRef(null);
+  const mobileScrollTimerRef = useRef(null);
+  const calendarScrollTimerRef = useRef(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (mobileScrollTimerRef.current) window.clearTimeout(mobileScrollTimerRef.current);
+      if (calendarScrollTimerRef.current) window.clearTimeout(calendarScrollTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    calendarScrollTimerRef.current = scrollMobileBookingElement(
+      calendarColumnRef.current,
+      { delay: 170 },
+    );
+    return () => {
+      if (calendarScrollTimerRef.current) window.clearTimeout(calendarScrollTimerRef.current);
+    };
   }, []);
 
   const load = useCallback(async () => {
@@ -564,8 +599,8 @@ function CalendlyTimeStep({
       <h2 className="text-[17px] font-bold text-[#1A1F36]">
         Select a Date &amp; Time
       </h2>
-      <div className="mt-5 flex flex-col sm:flex-row">
-        <div className="shrink-0 sm:w-[300px] sm:border-r sm:border-[#E5E7EB] sm:pr-7">
+      <div className="mt-3 flex flex-col sm:mt-5 sm:flex-row">
+        <div ref={calendarColumnRef} className="shrink-0 scroll-mt-3 sm:w-[300px] sm:border-r sm:border-[#E5E7EB] sm:pr-7">
           <div className="flex items-center justify-between">
             <motion.button
               type="button"
@@ -632,7 +667,7 @@ function CalendlyTimeStep({
               return (
                 <span
                   key={key}
-                  className="flex aspect-square items-center justify-center p-0.5"
+                  className="flex h-[clamp(30px,9vw,36px)] items-center justify-center p-0.5 sm:aspect-square sm:h-auto"
                 >
                   <motion.button
                     type="button"
@@ -647,8 +682,10 @@ function CalendlyTimeStep({
                     onClick={() => {
                       setSelectedDay(key);
                       setPendingSlot(null);
+                      if (mobileScrollTimerRef.current) window.clearTimeout(mobileScrollTimerRef.current);
+                      mobileScrollTimerRef.current = scrollMobileBookingElement(timeColumnRef.current, { delay: 180 });
                     }}
-                    className={`relative flex h-full w-full items-center justify-center rounded-full text-[13px] font-medium transition-colors ${
+                    className={`relative flex h-full w-full max-w-9 items-center justify-center rounded-full text-[13px] font-medium transition-colors sm:max-w-none ${
                       isSelected
                         ? "bg-[#006BFF] text-white"
                         : available
@@ -677,7 +714,7 @@ function CalendlyTimeStep({
 
         {/* Fixed-width column, always mounted — only its content swaps when
             a date is picked, so nothing in the layout resizes or shifts. */}
-        <div className="mt-6 min-w-0 flex-1 sm:mt-0 sm:pl-7">
+        <div ref={timeColumnRef} className="mt-6 min-w-0 scroll-mt-4 flex-1 sm:mt-0 sm:pl-7">
           <AnimatePresence mode="wait">
             {!selectedDay ? (
               <motion.div
@@ -720,9 +757,14 @@ function CalendlyTimeStep({
                           type="button"
                           whileHover={!isPending ? { scale: 1.015 } : undefined}
                           whileTap={{ scale: 0.97 }}
-                          onClick={() =>
-                            setPendingSlot(isPending ? null : slot)
-                          }
+                          onClick={() => {
+                            if (isSmallBookingViewport()) {
+                              setPendingSlot(slot);
+                              onConfirm(slot);
+                              return;
+                            }
+                            setPendingSlot(isPending ? null : slot);
+                          }}
                           className={`flex flex-1 items-center justify-between gap-3 rounded-md border px-4 py-2.5 text-sm font-semibold transition-colors ${
                             isPending
                               ? "border-[#E5E7EB] bg-[#F3F4F6] text-[#6B7280]"
@@ -757,7 +799,7 @@ function CalendlyTimeStep({
                             whileTap={{ scale: 0.95 }}
                             type="button"
                             onClick={() => onConfirm(slot)}
-                            className="rounded-md bg-[#006BFF] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0057CC]"
+                            className="hidden rounded-md bg-[#006BFF] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0057CC] sm:block"
                           >
                             Next
                           </motion.button>
@@ -908,6 +950,16 @@ export default function PublicBookingPage() {
     consultant: null,
   });
   const [cookieInfoOpen, setCookieInfoOpen] = useState(false);
+  const bookingStepRef = useRef(null);
+  const previousStepRef = useRef(step);
+
+  useEffect(() => {
+    const previous = previousStepRef.current;
+    previousStepRef.current = step;
+    if (previous === step) return undefined;
+    const timer = scrollMobileBookingElement(bookingStepRef.current, { delay: 70 });
+    return () => { if (timer) window.clearTimeout(timer); };
+  }, [step]);
 
   useEffect(() => {
     if (portalSessionAtLoad?.verificationToken) {
@@ -1649,7 +1701,7 @@ export default function PublicBookingPage() {
                 type="button"
                 onClick={() => setStep(backStep)}
                 aria-label="Back"
-                className="absolute left-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#4D5865] shadow-sm transition-colors hover:bg-slate-50"
+                className="absolute left-4 top-4 z-10 hidden h-9 w-9 items-center justify-center rounded-full border border-[#E5E7EB] bg-white text-[#4D5865] shadow-sm transition-colors hover:bg-slate-50 md:flex"
               >
                 <ArrowLeft className="h-4 w-4" />
               </motion.button>
@@ -1659,8 +1711,21 @@ export default function PublicBookingPage() {
           {twoStepFlow ? leftPanel : null}
 
           <div
-            className={twoStepFlow ? "flex-1 p-7 sm:p-9" : "w-full p-7 sm:p-9"}
+            ref={bookingStepRef}
+            className={`${twoStepFlow ? "flex-1 px-5 py-6 sm:p-9" : "w-full px-5 py-6 sm:p-9"} scroll-mt-3`}
           >
+            {backStep ? (
+              <motion.button
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                whileTap={{ scale: 0.96 }}
+                type="button"
+                onClick={() => setStep(backStep)}
+                className="mb-5 inline-flex h-9 items-center gap-1.5 rounded-full border border-[#E5E7EB] bg-white px-3.5 text-xs font-semibold text-[#4D5865] shadow-sm md:hidden"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Back
+              </motion.button>
+            ) : null}
             {error && !twoStepFlow ? (
               <motion.p
                 key={error}

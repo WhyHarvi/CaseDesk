@@ -184,7 +184,7 @@ function detailLinkRow(label, text, url) {
   return `<tr><td style="padding:0 0 15px;vertical-align:top;width:92px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase">${escapeHtml(label)}</td><td style="padding:0 0 15px;vertical-align:top;color:#0f172a;font-size:15px;font-weight:600;line-height:1.45">${valueHtml}</td></tr>`;
 }
 
-export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null }) {
+export function bookingEmailContent({ appointment, kind, agency, timezone, contactName, manageUrl, brandImageUrl = null, messageTemplates = {}, phoneCallInstructions = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null, expiresAt = null, includeIcs = true }) {
   const template = messageTemplates?.[kind] && typeof messageTemplates[kind] === "object" ? messageTemplates[kind] : {};
   const copy = { ...(KIND_COPY[kind] || KIND_COPY.booked), ...(template.subject ? { title: String(template.subject).slice(0, 140) } : {}), ...(template.intro ? { intro: String(template.intro).slice(0, 600) } : {}) };
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
@@ -205,6 +205,9 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     ? `${agencyName} will call${clientPhone ? ` ${clientPhone}` : " you"}${appointment.meetingPhoneNumber ? ` from ${appointment.meetingPhoneNumber}` : ""}.`
     : null;
   const safePayNowUrl = kind === "payment_requested" ? safeWebUrl(payNowUrl) : null;
+  const paymentExpiry = kind === "payment_requested" && expiresAt
+    ? new Date(expiresAt).toLocaleString("en-CA", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : null;
   const primaryUrl = kind === "cancelled" ? null : (safePayNowUrl || meetingUrl || mapsUrl || safeManageUrl);
   const primaryLabel = safePayNowUrl
     ? "Pay consultation fee"
@@ -236,6 +239,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
         <h1 style="margin:0;color:#0f172a;font-size:30px;line-height:1.18;letter-spacing:-.035em;font-weight:750">${escapeHtml(copy.title)}</h1>
         <p style="margin:14px 0 0;color:#475569;font-size:16px;line-height:1.65">Hi ${escapeHtml(contactName)},<br>${escapeHtml(copy.intro)}</p>
       </td></tr>
+      ${kind === "payment_requested" ? `<tr><td class="content-pad" style="padding:14px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:17px 18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em">Not confirmed yet</p><p style="margin:8px 0 0;color:#475569;font-size:14px;line-height:1.6">Your appointment will be booked only after payment is completed.${paymentExpiry ? ` This reservation is held until <strong>${escapeHtml(paymentExpiry)}</strong>.` : ""}</p></div></td></tr>` : ""}
       <tr><td class="content-pad" style="padding:24px 34px 8px">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border:1px solid #e2e8f0;border-radius:20px;background:#f8fafc">
           <tr><td style="padding:23px 24px 8px"><p style="margin:0 0 20px;color:#0f172a;font-size:19px;font-weight:750;line-height:1.35">${escapeHtml(subject)}</p>
@@ -258,7 +262,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
       ${kind === "cancelled" && refundEstimate ? `<tr><td class="content-pad" style="padding:18px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">About your refund</p><p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">You paid $${Number(refundEstimate.paid).toFixed(2)}. QuickBooks processing fees mean you'll receive approximately <strong>$${Number(refundEstimate.estimatedRefund).toFixed(2)}</strong> back, not the full amount. Our team will process this in QuickBooks and follow up.</p></div></td></tr>` : ""}
       ${primaryUrl ? `<tr><td class="content-pad" style="padding:18px 34px 0"><a class="action-button" href="${escapeHtml(primaryUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(primaryLabel)} &nbsp;→</a>${showManageButton ? `<a class="action-button secondary-action" href="${escapeHtml(safeManageUrl)}" style="display:inline-block;margin-left:10px;color:#334155;text-decoration:none;padding:13px 8px;font-size:14px;font-weight:700">Reschedule or cancel</a>` : ""}</td></tr>` : ""}
       ${kind !== "cancelled" && (appointment.sessionType?.preparationInstructions || appointment.sessionType?.preparationChecklist?.length || (appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON)) ? `<tr><td class="content-pad" style="padding:22px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">Before your appointment</p>${appointment.sessionType?.preparationInstructions ? `<p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">${escapeHtml(appointment.sessionType.preparationInstructions)}</p>` : ""}${appointment.sessionType?.preparationChecklist?.length ? `<ul style="margin:9px 0 0;padding-left:20px;color:#475569;font-size:14px;line-height:1.7">${appointment.sessionType.preparationChecklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}${appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON ? `<p style="margin:9px 0 0;color:#64748b;font-size:13px;line-height:1.5"><strong>Arrival:</strong> ${escapeHtml(appointment.sessionType.parkingInstructions)}</p>` : ""}</div></td></tr>` : ""}
-      <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : "A calendar file is attached so you can add this appointment to your calendar."}</p></td></tr>
+      <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : kind === "payment_requested" ? "After payment, we will send a separate confirmation with your calendar file and appointment details." : includeIcs ? "A calendar file is attached so you can add this appointment to your calendar." : "We will send any calendar details separately."}</p></td></tr>
       <tr><td class="content-pad" style="padding:23px 34px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;color:#334155;font-size:13px;font-weight:700">${escapeHtml(agencyName)}</p>${agencyContact ? `<p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5">${escapeHtml(agencyContact)}</p>` : ""}${agencyAddress ? `<p style="margin:3px 0 0;color:#94a3b8;font-size:12px;line-height:1.5">${escapeHtml(agencyAddress)}</p>` : ""}</td></tr>
     </table>
     <p style="margin:18px 0 0;color:#94a3b8;font-size:11px">Sent securely by CaseDesk</p>
@@ -277,6 +281,8 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     "",
     `Hi ${contactName},`,
     copy.intro,
+    kind === "payment_requested" ? "Your appointment is not confirmed until payment is completed." : null,
+    kind === "payment_requested" && paymentExpiry ? `Reservation expires: ${paymentExpiry}` : null,
     "",
     subject,
     kind === "payment_requested" && amount ? `Amount due: $${Number(amount).toFixed(2)}` : null,
@@ -345,19 +351,24 @@ export async function sendBookingTemplateTest({ agencyId, userId, kind, messageT
  */
 async function bookingDeliveryAllowed(deliveryId, appointmentId) {
   if (!deliveryId) return true;
-  const [delivery, appointment] = await Promise.all([
-    prisma.bookingMessageDelivery.findFirst({
-      where: { id: deliveryId, appointmentId, status: "processing" },
-      select: { id: true, kind: true, payload: true },
-    }),
-    prisma.appointment.findFirst({
-      where: { id: appointmentId },
-    }),
-  ]);
-  return Boolean(delivery && bookingDeliveryIsCurrent(delivery, appointment));
+  const delivery = await prisma.bookingMessageDelivery.findFirst({
+    where: { id: deliveryId, status: "processing" },
+    select: { id: true, appointmentId: true, paymentHoldId: true, kind: true, payload: true },
+  });
+  if (!delivery) return false;
+  if (delivery.paymentHoldId && delivery.kind === "payment_requested") {
+    const hold = await prisma.bookingPaymentHold.findFirst({
+      where: { id: delivery.paymentHoldId },
+      select: { id: true, status: true, expiresAt: true },
+    });
+    return Boolean(hold && hold.id === appointmentId && hold.status === "AwaitingPayment" && (!hold.expiresAt || hold.expiresAt > new Date()));
+  }
+  if (!delivery.appointmentId || delivery.appointmentId !== appointmentId) return false;
+  const appointment = await prisma.appointment.findFirst({ where: { id: appointmentId } });
+  return Boolean(appointment && bookingDeliveryIsCurrent(delivery, appointment));
 }
 
-export async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null, includeIcs = true }) {
+export async function deliverBookingMessages({ agencyId, appointment, kind, actorUserId = null, channel = null, dedupeSuffix = "", deliveryId = null, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null, expiresAt = null, includeIcs = true }) {
   const [agency, settings] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
@@ -375,7 +386,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
       const transport = createMailTransport(config);
       const avatarBuffer = await workspaceAvatarBuffer(agency, agencyId);
       const avatarCid = avatarBuffer ? `workspace-avatar-${appointment.id}-${kind}@casedesk` : null;
-      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions, payNowUrl, amount, invoiceUrl, refundEstimate });
+      const email = bookingEmailContent({ appointment, kind, agency, timezone, contactName: contact.name, manageUrl, brandImageUrl: avatarCid ? `cid:${avatarCid}` : null, messageTemplates: settings?.messageTemplates, phoneCallInstructions: settings?.phoneCallInstructions, payNowUrl, amount, invoiceUrl, refundEstimate, expiresAt, includeIcs });
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await transport.sendMail({
         from: config.from,
@@ -414,7 +425,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
         : kind === "payment_requested"
-          ? `${agencyName}: your consultation fee${amount ? ` of $${Number(amount).toFixed(2)}` : ""} for "${appointment.subject}" (${when}) is due. Pay now: ${payNowUrl}`
+          ? `${agencyName}: pay${amount ? ` $${Number(amount).toFixed(2)}` : ""} to confirm "${appointment.subject}" (${when}). This is not booked until paid${expiresAt ? `; the hold expires ${new Date(expiresAt).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}` : ""}. ${payNowUrl}`
           : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${smsAccess}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${deliveryId || dedupeSuffix || appointment.startsAt}` });
@@ -514,6 +525,75 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
     });
   }
   if (db === prisma) void processBookingDeliveryPass();
+}
+
+function paymentHoldAppointment(hold) {
+  return {
+    id: hold.id,
+    subject: hold.sessionType?.name || "Consultation",
+    startsAt: hold.startsAt,
+    endsAt: hold.endsAt,
+    guestName: hold.guestName,
+    guestEmail: hold.guestEmail,
+    guestPhone: hold.guestPhone,
+    meetingMode: hold.meetingMode,
+    meetingUrl: null,
+    meetingPhoneNumber: hold.meetingPhoneNumber,
+    location: hold.location,
+    locationMapsUrl: hold.locationMapsUrl,
+    manageToken: null,
+    status: hold.status,
+    assignedToId: hold.assignedToId,
+    assignedTo: hold.assignedTo || null,
+  };
+}
+
+export async function queuePaymentHoldMessages({ agencyId, hold, actorUserId = null, dedupeSuffix = "", db = prisma }) {
+  const recipients = [
+    hold.guestEmail ? { channel: "email", recipient: hold.guestEmail } : null,
+    hold.guestPhone ? { channel: "sms", recipient: hold.guestPhone } : null,
+  ].filter(Boolean);
+  if (!recipients.length) return [];
+  const revision = createHash("sha256").update(JSON.stringify({
+    startsAt: new Date(hold.startsAt).toISOString(),
+    endsAt: new Date(hold.endsAt).toISOString(),
+    email: hold.guestEmail || "",
+    phone: hold.guestPhone || "",
+    payNowUrl: hold.qbInvoiceLink || "",
+    expiresAt: hold.expiresAt ? new Date(hold.expiresAt).toISOString() : "",
+  })).digest("hex").slice(0, 24);
+  await db.bookingMessageDelivery.createMany({
+    data: recipients.map(({ channel, recipient }) => ({
+      agencyId,
+      paymentHoldId: hold.id,
+      kind: "payment_requested",
+      channel,
+      recipient,
+      dedupeKey: `payment-hold:${hold.id}:payment_requested:${channel}:${revision}${dedupeSuffix ? `:${dedupeSuffix}` : ""}`,
+      payload: {
+        actorUserId,
+        payNowUrl: hold.qbInvoiceLink,
+        amount: Number(hold.amount),
+        expiresAt: hold.expiresAt,
+      },
+    })),
+    skipDuplicates: true,
+  });
+  if (db === prisma) void processBookingDeliveryPass();
+  return paymentHoldDeliverySummary(hold.id, db);
+}
+
+export async function paymentHoldDeliverySummary(paymentHoldId, db = prisma) {
+  const rows = await db.bookingMessageDelivery.findMany({
+    where: { paymentHoldId, kind: "payment_requested" },
+    select: { id: true, channel: true, recipient: true, status: true, attempts: true, sentAt: true, failedAt: true, lastError: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  });
+  const latest = [];
+  for (const row of rows) {
+    if (!latest.some((item) => item.channel === row.channel)) latest.push(row);
+  }
+  return latest;
 }
 
 export async function sendBookingStaffNotification({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma }) {
@@ -665,12 +745,25 @@ async function processBookingDeliveryPass() {
       });
       if (!claimed.count) continue;
       try {
-        const appointment = await prisma.appointment.findUnique({
-          where: { id: job.appointmentId },
-          include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: { select: { preparationInstructions: true, preparationChecklist: true, parkingInstructions: true } } },
-        });
-        if (!appointment) throw new Error("Appointment no longer exists");
-        if (!bookingDeliveryIsCurrent(job, appointment)) {
+        let appointment;
+        let paymentHold = null;
+        if (job.paymentHoldId && job.kind === "payment_requested") {
+          paymentHold = await prisma.bookingPaymentHold.findUnique({
+            where: { id: job.paymentHoldId },
+            include: { assignedTo: { select: { id: true, fullName: true } }, sessionType: { select: { name: true } } },
+          });
+          appointment = paymentHold ? paymentHoldAppointment(paymentHold) : null;
+        } else if (job.appointmentId) {
+          appointment = await prisma.appointment.findUnique({
+            where: { id: job.appointmentId },
+            include: { client: { select: { fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true } }, sessionType: { select: { preparationInstructions: true, preparationChecklist: true, parkingInstructions: true } } },
+          });
+        }
+        if (!appointment) throw new Error(job.paymentHoldId ? "Payment reservation no longer exists" : "Appointment no longer exists");
+        const current = paymentHold
+          ? paymentHold.status === "AwaitingPayment" && (!paymentHold.expiresAt || paymentHold.expiresAt > new Date())
+          : bookingDeliveryIsCurrent(job, appointment);
+        if (!current) {
           await prisma.bookingMessageDelivery.updateMany({
             where: { id: job.id, status: "processing" },
             data: { status: "cancelled", failedAt: null, lastError: null },
@@ -689,6 +782,8 @@ async function processBookingDeliveryPass() {
           amount: job.payload?.amount ?? null,
           invoiceUrl: job.payload?.invoiceUrl || null,
           refundEstimate: job.payload?.refundEstimate || null,
+          expiresAt: job.payload?.expiresAt || null,
+          includeIcs: job.kind !== "payment_requested",
         });
         if (delivery?.suppressed) {
           await prisma.bookingMessageDelivery.updateMany({
@@ -705,23 +800,26 @@ async function processBookingDeliveryPass() {
         await resolveNotifications({
           agencyId: job.agencyId,
           entityType: "integration",
-          entityId: `appointment-${job.channel}`,
+          entityId: `${job.paymentHoldId ? "payment-request" : "appointment"}-${job.channel}`,
           types: ["appointment.delivery_failed"],
         });
-        if (job.kind === "reminder") {
+        if (job.kind === "reminder" && job.appointmentId) {
           const remaining = await prisma.bookingMessageDelivery.count({ where: { appointmentId: job.appointmentId, kind: "reminder", status: { not: "sent" } } });
           if (!remaining) await prisma.appointment.update({ where: { id: job.appointmentId }, data: { reminderSentAt: new Date() } });
         }
       } catch (error) {
         const attempts = job.attempts + 1;
         const exhausted = attempts >= job.maxAttempts;
+        const retryDelayMs = job.paymentHoldId
+          ? Math.min(120, 15 * 2 ** attempts) * 1000
+          : Math.min(60, 2 ** attempts) * 60_000;
         const failed = await prisma.bookingMessageDelivery.updateMany({
           where: { id: job.id, status: "processing" },
           data: {
             status: exhausted ? "failed" : "pending",
             failedAt: exhausted ? new Date() : null,
             lastError: String(error.message || error).slice(0, 1000),
-            availableAt: new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000),
+            availableAt: new Date(Date.now() + retryDelayMs),
           },
         });
         if (!failed.count) continue;
@@ -731,13 +829,13 @@ async function processBookingDeliveryPass() {
             recipientIds: await adminRecipientIds(job.agencyId),
             type: "appointment.delivery_failed",
             category: "appointments",
-            title: "Appointment message delivery failed",
-            body: `${job.channel.toUpperCase()} delivery failed after ${attempts} attempts.`,
+            title: job.paymentHoldId ? "Payment request delivery failed" : "Appointment message delivery failed",
+            body: `${job.channel.toUpperCase()} delivery failed after ${attempts} attempts.${job.paymentHoldId ? " Open the payment reservation to correct the recipient and resend it." : ""}`,
             severity: "critical",
             entityType: "integration",
-            entityId: `appointment-${job.channel}`,
-            actionUrl: "/app/calendar",
-            dedupeKey: `appointment-delivery:${job.channel}:failed`,
+            entityId: `${job.paymentHoldId ? "payment-request" : "appointment"}-${job.channel}`,
+            actionUrl: job.paymentHoldId ? `/app/payments?source=booking_payment&hold=${encodeURIComponent(job.paymentHoldId)}` : "/app/calendar",
+            dedupeKey: `${job.paymentHoldId ? `payment-request:${job.paymentHoldId}` : "appointment-delivery"}:${job.channel}:failed`,
             channels: ["in_app"],
             aggregate: true,
             attentionLevel: "action_required",

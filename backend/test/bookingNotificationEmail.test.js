@@ -36,6 +36,29 @@ test("booking email presents branded appointment details and safe actions", () =
   assert.match(email.text, /Add|Directions:/);
 });
 
+test("payment request clearly remains unconfirmed, shows expiry, and does not claim an ICS is attached", () => {
+  const email = bookingEmailContent({
+    appointment: { ...baseAppointment, status: "AwaitingPayment" },
+    kind: "payment_requested",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: null,
+    payNowUrl: "https://payments.example.test/invoice/1001",
+    amount: 150,
+    expiresAt: new Date("2026-07-21T13:30:00.000Z"),
+    includeIcs: false,
+  });
+
+  assert.match(email.html, /Not confirmed yet/);
+  assert.match(email.html, /booked only after payment is completed/);
+  assert.match(email.html, /Pay consultation fee/);
+  assert.match(email.text, /not confirmed until payment is completed/i);
+  assert.match(email.text, /Reservation expires:/);
+  assert.doesNotMatch(email.html, /A calendar file is attached/);
+  assert.match(email.html, /separate confirmation with your calendar file/);
+});
+
 test("booking email escapes visitor-controlled content", () => {
   const email = bookingEmailContent({
     appointment: { ...baseAppointment, subject: '<img src=x onerror="alert(1)">' },
