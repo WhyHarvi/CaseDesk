@@ -72,13 +72,13 @@ router.get(
 router.get(
   "/:id/billing/manual-entry-options",
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "frontdesk"),
   asyncHandler(getClientManualBillingOptions),
 );
 router.post(
   "/:id/billing/manual-entry",
   requirePortalCapability("financialData"),
-  requireRole("admin", "consultant"),
+  requireRole("admin", "consultant", "frontdesk"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(createClientManualBillingEntry),
 );

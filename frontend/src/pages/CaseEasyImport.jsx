@@ -73,7 +73,7 @@ function fmtDate(value) {
   return new Date(value).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" });
 }
 
-function PageHeader({ view, onViewChange, needsReviewTotal }) {
+function PageHeader({ view, onViewChange, needsReviewTotal, totalContacts }) {
   return (
     <>
       <div>
@@ -90,6 +90,11 @@ function PageHeader({ view, onViewChange, needsReviewTotal }) {
         </button>
         <button type="button" onClick={() => onViewChange("contacts")} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${view === "contacts" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-950"}`}>
           <UsersRound className="h-4 w-4" /> Clients & cases
+          {totalContacts != null ? (
+            <span className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${view === "contacts" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+              {totalContacts}
+            </span>
+          ) : null}
         </button>
         <button type="button" onClick={() => onViewChange("reports")} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${view === "reports" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-950"}`}>
           <BarChart3 className="h-4 w-4" /> Reports
@@ -492,7 +497,7 @@ export default function CaseEasyImport() {
   if (view === "import") {
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} />
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
           <CaseEasyImportSettingsPanel />
         </section>
@@ -503,7 +508,7 @@ export default function CaseEasyImport() {
   if (view === "reports") {
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} />
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
         <CaseEasyReportsBrowser />
       </div>
     );
@@ -511,7 +516,7 @@ export default function CaseEasyImport() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-      <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} />
+      <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
 
       <div className="flex flex-wrap items-center gap-3">
         <Select value={recordType} onChange={(event) => setRecordType(event.target.value)} className="w-40">
@@ -523,6 +528,9 @@ export default function CaseEasyImport() {
         <button type="button" onClick={load} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300">
           <RefreshCw className="h-3.5 w-3.5" /> Refresh
         </button>
+        <p className="text-xs font-medium text-slate-500">
+          {loading ? "Loading…" : `${contacts.length} contact${contacts.length === 1 ? "" : "s"}${recordType || importStatus ? " matching filters" : ""}`}
+        </p>
       </div>
 
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{notice}</div> : null}

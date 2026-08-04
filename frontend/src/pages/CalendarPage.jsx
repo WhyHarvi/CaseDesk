@@ -807,12 +807,12 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     const guestEmail = form.mode === "guest" ? form.guestEmail.trim() : "";
     if (!clientId && !guestEmail) { setFreeEligibility(null); return; }
     const timer = setTimeout(() => {
-      getFreeConsultationEligibility({ clientId: clientId || undefined, guestEmail: guestEmail || undefined })
+      getFreeConsultationEligibility({ clientId: clientId || undefined, guestEmail: guestEmail || undefined, sessionTypeId: form.sessionTypeId || undefined })
         .then(setFreeEligibility)
         .catch(() => setFreeEligibility(null));
     }, 350);
     return () => clearTimeout(timer);
-  }, [open, form.mode, form.clientId, form.guestEmail]);
+  }, [open, form.mode, form.clientId, form.guestEmail, form.sessionTypeId]);
 
   useEffect(() => {
     if (!pendingHold || !["AwaitingPayment", "Confirming"].includes(pendingHold.status)) return;
@@ -1090,7 +1090,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
               {freeEligibility?.enabled ? (
                 freeEligibility.eligible ? (
-                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free consultation available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
+                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free 15-minute follow-up available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
+                ) : freeEligibility.reason === "PAID_BOOKING_REQUIRED" ? (
+                  <p className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">A free follow-up becomes available only after a previous paid consultation.</p>
+                ) : freeEligibility.reason === "FIFTEEN_MINUTE_SESSION_REQUIRED" && freeEligibility.contactEligible ? (
+                  <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700">Eligible for a free follow-up, but only with a 15-minute appointment type. This appointment remains paid.</p>
                 ) : (
                   <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Free consultation limit reached — this will be booked as a paid consultation.</p>
                 )

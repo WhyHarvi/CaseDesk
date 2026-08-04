@@ -283,9 +283,22 @@ export async function createPublicBooking(req, res) {
     where: { agencyId: settings.agencyId, email: { equals: email, mode: "insensitive" } },
     select: { id: true, assignedUserId: true },
   }) : null;
-  const freeEligibility = await resolveFreeConsultationEligibility(settings.agencyId, settings, { clientId: existingClient?.id || null, guestEmailNormalized: email });
+  const freeEligibility = await resolveFreeConsultationEligibility(settings.agencyId, settings, {
+    clientId: existingClient?.id || null,
+    // A raw email address is not proof of identity. Only a valid booking
+    // verification token may use historic payments to unlock a free visit.
+    guestEmailNormalized: verification ? email : null,
+    durationMinutes: sessionType.durationMinutes,
+  });
   if (settings.freeConsultationsEnabled && !freeEligibility.eligible) {
-    throw createHttpError(409, "The free consultation limit for this email has been reached. Please contact the office.", "FREE_LIMIT_REACHED");
+    const message = freeEligibility.reason === "PAID_BOOKING_REQUIRED"
+      ? "A free consultation is available only after a previous paid consultation."
+      : freeEligibility.reason === "FIFTEEN_MINUTE_SESSION_REQUIRED"
+        ? "Free follow-up consultations must use a 15-minute appointment type."
+        : freeEligibility.reason === "VERIFIED_CONTACT_REQUIRED"
+          ? "Verify your email before using a free follow-up consultation."
+          : "The free consultation limit for this email has been reached. Please contact the office.";
+    throw createHttpError(409, message, freeEligibility.reason);
   }
 
   const appointment = await prisma.$transaction(async (tx) => {

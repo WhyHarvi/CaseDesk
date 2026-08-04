@@ -687,6 +687,7 @@ export async function createBookingAppointment(req, res) {
   const freeEligibility = await resolveFreeConsultationEligibility(req.auth.agencyId, settings, {
     clientId: client?.id || null,
     guestEmailNormalized: client ? client.email?.toLowerCase() || null : guestEmailNormalized,
+    durationMinutes,
   });
   assertMeetingModeConfigured({
     settings,
@@ -939,7 +940,15 @@ export async function getFreeConsultationEligibility(req, res) {
   const settings = await getOrCreateBookingSettings(req.auth.agencyId);
   const clientId = String(req.query.clientId || "") || null;
   const guestEmailNormalized = String(req.query.guestEmail || "").trim().toLowerCase() || null;
-  const eligibility = await resolveFreeConsultationEligibility(req.auth.agencyId, settings, { clientId, guestEmailNormalized });
+  const sessionTypeId = String(req.query.sessionTypeId || "") || null;
+  const sessionType = sessionTypeId
+    ? await prisma.bookingSessionType.findFirst({ where: { id: sessionTypeId, agencyId: req.auth.agencyId, isActive: true }, select: { durationMinutes: true } })
+    : null;
+  const eligibility = await resolveFreeConsultationEligibility(req.auth.agencyId, settings, {
+    clientId,
+    guestEmailNormalized,
+    durationMinutes: sessionType?.durationMinutes || null,
+  });
   res.json({ data: eligibility });
 }
 

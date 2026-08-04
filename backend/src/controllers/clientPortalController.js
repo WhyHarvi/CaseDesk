@@ -9,6 +9,7 @@ import { getClientInvoicePdf } from "../services/caseInvoiceService.js";
 import { getCaseSchedule } from "../services/paymentScheduleService.js";
 import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
+import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -380,7 +381,7 @@ async function portalData(req) {
     }),
     prisma.bookingSettings.findUnique({
       where: { agencyId: req.auth.agencyId },
-      select: { publicSlug: true, publicBookingEnabled: true },
+      select: { publicSlug: true, publicBookingEnabled: true, freeConsultationsEnabled: true, freeConsultationsPerContact: true },
     }),
     prisma.case.findFirst({
       where: { agencyId: req.auth.agencyId, clientId: link.clientId, deletedAt: null, archivedAt: null },
@@ -429,6 +430,20 @@ export async function getPortalOverview(req, res) {
   const payment = withPaymentDisplay(paymentSummary, agency);
   const nameParts = String(link.client.fullName || "").trim().split(/\s+/);
   const shared = sharedAssignments(assessment?.formData || {});
+  const freeSessionType = bookingSettings?.freeConsultationsEnabled
+    ? await prisma.bookingSessionType.findFirst({
+        where: { agencyId: req.auth.agencyId, isActive: true, durationMinutes: 15 },
+        select: { id: true, name: true, durationMinutes: true },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      })
+    : null;
+  const freeEligibility = freeSessionType
+    ? await resolveFreeConsultationEligibility(req.auth.agencyId, bookingSettings, {
+        clientId: link.clientId,
+        guestEmailNormalized: String(link.client.email || "").trim().toLowerCase() || null,
+        durationMinutes: freeSessionType.durationMinutes,
+      })
+    : null;
 
   res.json({
     success: true,
@@ -457,6 +472,9 @@ export async function getPortalOverview(req, res) {
           bookingSettings?.publicBookingEnabled && bookingSettings?.publicSlug
             ? `/b/${encodeURIComponent(bookingSettings.publicSlug)}`
             : null,
+        freeFollowUpOffer: freeEligibility?.eligible
+          ? { sessionTypeId: freeSessionType.id, sessionName: freeSessionType.name, durationMinutes: 15 }
+          : null,
       },
       case: caseItem
         ? {

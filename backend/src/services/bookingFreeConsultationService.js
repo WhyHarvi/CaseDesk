@@ -1,31 +1,83 @@
 import prisma from "./prisma/client.js";
 
-// Shared by the public booking page and the internal staff booking form so
-// both enforce the same per-contact free-consultation cutoff instead of
-// drifting — the public page blocks booking once the limit is reached, the
-// staff form just stops flagging the appointment as free (see callers).
-export async function resolveFreeConsultationEligibility(agencyId, settings, { clientId = null, guestEmailNormalized = null }) {
+// Shared by every booking surface. A complimentary follow-up is earned only
+// after an earlier paid consultation has actually taken place. UI labels are
+// advisory; this service is the server-side authority that prevents staff,
+// portal, public, and direct API bookings from bypassing the rule.
+export async function resolveFreeConsultationEligibility(agencyId, settings, {
+  clientId = null,
+  guestEmailNormalized = null,
+  durationMinutes = null,
+}) {
+  const limit = Number(settings.freeConsultationsPerContact || 1);
   if (!settings.freeConsultationsEnabled) {
-    return { enabled: false, eligible: false, priorFreeCount: 0, limit: settings.freeConsultationsPerContact };
+    return { enabled: false, eligible: false, contactEligible: false, hasPriorPaidBooking: false, priorPaidCount: 0, priorFreeCount: 0, limit, reason: "FREE_DISABLED" };
   }
   if (!clientId && !guestEmailNormalized) {
-    return { enabled: true, eligible: false, priorFreeCount: 0, limit: settings.freeConsultationsPerContact };
+    return { enabled: true, eligible: false, contactEligible: false, hasPriorPaidBooking: false, priorPaidCount: 0, priorFreeCount: 0, limit, reason: "VERIFIED_CONTACT_REQUIRED" };
   }
-  const priorFreeCount = await prisma.appointment.count({
-    where: {
-      agencyId,
-      isFreeConsultation: true,
-      status: { not: "Cancelled" },
-      OR: [
-        ...(clientId ? [{ clientId }] : []),
-        ...(guestEmailNormalized ? [{ guestEmailNormalized }] : []),
-      ],
-    },
-  });
+
+  const email = String(guestEmailNormalized || "").trim().toLowerCase() || null;
+  const identity = [
+    ...(clientId ? [{ clientId }, { appointment: { is: { clientId } } }] : []),
+    ...(email ? [{ guestEmailNormalized: email }, { appointment: { is: { guestEmailNormalized: email } } }] : []),
+  ];
+  const now = new Date();
+  const [priorPaidCount, priorFreeCount] = await Promise.all([
+    prisma.bookingPaymentHold.count({
+      where: {
+        agencyId,
+        status: "Paid",
+        paidAt: { not: null },
+        voidedAt: null,
+        balanceMismatchAt: null,
+        AND: [
+          { OR: identity },
+          {
+            appointment: {
+              is: {
+                isFreeConsultation: false,
+                status: { not: "Cancelled" },
+                endsAt: { lt: now },
+              },
+            },
+          },
+        ],
+      },
+    }),
+    prisma.appointment.count({
+      where: {
+        agencyId,
+        isFreeConsultation: true,
+        status: { not: "Cancelled" },
+        OR: [
+          ...(clientId ? [{ clientId }] : []),
+          ...(email ? [{ guestEmailNormalized: email }] : []),
+        ],
+      },
+    }),
+  ]);
+  const hasPriorPaidBooking = priorPaidCount > 0;
+  const withinLimit = priorFreeCount < limit;
+  const isFifteenMinutes = Number(durationMinutes) === 15;
+  const contactEligible = hasPriorPaidBooking && withinLimit;
+  const eligible = contactEligible && isFifteenMinutes;
+  const reason = !hasPriorPaidBooking
+    ? "PAID_BOOKING_REQUIRED"
+    : !withinLimit
+      ? "FREE_LIMIT_REACHED"
+      : !isFifteenMinutes
+        ? "FIFTEEN_MINUTE_SESSION_REQUIRED"
+        : "ELIGIBLE";
+
   return {
     enabled: true,
-    eligible: priorFreeCount < settings.freeConsultationsPerContact,
+    eligible,
+    contactEligible,
+    hasPriorPaidBooking,
+    priorPaidCount,
     priorFreeCount,
-    limit: settings.freeConsultationsPerContact,
+    limit,
+    reason,
   };
 }

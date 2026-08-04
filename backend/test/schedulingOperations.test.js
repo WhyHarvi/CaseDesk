@@ -470,7 +470,7 @@ test("client billing can record agency fee categories and repair paid appointmen
 
   assert.match(clientRoutes, /billing\/manual-entry-options/);
   assert.match(clientRoutes, /billing\/manual-entry/);
-  assert.match(clientRoutes, /requireRole\("admin", "consultant"\)/);
+  assert.match(clientRoutes, /requireRole\("admin", "consultant", "frontdesk"\)/);
   assert.match(controller, /listFeeCategories\(req\.auth\.agencyId\)/);
   assert.match(controller, /entryType === "invoice_payment"/);
   assert.match(controller, /entryType === "appointment_payment"/);
@@ -488,12 +488,42 @@ test("client billing can record agency fee categories and repair paid appointmen
   assert.match(quickBooks, /updateQuickBooksPaymentDetails/);
   assert.match(quickBooks, /sparse: true/);
   assert.match(billingCard, /Add entry/);
+  assert.match(billingCard, /"admin", "consultant", "frontdesk"/);
   assert.match(entrySheet, /Agency fee category/);
   assert.match(entrySheet, /New charge \+ payment/);
   assert.match(entrySheet, /add missing transaction #/);
   assert.match(entrySheet, /Convert this free appointment to paid/);
   assert.match(entrySheet, /matched by contact/);
   assert.match(calendar, /Add missing transaction number/);
+});
+
+test("free follow-up consultations require a prior settled booking and a 15-minute session", async () => {
+  const [eligibilityService, bookingController, publicController, portalController, portalOffer, calendar] = await Promise.all([
+    readFile(new URL("../src/services/bookingFreeConsultationService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/publicBookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/clientPortalController.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/client-portal/usePortalFreeAppointmentOffer.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(eligibilityService, /status: "Paid"/);
+  assert.match(eligibilityService, /paidAt: \{ not: null \}/);
+  assert.match(eligibilityService, /voidedAt: null/);
+  assert.match(eligibilityService, /balanceMismatchAt: null/);
+  assert.match(eligibilityService, /status: \{ not: "Cancelled" \}/);
+  assert.match(eligibilityService, /endsAt: \{ lt: now \}/);
+  assert.match(eligibilityService, /Number\(durationMinutes\) === 15/);
+  assert.match(eligibilityService, /PAID_BOOKING_REQUIRED/);
+  assert.match(eligibilityService, /FIFTEEN_MINUTE_SESSION_REQUIRED/);
+  assert.match(bookingController, /durationMinutes,/);
+  assert.match(publicController, /guestEmailNormalized: verification \? email : null/);
+  assert.match(portalController, /freeFollowUpOffer: freeEligibility\?\.eligible/);
+  assert.match(portalController, /durationMinutes: 15/);
+  assert.doesNotMatch(portalOffer, /getPublicBookingInfo/);
+  assert.match(portalOffer, /booking\.freeFollowUpOffer/);
+  assert.match(calendar, /previous paid consultation/);
+  assert.match(calendar, /only with a 15-minute appointment type/);
 });
 
 test("public paid and Zoom formats cannot be enabled with incomplete provider setup", async () => {

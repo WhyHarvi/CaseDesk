@@ -30,10 +30,11 @@ export async function updateSchedulingStaff(userId, values) {
   return response.data.data;
 }
 
-export async function getFreeConsultationEligibility({ clientId, guestEmail } = {}) {
+export async function getFreeConsultationEligibility({ clientId, guestEmail, sessionTypeId } = {}) {
   const params = new URLSearchParams();
   if (clientId) params.set("clientId", clientId);
   if (guestEmail) params.set("guestEmail", guestEmail);
+  if (sessionTypeId) params.set("sessionTypeId", sessionTypeId);
   const response = await api.get(`/booking/free-consultation-eligibility?${params.toString()}`);
   return response.data.data;
 }
