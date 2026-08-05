@@ -4,10 +4,17 @@ import { portalDataScope } from "../../services/portalAccessService.js";
 // widespread data-quality problems (missing contact info, missing payment
 // records) and are hidden from every lead-facing surface — list, dashboard,
 // reports, search, and direct lookups — until that batch is reviewed.
-// LeadImportRow.createdLeadId is set for every lead ever created through the
-// CSV/Excel import pipeline, so this is an exact match, not a heuristic.
+// LeadImportRow.createdLeadId covers everything that went through the
+// CSV/Excel pipeline; the ~5 "confirmed student" placeholder leads (zero
+// contact info anywhere in the source file) were created directly by a
+// one-off script instead, so they carry no import-row link — every lead from
+// that batch does carry an "Admissions detail (imported)" activity though,
+// so that closes the gap. Both are exact provenance matches, not heuristics.
 // Remove this clause once the batch has been cleaned up.
-const HIDE_IMPORTED_LEADS = { importedRows: { none: {} } };
+const HIDE_IMPORTED_LEADS = {
+  importedRows: { none: {} },
+  activities: { none: { title: "Admissions detail (imported)" } },
+};
 
 export function leadAccessWhere(req) {
   // Frontdesk works the incoming lead queue for the whole agency, not just

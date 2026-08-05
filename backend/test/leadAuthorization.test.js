@@ -6,8 +6,9 @@ import { canCreateLead, leadAccessWhere } from "../src/modules/leads/lead.permis
 const req = (role, userId = "user-a") => ({ auth: { role, userId, agencyId: "agency-a" } });
 
 test("admin sees agency leads while consultants see their assigned leads", () => {
-  assert.deepEqual(leadAccessWhere(req("admin")), { importedRows: { none: {} } });
-  assert.deepEqual(leadAccessWhere(req("consultant")), { ownerUserId: "user-a", importedRows: { none: {} } });
+  const hideImported = { importedRows: { none: {} }, activities: { none: { title: "Admissions detail (imported)" } } };
+  assert.deepEqual(leadAccessWhere(req("admin")), hideImported);
+  assert.deepEqual(leadAccessWhere(req("consultant")), { ownerUserId: "user-a", ...hideImported });
 });
 
 test("consultants can perform reception intake without adding another role", () => {

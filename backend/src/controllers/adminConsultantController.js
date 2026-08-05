@@ -582,6 +582,7 @@ async function loadAgencyWorkloads(agencyId) {
           deletedAt: null,
           status: "OPEN",
           importedRows: { none: {} },
+          activities: { none: { title: "Admissions detail (imported)" } },
         },
         select: {
           id: true,
