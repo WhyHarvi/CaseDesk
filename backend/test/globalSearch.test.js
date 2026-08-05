@@ -94,5 +94,6 @@ test("global search UI uses an unclipped portal and opens every result", async (
   assert.match(search, /280/);
   assert.match(caseProfile, /overlay"\) === "notes"/);
   assert.match(caseProfile, /highlightNoteId=\{highlightedNoteId\}/);
-  assert.match(clientProfile, /client-note-\$\{highlightedNoteId\}/);
+  assert.match(clientProfile, /useFadingHighlight\(highlightedNoteId/);
+  assert.match(clientProfile, /domIdPrefix: "client-note-"/);
 });

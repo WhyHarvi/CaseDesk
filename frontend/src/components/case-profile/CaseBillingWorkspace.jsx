@@ -17,6 +17,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
 import ManualLedgerPanel from "../ledger/ManualLedgerPanel";
+import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
 const PAYMENT_TYPE_META = {
   fees: { label: "Professional fees", icon: Banknote, tint: "bg-emerald-50 text-emerald-700" },
@@ -183,7 +184,7 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       id={`case-invoice-${invoice.id}`}
-      className={`rounded-[1.4rem] border border-white/70 bg-white/85 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
+      className={`rounded-[1.4rem] border border-white/70 bg-white/85 p-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl ${fadingHighlightClass(highlighted)}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
@@ -366,13 +367,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
 
   useEffect(() => { load(); }, [caseItem.id]);
 
-  useEffect(() => {
-    if (!highlightId || !invoices) return undefined;
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`case-invoice-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [highlightId, invoices]);
+  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-invoice-", ready: Boolean(invoices) });
 
   function patchInvoice(updated) {
     setInvoices((current) => {
@@ -415,7 +410,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {invoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === highlightId} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === activeHighlightId} />
             ))}
           </AnimatePresence>
         </div>

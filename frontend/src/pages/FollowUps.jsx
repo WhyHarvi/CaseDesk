@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
+import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 
 const defaultFormState = {
   clientId: "",
@@ -621,7 +622,7 @@ function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMa
   return (
     <article
       id={`followup-row-${item.id}`}
-      className={`group relative overflow-hidden rounded-[18px] border border-slate-200/70 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_42px_rgba(15,23,42,0.09)] ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
+      className={`group relative overflow-hidden rounded-[18px] border border-slate-200/70 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_42px_rgba(15,23,42,0.09)] ${fadingHighlightClass(highlighted)}`}
     >
       <div className={`absolute inset-y-0 left-0 w-1 ${getAccentBarClass(item.tone)}`} />
 
@@ -853,13 +854,11 @@ export default function FollowUps() {
     loadWorkspaceData();
   }, []);
 
-  useEffect(() => {
-    if (!highlightId || loading) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`followup-row-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [highlightId, loading, followUps]);
+  const activeHighlightId = useFadingHighlight(highlightId, {
+    domIdPrefix: "followup-row-",
+    ready: !loading,
+    deps: [followUps],
+  });
 
   useEffect(() => {
     if (!toast) {
@@ -1466,7 +1465,7 @@ export default function FollowUps() {
                     <FollowUpCard
                       key={item.id}
                       item={item}
-                      highlighted={item.id === highlightId}
+                      highlighted={item.id === activeHighlightId}
                       onEdit={openEditForm}
                       onDelete={handleDelete}
                       onCopyMessage={handleCopyMessage}

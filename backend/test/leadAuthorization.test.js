@@ -35,6 +35,8 @@ test("lead dashboard names open the existing lead detail sheet", async () => {
   assert.match(page, /function LeadNameButton\(\{ lead, onOpen \}\)/);
   assert.equal(page.match(/<LeadNameButton lead=\{lead\} onOpen=\{setSelectedLead\} \/>/g)?.length, 2);
   assert.match(page, /<LeadDetailSheet lead=\{selectedLead\}/);
+  assert.match(page, /\["Open leads", summary\.openLeads, TrendingUp, "\/leads\?status=OPEN"\]/);
+  assert.doesNotMatch(page, /money\.format\(summary\.openPipelineValue\)/);
 });
 
 test("lead RLS is agency scoped and no client policy is granted", async () => {

@@ -40,6 +40,7 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
   const [
     newToday,
     uncontacted,
+    openLeads,
     slaMissed,
     followUpsDueToday,
     overdueFollowUps,
@@ -59,6 +60,7 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
   ] = await Promise.all([
     db.lead.count({ where: { ...baseLeadWhere, createdAt: { gte: todayStart, lt: tomorrowStart } } }),
     db.lead.count({ where: { ...openLeadWhere, firstContactAt: null } }),
+    db.lead.count({ where: openLeadWhere }),
     db.lead.count({ where: { ...openLeadWhere, firstContactAt: null, firstContactDueAt: { lt: now } } }),
     db.leadFollowUp.count({ where: { agencyId, status: "PENDING", dueAt: { gte: todayStart, lt: tomorrowStart }, lead: relatedLeadWhere } }),
     db.leadFollowUp.count({ where: { agencyId, status: "PENDING", dueAt: { lt: now }, lead: relatedLeadWhere } }),
@@ -117,6 +119,7 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
     summary: {
       newToday,
       uncontacted,
+      openLeads,
       slaMissed,
       followUpsDueToday,
       overdueFollowUps,

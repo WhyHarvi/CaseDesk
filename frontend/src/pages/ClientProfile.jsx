@@ -31,6 +31,7 @@ import ClientCommunicationCard from "../components/clients/ClientCommunicationCa
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
 import { hasCapability } from "../auth/portalAccess";
+import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 
 const defaultNoteFormState = {
   content: "",
@@ -422,15 +423,11 @@ export default function ClientProfile() {
     return () => { active = false; };
   }, [canReassignClient]);
 
-  useEffect(() => {
-    if (!highlightedNoteId || loading) return;
-    const frame = window.requestAnimationFrame(() => {
-      document
-        .getElementById(`client-note-${highlightedNoteId}`)
-        ?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [highlightedNoteId, loading, sortedProfileNotes]);
+  const activeHighlightedNoteId = useFadingHighlight(highlightedNoteId, {
+    domIdPrefix: "client-note-",
+    ready: !loading,
+    deps: [sortedProfileNotes],
+  });
 
   function resetNoteForm() {
     setNoteFormState(defaultNoteFormState);
@@ -1000,7 +997,7 @@ export default function ClientProfile() {
                     <div
                       id={`client-note-${note.id}`}
                       key={note.id}
-                      className={note.id === highlightedNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}
+                      className={`rounded-[1.4rem] ${fadingHighlightClass(note.id === activeHighlightedNoteId)}`}
                     >
                       {note.appointment ? (
                         <button

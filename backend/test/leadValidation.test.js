@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeEmail, normalizePhone, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadConversion, parseLeadListQuery, parseLeadQualification, parseUpdateConsultation } from "../src/modules/leads/lead.validation.js";
+import { leadSearchWhere } from "../src/modules/leads/lead.service.js";
 
 test("lead input normalizes email and common phone formatting", () => {
   assert.equal(normalizeEmail("  Person@Example.CA "), "person@example.ca");
@@ -29,6 +30,22 @@ test("lead list query accepts only supported filters and sorting", () => {
   assert.deepEqual(parseLeadListQuery({ month: "2026-07" }).month, { year: 2026, month: 7 });
   assert.throws(() => parseLeadListQuery({ month: "not-a-month" }), /month must be in YYYY-MM format/);
   assert.throws(() => parseLeadListQuery({ status: "UNKNOWN" }), /status is invalid/);
+});
+
+test("lead search distinguishes lead numbers, names, and phone fragments", () => {
+  const named = leadSearchWhere("Loveleen");
+  assert.equal(named.OR.some((clause) => clause.phoneNormalized), false);
+  assert.deepEqual(leadSearchWhere("lead 100").OR[0], {
+    leadNumber: { endsWith: "-000100", mode: "insensitive" },
+  });
+  assert.deepEqual(leadSearchWhere("LD-2026-100").OR[0], {
+    leadNumber: { equals: "LD-2026-000100", mode: "insensitive" },
+  });
+  assert.deepEqual(
+    leadSearchWhere("+1 (416) 555-0100").OR.at(-1),
+    { phoneNormalized: { contains: "14165550100" } },
+  );
+  assert.ok(leadSearchWhere("Loveleen Davit").OR.some((clause) => clause.AND));
 });
 
 test("qualification validates outcome, confidence, and required explanation", () => {

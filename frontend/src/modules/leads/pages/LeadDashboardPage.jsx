@@ -97,8 +97,6 @@ export default function LeadDashboardPage() {
   const summary = dashboard?.summary;
   const operational = dashboard?.operational;
   const watchlist = operational?.watchlist?.filter((lead) => operationalFilter === "ALL" || lead.issues.includes(operationalFilter)) || [];
-  const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: dashboard?.currency || "CAD", maximumFractionDigits: 0 });
-
   return (
     <section className="space-y-6 pb-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -121,7 +119,7 @@ export default function LeadDashboardPage() {
             ["Uncontacted", summary.uncontacted, PhoneOff, "/leads?status=OPEN&uncontacted=true"],
             ["Converted this week", summary.convertedThisWeek, UserRoundCheck, "/leads?status=CONVERTED&convertedThisWeek=true"],
             ["Lost this week", summary.lostThisWeek, AlertTriangle, "/leads?status=LOST&lostThisWeek=true"],
-            ["Open pipeline", money.format(summary.openPipelineValue), TrendingUp, "/leads?status=OPEN"],
+            ["Open leads", summary.openLeads, TrendingUp, "/leads?status=OPEN"],
             ["Conversion", `${summary.overallConversionRate}%`, Gauge, "/lead-reports"],
           ].map(([label, value, Icon, to], index) => (
             <Link key={label} to={to} className={`px-4 py-4 transition hover:bg-slate-50 ${index % 2 ? "border-l" : ""} border-slate-100 sm:border-l sm:first:border-l-0`}>

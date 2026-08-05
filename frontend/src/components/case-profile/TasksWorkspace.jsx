@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
 import { getWorkflowPriorityStyles } from "./caseProfileUtils";
+import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
 const priorities = ["Low", "Normal", "High", "Urgent"];
 const inputClass =
@@ -394,13 +395,7 @@ export default function TasksWorkspace({
         }),
     [tasks, view],
   );
-  useEffect(() => {
-    if (!highlightId) return undefined;
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`case-task-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [highlightId, visible]);
+  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-task-" });
   const save = async (values) => {
     try {
       setSaving(true);
@@ -539,7 +534,7 @@ export default function TasksWorkspace({
             <article
               key={task.id}
               id={`case-task-${task.id}`}
-              className={`group flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50/70 ${task.id === highlightId ? "ring-4 ring-sky-200/80" : ""}`}
+              className={`group flex items-center gap-3 px-4 py-3.5 transition hover:bg-slate-50/70 ${fadingHighlightClass(task.id === activeHighlightId)}`}
             >
               <button
                 type="button"

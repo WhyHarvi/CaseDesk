@@ -145,7 +145,8 @@ export default function LeadsPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <form onSubmit={submitSearch} className="relative min-w-[260px] flex-1">
               <Search className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
-              <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} className="h-11 w-full rounded-2xl border border-slate-200/90 bg-white/90 pl-11 pr-4 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:bg-white focus:ring-4 focus:ring-brand-100" placeholder="Search name, lead number, phone, or email" />
+              <input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} className="h-11 w-full rounded-2xl border border-slate-200/90 bg-white/90 pl-11 pr-24 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:bg-white focus:ring-4 focus:ring-brand-100" placeholder="Search name, lead number, phone, or email" />
+              <button type="submit" className="absolute right-1.5 top-1.5 h-8 rounded-xl bg-slate-900 px-3.5 text-xs font-semibold text-white transition hover:bg-slate-700">Search</button>
             </form>
             <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-nowrap">
               <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400"><SlidersHorizontal className="h-3.5 w-3.5" />Filters</span>

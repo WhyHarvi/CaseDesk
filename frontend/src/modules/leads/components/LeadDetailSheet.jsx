@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CalendarPlus,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
   HeartHandshake,
   Landmark,
@@ -26,7 +27,7 @@ import { formatDueDate, humanize, initials, leadName, statusTone } from "../lead
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 
@@ -193,6 +194,22 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     <SummaryValue label="Priority" value={humanize(lead.priority)} />
                   </section>
 
+                  {!isFrontdesk && (lead.status === "OPEN" || lead.qualification) ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><ClipboardCheck className="h-4 w-4 text-slate-400" />Qualification</h3><p className="mt-1 text-xs text-slate-500">Eligibility assessment and outcome</p></div>
+                      {lead.status === "OPEN" ? <button type="button" onClick={() => setActiveAction("qualify")} className="h-9 rounded-full border border-slate-200 px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{lead.qualification ? "Update" : "Qualify"}</button> : null}
+                    </div>
+                    {lead.qualification ? (
+                      <>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs text-slate-400">Outcome</p><p className="mt-1 text-sm font-semibold text-slate-800">{humanize(lead.qualification.outcome)}</p></div>
+                          <div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs text-slate-400">Eligibility confidence</p><p className="mt-1 text-sm font-semibold text-slate-800">{lead.qualification.eligibilityConfidence != null ? `${lead.qualification.eligibilityConfidence}%` : "—"}</p></div>
+                        </div>
+                        {lead.qualification.notes ? <p className="mt-3 text-sm leading-6 text-slate-600">{lead.qualification.notes}</p> : null}
+                      </>
+                    ) : <p className="mt-4 text-sm text-slate-500">Not yet qualified.</p>}
+                  </section> : null}
+
                   <section className="rounded-2xl border border-slate-200/70 bg-white">
                     <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                       <h3 className="text-sm font-semibold text-slate-900">Contact</h3>
@@ -325,6 +342,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       </aside>
 
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}

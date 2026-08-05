@@ -27,6 +27,7 @@ import { createPortal } from "react-dom";
 import api from "../../services/api";
 import { deduplicateDocuments, normalizeDocumentName } from "./documentNames";
 import { buildDocumentPreview, releaseDocumentPreview } from "./documentPreview";
+import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
 const myDocumentMarker = "[MY_DOCUMENT]";
 const acceptedDocumentTypes = ".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.txt";
@@ -610,7 +611,7 @@ function DocumentRow({ document, uploading, updating, selectable, selected, inte
       onDragOver={acceptsDrop ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setDragging(true); } : undefined}
       onDragLeave={acceptsDrop ? (event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); } : undefined}
       onDrop={acceptsDrop ? (event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files?.[0]; if (file) onUpload(document, file); } : undefined}
-      className={`relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-slate-100 px-4 py-3 transition last:border-b-0 ${hasFile ? "cursor-pointer hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400" : ""} ${dragging ? "bg-sky-50 ring-2 ring-inset ring-sky-300" : ""} ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}
+      className={`relative grid grid-cols-[1fr_auto] items-center gap-4 border-b border-slate-100 px-4 py-3 transition last:border-b-0 ${hasFile ? "cursor-pointer hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400" : ""} ${dragging ? "bg-sky-50 ring-2 ring-inset ring-sky-300" : ""} ${fadingHighlightClass(highlighted)}`}
     >
       <div className="min-w-0">
         <div className="flex items-center gap-2">
@@ -727,13 +728,12 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
     () => deduplicateDocuments(documents.filter((item) => !isMyDocument(item) && item.status === "Finalized")),
     [documents],
   );
-  useEffect(() => {
-    if (!highlightId || openFolder !== "client") return undefined;
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`case-document-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [highlightId, openFolder, clientDocs]);
+  // openFolder is forced to "client" at mount whenever highlightId is set
+  // (see the useState initializer above), so the highlighted row already
+  // exists in the DOM by the time this fires — no need to re-gate on folder
+  // switches after that (doing so would let the ring get "stuck" active if
+  // the user switches away and back before the fade timer completes).
+  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-document-" });
 
   const receivedCount = clientDocs.filter((item) => item.storageKey).length;
   const folders = [
@@ -1102,7 +1102,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             updating={bulkUpdating || assignmentUpdatingId === document.id}
             selectable
             selected={selectedDocumentIds.has(document.id)}
-            highlighted={document.id === highlightId}
+            highlighted={document.id === activeHighlightId}
             onToggleSelected={toggleSelected}
             onUpload={upload}
             onView={viewDocument}

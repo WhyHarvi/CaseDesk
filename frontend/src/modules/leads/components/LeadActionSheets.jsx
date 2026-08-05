@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -10,9 +10,19 @@ const ACTIVITY_DIRECTIONS = ["INBOUND", "OUTBOUND", "INTERNAL"];
 const ACTIVITY_CHANNELS = ["PHONE", "WHATSAPP", "SMS", "EMAIL", "SOCIAL", "WEBSITE", "IN_PERSON", "OTHER"];
 const FOLLOW_UP_TYPES = ["PHONE_CALL", "EMAIL", "SMS", "WHATSAPP", "MEETING", "DOCUMENT_REQUEST", "OTHER"];
 const LOST_REASONS = ["NO_RESPONSE", "NOT_INTERESTED", "NOT_ELIGIBLE", "PRICE_CONCERN", "SELECTED_ANOTHER_CONSULTANT", "CONSULTATION_NO_SHOW", "AGREEMENT_NOT_SIGNED", "PAYMENT_NOT_COMPLETED", "SERVICE_NOT_OFFERED", "WRONG_CONTACT_INFORMATION", "DUPLICATE", "DO_NOT_CONTACT", "OTHER"];
+const QUALIFICATION_OUTCOMES = ["QUALIFIED", "MORE_INFORMATION_REQUIRED", "CONSULTATION_REQUIRED", "NOT_ELIGIBLE", "FUTURE_OPPORTUNITY", "SERVICE_NOT_OFFERED"];
+const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"];
 
 function localInput(offsetMs = 0) {
   const date = new Date(Date.now() + offsetMs);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   return date.toISOString().slice(0, 16);
 }
@@ -118,6 +128,72 @@ export function EditLeadDetailsSheet({ lead, onClose, onSaved }) {
       <label className="text-sm font-medium text-slate-700">Current immigration status<input maxLength={150} name="currentImmigrationStatus" value={form.currentImmigrationStatus} onChange={update} className={fieldClass} /></label>
       <label className="text-sm font-medium text-slate-700">Interest<input maxLength={150} name="immigrationInterest" value={form.immigrationInterest} onChange={update} className={fieldClass} /></label>
       <label className="text-sm font-medium text-slate-700">Inquiry date<input type="date" name="inquiryDate" value={form.inquiryDate} onChange={update} className={fieldClass} /></label>
+    </ActionModal>
+  );
+}
+
+export function QualifyLeadSheet({ lead, onClose, onSaved }) {
+  const q = lead.qualification || {};
+  const [form, setForm] = useState({
+    immigrationService: q.immigrationService || lead.immigrationInterest || "",
+    currentCountry: q.currentCountry || lead.country || "",
+    currentImmigrationStatus: q.currentImmigrationStatus || lead.currentImmigrationStatus || "",
+    statusExpiryDate: q.statusExpiryDate ? q.statusExpiryDate.slice(0, 10) : "",
+    preferredDestination: q.preferredDestination || "",
+    education: q.education || "",
+    workExperience: q.workExperience || "",
+    languageTest: q.languageTest || "",
+    previousRefusals: q.previousRefusals === true ? "true" : q.previousRefusals === false ? "false" : "",
+    familyStatus: q.familyStatus || "",
+    estimatedBudget: q.estimatedBudget != null ? String(q.estimatedBudget) : "",
+    preferredConsultationAt: toDateTimeLocal(q.preferredConsultationAt),
+    urgency: q.urgency || lead.priority || "NORMAL",
+    notes: q.notes || "",
+    eligibilityConfidence: q.eligibilityConfidence != null ? String(q.eligibilityConfidence) : "",
+    outcome: q.outcome || "QUALIFIED",
+  });
+  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const notesRequired = ["NOT_ELIGIBLE", "SERVICE_NOT_OFFERED"].includes(form.outcome);
+  const { saving, error, submit } = useSubmit(
+    () => api.post(`/leads/${lead.id}/qualify`, {
+      immigrationService: form.immigrationService,
+      currentCountry: form.currentCountry || undefined,
+      currentImmigrationStatus: form.currentImmigrationStatus || undefined,
+      statusExpiryDate: form.statusExpiryDate ? new Date(form.statusExpiryDate).toISOString() : undefined,
+      preferredDestination: form.preferredDestination || undefined,
+      education: form.education || undefined,
+      workExperience: form.workExperience || undefined,
+      languageTest: form.languageTest || undefined,
+      previousRefusals: form.previousRefusals === "" ? undefined : form.previousRefusals === "true",
+      familyStatus: form.familyStatus || undefined,
+      estimatedBudget: form.estimatedBudget === "" ? undefined : Number(form.estimatedBudget),
+      preferredConsultationAt: form.preferredConsultationAt ? new Date(form.preferredConsultationAt).toISOString() : undefined,
+      urgency: form.urgency || undefined,
+      notes: form.notes || undefined,
+      eligibilityConfidence: form.eligibilityConfidence === "" ? undefined : Number(form.eligibilityConfidence),
+      outcome: form.outcome,
+    }),
+    onSaved,
+  );
+
+  return (
+    <ActionModal title="Qualify lead" subtitle="Record eligibility details and the qualification outcome." icon={ClipboardCheck} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save qualification">
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Outcome<select required name="outcome" value={form.outcome} onChange={update} className={fieldClass}>{QUALIFICATION_OUTCOMES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
+      <label className="text-sm font-medium text-slate-700">Immigration service<input required maxLength={150} name="immigrationService" value={form.immigrationService} onChange={update} className={fieldClass} placeholder="Express Entry, Study Permit…" /></label>
+      <label className="text-sm font-medium text-slate-700">Eligibility confidence (%)<input type="number" min="0" max="100" name="eligibilityConfidence" value={form.eligibilityConfidence} onChange={update} className={fieldClass} placeholder="70" /></label>
+      <label className="text-sm font-medium text-slate-700">Current country<input maxLength={100} name="currentCountry" value={form.currentCountry} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Current immigration status<input maxLength={150} name="currentImmigrationStatus" value={form.currentImmigrationStatus} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Status expiry<input type="date" name="statusExpiryDate" value={form.statusExpiryDate} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Preferred destination<input maxLength={150} name="preferredDestination" value={form.preferredDestination} onChange={update} className={fieldClass} placeholder="Ontario, Canada" /></label>
+      <label className="text-sm font-medium text-slate-700">Language test<input maxLength={500} name="languageTest" value={form.languageTest} onChange={update} className={fieldClass} placeholder="IELTS 7.0" /></label>
+      <label className="text-sm font-medium text-slate-700">Previous refusals<select name="previousRefusals" value={form.previousRefusals} onChange={update} className={fieldClass}><option value="">Unknown</option><option value="false">No</option><option value="true">Yes</option></select></label>
+      <label className="text-sm font-medium text-slate-700">Family status<input maxLength={500} name="familyStatus" value={form.familyStatus} onChange={update} className={fieldClass} placeholder="Married, 2 dependents" /></label>
+      <label className="text-sm font-medium text-slate-700">Estimated budget (CAD)<input type="number" min="0" name="estimatedBudget" value={form.estimatedBudget} onChange={update} className={fieldClass} placeholder="15000" /></label>
+      <label className="text-sm font-medium text-slate-700">Urgency<select name="urgency" value={form.urgency} onChange={update} className={fieldClass}>{PRIORITIES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
+      <label className="text-sm font-medium text-slate-700">Preferred consultation<input type="datetime-local" name="preferredConsultationAt" value={form.preferredConsultationAt} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Education<textarea maxLength={1000} name="education" value={form.education} onChange={update} rows={2} className={`${fieldClass} h-auto py-3`} /></label>
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Work experience<textarea maxLength={2000} name="workExperience" value={form.workExperience} onChange={update} rows={2} className={`${fieldClass} h-auto py-3`} /></label>
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Notes{notesRequired ? " (required for this outcome)" : ""}<textarea required={notesRequired} maxLength={5000} name="notes" value={form.notes} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Eligibility assessment summary" /></label>
     </ActionModal>
   );
 }

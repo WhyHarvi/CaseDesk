@@ -7,6 +7,7 @@ import NoteCard from "./NoteCard";
 import NoteComposer from "./NoteComposer";
 import { useAuth } from "../../../auth/AuthContext";
 import NoteDeleteOverlay from "./NoteDeleteOverlay";
+import { fadingHighlightClass, useFadingHighlight } from "../../../hooks/useFadingHighlight";
 
 export default function NotesOverlay({ caseItem, initialNotes = [], highlightNoteId = "", onNotesChange, onClose }) {
   const { role, appUser } = useAuth();
@@ -69,15 +70,11 @@ export default function NotesOverlay({ caseItem, initialNotes = [], highlightNot
     return () => { active = false; };
   }, [caseItem.id, highlightNoteId]);
 
-  useEffect(() => {
-    if (loading || !highlightNoteId) return;
-    const frame = window.requestAnimationFrame(() => {
-      document
-        .getElementById(`case-note-${highlightNoteId}`)
-        ?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [highlightNoteId, loading, notes]);
+  const activeHighlightNoteId = useFadingHighlight(highlightNoteId, {
+    domIdPrefix: "case-note-",
+    ready: !loading,
+    deps: [notes],
+  });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -179,7 +176,7 @@ export default function NotesOverlay({ caseItem, initialNotes = [], highlightNot
             {loading && !notes.length ? (
               <div className="flex min-h-56 items-center justify-center"><LoaderCircle className="h-6 w-6 animate-spin text-slate-400" /></div>
             ) : sortedNotes.length ? (
-              <div className="space-y-3">{sortedNotes.map((note) => <div id={`case-note-${note.id}`} key={note.id} className={note.id === highlightNoteId ? "rounded-[1.4rem] ring-4 ring-sky-200/80" : ""}><NoteCard note={note} canManage={role === "admin" || note.user?.id === appUser?.id} deleting={deletingId === note.id} onEdit={openEdit} onDelete={(item) => { setDeleteError(""); setDeleteTarget(item); }} /></div>)}</div>
+              <div className="space-y-3">{sortedNotes.map((note) => <div id={`case-note-${note.id}`} key={note.id} className={`rounded-[1.4rem] ${fadingHighlightClass(note.id === activeHighlightNoteId)}`}><NoteCard note={note} canManage={role === "admin" || note.user?.id === appUser?.id} deleting={deletingId === note.id} onEdit={openEdit} onDelete={(item) => { setDeleteError(""); setDeleteTarget(item); }} /></div>)}</div>
             ) : !loadError ? (
               <div className="rounded-[1.75rem] border border-dashed border-slate-200 bg-white/55 px-6 py-12 text-center"><div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm"><MessageSquareText className="h-5 w-5" /></div><h3 className="mt-4 text-sm font-semibold text-slate-900">No case notes yet</h3><p className="mt-1 text-sm text-slate-400">Add a private note for the consulting team.</p><button type="button" onClick={openCreate} className="mt-5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">Add first note</button></div>
             ) : null}

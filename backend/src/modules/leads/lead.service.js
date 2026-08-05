@@ -86,6 +86,58 @@ export async function createLead(req, db = prisma) {
   return result;
 }
 
+export function leadSearchWhere(search) {
+  const normalized = String(search || "").trim();
+  if (!normalized) return null;
+
+  const digits = normalized.replace(/\D/g, "");
+  const shortNumber = /^(?:(?:lead(?:\s+number)?)\s*)?#?\s*(\d{1,6})$/i.exec(normalized);
+  const canonicalNumber = /^ld[-\s](\d{4})[-\s](\d{1,6})$/i.exec(normalized);
+  const leadNumberFilter = canonicalNumber
+    ? {
+        leadNumber: {
+          equals: `LD-${canonicalNumber[1]}-${canonicalNumber[2].padStart(6, "0")}`,
+          mode: "insensitive",
+        },
+      }
+    : shortNumber
+      ? {
+          leadNumber: {
+            endsWith: `-${shortNumber[1].padStart(6, "0")}`,
+            mode: "insensitive",
+          },
+        }
+      : { leadNumber: { contains: normalized, mode: "insensitive" } };
+  const nameParts = normalized.split(/\s+/).filter(Boolean);
+
+  return {
+    OR: [
+      leadNumberFilter,
+      { firstName: { contains: normalized, mode: "insensitive" } },
+      { lastName: { contains: normalized, mode: "insensitive" } },
+      { emailNormalized: { contains: normalized.toLowerCase() } },
+      ...(nameParts.length > 1
+        ? [
+            {
+              AND: nameParts.map((part) => ({
+                OR: [
+                  { firstName: { contains: part, mode: "insensitive" } },
+                  { lastName: { contains: part, mode: "insensitive" } },
+                ],
+              })),
+            },
+          ]
+        : []),
+      // Short numbers are overwhelmingly likely to be lead sequence
+      // numbers. Requiring seven digits prevents searches like "100" or a
+      // name with no digits from matching unrelated phone records.
+      ...(digits.length >= 7
+        ? [{ phoneNormalized: { contains: digits } }]
+        : []),
+    ],
+  };
+}
+
 export async function listLeads(req) {
   const { page, limit, search, status, stage, sourceId, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
 
@@ -103,13 +155,7 @@ export async function listLeads(req) {
     deletedAt: null,
     AND: [
       leadAccessWhere(req),
-      ...(search ? [{ OR: [
-        { leadNumber: { contains: search, mode: "insensitive" } },
-        { firstName: { contains: search, mode: "insensitive" } },
-        { lastName: { contains: search, mode: "insensitive" } },
-        { phoneNormalized: { contains: search.replace(/\D/g, "") } },
-        { emailNormalized: { contains: search.toLowerCase() } },
-      ] }] : []),
+      ...(search ? [leadSearchWhere(search)] : []),
     ],
     ...(status ? { status } : {}),
     ...(stage ? { stage } : {}),
@@ -196,6 +242,7 @@ export async function getLead(req) {
       },
       lostDetail: true,
       conversion: true,
+      qualification: true,
     },
   });
   if (!data) throw createHttpError(404, "Lead not found.", "LEAD_NOT_FOUND");

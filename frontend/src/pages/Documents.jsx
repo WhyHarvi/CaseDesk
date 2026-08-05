@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
+import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 
 const defaultFormState = {
   clientId: "",
@@ -381,7 +382,7 @@ function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
   const fileMeta = getFileMeta(item.documentName);
 
   return (
-    <tr id={`document-row-${item.id}`} className={`border-t border-slate-100 text-sm text-slate-700 ${highlighted ? "ring-4 ring-inset ring-sky-200/80" : ""}`}>
+    <tr id={`document-row-${item.id}`} className={`border-t border-slate-100 text-sm text-slate-700 ring-inset ${fadingHighlightClass(highlighted)}`}>
       <td className="px-4 py-5 align-top">
         <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300" />
       </td>
@@ -443,7 +444,7 @@ function DocumentGridCard({ item, highlighted, onEdit, onDelete, deletingId }) {
   const fileMeta = getFileMeta(item.documentName);
 
   return (
-    <div id={`document-row-${item.id}`} className={`${cardClassName} p-5 ${highlighted ? "ring-4 ring-sky-200/80" : ""}`}>
+    <div id={`document-row-${item.id}`} className={`${cardClassName} p-5 ${fadingHighlightClass(highlighted)}`}>
       <div className="flex items-start justify-between gap-3">
         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${fileMeta.iconWrap}`}>
           <FileBadge2 className="h-5 w-5" />
@@ -608,13 +609,11 @@ export default function Documents() {
     setPage((current) => (current === targetPage ? current : targetPage));
   }, [highlightId, filteredDocuments]);
 
-  useEffect(() => {
-    if (!highlightId || loading) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`document-row-${highlightId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [highlightId, loading, page]);
+  const activeHighlightId = useFadingHighlight(highlightId, {
+    domIdPrefix: "document-row-",
+    ready: !loading,
+    deps: [page],
+  });
 
   const paginatedDocuments = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -905,7 +904,7 @@ export default function Documents() {
                             <DocumentRow
                               key={item.id}
                               item={item}
-                              highlighted={item.id === highlightId}
+                              highlighted={item.id === activeHighlightId}
                               onEdit={openEditForm}
                               onDelete={handleDelete}
                               deletingId={deletingId}
@@ -920,7 +919,7 @@ export default function Documents() {
                         <DocumentGridCard
                           key={item.id}
                           item={item}
-                          highlighted={item.id === highlightId}
+                          highlighted={item.id === activeHighlightId}
                           onEdit={openEditForm}
                           onDelete={handleDelete}
                           deletingId={deletingId}

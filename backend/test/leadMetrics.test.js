@@ -21,8 +21,12 @@ test("consultant dashboard queries stay agency and owner scoped", async () => {
   const db = {
     agency: { findUnique: async () => ({ timezone: "America/Toronto", defaultCurrency: "CAD" }) },
     lead: {
-      count: async ({ where }) => { leadWheres.push(where); return 0; },
-      aggregate: async ({ where }) => { leadWheres.push(where); return { _sum: { estimatedValue: null } }; },
+      count: async ({ where }) => {
+        leadWheres.push(where);
+        const exactOpenQueue = Object.keys(where).sort().join(",") === "agencyId,deletedAt,ownerUserId,status" && where.status === "OPEN";
+        return exactOpenQueue ? 17 : 0;
+      },
+      aggregate: async ({ where }) => { leadWheres.push(where); return { _sum: { estimatedValue: 2000 } }; },
       findMany: async ({ where }) => { leadWheres.push(where); return []; },
       groupBy: async ({ where }) => { leadWheres.push(where); return []; },
     },
@@ -31,8 +35,10 @@ test("consultant dashboard queries stay agency and owner scoped", async () => {
   };
   const req = { auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" } };
 
-  await getLeadDashboard(req, db, new Date("2026-07-14T15:00:00Z"));
+  const dashboard = await getLeadDashboard(req, db, new Date("2026-07-14T15:00:00Z"));
 
   assert.ok(leadWheres.every((where) => where.agencyId === "agency-1" && where.ownerUserId === "consultant-1"));
   assert.ok(relatedWheres.every((where) => where.agencyId === "agency-1" && where.lead.agencyId === "agency-1" && where.lead.ownerUserId === "consultant-1"));
+  assert.equal(dashboard.summary.openLeads, 17);
+  assert.equal(dashboard.summary.openPipelineValue, 2000);
 });
