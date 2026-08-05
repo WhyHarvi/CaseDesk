@@ -581,6 +581,7 @@ async function loadAgencyWorkloads(agencyId) {
           agencyId,
           deletedAt: null,
           status: "OPEN",
+          importedRows: { none: {} },
         },
         select: {
           id: true,

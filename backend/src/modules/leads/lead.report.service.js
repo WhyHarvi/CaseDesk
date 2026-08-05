@@ -79,6 +79,7 @@ export async function getSourceReport(req, db = prisma, now = new Date()) {
       AND l."agency_id" = ${agencyId}
       AND l."deleted_at" IS NULL
       AND l.status::text NOT IN ('DUPLICATE', 'ARCHIVED')
+      AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id)
       ${ownerScope}
       ${periodScope}
     LEFT JOIN "lead_qualifications" q ON q."lead_id" = l.id AND q."agency_id" = ${agencyId}
@@ -124,6 +125,7 @@ export async function getEmployeeReport(req, db = prisma, now = new Date()) {
       WHERE l."agency_id" = ${agencyId}
         AND l."deleted_at" IS NULL
         AND l.status::text NOT IN ('DUPLICATE', 'ARCHIVED')
+        AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id)
         ${leadOwnerScope}
         ${periodScope}
     ),
@@ -284,6 +286,7 @@ export async function getResponseTimeReport(req, db = prisma, now = new Date()) 
     WHERE l."agency_id" = ${agencyId}
       AND l."deleted_at" IS NULL
       AND l.status::text NOT IN ('DUPLICATE', 'ARCHIVED')
+      AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id)
       ${ownerScope}
       ${periodScope}
   `;
@@ -363,6 +366,7 @@ export async function getAgeingReport(req, db = prisma, now = new Date()) {
     WHERE l."agency_id" = ${agencyId}
       AND l."deleted_at" IS NULL
       AND l.status::text = 'OPEN'
+      AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id)
       ${ownerScope}
   `;
   const [summaryRows, bucketRows, stageRows, oldestRows] = await Promise.all([
@@ -430,7 +434,8 @@ export async function getConversionTrendReport(req, db = prisma, now = new Date(
   const eventPeriod = from ? Prisma.sql`WHERE occurred_at >= ${from} AND occurred_at <= ${now}` : Prisma.empty;
   const scopedLeads = Prisma.sql`
     SELECT l.* FROM "leads" l WHERE l."agency_id" = ${agencyId} AND l."deleted_at" IS NULL
-      AND l.status::text NOT IN ('DUPLICATE', 'ARCHIVED') ${ownerScope}
+      AND l.status::text NOT IN ('DUPLICATE', 'ARCHIVED')
+      AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id) ${ownerScope}
   `;
   const events = Prisma.sql`
     SELECT sl."created_at" AS occurred_at, 'RECEIVED'::text AS event_type, 0::numeric AS value FROM scoped_leads sl
@@ -485,7 +490,8 @@ export async function getWorkloadReport(req, db = prisma, now = new Date()) {
   const employeeScope = req.auth.role === "admin" ? Prisma.empty : Prisma.sql`AND u.id = ${req.auth.userId}`;
   const rows = await db.$queryRaw(Prisma.sql`
     WITH scoped_leads AS (
-      SELECT l.* FROM "leads" l WHERE l."agency_id" = ${agencyId} AND l."deleted_at" IS NULL AND l.status::text = 'OPEN' ${leadOwnerScope}
+      SELECT l.* FROM "leads" l WHERE l."agency_id" = ${agencyId} AND l."deleted_at" IS NULL AND l.status::text = 'OPEN'
+        AND NOT EXISTS (SELECT 1 FROM "lead_import_rows" lir WHERE lir."created_lead_id" = l.id) ${leadOwnerScope}
     )
     SELECT u.id, u."full_name" AS name, u.email,
       (SELECT COUNT(*)::int FROM scoped_leads sl WHERE sl."owner_user_id" = u.id) AS "openLeads",

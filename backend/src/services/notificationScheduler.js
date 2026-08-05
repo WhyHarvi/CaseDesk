@@ -273,9 +273,9 @@ async function questionnaireNotifications(now, horizon) {
 async function leadNotifications(now, horizon) {
   const consultationHorizon = new Date(Math.min(horizon.getTime(), now.getTime() + 24 * 60 * 60_000));
   const [followUps, leads, consultations] = await Promise.all([
-    prisma.leadFollowUp.findMany({ where: { status: "PENDING", dueAt: { lte: horizon } }, take: 500, select: { id: true, agencyId: true, leadId: true, assignedUserId: true, description: true, dueAt: true } }),
-    prisma.lead.findMany({ where: { status: { in: ["OPEN", "NURTURE"] }, OR: [{ firstContactDueAt: { lte: horizon }, firstContactAt: null }, { nextActionAt: { lte: horizon } }, { nurtureUntil: { lte: now } }] }, take: 500, select: { id: true, agencyId: true, leadNumber: true, ownerUserId: true, nextActionOwnerId: true, firstContactDueAt: true, firstContactAt: true, nextActionAt: true, nurtureUntil: true } }),
-    prisma.leadConsultation.findMany({ where: { status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] }, startAt: { gt: now, lte: consultationHorizon } }, take: 500, select: { id: true, agencyId: true, leadId: true, consultantUserId: true, startAt: true } }),
+    prisma.leadFollowUp.findMany({ where: { status: "PENDING", dueAt: { lte: horizon }, lead: { importedRows: { none: {} } } }, take: 500, select: { id: true, agencyId: true, leadId: true, assignedUserId: true, description: true, dueAt: true } }),
+    prisma.lead.findMany({ where: { status: { in: ["OPEN", "NURTURE"] }, importedRows: { none: {} }, OR: [{ firstContactDueAt: { lte: horizon }, firstContactAt: null }, { nextActionAt: { lte: horizon } }, { nurtureUntil: { lte: now } }] }, take: 500, select: { id: true, agencyId: true, leadNumber: true, ownerUserId: true, nextActionOwnerId: true, firstContactDueAt: true, firstContactAt: true, nextActionAt: true, nurtureUntil: true } }),
+    prisma.leadConsultation.findMany({ where: { status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] }, startAt: { gt: now, lte: consultationHorizon }, lead: { importedRows: { none: {} } } }, take: 500, select: { id: true, agencyId: true, leadId: true, consultantUserId: true, startAt: true } }),
   ]);
   for (const item of followUps) {
     const overdue = item.dueAt < now;

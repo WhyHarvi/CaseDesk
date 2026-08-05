@@ -1,7 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus } from "../src/modules/leads/lead.service.js";
+import { convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
+
+test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
+  const activities = [
+    { id: "legacy-follow-up", title: "Follow-up (imported)", description: "Call again" },
+    { id: "blank-follow-up", title: "Follow-up (imported)", description: "" },
+    { id: "fixed-follow-up", title: "Follow-up (reconciled)", description: "Call again" },
+    { id: "legacy-admissions", title: "Admissions detail (imported)", description: "Wrong lead" },
+    { id: "fixed-admissions", title: "Admissions detail (reconciled)", description: "Correct lead" },
+    { id: "audit", title: "Admissions import association corrected", description: "Moved to the correct lead" },
+    { id: "normal", title: "Client called", description: "Normal activity" },
+  ];
+
+  assert.deepEqual(
+    visibleLeadActivities(activities).map((activity) => activity.id),
+    ["fixed-follow-up", "fixed-admissions", "audit", "normal"],
+  );
+});
+
+test("lead timelines keep legacy imports until a reconciliation exists", () => {
+  const activities = [
+    { id: "follow-up", title: "Follow-up (imported)", description: "Call again" },
+    { id: "admissions", title: "Admissions detail (imported)", description: "Imported detail" },
+  ];
+
+  assert.deepEqual(visibleLeadActivities(activities).map((activity) => activity.id), ["follow-up", "admissions"]);
+});
 
 test("lead creation writes its operational foundation in one transaction", async () => {
   const created = [];

@@ -20,15 +20,15 @@ const source = (relativePath) =>
 test("front desk receives agency-wide lead access without changing consultant scope", () => {
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "admin", userId: "admin-1" } }),
-    {},
+    { importedRows: { none: {} } },
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }),
-    { ownerUserId: "consultant-1" },
+    { ownerUserId: "consultant-1", importedRows: { none: {} } },
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "frontdesk", userId: "frontdesk-1" } }),
-    {},
+    { importedRows: { none: {} } },
   );
   assert.equal(canCreateLead({ auth: { role: "frontdesk" } }), true);
   assert.equal(canCreateLead({ auth: { role: "client" } }), false);

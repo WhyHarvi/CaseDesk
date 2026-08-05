@@ -34,6 +34,22 @@ const leadInclude = {
   campaign: { select: { id: true, name: true } },
 };
 
+export function visibleLeadActivities(activities = []) {
+  const hasReconciledFollowUp = activities.some((activity) => activity.title === "Follow-up (reconciled)");
+  const hasReconciledAdmissions = activities.some((activity) => activity.title === "Admissions detail (reconciled)");
+  const hasAdmissionsAssociationCorrection = activities.some((activity) => activity.title === "Admissions import association corrected");
+
+  return activities.filter((activity) => {
+    if (activity.title === "Follow-up (imported)") {
+      return Boolean(String(activity.description || "").trim()) && !hasReconciledFollowUp;
+    }
+    if (activity.title === "Admissions detail (imported)") {
+      return !hasReconciledAdmissions && !hasAdmissionsAssociationCorrection;
+    }
+    return true;
+  });
+}
+
 const leadTransactionOptions = {
   maxWait: 10_000,
   timeout: 20_000,
@@ -246,7 +262,7 @@ export async function getLead(req) {
     },
   });
   if (!data) throw createHttpError(404, "Lead not found.", "LEAD_NOT_FOUND");
-  return data;
+  return { ...data, activities: visibleLeadActivities(data.activities) };
 }
 
 export async function listLeadSources(req, db = prisma) {
