@@ -55,6 +55,10 @@ export async function getLead(req, res) {
   res.json({ data: await service.getLead(req) });
 }
 
+export async function updateLeadDetails(req, res) {
+  res.json({ data: await service.updateLeadDetails(req) });
+}
+
 export async function listLeadSources(req, res) {
   res.json({ data: await service.listLeadSources(req) });
 }

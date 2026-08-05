@@ -1,5 +1,5 @@
-import { ArrowDownUp, ChevronLeft, ChevronRight, CircleDot, CirclePlus, FilterX, Layers3, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, FilterX, Layers3, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import QuickAddLeadSheet from "../components/QuickAddLeadSheet";
@@ -23,6 +23,7 @@ export default function LeadsPage() {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [supportingDataError, setSupportingDataError] = useState("");
   const [selectedLead, setSelectedLead] = useState(null);
+  const requestedLeadId = params.get("lead") || "";
 
   const queryString = params.toString();
   const updateParams = useCallback((changes) => {
@@ -50,6 +51,26 @@ export default function LeadsPage() {
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
   useEffect(() => {
+    if (!requestedLeadId || selectedLead?.id === requestedLeadId) return;
+    let active = true;
+    api.get(`/leads/${encodeURIComponent(requestedLeadId)}`)
+      .then((response) => {
+        if (active) setSelectedLead(response.data.data);
+      })
+      .catch(() => {
+        if (active) {
+          setParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete("lead");
+            return next;
+          }, { replace: true });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [requestedLeadId, selectedLead?.id, setParams]);
+  useEffect(() => {
     Promise.all([api.get("/leads/sources"), api.get("/leads/staff")])
       .then(([sourceResponse, staffResponse]) => {
         setSources(sourceResponse.data.data);
@@ -60,8 +81,41 @@ export default function LeadsPage() {
   }, []);
 
   const pageCount = Math.max(Math.ceil(meta.total / meta.limit), 1);
-  const hasFilters = ["search", "status", "stage", "sourceId"].some((key) => params.get(key));
+  const hasFilters = ["search", "status", "stage", "sourceId", "month"].some((key) => params.get(key));
   const range = useMemo(() => meta.total ? `${(meta.page - 1) * meta.limit + 1}–${Math.min(meta.page * meta.limit, meta.total)} of ${meta.total}` : "0 leads", [meta]);
+
+  // Last 18 months plus the current one — comfortably covers both imported
+  // historical data and normal day-to-day use without a bare date input
+  // that would look inconsistent next to the other dropdown filters.
+  const monthOptions = useMemo(() => {
+    const options = [];
+    const cursor = new Date();
+    cursor.setDate(1);
+    for (let i = 0; i < 19; i++) {
+      const year = cursor.getFullYear();
+      const month = cursor.getMonth() + 1;
+      options.push({ value: `${year}-${String(month).padStart(2, "0")}`, label: cursor.toLocaleDateString("en-CA", { month: "long", year: "numeric" }) });
+      cursor.setMonth(cursor.getMonth() - 1);
+    }
+    return options;
+  }, []);
+
+  const monthWise = (params.get("sortBy") || "createdAt") === "inquiryDate";
+  const groupedLeads = useMemo(() => {
+    if (!monthWise) return [{ key: null, label: null, items: leads }];
+    const groups = [];
+    let current = null;
+    for (const lead of leads) {
+      const date = new Date(lead.inquiryDate);
+      const key = `${date.getFullYear()}-${date.getMonth()}`;
+      if (!current || current.key !== key) {
+        current = { key, label: date.toLocaleDateString("en-CA", { month: "long", year: "numeric" }), items: [] };
+        groups.push(current);
+      }
+      current.items.push(lead);
+    }
+    return groups;
+  }, [leads, monthWise]);
 
   function submitSearch(event) {
     event.preventDefault();
@@ -98,7 +152,8 @@ export default function LeadsPage() {
               <LeadFilterMenu label="Status" value={params.get("status") || ""} options={LEAD_STATUSES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(status) => updateParams({ status })} icon={CircleDot} allLabel="All statuses" />
               <LeadFilterMenu label="Stage" value={params.get("stage") || ""} options={LEAD_STAGES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(stage) => updateParams({ stage })} icon={Layers3} allLabel="All stages" />
               <LeadFilterMenu label="Source" value={params.get("sourceId") || ""} options={sources.map((source) => ({ value: source.id, label: source.name }))} onChange={(sourceId) => updateParams({ sourceId })} icon={Megaphone} allLabel="All sources" />
-              <LeadFilterMenu label="Sort" value={`${params.get("sortBy") || "createdAt"}:${params.get("sortDirection") || "desc"}`} options={[{ value: "createdAt:desc", label: "Newest first" }, { value: "createdAt:asc", label: "Oldest first" }, { value: "nextActionAt:asc", label: "Next action" }, { value: "leadNumber:asc", label: "Lead number" }]} onChange={(value) => { const [sortBy, sortDirection] = value.split(":"); updateParams({ sortBy, sortDirection }); }} icon={ArrowDownUp} allLabel="Newest first" />
+              <LeadFilterMenu label="Month" value={params.get("month") || ""} options={monthOptions} onChange={(month) => updateParams({ month })} icon={CalendarRange} allLabel="All time" />
+              <LeadFilterMenu label="Sort" value={`${params.get("sortBy") || "createdAt"}:${params.get("sortDirection") || "desc"}`} options={[{ value: "createdAt:desc", label: "Newest first" }, { value: "createdAt:asc", label: "Oldest first" }, { value: "nextActionAt:asc", label: "Next action" }, { value: "leadNumber:asc", label: "Lead number" }, { value: "inquiryDate:desc", label: "Month wise (newest)" }, { value: "inquiryDate:asc", label: "Month wise (oldest)" }]} onChange={(value) => { const [sortBy, sortDirection] = value.split(":"); updateParams({ sortBy, sortDirection }); }} icon={ArrowDownUp} allLabel="Newest first" />
               {hasFilters ? <button type="button" onClick={clearFilters} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"><FilterX className="h-3.5 w-3.5" />Reset</button> : null}
             </div>
           </div>
@@ -111,13 +166,18 @@ export default function LeadsPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-left">
               <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"><th className="px-5 py-3">Lead</th><th className="px-4 py-3">Source and interest</th><th className="px-4 py-3">Progress</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Next action</th></tr></thead>
-              <tbody>{leads.map((lead) => { const due = formatDueDate(lead.nextActionAt); return <tr key={lead.id} role="button" tabIndex={0} onClick={() => setSelectedLead(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLead(lead); } }} className="cursor-pointer border-b border-slate-100 text-sm outline-none transition last:border-0 hover:bg-brand-50/45 focus:bg-brand-50/70">
-                <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div></div></td>
-                <td className="px-4 py-4"><p className="font-medium text-slate-700">{lead.originalSource?.name || "Unknown source"}</p><p className="mt-0.5 max-w-[190px] truncate text-xs text-slate-400">{lead.immigrationInterest || "Interest not specified"}</p></td>
-                <td className="px-4 py-4"><div className="flex items-center gap-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusTone[lead.status] || statusTone.ARCHIVED}`}>{humanize(lead.status)}</span><span className="text-xs font-medium text-slate-600">{humanize(lead.stage)}</span></div><p className="mt-1.5 text-xs text-slate-400">{humanize(lead.temperature)} · {humanize(lead.priority)}</p></td>
-                <td className="px-4 py-4"><p className="text-slate-700">{lead.owner?.fullName || "Unassigned"}</p></td>
-                <td className="px-4 py-4"><p className="max-w-[190px] truncate font-medium text-slate-700">{lead.nextActionDescription || "No next action"}</p><p className={`mt-0.5 text-xs ${due.overdue && lead.status === "OPEN" ? "font-semibold text-rose-600" : "text-slate-400"}`}>{due.overdue && lead.status === "OPEN" ? "Overdue · " : ""}{due.label}</p></td>
-              </tr>; })}</tbody>
+              <tbody>{groupedLeads.map((group) => (
+                <Fragment key={group.key ?? "all"}>
+                  {group.label ? <tr><td colSpan={5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
+                  {group.items.map((lead) => { const due = formatDueDate(lead.nextActionAt); return <tr key={lead.id} role="button" tabIndex={0} onClick={() => setSelectedLead(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLead(lead); } }} className="cursor-pointer border-b border-slate-100 text-sm outline-none transition last:border-0 hover:bg-brand-50/45 focus:bg-brand-50/70">
+                    <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div></div></td>
+                    <td className="px-4 py-4"><p className="font-medium text-slate-700">{lead.originalSource?.name || "Unknown source"}</p><p className="mt-0.5 max-w-[190px] truncate text-xs text-slate-400">{lead.immigrationInterest || "Interest not specified"}</p></td>
+                    <td className="px-4 py-4"><div className="flex items-center gap-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusTone[lead.status] || statusTone.ARCHIVED}`}>{humanize(lead.status)}</span><span className="text-xs font-medium text-slate-600">{humanize(lead.stage)}</span></div><p className="mt-1.5 text-xs text-slate-400">{humanize(lead.temperature)} · {humanize(lead.priority)}</p></td>
+                    <td className="px-4 py-4"><p className="text-slate-700">{lead.owner?.fullName || "Unassigned"}</p></td>
+                    <td className="px-4 py-4"><p className="max-w-[190px] truncate font-medium text-slate-700">{lead.nextActionDescription || "No next action"}</p><p className={`mt-0.5 text-xs ${due.overdue && lead.status === "OPEN" ? "font-semibold text-rose-600" : "text-slate-400"}`}>{due.overdue && lead.status === "OPEN" ? "Overdue · " : ""}{due.label}</p></td>
+                  </tr>; })}
+                </Fragment>
+              ))}</tbody>
             </table>
           </div>
         )}
@@ -128,7 +188,16 @@ export default function LeadsPage() {
       </div>
 
       <QuickAddLeadSheet open={quickAddOpen} sources={sources} staff={staff} onClose={() => setQuickAddOpen(false)} onCreated={() => { setQuickAddOpen(false); setParams({}); loadLeads(); }} />
-      {selectedLead ? <LeadDetailSheet lead={selectedLead} staff={staff} onClose={() => setSelectedLead(null)} onChanged={loadLeads} /> : null}
+      {selectedLead ? <LeadDetailSheet lead={selectedLead} staff={staff} onClose={() => {
+        setSelectedLead(null);
+        if (requestedLeadId) {
+          setParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete("lead");
+            return next;
+          }, { replace: true });
+        }
+      }} onChanged={loadLeads} /> : null}
     </section>
   );
 }

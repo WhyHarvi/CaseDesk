@@ -24,6 +24,37 @@ test("calendar client identity opens the connected client profile", async () => 
   assert.match(profile, /`\/app\/clients\/\$\{appointment\.client\.id\}`/);
 });
 
+test("dashboard upcoming appointments open the client profile or save an unlinked visitor", async () => {
+  const [dashboard, controller] = await Promise.all([
+    source("../../frontend/src/components/dashboard/DashboardWorkRow.jsx"),
+    source("../src/controllers/dashboardController.js"),
+  ]);
+  assert.match(controller, /client: \{ select: \{ id: true, fullName: true \} \}/);
+  assert.match(dashboard, /const client = item\.client \|\| item\.case\?\.client \|\| null/);
+  assert.match(dashboard, /to=\{`\/app\/clients\/\$\{client\.id\}`\}/);
+  assert.match(dashboard, /convertAppointmentToClient\(item\.id\)/);
+  assert.match(dashboard, /Save as client/);
+  assert.doesNotMatch(dashboard, /AppointmentProfileOverlay/);
+});
+
+test("calendar keeps no-show appointments in their original time slot", async () => {
+  const calendar = await source("../../frontend/src/pages/CalendarPage.jsx");
+  assert.match(calendar, /\["Scheduled", "Completed", "NoShow"\]\.includes\(item\.status\)/);
+  assert.match(calendar, /item\.status === "NoShow" \? NO_SHOW_TONE/);
+  assert.match(calendar, /No-show/);
+});
+
+test("a no-show appointment can be rescheduled through the normal protected flow", async () => {
+  const [calendar, controller] = await Promise.all([
+    source("../../frontend/src/pages/CalendarPage.jsx"),
+    source("../src/controllers/bookingController.js"),
+  ]);
+  assert.match(calendar, /Reschedule missed appointment/);
+  assert.match(controller, /status: \{ in: \["Scheduled", "NoShow"\] \}/);
+  assert.match(controller, /existing\.status === "NoShow" \? \{ status: "Scheduled" \}/);
+  assert.match(controller, /types: \["appointment\.no_show"\]/);
+});
+
 test("appointment profile limits consultants to assigned or related appointments", () => {
   const where = appointmentProfileAccessWhere({ auth: { role: "consultant", userId: "user-1" } });
   assert.ok(Array.isArray(where.OR));

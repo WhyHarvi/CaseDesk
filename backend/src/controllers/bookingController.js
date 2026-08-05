@@ -50,6 +50,7 @@ import {
   syncLeadConsultationFromAppointment,
 } from "../services/leadConsultationAppointmentService.js";
 import { ensureAppointmentCompletionFollowUp, requireAppointmentProfile } from "../services/appointmentProfileService.js";
+import { resolveNotifications } from "../services/notificationService.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -1212,7 +1213,7 @@ export async function rescheduleBookingAppointment(req, res) {
     where: {
       id: req.params.id,
       agencyId: req.auth.agencyId,
-      status: "Scheduled",
+      status: { in: ["Scheduled", "NoShow"] },
       ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
     include: {
@@ -1222,7 +1223,7 @@ export async function rescheduleBookingAppointment(req, res) {
     },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  if (new Date(existing.startsAt) <= new Date()) throw createHttpError(409, "Past appointments cannot be rescheduled.", "TOO_LATE");
+  if (existing.status === "Scheduled" && new Date(existing.startsAt) <= new Date()) throw createHttpError(409, "Past appointments must be marked attended or no-show before they can be rescheduled.", "TOO_LATE");
   const startsAt = new Date(String(req.body?.startsAt || ""));
   if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "Pick a new time.", "VALIDATION_ERROR");
   const duration = Math.round((new Date(existing.endsAt) - new Date(existing.startsAt)) / 60_000);
@@ -1249,7 +1250,7 @@ export async function rescheduleBookingAppointment(req, res) {
   if (meetingMode === MEETING_MODES.IN_PERSON && locations.length && !selectedLocation) throw createHttpError(400, "Choose an office location.", "VALIDATION_ERROR");
   const dayKey = localDateKey(startsAt, settings.timezone);
   const effectiveBuffer = existing.sessionType?.bufferMinutes ?? existing.assignedTo?.schedulingPreference?.bufferMinutes ?? settings.bufferMinutes;
-  const rescheduleSeries = req.body?.scope === "series" && existing.seriesKey;
+  const rescheduleSeries = existing.status === "Scheduled" && req.body?.scope === "series" && existing.seriesKey;
   if (rescheduleSeries) {
     const series = await prisma.appointment.findMany({
       where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
@@ -1342,6 +1343,7 @@ export async function rescheduleBookingAppointment(req, res) {
     const updated = await tx.appointment.update({
       where: { id: existing.id },
       data: {
+        ...(existing.status === "NoShow" ? { status: "Scheduled" } : {}),
         startsAt,
         endsAt,
         ...meetingFields,
@@ -1355,7 +1357,7 @@ export async function rescheduleBookingAppointment(req, res) {
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     });
     await syncLeadConsultationFromAppointment(tx, updated, { consultationStatus: "RESCHEDULED" });
-    await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "RESCHEDULED", summary: "Appointment date or format changed", metadata: { from: existing.startsAt, to: startsAt, meetingMode } });
+    await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: existing.id, actorUserId: req.auth.userId, type: "RESCHEDULED", summary: existing.status === "NoShow" ? "No-show appointment rescheduled" : "Appointment date or format changed", metadata: { from: existing.startsAt, to: startsAt, fromStatus: existing.status, toStatus: "Scheduled", meetingMode } });
     if (existing.meetingProvider === "Zoom" && existing.meetingProviderId && meetingMode !== MEETING_MODES.ZOOM) {
       await enqueueAppointmentMeetingJob(tx, { appointment: updated, action: "DELETE", providerMeetingId: existing.meetingProviderId, dedupeSuffix: "mode-changed" });
     }
@@ -1376,6 +1378,14 @@ export async function rescheduleBookingAppointment(req, res) {
     details: `${existing.subject} rescheduled`,
   });
   invalidateDashboardCache(req.auth.agencyId);
+  if (existing.status === "NoShow") {
+    await resolveNotifications({
+      agencyId: req.auth.agencyId,
+      entityType: "appointment",
+      entityId: existing.id,
+      types: ["appointment.no_show"],
+    });
+  }
   if (data.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
   res.json({ data });
 }

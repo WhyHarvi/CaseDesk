@@ -23,9 +23,11 @@ test("valid intake produces canonical foundation values", () => {
 
 test("lead list query accepts only supported filters and sorting", () => {
   assert.deepEqual(parseLeadListQuery({ page: "2", limit: "500", status: "OPEN", sortBy: "nextActionAt", sortDirection: "asc" }), {
-    page: 2, limit: 100, status: "OPEN", stage: null, sortBy: "nextActionAt", sortDirection: "asc", search: "", sourceId: null,
+    page: 2, limit: 100, status: "OPEN", stage: null, sortBy: "nextActionAt", sortDirection: "asc", month: null, search: "", sourceId: null,
     createdToday: false, uncontacted: false, convertedThisWeek: false, lostThisWeek: false,
   });
+  assert.deepEqual(parseLeadListQuery({ month: "2026-07" }).month, { year: 2026, month: 7 });
+  assert.throws(() => parseLeadListQuery({ month: "not-a-month" }), /month must be in YYYY-MM format/);
   assert.throws(() => parseLeadListQuery({ status: "UNKNOWN" }), /status is invalid/);
 });
 

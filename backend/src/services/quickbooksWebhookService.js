@@ -63,7 +63,7 @@ async function notifyOrphanedPayment(hold) {
     severity: "critical",
     entityType: "bookingPaymentHold",
     entityId: hold.id,
-    actionUrl: "/app/payments",
+    actionUrl: `/app/payments?source=booking_payment&hold=${encodeURIComponent(hold.id)}`,
     metadata: {
       holdId: hold.id,
       amount: Number(hold.amount),
@@ -148,7 +148,7 @@ async function notifyAmbiguousRefund(agencyId, refund, candidates) {
     severity: "warning",
     entityType: "quickBooksRefundReceipt",
     entityId: refund.id,
-    actionUrl: "/app/payments",
+    actionUrl: `/app/payments?source=booking_payment&refund=${encodeURIComponent(refund.id)}`,
     metadata: { refundReceiptId: refund.id, amount: Number(refund.totalAmount), candidateHoldIds: candidates.map((item) => item.id) },
     dedupeKey: `refund_receipt:${refund.id}:ambiguous`,
     channels: ["in_app"],
@@ -168,7 +168,7 @@ async function notifyUnmatchedRefund(agencyId, refund) {
     severity: "warning",
     entityType: "quickBooksRefundReceipt",
     entityId: refund.id,
-    actionUrl: "/app/payments",
+    actionUrl: `/app/payments?source=booking_payment&refund=${encodeURIComponent(refund.id)}`,
     metadata: {
       refundReceiptId: refund.id,
       customerId: refund.customerId,
@@ -208,7 +208,9 @@ async function notifyMatchedRefund(agencyId, refund, hold) {
     severity: stillScheduled ? "critical" : "info",
     entityType: "bookingPaymentHold",
     entityId: hold.id,
-    actionUrl: "/app/payments",
+    actionUrl: appointment
+      ? `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}`
+      : `/app/payments?source=booking_payment&hold=${encodeURIComponent(hold.id)}`,
     metadata: {
       refundReceiptId: refund.id,
       paymentHoldId: hold.id,

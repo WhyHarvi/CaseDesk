@@ -44,6 +44,13 @@ export async function getMe(req, res) {
   res.json({ success: true, ...publicIdentity(req) });
 }
 
+// Lightweight identity snapshot for long-lived browser sessions. Unlike
+// /auth/me this endpoint does not record a login activity, so the frontend
+// can safely refresh role and portal-access changes while the app is open.
+export async function getAccessSnapshot(req, res) {
+  res.json({ success: true, ...publicIdentity(req) });
+}
+
 export async function logout(req, res) {
   await recordActivity({
     agencyId: req.auth.agencyId,

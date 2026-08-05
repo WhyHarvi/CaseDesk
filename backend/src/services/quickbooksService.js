@@ -31,7 +31,11 @@ export function quickBooksApiBase() {
 // searching for the transaction.
 export function quickBooksAppUrl(kind, txnId) {
   if (!txnId) return null;
-  const path = kind === "invoice" ? "invoice" : "recvpayment";
+  const path = {
+    invoice: "invoice",
+    refundreceipt: "refundreceipt",
+    recvpayment: "recvpayment",
+  }[kind] || "recvpayment";
   return `https://app.qbo.intuit.com/app/${path}?txnId=${encodeURIComponent(txnId)}`;
 }
 
@@ -512,7 +516,9 @@ function mapQuickBooksRefundReceipt(receipt) {
   return {
     id: receipt.Id,
     syncToken: receipt.SyncToken,
+    docNumber: receipt.DocNumber || null,
     customerId: receipt.CustomerRef?.value || null,
+    customerName: receipt.CustomerRef?.name || null,
     totalAmount: Number(receipt.TotalAmt ?? 0),
     itemIds: [...new Set(itemIds)],
     paymentRefNum: receipt.PaymentRefNum || null,
@@ -520,6 +526,9 @@ function mapQuickBooksRefundReceipt(receipt) {
     createdAt: receipt.MetaData?.CreateTime || receipt.TxnDate || null,
     updatedAt: receipt.MetaData?.LastUpdatedTime || null,
     cardStatus: receipt.CreditCardPayment?.CreditChargeResponse?.Status || null,
+    cardTransactionId:
+      receipt.CreditCardPayment?.CreditChargeResponse?.CCTransId || null,
+    paymentMethodName: receipt.PaymentMethodRef?.name || null,
     currency: receipt.CurrencyRef?.value || "CAD",
   };
 }

@@ -51,7 +51,8 @@ test("follow-up writes validate accessible relations and active internal assigne
     /Assigned staff member was not found or is inactive/,
   );
   assert.match(controller, /\.\.\.followUpAccessWhere\(req\)/);
-  assert.match(controller, /appointment: appointmentProfileAccessWhere\(req\)/);
+  assert.match(controller, /const appointmentWhere = appointmentProfileAccessWhere\(req\)/);
+  assert.match(controller, /branches\.push\(\{ appointment: appointmentWhere \}\)/);
   assert.doesNotMatch(routes, /error-demo/);
   assert.doesNotMatch(controller, /getFollowUpError/);
 });

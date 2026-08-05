@@ -52,7 +52,7 @@ export default function Dashboard() {
         onFocusScheduling={() => setSchedulingFocusSignal((count) => count + 1)}
       />
 
-      <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} />
+      <DashboardWorkRow dashboard={dashboard} loading={loading} role={role} onDashboardChanged={() => dashboardQuery.refetch()} />
 
       <DashboardBottomRow dashboard={dashboard} loading={loading} />
 

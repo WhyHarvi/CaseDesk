@@ -799,8 +799,8 @@ async function processBookingDeliveryPass() {
         if (!sent.count) continue;
         await resolveNotifications({
           agencyId: job.agencyId,
-          entityType: "integration",
-          entityId: `${job.paymentHoldId ? "payment-request" : "appointment"}-${job.channel}`,
+          entityType: job.paymentHoldId ? "booking_payment_hold" : "appointment",
+          entityId: job.paymentHoldId || job.appointmentId,
           types: ["appointment.delivery_failed"],
         });
         if (job.kind === "reminder" && job.appointmentId) {
@@ -832,10 +832,12 @@ async function processBookingDeliveryPass() {
             title: job.paymentHoldId ? "Payment request delivery failed" : "Appointment message delivery failed",
             body: `${job.channel.toUpperCase()} delivery failed after ${attempts} attempts.${job.paymentHoldId ? " Open the payment reservation to correct the recipient and resend it." : ""}`,
             severity: "critical",
-            entityType: "integration",
-            entityId: `${job.paymentHoldId ? "payment-request" : "appointment"}-${job.channel}`,
-            actionUrl: job.paymentHoldId ? `/app/payments?source=booking_payment&hold=${encodeURIComponent(job.paymentHoldId)}` : "/app/calendar",
-            dedupeKey: `${job.paymentHoldId ? `payment-request:${job.paymentHoldId}` : "appointment-delivery"}:${job.channel}:failed`,
+            entityType: job.paymentHoldId ? "booking_payment_hold" : "appointment",
+            entityId: job.paymentHoldId || job.appointmentId,
+            actionUrl: job.paymentHoldId
+              ? `/app/payments?source=booking_payment&hold=${encodeURIComponent(job.paymentHoldId)}`
+              : `/app/calendar?appointment=${encodeURIComponent(job.appointmentId)}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}`,
+            dedupeKey: `${job.paymentHoldId ? `payment-request:${job.paymentHoldId}` : `appointment:${job.appointmentId}`}:${job.channel}:failed`,
             channels: ["in_app"],
             aggregate: true,
             attentionLevel: "action_required",

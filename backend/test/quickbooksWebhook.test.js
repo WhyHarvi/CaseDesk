@@ -4,6 +4,7 @@ import test from "node:test";
 import { normalizeQuickBooksWebhookNotifications } from "../src/controllers/quickbooksWebhookController.js";
 import { microsoftInternetMessageHeaders } from "../src/services/microsoftMailboxService.js";
 import { netCollectedAmount, normalizeCaseInvoiceStatus } from "../src/services/paymentsOverviewService.js";
+import { quickBooksAppUrl } from "../src/services/quickbooksService.js";
 
 test("QuickBooks webhook normalization retains the legacy payload", () => {
   const payload = {
@@ -19,6 +20,13 @@ test("QuickBooks webhook normalization retains the legacy payload", () => {
     realmId: "realm-1",
     entities: [{ id: "21", name: "Invoice", operation: "Update" }],
   }]);
+});
+
+test("QuickBooks transaction links preserve the transaction type", () => {
+  assert.equal(
+    quickBooksAppUrl("refundreceipt", "refund/42"),
+    "https://app.qbo.intuit.com/app/refundreceipt?txnId=refund%2F42",
+  );
 });
 
 test("QuickBooks webhook normalization accepts and groups CloudEvents", () => {

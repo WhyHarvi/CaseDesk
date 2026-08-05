@@ -260,6 +260,12 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                   )}
                   {appointment?.referenceCode ? ` · ${appointment.referenceCode}` : ""}
                 </p>
+                {!loading && canWrite && appointment && !appointment.client ? (
+                  <button type="button" disabled={saving} onClick={convertGuest} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserRound className="h-3.5 w-3.5" />}
+                    {saving ? "Saving…" : "Save as client"}
+                  </button>
+                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {onEditScheduling && appointment ? <button type="button" onClick={() => onEditScheduling(appointment)} className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700">Edit schedule</button> : null}
@@ -296,7 +302,6 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               </section>
               {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
               {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
-              {canWrite && appointment.status === "Completed" && !appointment.client ? <button type="button" disabled={saving} onClick={convertGuest} className="w-full rounded-full bg-emerald-600 px-4 py-3 text-sm font-semibold text-white">Save visitor as client</button> : null}
             </div> : null}
 
             {!loading && appointment && tab === "notes" ? <div className="space-y-5">

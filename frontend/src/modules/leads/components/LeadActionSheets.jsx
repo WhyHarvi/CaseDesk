@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, HeartHandshake, PhoneIncoming, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -89,6 +89,35 @@ export function LogActivitySheet({ lead, onClose, onSaved }) {
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Details<textarea name="description" value={form.description} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="What was discussed?" /></label>
       <label className="text-sm font-medium text-slate-700">Outcome<input maxLength={160} name="outcome" value={form.outcome} onChange={update} className={fieldClass} placeholder="Follow-up required" /></label>
       <label className="text-sm font-medium text-slate-700">Duration (minutes)<input type="number" min="0" max="1440" name="durationMinutes" value={form.durationMinutes} onChange={update} className={fieldClass} placeholder="4" /></label>
+    </ActionModal>
+  );
+}
+
+export function EditLeadDetailsSheet({ lead, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    firstName: lead.firstName || "", lastName: lead.lastName || "", phone: lead.phone || "", email: lead.email || "",
+    country: lead.country || "", province: lead.province || "", preferredLanguage: lead.preferredLanguage || "",
+    currentImmigrationStatus: lead.currentImmigrationStatus || "", immigrationInterest: lead.immigrationInterest || "",
+    inquiryDate: lead.inquiryDate ? lead.inquiryDate.slice(0, 10) : "",
+  });
+  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const { saving, error, submit } = useSubmit(
+    () => api.patch(`/leads/${lead.id}`, { ...form, inquiryDate: form.inquiryDate ? new Date(form.inquiryDate).toISOString() : undefined }),
+    onSaved,
+  );
+
+  return (
+    <ActionModal title="Edit lead details" subtitle="Fix or fill in contact and background info." icon={UserPen} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save changes">
+      <label className="text-sm font-medium text-slate-700">First name<input maxLength={100} name="firstName" value={form.firstName} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Last name<input maxLength={100} name="lastName" value={form.lastName} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Phone<input maxLength={40} name="phone" value={form.phone} onChange={update} className={fieldClass} placeholder="e.g. 416 555 1234" /></label>
+      <label className="text-sm font-medium text-slate-700">Email<input type="email" maxLength={320} name="email" value={form.email} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Country<input maxLength={100} name="country" value={form.country} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Province / state<input maxLength={100} name="province" value={form.province} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Preferred language<input maxLength={100} name="preferredLanguage" value={form.preferredLanguage} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Current immigration status<input maxLength={150} name="currentImmigrationStatus" value={form.currentImmigrationStatus} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Interest<input maxLength={150} name="immigrationInterest" value={form.immigrationInterest} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Inquiry date<input type="date" name="inquiryDate" value={form.inquiryDate} onChange={update} className={fieldClass} /></label>
     </ActionModal>
   );
 }

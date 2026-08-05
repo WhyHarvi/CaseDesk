@@ -2,15 +2,22 @@ import { CalendarDays, ClipboardList, CreditCard, FileText, House, LogOut, Messa
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { usePortalData } from "./ClientPortalLayout";
+import { useNotifications } from "../notifications/NotificationProvider";
 
 const items = [
-  { label: "Home", to: "/client-portal", icon: House, end: true },
-  { label: "Documents", to: "/client-portal/documents", icon: FileText },
-  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList },
-  { label: "Appointments", to: "/client-portal/appointments", icon: CalendarDays },
-  { label: "Payments", to: "/client-portal/payments", icon: CreditCard },
-  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare },
+  { label: "Home", to: "/client-portal", icon: House, end: true, badgeKey: "portalHome" },
+  { label: "Documents", to: "/client-portal/documents", icon: FileText, badgeKey: "portalDocuments" },
+  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList, badgeKey: "portalForms" },
+  { label: "Appointments", to: "/client-portal/appointments", icon: CalendarDays, badgeKey: "portalAppointments" },
+  { label: "Payments", to: "/client-portal/payments", icon: CreditCard, badgeKey: "portalPayments" },
+  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare, badgeKey: "portalChat" },
 ];
+
+function PortalBadge({ count }) {
+  if (!count?.total) return null;
+  const title = `${count.total} unread ${count.total === 1 ? "item" : "items"}${count.actions ? ` · ${count.actions} require action` : ""}`;
+  return <span title={title} aria-label={title} className={`ml-auto inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold text-white shadow-sm ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span>;
+}
 
 // Desktop-only companion to ClientPortalBottomNav.jsx (mobile keeps the
 // bottom nav untouched — this only renders at the lg breakpoint and up).
@@ -19,6 +26,7 @@ const items = [
 // product family, not a bolted-on second design.
 export default function ClientPortalSidebar() {
   const { signOut } = useAuth();
+  const { sidebarCounts, acknowledgeDestination, focusDestination } = useNotifications();
   const { overview } = usePortalData();
   const initials = (overview?.client?.fullName || overview?.client?.firstName || "You")
     .split(" ")
@@ -45,6 +53,10 @@ export default function ClientPortalSidebar() {
               key={item.to}
               to={item.to}
               end={item.end}
+              onClick={(event) => {
+                focusDestination(item.badgeKey, item.label, { anchorRect: event.currentTarget.getBoundingClientRect() });
+                void acknowledgeDestination(item.badgeKey);
+              }}
               className={({ isActive }) =>
                 [
                   "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all duration-200",
@@ -54,6 +66,7 @@ export default function ClientPortalSidebar() {
             >
               <Icon className="h-[18px] w-[18px] shrink-0" />
               <span className="truncate">{item.label}</span>
+              <PortalBadge count={sidebarCounts[item.badgeKey]} />
             </NavLink>
           );
         })}

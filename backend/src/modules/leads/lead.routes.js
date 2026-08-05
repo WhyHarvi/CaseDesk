@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { assignLead, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
+import { assignLead, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, getImport, getOperations, listEvents, listForms, listImports, previewImport, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
 import { requireRole } from "../../middleware/authorization.js";
+import { createLeadLedgerEntry, deleteLedgerEntry, listLeadLedgerEntries, updateLedgerEntry } from "../../controllers/manualLedgerController.js";
 
 const router = Router();
 
@@ -54,6 +55,11 @@ router.post("/:id/convert", requireRole("admin", "consultant"), asyncHandler(con
 router.get("/:id/consultations", asyncHandler(listConsultations));
 router.post("/:id/consultations", asyncHandler(createConsultation));
 router.patch("/:id/consultations/:consultationId", requireRole("admin", "consultant"), asyncHandler(updateConsultation));
+router.get("/:leadId/ledger", asyncHandler(listLeadLedgerEntries));
+router.post("/:leadId/ledger", asyncHandler(createLeadLedgerEntry));
+router.patch("/:leadId/ledger/:entryId", asyncHandler(updateLedgerEntry));
+router.delete("/:leadId/ledger/:entryId", asyncHandler(deleteLedgerEntry));
+router.patch("/:id", asyncHandler(updateLeadDetails));
 router.get("/:id", asyncHandler(getLead));
 
 export default router;

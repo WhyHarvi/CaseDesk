@@ -10,3 +10,11 @@ export async function getPaymentsOverviewSummary() {
   const response = await api.get("/payments-overview/summary", { cache: false });
   return response.data.data;
 }
+
+export async function getConsultationRefundReview(refundReceiptId) {
+  const response = await api.get(
+    `/payments-overview/refunds/${encodeURIComponent(refundReceiptId)}`,
+    { cache: false },
+  );
+  return response.data.data;
+}

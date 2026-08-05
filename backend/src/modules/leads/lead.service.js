@@ -4,7 +4,7 @@ import { nextClientNumber } from "../../services/clientNumberService.js";
 import { canCreateLead, leadAccessWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation } from "./lead.validation.js";
+import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 import { notifyUsers } from "../../services/notificationService.js";
@@ -87,7 +87,7 @@ export async function createLead(req, db = prisma) {
 }
 
 export async function listLeads(req) {
-  const { page, limit, search, status, stage, sourceId, sortBy, sortDirection, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
+  const { page, limit, search, status, stage, sourceId, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
 
   // Only computed when a date-scoped dashboard flag is present — same
   // bounds getLeadDashboard() uses, so a stat card's count and this list
@@ -114,6 +114,7 @@ export async function listLeads(req) {
     ...(status ? { status } : {}),
     ...(stage ? { stage } : {}),
     ...(sourceId ? { originalSourceId: sourceId } : {}),
+    ...(month ? { inquiryDate: { gte: new Date(Date.UTC(month.year, month.month - 1, 1)), lt: new Date(Date.UTC(month.month === 12 ? month.year + 1 : month.year, month.month === 12 ? 0 : month.month, 1)) } } : {}),
     ...(createdToday ? { createdAt: { gte: bounds.todayStart, lt: bounds.tomorrowStart } } : {}),
     ...(uncontacted ? { firstContactAt: null } : {}),
     ...(convertedThisWeek ? { convertedAt: { gte: bounds.weekStart, lt: bounds.tomorrowStart } } : {}),
@@ -259,6 +260,31 @@ async function syncLeadNextAction(tx, leadId) {
   const next = await tx.leadFollowUp.findFirst({ where: { leadId, status: "PENDING" }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }] });
   await tx.lead.update({ where: { id: leadId }, data: { nextActionType: next?.type || null, nextActionDescription: next?.description || null, nextActionAt: next?.dueAt || null, nextActionOwnerId: next?.assignedUserId || null, version: { increment: 1 } } });
   return next;
+}
+
+// Editing core contact/demographic fields — separate from recordLeadActivity
+// (which is for logging contact events) and reassignLead/nurture/etc (which
+// are pipeline-stage actions). This is just "the details were wrong or
+// incomplete, fix them" — e.g. a lead imported with no phone number yet.
+export async function updateLeadDetails(req, db = prisma) {
+  const values = parseUpdateLeadDetails(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    if (values.phoneNormalized !== undefined || values.emailNormalized !== undefined) {
+      await lockAgencyContactIntake(tx, agencyId);
+      await assertNoContactDuplicate(tx, {
+        agencyId,
+        phoneNormalized: values.phoneNormalized !== undefined ? values.phoneNormalized : lead.phoneNormalized,
+        emailNormalized: values.emailNormalized !== undefined ? values.emailNormalized : lead.emailNormalized,
+        excludeLeadId: lead.id,
+      });
+    }
+    const updated = await tx.lead.update({ where: { id: lead.id }, data: { ...values, version: { increment: 1 } }, include: leadInclude });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.details_updated", details: `${lead.leadNumber}: contact details updated`, entityType: "lead", entityId: lead.id, metadata: { fields: Object.keys(values) } } });
+    return updated;
+  }, leadTransactionOptions);
 }
 
 export async function recordLeadActivity(req, db = prisma) {

@@ -4,7 +4,7 @@ import { normalizeIncomingLead } from "./lead.intake.validation.js";
 import { adaptProviderPayload } from "./lead.provider.adapters.js";
 import { enrichProviderPayload } from "./lead.provider.enrichment.js";
 import { logger } from "../../services/logger.js";
-import { adminRecipientIds, notifyUsers } from "../../services/notificationService.js";
+import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../services/notificationService.js";
 import { invalidateDashboardCache } from "../../services/dashboardCache.js";
 import { leadWelcomeEmailEligible, sendLeadWelcomeEmail } from "./lead.welcomeEmail.service.js";
 
@@ -99,9 +99,17 @@ async function processClaimed(eventId) {
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });
     if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "PROCESSED", normalizedData: normalized.data, createdLeadId: lead.id } });
     await refreshBatch(tx, event.importBatchId);
-    return { agencyId: event.agencyId, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, phone: lead.phone, firstName: lead.firstName };
+    return { agencyId: event.agencyId, eventId: event.id, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, phone: lead.phone, firstName: lead.firstName };
   }, { maxWait: 10_000, timeout: 30_000 });
   if (result?.agencyId) invalidateDashboardCache(result.agencyId);
+  if (result?.agencyId && result?.eventId) {
+    await resolveNotifications({
+      agencyId: result.agencyId,
+      entityType: "lead_incoming_event",
+      entityId: result.eventId,
+      types: ["lead.intake_failed"],
+    });
+  }
   if (result?.ownerUserId) {
     await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
   }
@@ -126,7 +134,7 @@ async function failEvent(event, error) {
     if (terminal) await refreshBatch(tx, event.importBatchId);
   });
   if (terminal) {
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: await adminRecipientIds(event.agencyId), type: "lead.intake_failed", category: "leads", title: "Lead intake failed", body: message, severity: "critical", entityType: "lead_incoming_event", entityId: event.id, actionUrl: "/lead-intake", channels: ["in_app"], dedupeKey: `lead-intake:${event.id}:failed:${event.attempts + 1}` });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: await adminRecipientIds(event.agencyId), type: "lead.intake_failed", category: "leads", title: "Lead intake failed", body: message, severity: "critical", entityType: "lead_incoming_event", entityId: event.id, actionUrl: `/lead-intake?tab=events&event=${encodeURIComponent(event.id)}`, channels: ["in_app"], dedupeKey: `lead-intake:${event.id}:failed:${event.attempts + 1}` });
   }
 }
 

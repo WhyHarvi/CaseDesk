@@ -105,7 +105,7 @@ async function alertMeetingSyncFailure(job, appointment, error, { exhausted = tr
     severity: exhausted ? "critical" : "warning",
     entityType: "appointment",
     entityId: job.appointmentId,
-    actionUrl: "/app/calendar",
+    actionUrl: `/app/calendar?appointment=${encodeURIComponent(job.appointmentId)}`,
     dedupeKey: `appointment:${job.appointmentId}:meeting-sync:${job.id}:${exhausted ? "failed" : "delayed"}`,
     channels: ["in_app"],
   }).catch(() => {});

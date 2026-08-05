@@ -23,6 +23,20 @@ test("lead dashboard and report endpoints are admin-only", async () => {
   }
 });
 
+test("lead dashboard names open the existing lead detail sheet", async () => {
+  const page = await readFile(
+    new URL(
+      "../../frontend/src/modules/leads/pages/LeadDashboardPage.jsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(page, /function LeadNameButton\(\{ lead, onOpen \}\)/);
+  assert.equal(page.match(/<LeadNameButton lead=\{lead\} onOpen=\{setSelectedLead\} \/>/g)?.length, 2);
+  assert.match(page, /<LeadDetailSheet lead=\{selectedLead\}/);
+});
+
 test("lead RLS is agency scoped and no client policy is granted", async () => {
   const sql = await readFile(new URL("../prisma/migrations/20260714150000_add_lead_foundation/migration.sql", import.meta.url), "utf8");
   assert.match(sql, /ALTER TABLE "leads" ENABLE ROW LEVEL SECURITY/);

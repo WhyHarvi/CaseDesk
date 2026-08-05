@@ -20,6 +20,7 @@ import logo from "../../assets/logo.png";
 import { useAuth } from "../../auth/AuthContext";
 import { prefetchRoute } from "../../services/routePrefetch";
 import { getPortalAccess } from "../../auth/portalAccess";
+import { useNotifications } from "../notifications/NotificationProvider";
 
 const adminNavigation = [
   {
@@ -49,6 +50,7 @@ const adminNavigation = [
     icon: Users,
     description: "Profiles and intake",
     disabled: false,
+    badgeKey: "clients",
   },
   {
     label: "Lead Intake",
@@ -56,6 +58,7 @@ const adminNavigation = [
     icon: Waypoints,
     description: "Forms and imports",
     disabled: false,
+    badgeKey: "leadIntake",
   },
   {
     label: "Leads",
@@ -63,6 +66,7 @@ const adminNavigation = [
     icon: ContactRound,
     description: "Inquiry pipeline",
     disabled: false,
+    badgeKey: "leads",
   },
   {
     label: "Cases",
@@ -70,12 +74,22 @@ const adminNavigation = [
     icon: BriefcaseBusiness,
     description: "Active casework",
     disabled: false,
+    badgeKey: "cases",
+  },
+  {
+    label: "Documents",
+    to: "/app/documents",
+    icon: FileCheck2,
+    description: "Uploads and document review",
+    disabled: false,
+    badgeKey: "documents",
   },
   {
     label: "Follow-ups",
     to: "/app/follow-ups",
     icon: CalendarClock,
     disabled: false,
+    badgeKey: "followUps",
   },
   {
     label: "Calendar",
@@ -83,6 +97,7 @@ const adminNavigation = [
     icon: CalendarDays,
     description: "Appointments and booking",
     disabled: false,
+    badgeKey: "calendar",
   },
   {
     label: "Team Workload",
@@ -97,6 +112,7 @@ const adminNavigation = [
     icon: CreditCard,
     description: "Agency-wide payment history",
     disabled: false,
+    badgeKey: "payments",
   },
   {
     label: "Case Easy Import",
@@ -104,6 +120,7 @@ const adminNavigation = [
     icon: DatabaseZap,
     description: "Import and review Case Easy data",
     disabled: false,
+    badgeKey: "caseEasyImport",
   },
   {
     label: "Settings",
@@ -111,6 +128,7 @@ const adminNavigation = [
     icon: Settings,
     description: "Workspace controls",
     disabled: false,
+    badgeKey: "settings",
   },
 ];
 
@@ -121,37 +139,42 @@ const memberNavigation = [
     icon: LayoutDashboard,
     accessKey: "dashboard",
   },
-  { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads" },
+  { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads" },
   {
     label: "Lead Intake",
     to: "/lead-intake",
     icon: Waypoints,
     accessKey: "leadIntake",
+    badgeKey: "leadIntake",
   },
-  { label: "Clients", to: "/app/clients", icon: Users, accessKey: "clients" },
+  { label: "Clients", to: "/app/clients", icon: Users, accessKey: "clients", badgeKey: "clients" },
   {
     label: "Cases",
     to: "/app/cases",
     icon: BriefcaseBusiness,
     accessKey: "cases",
+    badgeKey: "cases",
   },
   {
     label: "Follow-ups",
     to: "/app/follow-ups",
     icon: CalendarClock,
     accessKey: "followUps",
+    badgeKey: "followUps",
   },
   {
     label: "Calendar",
     to: "/app/calendar",
     icon: CalendarDays,
     accessKey: "calendar",
+    badgeKey: "calendar",
   },
   {
     label: "Documents",
     to: "/app/documents",
     icon: FileCheck2,
     accessKey: "documents",
+    badgeKey: "documents",
   },
   {
     label: "Workload",
@@ -164,18 +187,48 @@ const memberNavigation = [
     to: "/app/payments",
     icon: CreditCard,
     accessKey: "payments",
+    badgeKey: "payments",
   },
   {
     label: "Case Easy Import",
     to: "/app/case-easy-import",
     icon: DatabaseZap,
     accessKey: "caseEasyImport",
+    badgeKey: "caseEasyImport",
   },
-  { label: "Settings", to: "/app/settings", icon: Settings },
+  { label: "Settings", to: "/app/settings", icon: Settings, badgeKey: "settings" },
 ];
+
+function UpdateBadge({ count, collapsed = false }) {
+  if (!count?.total) return null;
+  const needsAction = count.actions > 0;
+  const value = count.total > 99 ? "99+" : count.total;
+  const title = `${count.total} unread ${count.total === 1 ? "item" : "items"}${count.actions ? ` · ${count.actions} require action` : ""}${count.focus?.title ? ` · Latest: ${count.focus.title}` : ""}`;
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      className={[
+        "inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-none text-white shadow-sm transition-all duration-200",
+        needsAction ? "bg-rose-500 shadow-rose-200" : "bg-sky-500 shadow-sky-200",
+        collapsed ? "absolute -right-1 -top-1 ring-2 ring-slate-50" : "ml-auto",
+      ].join(" ")}
+    >
+      {value}
+    </span>
+  );
+}
 
 function NavItem({ item, collapsed, onNavigate, role }) {
   const Icon = item.icon;
+  const focusUrl = String(item.badge?.focus?.actionUrl || "");
+  let target = item.to;
+  if (item.badge?.total && focusUrl.startsWith("/") && !focusUrl.startsWith("//")) {
+    try {
+      const focusPath = new URL(focusUrl, window.location.origin).pathname;
+      if (focusPath === item.to || focusPath.startsWith(`${item.to}/`)) target = focusUrl;
+    } catch { /* keep the module route */ }
+  }
 
   if (item.disabled) {
     return (
@@ -211,8 +264,8 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 
   return (
     <NavLink
-      to={item.to}
-      onClick={onNavigate}
+      to={target}
+      onClick={(event) => onNavigate?.({ hasDirectFocus: target !== item.to, anchorRect: event.currentTarget.getBoundingClientRect() })}
       onMouseEnter={() => prefetchRoute(item.to, role)}
       onFocus={() => prefetchRoute(item.to, role)}
       className={({ isActive }) =>
@@ -231,13 +284,14 @@ function NavItem({ item, collapsed, onNavigate, role }) {
         <>
           <div
             className={[
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+              "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all duration-200",
               isActive
                 ? "bg-sky-200 text-sky-700"
                 : "border border-slate-200 bg-white text-slate-500 group-hover:border-sky-100 group-hover:bg-sky-50 group-hover:text-sky-700",
             ].join(" ")}
           >
             <Icon className="h-5 w-5" />
+            {collapsed ? <UpdateBadge count={item.badge} collapsed /> : null}
           </div>
           <div
             className={[
@@ -247,6 +301,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
                 : "w-full translate-x-0 opacity-100",
             ].join(" ")}
           >
+            <div className="flex min-w-0 items-center gap-2">
             <p
               className={[
                 "truncate text-sm font-medium",
@@ -255,6 +310,8 @@ function NavItem({ item, collapsed, onNavigate, role }) {
             >
               {item.label}
             </p>
+            {!collapsed ? <UpdateBadge count={item.badge} /> : null}
+            </div>
           </div>
         </>
       )}
@@ -265,6 +322,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
   const { role, appUser, membership, signOut } = useAuth();
   const access = getPortalAccess(role, membership?.permissions);
+  const { sidebarCounts, acknowledgeDestination, focusDestination } = useNotifications();
   const navigation = (
     role === "admin" ? adminNavigation : memberNavigation
   ).filter((item) => !item.accessKey || access.pages[item.accessKey]);
@@ -319,9 +377,15 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
         {navigation.map((item) => (
           <NavItem
             key={item.label}
-            item={item}
+            item={{ ...item, badge: item.badgeKey ? sidebarCounts[item.badgeKey] : null }}
             collapsed={collapsed}
-            onNavigate={mobile ? onCloseMobile : undefined}
+            onNavigate={({ hasDirectFocus, anchorRect }) => {
+              if (item.badgeKey) {
+                focusDestination(item.badgeKey, item.label, { hasDirectFocus, anchorRect });
+                void acknowledgeDestination(item.badgeKey);
+              }
+              if (mobile) onCloseMobile?.();
+            }}
             role={role}
           />
         ))}

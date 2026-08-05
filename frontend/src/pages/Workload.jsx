@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarDays, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarDays, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound, UserRoundSearch } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import PageContainer from "../components/layout/PageContainer";
@@ -62,9 +62,18 @@ function AppointmentRow({ item }) {
   return <Link to={`/app/cases/${item.case.id}`} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-emerald-200 hover:bg-emerald-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.subject}</p><p className="truncate text-xs text-slate-500">{item.client.fullName} · {item.case.caseType}</p></div><p className="shrink-0 text-xs font-medium text-slate-600">{formatDate(item.startsAt)}</p></Link>;
 }
 
+function LeadRow({ item }) {
+  const name = [item.firstName, item.lastName].filter(Boolean).join(" ") || item.leadNumber;
+  const overdue = item.nextActionAt && new Date(item.nextActionAt) < new Date();
+  return <Link to={`/leads?lead=${encodeURIComponent(item.id)}`} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/30"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{name}</p><p className="truncate text-xs text-slate-500">{item.leadNumber} · {item.stage.replaceAll("_", " ")}</p>{item.nextActionDescription ? <p className="mt-1 truncate text-xs text-slate-500">{item.nextActionDescription}</p> : null}</div><div className="shrink-0 text-right"><p className={overdue ? "text-xs font-semibold text-rose-700" : "text-xs font-medium text-slate-600"}>{formatDate(item.nextActionAt)}</p><p className="mt-0.5 text-[11px] text-slate-400">{item.priority}</p></div></Link>;
+}
+
 function WorkDetails({ workload }) {
   return (
     <div className="grid gap-4 xl:grid-cols-2">
+      <WorkSection icon={UserRoundSearch} title="Open Leads" count={workload.activeLeads} empty="No open leads.">
+        {workload.activeLeadItems.map((item) => <LeadRow key={item.id} item={item} />)}
+      </WorkSection>
       <WorkSection icon={AlertTriangle} title="Overdue Tasks" count={workload.overdueTasks} empty="No overdue tasks." tone="rose">
         {workload.overdueTaskItems.map((item) => <TaskRow key={item.id} item={item} overdue />)}
       </WorkSection>
@@ -88,15 +97,16 @@ function WorkDetails({ workload }) {
 }
 
 function ConsultantWorkloadCard({ workload, open, onToggle }) {
-  const riskTone = workload.overdueTasks > 0 ? "text-rose-700 bg-rose-50" : workload.workloadPercentage >= 90 ? "text-amber-700 bg-amber-50" : "text-emerald-700 bg-emerald-50";
+  const riskTone = workload.overdueTasks > 0 || workload.overdueLeadActions > 0 ? "text-rose-700 bg-rose-50" : workload.workloadPercentage >= 90 ? "text-amber-700 bg-amber-50" : "text-emerald-700 bg-emerald-50";
   return (
     <article className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white/85 shadow-sm">
-      <button type="button" onClick={onToggle} className="grid w-full gap-4 p-5 text-left transition hover:bg-slate-50/70 lg:grid-cols-[minmax(220px,1.4fr)_repeat(4,minmax(90px,.55fr))_44px] lg:items-center">
+      <button type="button" onClick={onToggle} className="grid w-full gap-4 p-5 text-left transition hover:bg-slate-50/70 lg:grid-cols-[minmax(220px,1.4fr)_repeat(5,minmax(82px,.55fr))_44px] lg:items-center">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 font-semibold text-sky-700"><UserRound className="h-5 w-5" /></div>
           <div className="min-w-0"><p className="truncate font-semibold text-slate-950">{workload.consultant.fullName}</p><p className="truncate text-xs text-slate-500">{workload.profile.masteryLevel || workload.consultant.email}</p></div>
         </div>
-        <div><p className="text-xs text-slate-400">Capacity</p><p className="mt-1 text-sm font-semibold text-slate-800">{workload.activeCases} / {workload.capacity}</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={workload.workloadPercentage >= 100 ? "h-full rounded-full bg-rose-500" : workload.workloadPercentage >= 75 ? "h-full rounded-full bg-amber-400" : "h-full rounded-full bg-emerald-500"} style={{ width: `${Math.min(workload.workloadPercentage, 100)}%` }} /></div></div>
+        <div><p className="text-xs text-slate-400">Open leads</p><p className="mt-1 text-xl font-semibold text-indigo-700">{workload.activeLeads}</p>{workload.overdueLeadActions ? <p className="mt-0.5 text-[11px] font-semibold text-rose-600">{workload.overdueLeadActions} overdue</p> : null}</div>
+        <div><p className="text-xs text-slate-400">Cases / limit</p><p className="mt-1 text-sm font-semibold text-slate-800">{workload.activeCases} / {workload.capacity}</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={workload.workloadPercentage >= 100 ? "h-full rounded-full bg-rose-500" : workload.workloadPercentage >= 75 ? "h-full rounded-full bg-amber-400" : "h-full rounded-full bg-emerald-500"} style={{ width: `${Math.min(workload.workloadPercentage, 100)}%` }} /></div></div>
         <div><p className="text-xs text-slate-400">Pending tasks</p><p className="mt-1 text-xl font-semibold text-slate-900">{workload.pendingTasks}</p></div>
         <div><p className="text-xs text-slate-400">Overdue</p><p className="mt-1 text-xl font-semibold text-rose-700">{workload.overdueTasks}</p></div>
         <div><p className="text-xs text-slate-400">Documents</p><p className="mt-1 text-xl font-semibold text-amber-700">{workload.documentsWaitingReview}</p></div>
@@ -110,14 +120,14 @@ function ConsultantWorkloadCard({ workload, open, onToggle }) {
 function TeamWorkload({ data }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(() => new Set());
-  const totalWork = (bucket) => bucket.activeCases + bucket.pendingTasks + bucket.documentsWaitingReview + bucket.pendingFollowUps + bucket.upcomingAppointments;
+  const totalWork = (bucket) => bucket.activeLeads + bucket.activeCases + bucket.pendingTasks + bucket.documentsWaitingReview + bucket.pendingFollowUps + bucket.upcomingAppointments;
   const unassignedCount = totalWork(data.unassigned);
   const outsideTeamCount = totalWork(data.outsideTeam);
   const visibleConsultants = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return [...data.consultants]
       .filter((item) => !needle || [item.consultant.fullName, item.consultant.email, item.profile.masteryLevel, ...(item.profile.specializations || [])].some((value) => String(value || "").toLowerCase().includes(needle)))
-      .sort((left, right) => right.overdueTasks - left.overdueTasks || right.workloadPercentage - left.workloadPercentage || left.consultant.fullName.localeCompare(right.consultant.fullName));
+      .sort((left, right) => right.overdueLeadActions - left.overdueLeadActions || right.overdueTasks - left.overdueTasks || right.activeLeads - left.activeLeads || right.workloadPercentage - left.workloadPercentage || left.consultant.fullName.localeCompare(right.consultant.fullName));
   }, [data.consultants, query]);
   const toggle = (id) => setExpanded((current) => {
     const next = new Set(current);
@@ -127,8 +137,10 @@ function TeamWorkload({ data }) {
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 2xl:grid-cols-9">
         <Metric label="Active consultants" value={data.summary.activeConsultants} tone="sky" />
+        <Metric label="Open leads" value={data.summary.activeLeads} tone="sky" />
+        <Metric label="Overdue lead actions" value={data.summary.overdueLeadActions} tone={data.summary.overdueLeadActions ? "rose" : "slate"} />
         <Metric label="Case assignments" value={data.summary.activeCases} />
         <Metric label="Pending tasks" value={data.summary.pendingTasks} />
         <Metric label="Overdue tasks" value={data.summary.overdueTasks} tone={data.summary.overdueTasks ? "rose" : "slate"} />
@@ -154,7 +166,7 @@ function TeamWorkload({ data }) {
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="text-xl font-semibold text-slate-950">Consultant workload</h2><p className="mt-1 text-sm text-slate-500">Open a consultant to see their current cases, tasks, and review queue.</p></div>
+          <div><h2 className="text-xl font-semibold text-slate-950">Consultant workload</h2><p className="mt-1 text-sm text-slate-500">Open a consultant to see their current leads, cases, tasks, and review queue.</p></div>
           <label className="relative block w-full sm:w-80"><Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search consultants" className="h-10 w-full rounded-full border border-slate-200 bg-white pl-10 pr-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
         </div>
         {visibleConsultants.map((item) => <ConsultantWorkloadCard key={item.consultant.id} workload={item} open={expanded.has(item.consultant.id)} onToggle={() => toggle(item.consultant.id)} />)}
@@ -167,13 +179,15 @@ function TeamWorkload({ data }) {
 function PersonalWorkload({ data }) {
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <Metric label="Open leads" value={data.activeLeads} tone="sky" />
+        <Metric label="Overdue lead actions" value={data.overdueLeadActions} tone={data.overdueLeadActions ? "rose" : "slate"} />
         <Metric label="Active cases" value={data.activeCases} tone="sky" />
         <Metric label="Pending tasks" value={data.pendingTasks} />
         <Metric label="Overdue tasks" value={data.overdueTasks} tone={data.overdueTasks ? "rose" : "slate"} />
         <Metric label="Documents needing action" value={data.documentsWaitingReview} tone={data.documentsWaitingReview ? "amber" : "slate"} />
         <Metric label="Case capacity" value={data.capacity} />
-        <Metric label="Capacity used" value={`${data.workloadPercentage}%`} tone={data.workloadPercentage >= 90 ? "rose" : data.workloadPercentage >= 70 ? "amber" : "emerald"} />
+        <Metric label="Case capacity used" value={`${data.workloadPercentage}%`} tone={data.workloadPercentage >= 90 ? "rose" : data.workloadPercentage >= 70 ? "amber" : "emerald"} />
       </div>
       <WorkDetails workload={data} />
     </>
@@ -214,7 +228,7 @@ export default function Workload() {
   return (
     <PageContainer
       title={isAdmin ? "Team Workload" : "My Workload"}
-      description={isAdmin ? "See who is handling each case, where capacity is tight, and what needs attention across your workspace." : "Your assigned cases, deadlines, and documents requiring review."}
+      description={isAdmin ? "See who is handling each lead and case, where capacity is tight, and what needs attention across your workspace." : "Your assigned leads, cases, deadlines, and documents requiring review."}
       actions={<button type="button" onClick={() => loadWorkload({ fresh: true })} disabled={loading} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} />Refresh</button>}
     >
       {error ? <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><button type="button" onClick={loadWorkload} className="font-semibold underline">Try again</button></div> : null}

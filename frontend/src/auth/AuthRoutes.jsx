@@ -20,8 +20,8 @@ export function homePathForRole(role, permissions = {}) {
 }
 
 export function HomeRedirect() {
-  const { loading, isAuthenticated, role, appUser, membership } = useAuth();
-  if (loading) return <AuthLoading />;
+  const { loading, accessReady, isAuthenticated, role, appUser, membership } = useAuth();
+  if (loading || (isAuthenticated && !accessReady)) return <AuthLoading />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (appUser?.mustChangePassword)
     return <Navigate to="/change-password" replace />;
@@ -71,11 +71,12 @@ export function AdminRoute({ children }) {
 }
 
 export function PortalAccessRoute({ page, children }) {
-  const { loading, isAuthenticated, role, appUser, membership } = useAuth();
+  const { loading, accessReady, isAuthenticated, role, appUser, membership } = useAuth();
   const location = useLocation();
   if (loading) return <AuthLoading />;
   if (!isAuthenticated)
     return <Navigate to="/login" state={{ from: location }} replace />;
+  if (!accessReady) return <AuthLoading />;
   if (appUser?.mustChangePassword)
     return <Navigate to="/change-password" replace />;
   if (role === "client") return <Navigate to="/client-portal" replace />;

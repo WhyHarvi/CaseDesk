@@ -22,7 +22,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { cancelBookingPaymentHoldRequest, getBookingPaymentHoldStatus, resendBookingPaymentHoldRequest } from "../api/bookingApi";
-import { getPaymentsOverview, getPaymentsOverviewSummary } from "../api/paymentsOverviewApi";
+import {
+  getConsultationRefundReview,
+  getPaymentsOverview,
+  getPaymentsOverviewSummary,
+} from "../api/paymentsOverviewApi";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
 const moneyWhole = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
@@ -169,6 +173,219 @@ function PaymentHoldDrawer({ holdId, onClose, onChanged }) {
             {active && confirmCancel ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4"><p className="text-sm font-semibold text-rose-900">Release this slot?</p><p className="mt-1 text-xs leading-5 text-rose-700">The QuickBooks invoice will be voided and the payment link will stop working.</p><div className="mt-3 flex gap-2"><button type="button" disabled={Boolean(busy)} onClick={() => setConfirmCancel(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Keep it</button><button type="button" disabled={Boolean(busy)} onClick={cancel} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-rose-600 text-xs font-semibold text-white">{busy === "cancel" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Release slot</button></div></div> : null}
           </> : null}
           {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm leading-5 text-rose-700">{error}</p> : null}
+        </div>
+      </motion.aside>
+    </div>
+  );
+}
+
+function RefundReviewDrawer({ refundReceiptId, onClose }) {
+  const navigate = useNavigate();
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setReview(null);
+    setError("");
+    getConsultationRefundReview(refundReceiptId)
+      .then((data) => active && setReview(data))
+      .catch((reason) => {
+        if (active) {
+          setError(
+            reason.response?.data?.message ||
+              "This refund could not be loaded from QuickBooks.",
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [refundReceiptId]);
+
+  function openCandidate(candidate) {
+    if (candidate.appointment?.id) {
+      const date = candidate.appointment.startsAt
+        ? new Date(candidate.appointment.startsAt).toISOString().slice(0, 10)
+        : "";
+      navigate(
+        `/app/calendar?appointment=${encodeURIComponent(candidate.appointment.id)}${date ? `&date=${date}` : ""}`,
+      );
+      return;
+    }
+    navigate(
+      `/app/payments?source=booking_payment&hold=${encodeURIComponent(candidate.id)}`,
+      { replace: true },
+    );
+  }
+
+  const stateCopy = {
+    matched: {
+      label: "Matched",
+      className: "bg-emerald-100 text-emerald-700",
+      message: "CaseDesk has linked this refund to the consultation payment shown below.",
+    },
+    possible_match: {
+      label: "Review match",
+      className: "bg-amber-100 text-amber-700",
+      message: "One or more payments may relate to this refund. Compare the amount, client, and date before taking action.",
+    },
+    unmatched: {
+      label: "Unmatched",
+      className: "bg-rose-100 text-rose-700",
+      message: "No CaseDesk consultation payment was found. The QuickBooks customer and payment trail are shown below so you can verify what happened.",
+    },
+  }[review?.state] || null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[420] flex justify-end bg-slate-950/25 backdrop-blur-[2px]"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <motion.aside
+        initial={{ x: 70, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 70, opacity: 0 }}
+        transition={spring}
+        className="flex h-full w-full max-w-[470px] flex-col border-l border-white/70 bg-white/95 shadow-[-30px_0_90px_rgba(15,23,42,0.2)] backdrop-blur-2xl"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-violet-500">QuickBooks refund</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">Consultation refund review</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close refund review" className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          {!review && !error ? (
+            <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
+          ) : null}
+          {error ? (
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
+              <p className="text-sm font-semibold text-rose-900">Refund details unavailable</p>
+              <p className="mt-1 text-xs leading-5 text-rose-700">{error}</p>
+            </div>
+          ) : null}
+          {review ? (
+            <>
+              <section className="rounded-[1.4rem] border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-violet-600">Refund receipt #{review.refund.docNumber || review.refund.id}</p>
+                    <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{money.format(Number(review.refund.totalAmount))}</p>
+                    <p className="mt-1 text-xs text-slate-500">{formatDate(review.refund.transactionDate || review.refund.createdAt)}{review.refund.paymentMethodName ? ` · ${review.refund.paymentMethodName}` : ""}</p>
+                    <p className="mt-1 text-[11px] text-slate-400">QuickBooks record ID {review.refund.id}{review.refund.paymentRefNum ? ` · Reference ${review.refund.paymentRefNum}` : ""}</p>
+                  </div>
+                  {stateCopy ? <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${stateCopy.className}`}>{stateCopy.label}</span> : null}
+                </div>
+                {stateCopy ? <p className="mt-4 text-sm leading-6 text-slate-600">{stateCopy.message}</p> : null}
+                {review.refund.quickBooksUrl ? (
+                  <a href={review.refund.quickBooksUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white transition hover:bg-slate-800">
+                    <ExternalLink className="h-3.5 w-3.5" /> Open refund receipt #{review.refund.docNumber || review.refund.id}
+                  </a>
+                ) : null}
+              </section>
+
+              {review.customer ? (
+                <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-400">Whose payment is this?</p>
+                  <div className="mt-2 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-slate-950">{review.customer.displayName || review.refund.customerName || "Unknown QuickBooks customer"}</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">{review.customer.email || "No email saved in QuickBooks"}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">QuickBooks customer ID {review.customer.id}</p>
+                    </div>
+                    {review.customer.caseDeskClient ? (
+                      <button type="button" onClick={() => navigate(`/app/clients/${review.customer.caseDeskClient.id}`)} className="shrink-0 rounded-full bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-700">Open client</button>
+                    ) : (
+                      <span className="shrink-0 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Not in CaseDesk</span>
+                    )}
+                  </div>
+                </section>
+              ) : null}
+
+              <section>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">QuickBooks payment trail</h3>
+                    <p className="mt-0.5 text-xs text-slate-400">Same customer and amount within seven days</p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">{review.quickBooksPayments?.length || 0}</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {review.quickBooksPayments?.length ? review.quickBooksPayments.map((payment) => (
+                    <article key={payment.id} className={`rounded-2xl border p-4 ${payment.likelyOrigin ? "border-violet-200 bg-violet-50/60" : "border-slate-200 bg-white"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{payment.likelyOrigin ? "Likely original payment" : "Possible original payment"}</p>
+                          <p className="mt-1 text-xs text-slate-500">Payment #{payment.id} · {formatDate(payment.transactionDate || payment.createdAt)}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{payment.cardStatus || payment.methodName || "Payment recorded"}</p>
+                        </div>
+                        <p className="shrink-0 text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(payment.totalAmount))}</p>
+                      </div>
+                      {payment.linkedInvoices?.length ? (
+                        <div className="mt-3 space-y-2 border-t border-slate-200/70 pt-3">
+                          {payment.linkedInvoices.map((invoice) => (
+                            <a key={invoice.id} href={invoice.quickBooksUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-xs font-semibold text-sky-700 ring-1 ring-slate-200 transition hover:ring-sky-200">
+                              <span>Open invoice #{invoice.docNumber || invoice.id}</span>
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">
+                          No invoice is linked to this payment. QuickBooks shows {money.format(Number(payment.unappliedAmount || 0))} as unapplied, so there is no exact invoice to open.
+                        </div>
+                      )}
+                      <a href={payment.quickBooksUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-700 hover:underline">
+                        <ExternalLink className="h-3.5 w-3.5" /> Open original payment in QuickBooks
+                      </a>
+                    </article>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-5 text-center text-xs leading-5 text-slate-500">No same-amount QuickBooks payment was found near this refund.</div>
+                  )}
+                </div>
+              </section>
+
+              <section>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">Related consultation payments</h3>
+                    <p className="mt-0.5 text-xs text-slate-400">Same QuickBooks customer, newest first</p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">{review.candidates.length}</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {review.candidates.length ? review.candidates.map((candidate) => (
+                    <button key={candidate.id} type="button" onClick={() => openCandidate(candidate)} className={`w-full rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${candidate.isMatched ? "border-emerald-200 bg-emerald-50/70" : candidate.amountMatches ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{candidate.guestName || "Unknown client"}</p>
+                          <p className="mt-1 text-xs text-slate-500">{candidate.appointment?.subject || "Consultation payment"} · {formatDate(candidate.paidAt || candidate.createdAt)}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">{candidate.appointment ? `${candidate.appointment.status} appointment` : "No appointment attached"}</p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-semibold tabular-nums text-slate-900">{money.format(Number(candidate.amount))}</p>
+                          <p className={`mt-1 text-[10px] font-semibold ${candidate.isMatched ? "text-emerald-600" : candidate.amountMatches ? "text-amber-600" : "text-slate-400"}`}>{candidate.isMatched ? "Linked refund" : candidate.amountMatches ? "Amount matches" : candidate.status}</p>
+                        </div>
+                      </div>
+                    </button>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-6 text-center">
+                      <ShieldAlert className="mx-auto h-5 w-5 text-amber-500" />
+                      <p className="mt-2 text-sm font-semibold text-slate-800">No related CaseDesk payment found</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">Use the QuickBooks button above to identify the customer and confirm whether this refund belongs to an older or manually recorded consultation.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </>
+          ) : null}
         </div>
       </motion.aside>
     </div>
@@ -543,6 +760,7 @@ export default function Payments() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedHoldId = searchParams.get("hold") || "";
+  const selectedRefundId = searchParams.get("refund") || "";
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
@@ -583,6 +801,12 @@ export default function Payments() {
   function closePaymentHold() {
     const next = new URLSearchParams(searchParams);
     next.delete("hold");
+    setSearchParams(next, { replace: true });
+  }
+
+  function closeRefundReview() {
+    const next = new URLSearchParams(searchParams);
+    next.delete("refund");
     setSearchParams(next, { replace: true });
   }
 
@@ -821,6 +1045,7 @@ export default function Payments() {
         </motion.section>
       </div>
       <AnimatePresence>{selectedHoldId ? <PaymentHoldDrawer key={selectedHoldId} holdId={selectedHoldId} onClose={closePaymentHold} onChanged={() => setRefreshKey((value) => value + 1)} /> : null}</AnimatePresence>
+      <AnimatePresence>{selectedRefundId ? <RefundReviewDrawer key={selectedRefundId} refundReceiptId={selectedRefundId} onClose={closeRefundReview} /> : null}</AnimatePresence>
     </main>
   );
 }

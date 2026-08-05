@@ -69,6 +69,7 @@ const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-5
 // of who they're assigned to, instead of the per-staff rotation below — a
 // distinct, at-a-glance "this came from the front desk" signal.
 const WALK_IN_TONE = { chip: "bg-fuchsia-500", block: "border-fuchsia-400 bg-fuchsia-50/90 hover:bg-fuchsia-100/90", title: "text-fuchsia-900", meta: "text-fuchsia-600" };
+const NO_SHOW_TONE = { chip: "bg-amber-500", block: "border-amber-400 bg-amber-50/95 hover:bg-amber-100/95", title: "text-amber-950", meta: "text-amber-700" };
 const MEETING_MODE_ICON = { InPerson: MapPin, Phone: Phone, Online: Video, Zoom: Video };
 const APPOINTMENT_STATUS_TONE = {
   Scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
@@ -241,7 +242,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const person = effectiveClient?.fullName || appointment.guestName || "No contact";
   const initials = person.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const [resched, setResched] = useState(false);
-  const [reschedDate, setReschedDate] = useState(dateKey(start));
+  const [reschedDate, setReschedDate] = useState(dateKey(start > new Date() ? start : new Date()));
   const [reschedSlots, setReschedSlots] = useState(null);
   const [reschedSlot, setReschedSlot] = useState(null);
   const [reschedBusy, setReschedBusy] = useState(false);
@@ -670,9 +671,10 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       {resched ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5">
           <p className="text-xs font-semibold text-slate-700">Move to</p>
-          {appointment.seriesKey ? <div className="mt-2 flex rounded-xl bg-slate-100 p-1">{[["single", "This appointment"], ["series", "This & future"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
+          {appointment.seriesKey && appointment.status === "Scheduled" ? <div className="mt-2 flex rounded-xl bg-slate-100 p-1">{[["single", "This appointment"], ["series", "This & future"]].map(([value, label]) => <button key={value} type="button" onClick={() => setSeriesScope(value)} className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold ${seriesScope === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div> : null}
           <input
             type="date"
+            min={dateKey(new Date())}
             value={reschedDate}
             onChange={(event) => setReschedDate(event.target.value)}
             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-sky-400"
@@ -758,6 +760,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
               </div>
               {appointment.status === "Completed" && role === "admin" ? (
                 <button type="button" onClick={() => onStatus("Scheduled")} className="h-10 w-full rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">Unmark attended</button>
+              ) : null}
+              {appointment.status === "NoShow" ? (
+                <button type="button" onClick={() => setResched(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-white text-xs font-semibold text-amber-800 transition hover:bg-amber-50">
+                  <CalendarDays className="h-4 w-4" /> Reschedule missed appointment
+                </button>
               ) : null}
             </div>
           ) : null}
@@ -1237,6 +1244,7 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
   const [notesAppointmentId, setNotesAppointmentId] = useState(null);
   const [cancelling, setCancelling] = useState(false);
 
@@ -1269,8 +1277,11 @@ export default function CalendarPage() {
     const linked = appointments.find((item) => item.id === linkedAppointmentId);
     if (!linked) return;
     setSelected(linked);
+    setFocusedAppointmentId(linked.id);
     setView("day");
     setSelectedDate((current) => dateKey(current) === dateKey(new Date(linked.startsAt)) ? current : startOfDayLocal(new Date(linked.startsAt)));
+    const timer = window.setTimeout(() => setFocusedAppointmentId(""), 4800);
+    return () => window.clearTimeout(timer);
   }, [appointments, linkedAppointmentId]);
 
   useEffect(() => {
@@ -1295,12 +1306,15 @@ export default function CalendarPage() {
   }, [staff]);
 
   const toneFor = useCallback(
-    (item) => item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
+    (item) => item.status === "NoShow" ? NO_SHOW_TONE : item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
     [staffTone, role],
   );
 
   const visible = useMemo(
-    () => appointments.filter((item) => ["Scheduled", "Completed"].includes(item.status) && (!staffFilter || item.assignedTo?.id === staffFilter)),
+    // Attendance changes the visual state, not the historical calendar.
+    // Keep no-shows in their original time slot so consultants can still
+    // open the appointment, review notes, and follow up with context.
+    () => appointments.filter((item) => ["Scheduled", "Completed", "NoShow"].includes(item.status) && (!staffFilter || item.assignedTo?.id === staffFilter)),
     [appointments, staffFilter],
   );
 
@@ -1469,7 +1483,9 @@ export default function CalendarPage() {
                         const isNarrowWeekPill = view === "week" && columns > 1;
                         const tone = toneFor(item);
                         const isSelected = selected?.id === item.id;
+                        const isFocused = focusedAppointmentId === item.id;
                         const isDone = item.status === "Completed";
+                        const isNoShow = item.status === "NoShow";
                         const displayName = item.client?.fullName || item.guestName || item.subject;
                         const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                         const outerGutter = 5;
@@ -1485,9 +1501,9 @@ export default function CalendarPage() {
                             key={item.id}
                             type="button"
                             onClick={() => setSelected(item)}
-                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : ""}`}
-                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : ""}`}
-                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""}`}
+                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}`}
+                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}`}
+                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
                             style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
                             <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
@@ -1499,6 +1515,7 @@ export default function CalendarPage() {
                               <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
                                 {formatTime(item.startsAt)}
                                 {item.sessionType ? ` · ${item.sessionType.name}` : ""}
+                                {isNoShow ? " · No-show" : ""}
                               </p>
                             ) : null}
                           </button>
@@ -1594,7 +1611,7 @@ export default function CalendarPage() {
                       const tone = toneFor(item);
                       const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                       return (
-                        <button key={item.id} type="button" onClick={() => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); }} className="flex w-full items-center gap-3 rounded-2xl px-2 py-1.5 text-left transition hover:bg-slate-50">
+                        <button key={item.id} type="button" onClick={() => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); }} className={`flex w-full items-center gap-3 rounded-2xl px-2 py-1.5 text-left transition-[background-color,box-shadow] duration-[3800ms] hover:bg-slate-50 ${focusedAppointmentId === item.id ? "bg-amber-100 ring-2 ring-amber-300" : ""}`}>
                           <span className={`h-2 w-2 shrink-0 rounded-full ${tone.chip}`} />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-1 truncate text-sm font-medium text-slate-800"><ModeIcon className="h-3 w-3 shrink-0 text-slate-400" />{item.client?.fullName || item.guestName || item.subject}</span>

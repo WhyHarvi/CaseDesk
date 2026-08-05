@@ -10,6 +10,7 @@ import {
   Mail,
   MapPin,
   MessageSquareText,
+  Pencil,
   Phone,
   PhoneIncoming,
   UserRound,
@@ -25,13 +26,15 @@ import { formatDueDate, humanize, initials, leadName, statusTone } from "../lead
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { CloseFollowUpSheet, CreateFollowUpSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
+import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
   { id: "work", label: "Work", icon: CalendarClock },
   { id: "history", label: "History", icon: Activity },
+  { id: "payments", label: "Payments", icon: Landmark },
   { id: "messages", label: "Messages", icon: MessageSquareText },
 ];
 
@@ -191,7 +194,12 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   </section>
 
                   <section className="rounded-2xl border border-slate-200/70 bg-white">
-                    <div className="border-b border-slate-100 px-5 py-4"><h3 className="text-sm font-semibold text-slate-900">Contact</h3></div>
+                    <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+                      <h3 className="text-sm font-semibold text-slate-900">Contact</h3>
+                      <button type="button" onClick={() => setActiveAction("edit-details")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700">
+                        <Pencil className="h-3.5 w-3.5" />Edit
+                      </button>
+                    </div>
                     <div className="grid gap-px bg-slate-100 sm:grid-cols-2">
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Phone className="h-3.5 w-3.5" />Phone</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.phone}</p></div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Mail className="h-3.5 w-3.5" />Email</p><p className="mt-1.5 break-words text-sm font-medium text-slate-800">{lead.email || "Not provided"}</p></div>
@@ -264,6 +272,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                 </section>
               ) : null}
 
+              {tab === "payments" ? <ManualLedgerPanel leadId={lead.id} /> : null}
+
               {tab === "messages" ? (
                 <section>
                   <div className="mb-4 flex items-start justify-between gap-4">
@@ -314,6 +324,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
         </div>
       </aside>
 
+      {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}

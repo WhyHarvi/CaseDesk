@@ -28,6 +28,7 @@ import {
   putCaseInformationSectionState,
 } from "../controllers/caseInformationMutationController.js";
 import { reviewQuestionnaireAssignment } from "../controllers/questionnaireReviewController.js";
+import { createCaseLedgerEntry, deleteLedgerEntry, listCaseLedgerEntries, updateLedgerEntry } from "../controllers/manualLedgerController.js";
 import {
   applyCaseWorkflowTemplate,
   createCaseTask,
@@ -162,6 +163,10 @@ router.post(
 );
 router.patch("/:id/workflow", asyncHandler(saveCaseWorkflow));
 router.patch("/:id/workflow/:stepId", asyncHandler(updateCaseWorkflowStep));
+router.get("/:id/ledger", asyncHandler(listCaseLedgerEntries));
+router.post("/:id/ledger", asyncHandler(createCaseLedgerEntry));
+router.patch("/:id/ledger/:entryId", asyncHandler(updateLedgerEntry));
+router.delete("/:id/ledger/:entryId", asyncHandler(deleteLedgerEntry));
 router.get("/:id", asyncHandler(getCaseById));
 router.patch("/:id", asyncHandler(updateCase));
 router.patch("/:id/close", asyncHandler(closeCase));

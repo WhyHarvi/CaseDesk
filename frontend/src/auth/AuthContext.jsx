@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import api from "../services/api";
 import { requireSupabase, supabase } from "../services/supabase";
 import { clearApiCache, setApiCacheScope } from "../services/queryClient";
@@ -31,19 +31,23 @@ function clearCachedIdentity() {
 }
 
 export function AuthProvider({ children }) {
-  const [state, setState] = useState({ session: null, authUser: null, appUser: null, membership: null, agency: null, loading: true, accountError: null });
+  const [state, setState] = useState({ session: null, authUser: null, appUser: null, membership: null, agency: null, loading: true, accessReady: false, accountError: null });
+  const accessRefreshInFlight = useRef(false);
+  const lastAccessRefreshAt = useRef(0);
 
   const loadIdentity = useCallback(async (session) => {
     if (!session) {
       setApiCacheScope(null, null);
-      setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
+      lastAccessRefreshAt.current = 0;
+      setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false, accessReady: true }));
       return null;
     }
     try {
       const { data } = await api.get("/auth/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
-      const next = { session, authUser: session.user, appUser: data.user, membership: data.membership, agency: data.agency, loading: false, accountError: null };
+      const next = { session, authUser: session.user, appUser: data.user, membership: data.membership, agency: data.agency, loading: false, accessReady: true, accountError: null };
       writeCachedIdentity(session.user.id, data);
       setApiCacheScope(session.user.id, data.agency?.id);
+      lastAccessRefreshAt.current = Date.now();
       setState(next);
       warmAppCache(data.membership?.role);
       return next;
@@ -51,7 +55,7 @@ export function AuthProvider({ children }) {
       const status = error.response?.status;
       const setupRequired = error.response?.data?.code === "ACCOUNT_SETUP_REQUIRED";
       if (setupRequired) {
-        const next = { session, authUser: session.user, appUser: null, membership: null, agency: null, loading: false, accountError: null };
+        const next = { session, authUser: session.user, appUser: null, membership: null, agency: null, loading: false, accessReady: true, accountError: null };
         setState(next);
         return next;
       }
@@ -60,8 +64,49 @@ export function AuthProvider({ children }) {
       const message = error.response?.data?.message || (accessDenied
         ? "Your CaseDesk account does not have active access."
         : "The CaseDesk server is unavailable. Please try again.");
-      setState({ session: accessDenied ? null : session, authUser: accessDenied ? null : session.user, appUser: null, membership: null, agency: null, loading: false, accountError: message });
+      setState({ session: accessDenied ? null : session, authUser: accessDenied ? null : session.user, appUser: null, membership: null, agency: null, loading: false, accessReady: true, accountError: message });
       throw new Error(message);
+    }
+  }, []);
+
+  const refreshAccess = useCallback(async (session, { force = false } = {}) => {
+    if (!session || accessRefreshInFlight.current) return null;
+    if (!force && Date.now() - lastAccessRefreshAt.current < 15_000) return null;
+    accessRefreshInFlight.current = true;
+    try {
+      const { data } = await api.get("/auth/access", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const next = {
+        session,
+        authUser: session.user,
+        appUser: data.user,
+        membership: data.membership,
+        agency: data.agency,
+        loading: false,
+        accessReady: true,
+        accountError: null,
+      };
+      writeCachedIdentity(session.user.id, data);
+      setApiCacheScope(session.user.id, data.agency?.id);
+      lastAccessRefreshAt.current = Date.now();
+      setState((current) =>
+        current.session?.user?.id === session.user.id ? next : current,
+      );
+      return next;
+    } catch (error) {
+      const accessDenied = [401, 403].includes(error.response?.status);
+      if (accessDenied) {
+        clearCachedIdentity();
+        cancelAppWarmup();
+        clearApiCache();
+        await supabase?.auth.signOut();
+      }
+      // A temporary network error must not remove an otherwise valid signed-in
+      // identity. The next focus/interval refresh will try again.
+      return null;
+    } finally {
+      accessRefreshInFlight.current = false;
     }
   }, []);
 
@@ -79,7 +124,7 @@ export function AuthProvider({ children }) {
         // Render immediately from the last known identity; /auth/me still runs
         // in the background and corrects state (or signs out) if anything changed.
         setApiCacheScope(session.user.id, cached.agency?.id);
-        setState({ session, authUser: session.user, appUser: cached.user, membership: cached.membership, agency: cached.agency, loading: false, accountError: null });
+        setState({ session, authUser: session.user, appUser: cached.user, membership: cached.membership, agency: cached.agency, loading: false, accessReady: false, accountError: null });
         warmAppCache(cached.membership?.role);
       }
       loadIdentity(session).catch(() => {});
@@ -87,16 +132,34 @@ export function AuthProvider({ children }) {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (["TOKEN_REFRESHED", "SIGNED_IN", "PASSWORD_RECOVERY"].includes(event) && active) {
         setState((current) => ({ ...current, session, authUser: session?.user || null, loading: false }));
+        if (event === "TOKEN_REFRESHED" && session) {
+          void refreshAccess(session, { force: true });
+        }
       }
       if (event === "SIGNED_OUT" && active) {
         clearCachedIdentity();
         cancelAppWarmup();
         clearApiCache();
-        setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false }));
+        setState((current) => ({ ...current, session: null, authUser: null, appUser: null, membership: null, agency: null, loading: false, accessReady: true }));
       }
     });
-    return () => { active = false; listener.subscription.unsubscribe(); };
-  }, [loadIdentity]);
+    const refreshWhenVisible = () => {
+      if (!active || document.visibilityState === "hidden") return;
+      supabase.auth.getSession().then(({ data }) => {
+        if (active && data.session) void refreshAccess(data.session);
+      });
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const interval = window.setInterval(refreshWhenVisible, 60_000);
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [loadIdentity, refreshAccess]);
 
   const signIn = useCallback(async (email, password) => {
     setState((current) => ({ ...current, accountError: null }));

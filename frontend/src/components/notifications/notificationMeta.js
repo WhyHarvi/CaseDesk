@@ -8,13 +8,17 @@ import {
   MessageSquareText,
   ShieldCheck,
   Target,
+  UsersRound,
+  WalletCards,
 } from "lucide-react";
 
 export const CATEGORY_META = {
+  clients: { icon: UsersRound, gradient: "from-cyan-400 to-sky-600", label: "Clients" },
   cases: { icon: BriefcaseBusiness, gradient: "from-sky-400 to-blue-600", label: "Cases" },
   leads: { icon: Target, gradient: "from-orange-400 to-rose-500", label: "Leads" },
   documents: { icon: FileText, gradient: "from-indigo-400 to-violet-600", label: "Documents" },
   appointments: { icon: CalendarClock, gradient: "from-rose-400 to-red-500", label: "Appointments" },
+  payments: { icon: WalletCards, gradient: "from-emerald-400 to-green-600", label: "Payments" },
   communications: { icon: MessageSquareText, gradient: "from-emerald-400 to-teal-600", label: "Messages" },
   work: { icon: ClipboardList, gradient: "from-amber-400 to-orange-500", label: "Work" },
   questionnaires: { icon: ListChecks, gradient: "from-fuchsia-400 to-purple-600", label: "Questionnaires" },

@@ -26,6 +26,8 @@ import { useSearchParams } from "react-router-dom";
 import { lazyWithRetry } from "../../services/lazyWithRetry";
 import { useAuth } from "../../auth/AuthContext";
 import { canAccessCaseTab, hasCapability } from "../../auth/portalAccess";
+import { useNotifications } from "../notifications/NotificationProvider";
+import { getSidebarNotificationCounts } from "../../api/notificationApi";
 import {
   getCaseInformationWorkspace,
   setCaseInformationSectionEnabled,
@@ -92,6 +94,19 @@ const workspaceTabAccessKeys = {
   APPOINTMENTS: "appointments",
   COMMUNICATION: "communication",
   BILLING: "billing",
+};
+
+const workspaceTabDestinations = {
+  PROFILE: "cases",
+  REMINDERS: "cases",
+  QUESTIONNAIRES: "cases",
+  DOCUMENTS: "documents",
+  FORMS: "documents",
+  TASKS: "cases",
+  "AGREEMENTS & LETTERS": "cases",
+  APPOINTMENTS: "calendar",
+  COMMUNICATION: "cases",
+  BILLING: "payments",
 };
 
 const workspaceTabFromSlug = (slug, availableTabs = caseWorkspaceTabs) =>
@@ -3679,6 +3694,7 @@ export default function CaseWorkspaceTabs({
   applicantProfileError,
 }) {
   const { role, membership } = useAuth();
+  const { acknowledgeDestination } = useNotifications();
   const [searchParams, setSearchParams] = useSearchParams();
   const visibleCaseWorkspaceTabs = useMemo(
     () =>
@@ -3699,11 +3715,21 @@ export default function CaseWorkspaceTabs({
   );
   const highlightId = searchParams.get("highlight") || "";
   const [profileSectionRequest, setProfileSectionRequest] = useState(null);
+  const [caseTabCounts, setCaseTabCounts] = useState({});
   const workspaceContentRef = useRef(null);
 
   const selectWorkspaceTab = (tab) => {
     if (!visibleCaseWorkspaceTabs.includes(tab)) return;
     setActiveTab(tab);
+    const caseTabKey = workspaceTabAccessKeys[tab];
+    const count = caseTabCounts[caseTabKey];
+    if (count?.total) {
+      setCaseTabCounts((current) => ({
+        ...current,
+        [caseTabKey]: { ...current[caseTabKey], actions: 0, updates: 0, total: 0 },
+      }));
+      void acknowledgeDestination(workspaceTabDestinations[tab], { caseId: caseItem.id, caseTabKey });
+    }
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current);
@@ -3714,6 +3740,14 @@ export default function CaseWorkspaceTabs({
       { replace: true },
     );
   };
+
+  useEffect(() => {
+    let active = true;
+    getSidebarNotificationCounts(caseItem.id)
+      .then((result) => { if (active) setCaseTabCounts(result.caseTabs || {}); })
+      .catch(() => { if (active) setCaseTabCounts({}); });
+    return () => { active = false; };
+  }, [caseItem.id]);
 
   const openProfileSection = (tab = "APPLICANT DETAILS", view = null) => {
     setProfileSectionRequest({ tab, view, requestId: Date.now() });
@@ -3754,6 +3788,7 @@ export default function CaseWorkspaceTabs({
         <div className="scrollbar-hidden flex gap-1 overflow-x-auto pb-0.5">
           {visibleCaseWorkspaceTabs.map((tab) => {
             const isActive = activeTab === tab;
+            const badge = caseTabCounts[workspaceTabAccessKeys[tab]];
 
             return (
               <button
@@ -3767,6 +3802,14 @@ export default function CaseWorkspaceTabs({
                 }`}
               >
                 {tab}
+                {badge?.total ? (
+                  <span
+                    title={`${badge.total} ${badge.total === 1 ? "update" : "updates"}${badge.actions ? ` · ${badge.actions} require action` : ""}`}
+                    className={`ml-2 inline-flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ${badge.actions ? "bg-rose-500" : "bg-sky-500"}`}
+                  >
+                    {badge.total > 99 ? "99+" : badge.total}
+                  </span>
+                ) : null}
                 {isActive ? (
                   <span className="absolute inset-x-0 -bottom-1 h-1 bg-white" />
                 ) : null}

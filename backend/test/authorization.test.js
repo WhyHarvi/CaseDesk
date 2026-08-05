@@ -104,12 +104,12 @@ test("consultant cannot create another admin", () => {
   assert.equal(status, 403);
 });
 
-test("follow-ups use the internal staff picker without opening the admin user directory", async () => {
+test("follow-ups use their scoped options endpoint without opening the admin user directory", async () => {
   const source = await readFile(
     new URL("../../frontend/src/pages/FollowUps.jsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /api\.get\("\/leads\/staff"\)/);
+  assert.match(source, /get\("\/follow-ups\/options"\)/);
   assert.doesNotMatch(source, /api\.get\("\/users"\)/);
 });
 

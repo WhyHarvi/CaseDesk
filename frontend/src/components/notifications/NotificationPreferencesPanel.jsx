@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getNotificationPreferences, updateNotificationPreference } from "../../api/notificationApi";
 import { CATEGORY_META, categoryMeta } from "./notificationMeta";
 
-const CATEGORIES = ["all", "cases", "leads", "documents", "appointments", "communications", "work", "questionnaires", "security"];
+const CATEGORIES = ["all", "clients", "cases", "leads", "documents", "appointments", "payments", "communications", "work", "questionnaires", "security"];
 
 const DUE_SOON_OPTIONS = [
   { label: "15 minutes", value: 15 },

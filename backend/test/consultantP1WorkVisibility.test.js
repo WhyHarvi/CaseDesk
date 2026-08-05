@@ -93,6 +93,8 @@ test("my workload exposes actionable records and recovers from API errors", asyn
   ]);
 
   assert.match(controller, /activeCaseItems/);
+  assert.match(controller, /activeLeadItems/);
+  assert.match(controller, /overdueLeadActions/);
   assert.match(controller, /pendingTaskItems/);
   assert.match(controller, /overdueTaskItems/);
   assert.match(controller, /documentReviewItems/);
@@ -119,12 +121,16 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   assert.match(controller, /memberships: \{[\s\S]*some: \{[\s\S]*agencyId,[\s\S]*role: "consultant",[\s\S]*isActive: true,[\s\S]*\}[\s\S]*\}/);
   assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
   assert.match(controller, /pendingFollowUps: followUps\.length/);
+  assert.match(controller, /activeLeads: leads\.length/);
+  assert.match(controller, /status: "OPEN"/);
   assert.match(controller, /upcomingAppointments: appointments\.length/);
   assert.match(controller, /activeCases: cases\.length/);
   assert.match(page, /isAdmin \? "\/admin\/consultants\/workload" : "\/consultants\/me\/workload"/);
   assert.match(page, /title=\{isAdmin \? "Team Workload" : "My Workload"\}/);
   assert.match(page, /Unassigned work needs an owner/);
   assert.match(page, /Consultant workload/);
+  assert.match(page, /Open Leads/);
+  assert.match(page, /Overdue lead actions/);
   assert.match(dashboard, /isAdmin \? "View team workload" : "View all my work"/);
   assert.match(sidebar, /label: "Team Workload"/);
   assert.match(tasksWorkspace, /\$\{caseItem\.assignedUser\.fullName\} \(case owner\)/);

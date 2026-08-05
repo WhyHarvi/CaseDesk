@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
+import ManualLedgerPanel from "../ledger/ManualLedgerPanel";
 
 const PAYMENT_TYPE_META = {
   fees: { label: "Professional fees", icon: Banknote, tint: "bg-emerald-50 text-emerald-700" },
@@ -421,6 +422,10 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
       )}
 
       {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={patchInvoice} categories={categories} /> : null}
+
+      <div className="mt-8 border-t border-slate-100 pt-6">
+        <ManualLedgerPanel caseId={caseItem.id} />
+      </div>
     </div>
   );
 }

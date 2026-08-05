@@ -14,6 +14,8 @@ import {
   clientAccessWhere,
 } from "../src/middleware/authorization.js";
 import { leadAccessWhere } from "../src/modules/leads/lead.permissions.js";
+import { followUpAccessWhere } from "../src/controllers/followUpController.js";
+import { appointmentProfileAccessWhere } from "../src/services/appointmentProfileService.js";
 
 const source = (relativePath) =>
   readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -90,6 +92,26 @@ test("page middleware and data scopes enforce the membership policy", () => {
   assert.equal(status, 403);
 });
 
+test("all-client scope exposes client-linked follow-ups without an empty relation filter", () => {
+  const req = {
+    auth: {
+      role: "consultant",
+      userId: "consultant-1",
+      permissions: {
+        portalAccess: normalizePortalAccess("consultant", {
+          pages: { followUps: true },
+          data: { clients: "all", cases: "assigned" },
+        }),
+      },
+    },
+  };
+  const access = followUpAccessWhere(req);
+  const appointmentAccess = appointmentProfileAccessWhere(req);
+  assert.ok(access.OR.some((branch) => branch.clientId?.not === null));
+  assert.ok(appointmentAccess.OR.some((branch) => branch.clientId?.not === null));
+  assert.doesNotMatch(JSON.stringify(access), /"client":\{\}/);
+});
+
 test("Portal Access is admin-only and wired to both UI and server routes", async () => {
   const [adminRoutes, settings, panel, appRoutes, sidebar, server] =
     await Promise.all([
@@ -115,4 +137,28 @@ test("Portal Access is admin-only and wired to both UI and server routes", async
   assert.match(sidebar, /access\.pages\[item\.accessKey\]/);
   assert.match(server, /requirePortalPage\("clients"\)/);
   assert.match(server, /requirePortalCapability\("financialData"\)/);
+});
+
+test("open sessions refresh portal access without recording repeated logins", async () => {
+  const [authController, authRoutes, authContext, authGuards] =
+    await Promise.all([
+      source("../src/controllers/authController.js"),
+      source("../src/routes/authRoutes.js"),
+      source("../../frontend/src/auth/AuthContext.jsx"),
+      source("../../frontend/src/auth/AuthRoutes.jsx"),
+    ]);
+
+  assert.match(authRoutes, /router\.get\("\/access", requireAuth, asyncHandler\(getAccessSnapshot\)\)/);
+  assert.match(authController, /export async function getAccessSnapshot/);
+  assert.match(authController, /getAccessSnapshot[\s\S]*?publicIdentity\(req\)/);
+  assert.doesNotMatch(
+    authController.match(/export async function getAccessSnapshot[\s\S]*?\n\}/)?.[0] || "",
+    /recordActivity/,
+  );
+  assert.match(authContext, /api\.get\("\/auth\/access"/);
+  assert.match(authContext, /window\.addEventListener\("focus", refreshWhenVisible\)/);
+  assert.match(authContext, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(authContext, /window\.setInterval\(refreshWhenVisible, 60_000\)/);
+  assert.match(authContext, /event === "TOKEN_REFRESHED"/);
+  assert.match(authGuards, /if \(!accessReady\) return <AuthLoading \/>/);
 });

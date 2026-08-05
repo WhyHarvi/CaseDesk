@@ -532,6 +532,7 @@ model Agency {
   zoomHostMappings               ZoomHostMapping[]
   appointmentMeetingJobs         AppointmentMeetingJob[]
   caseInvoices                   CaseInvoice[]
+  caseManualLedgerEntries        CaseManualLedgerEntry[]
   feeCategories                  AgencyFeeCategory[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
@@ -714,38 +715,75 @@ model ExpiringDocumentReminderDelivery {
 }
 
 model CaseInvoice {
-  id              String                   @id @default(uuid())
-  agencyId        String                   @map("agency_id")
-  caseId          String                   @map("case_id")
-  clientId        String                   @map("client_id")
-  paymentType     String                   @map("payment_type")
-  description     String
-  qbInvoiceId     String                   @map("qb_invoice_id")
-  qbInvoiceNumber String?                  @map("qb_invoice_number")
-  qbInvoiceLink   String?                  @map("qb_invoice_link")
-  qbSyncToken     String                   @map("qb_sync_token")
-  amount          Decimal                  @db.Decimal(10, 2)
-  balance         Decimal                  @db.Decimal(10, 2)
-  status          String                   @default("Open")
-  dueDate         DateTime?                @map("due_date")
-  lastPaymentMethod    String?              @map("last_payment_method")
-  lastPaymentReference String?              @map("last_payment_reference")
-  lastPaymentAt        DateTime?            @map("last_payment_at")
-  lastQbPaymentId      String?              @map("last_qb_payment_id")
-  createdById     String?                  @map("created_by_id")
-  createdAt       DateTime                 @default(now()) @map("created_at")
-  updatedAt       DateTime                 @updatedAt @map("updated_at")
-  lastSyncedAt    DateTime                 @map("last_synced_at")
-  agency          Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case            Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client          Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy       User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  installments    CasePaymentInstallment[]
+  id                   String                   @id @default(uuid())
+  agencyId             String                   @map("agency_id")
+  caseId               String                   @map("case_id")
+  clientId             String                   @map("client_id")
+  paymentType          String                   @map("payment_type")
+  description          String
+  qbInvoiceId          String                   @map("qb_invoice_id")
+  qbInvoiceNumber      String?                  @map("qb_invoice_number")
+  qbInvoiceLink        String?                  @map("qb_invoice_link")
+  qbSyncToken          String                   @map("qb_sync_token")
+  amount               Decimal                  @db.Decimal(10, 2)
+  balance              Decimal                  @db.Decimal(10, 2)
+  status               String                   @default("Open")
+  dueDate              DateTime?                @map("due_date")
+  lastPaymentMethod    String?                  @map("last_payment_method")
+  lastPaymentReference String?                  @map("last_payment_reference")
+  lastPaymentAt        DateTime?                @map("last_payment_at")
+  lastQbPaymentId      String?                  @map("last_qb_payment_id")
+  createdById          String?                  @map("created_by_id")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  lastSyncedAt         DateTime                 @map("last_synced_at")
+  agency               Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                 Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client               Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy            User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  installments         CasePaymentInstallment[]
 
   @@unique([agencyId, qbInvoiceId])
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
   @@map("case_invoices")
+}
+
+// A lightweight, QuickBooks-independent record of money owed/received on a
+// case — for amounts staff deliberately don't want flowing into the
+// QuickBooks-synced CaseInvoice/CasePaymentInstallment pipeline above (e.g.
+// historical admissions fees migrated from an outside spreadsheet). Just
+// enough to answer "what came in and what's still owed" without pretending
+// to be a real accounting record.
+// Attaches to either a Lead (pre-conversion) or a Case+Client (post-
+// conversion) — never both. caseId/clientId used to be required back when
+// this only tracked converted-client fees; leadId was added so staff can
+// start recording "what's paid, what's still owed" during the lead stage
+// too, before there's a Case to hang it off of.
+model CaseManualLedgerEntry {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  leadId      String?  @map("lead_id")
+  caseId      String?  @map("case_id")
+  clientId    String?  @map("client_id")
+  label       String
+  amountOwed  Decimal  @default(0) @map("amount_owed") @db.Decimal(10, 2)
+  amountPaid  Decimal  @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  status      String   @default("Unpaid")
+  note        String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  case        Case?    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client      Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, leadId])
+  @@index([agencyId, caseId])
+  @@index([agencyId, clientId])
+  @@map("case_manual_ledger_entries")
 }
 
 model PaymentScheduleTemplate {
@@ -1111,6 +1149,7 @@ model User {
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                       LeadConversion[]                @relation("LeadConversionActorUser")
   createdCaseInvoices                  CaseInvoice[]
+  createdCaseManualLedgerEntries       CaseManualLedgerEntry[]
   createdPaymentSchedules              CasePaymentSchedule[]           @relation("PaymentScheduleCreator")
   createdPaymentInstallments           CasePaymentInstallment[]        @relation("PaymentInstallmentCreator")
   voidedPaymentInstallments            CasePaymentInstallment[]        @relation("PaymentInstallmentVoider")
@@ -1298,6 +1337,7 @@ model Client {
   clientInformationProfiles  ClientInformationProfile[]
   caseInformationProfiles    CaseInformationProfile[]
   caseInvoices               CaseInvoice[]
+  caseManualLedgerEntries    CaseManualLedgerEntry[]
   paymentSchedules           CasePaymentSchedule[]
   paymentInstallments        CasePaymentInstallment[]
   caseEasyImportContacts     CaseEasyImportContact[]
@@ -1354,6 +1394,7 @@ model Case {
   caseInformationProfiles      CaseInformationProfile[]
   caseInformationSectionStates CaseInformationSectionState[]
   caseInvoices                 CaseInvoice[]
+  caseManualLedgerEntries      CaseManualLedgerEntry[]
   paymentSchedule              CasePaymentSchedule?
   paymentInstallments          CasePaymentInstallment[]
   caseEasyImportCases          CaseEasyImportCase[]
@@ -1693,89 +1734,89 @@ model BookingSlotHold {
 }
 
 model BookingPaymentHold {
-  id                   String                   @id @default(uuid())
-  agencyId             String                   @map("agency_id")
-  assignedToId         String                   @map("assigned_to_id")
-  sessionTypeId        String?                  @map("session_type_id")
-  startsAt             DateTime                 @map("starts_at")
-  endsAt               DateTime                 @map("ends_at")
-  claimToken           String                   @unique @default(uuid()) @map("claim_token")
-  idempotencyKey       String?                  @map("idempotency_key")
-  guestName            String                   @map("guest_name")
-  guestEmail           String?                  @map("guest_email")
-  guestEmailNormalized String?                  @map("guest_email_normalized")
-  guestPhone           String?                  @map("guest_phone")
-  meetingMode          String                   @map("meeting_mode")
-  meetingPhoneNumber   String?                  @map("meeting_phone_number")
-  meetingProvider      String?                  @map("meeting_provider")
-  locationId           String?                  @map("location_id")
-  location             String?
-  locationMapsUrl      String?                  @map("location_maps_url")
-  notes                String?
-  amount               Decimal                  @db.Decimal(10, 2)
+  id                     String                   @id @default(uuid())
+  agencyId               String                   @map("agency_id")
+  assignedToId           String                   @map("assigned_to_id")
+  sessionTypeId          String?                  @map("session_type_id")
+  startsAt               DateTime                 @map("starts_at")
+  endsAt                 DateTime                 @map("ends_at")
+  claimToken             String                   @unique @default(uuid()) @map("claim_token")
+  idempotencyKey         String?                  @map("idempotency_key")
+  guestName              String                   @map("guest_name")
+  guestEmail             String?                  @map("guest_email")
+  guestEmailNormalized   String?                  @map("guest_email_normalized")
+  guestPhone             String?                  @map("guest_phone")
+  meetingMode            String                   @map("meeting_mode")
+  meetingPhoneNumber     String?                  @map("meeting_phone_number")
+  meetingProvider        String?                  @map("meeting_provider")
+  locationId             String?                  @map("location_id")
+  location               String?
+  locationMapsUrl        String?                  @map("location_maps_url")
+  notes                  String?
+  amount                 Decimal                  @db.Decimal(10, 2)
   // Nullable: unset for the brief window between the slot lock committing
   // and the QuickBooks customer/invoice calls completing. Deliberately not
   // NOT NULL — Postgres allows multiple NULLs under a unique index, so two
   // concurrent holds mid-creation never collide on qbInvoiceId.
-  qbCustomerId         String?                  @map("qb_customer_id")
-  qbInvoiceId          String?                  @map("qb_invoice_id")
+  qbCustomerId           String?                  @map("qb_customer_id")
+  qbInvoiceId            String?                  @map("qb_invoice_id")
   // Human-facing QuickBooks document number (for example, 1006). The QBO
   // entity id above is an internal identifier and should never be shown to
   // staff as the invoice number.
-  qbInvoiceNumber      String?                  @map("qb_invoice_number")
-  qbInvoiceLink        String?                  @map("qb_invoice_link")
-  qbSyncToken          String?                  @map("qb_sync_token")
-  qbRefundReceiptId    String?                  @map("qb_refund_receipt_id")
-  qbPaymentId          String?                  @map("qb_payment_id")
-  paymentMethod        String?                  @map("payment_method")
-  manualPaymentNote    String?                  @map("manual_payment_note")
-  manualPaymentReference String?                @map("manual_payment_reference")
-  paymentError         String?                  @map("payment_error")
-  status               String                   @default("AwaitingPayment")
-  source               String                   @default("Public")
-  expiresAt            DateTime?                @map("expires_at")
-  paidAt               DateTime?                @map("paid_at")
-  voidedAt             DateTime?                @map("voided_at")
+  qbInvoiceNumber        String?                  @map("qb_invoice_number")
+  qbInvoiceLink          String?                  @map("qb_invoice_link")
+  qbSyncToken            String?                  @map("qb_sync_token")
+  qbRefundReceiptId      String?                  @map("qb_refund_receipt_id")
+  qbPaymentId            String?                  @map("qb_payment_id")
+  paymentMethod          String?                  @map("payment_method")
+  manualPaymentNote      String?                  @map("manual_payment_note")
+  manualPaymentReference String?                  @map("manual_payment_reference")
+  paymentError           String?                  @map("payment_error")
+  status                 String                   @default("AwaitingPayment")
+  source                 String                   @default("Public")
+  expiresAt              DateTime?                @map("expires_at")
+  paidAt                 DateTime?                @map("paid_at")
+  voidedAt               DateTime?                @map("voided_at")
   // Set by the periodic balance-mismatch sweep when a "Paid" hold's real
   // QuickBooks invoice no longer shows a zero balance (or the invoice is
   // gone entirely) — the usual cause is a Payment being deleted in
   // QuickBooks directly rather than properly refunded, which produces no
   // RefundReceipt for the normal refund-matching path to ever see. Cleared
   // automatically if a later sweep finds the balance whole again.
-  balanceMismatchAt    DateTime?                @map("balance_mismatch_at")
-  voidAttempts         Int                      @default(0) @map("void_attempts")
-  nextVoidAttemptAt    DateTime?                @map("next_void_attempt_at")
-  appointmentId        String?                  @unique @map("appointment_id")
+  balanceMismatchAt      DateTime?                @map("balance_mismatch_at")
+  voidAttempts           Int                      @default(0) @map("void_attempts")
+  nextVoidAttemptAt      DateTime?                @map("next_void_attempt_at")
+  appointmentId          String?                  @unique @map("appointment_id")
   // Set when this paid booking is fulfilling a waitlist offer — the offer's
   // own BookingSlotHold can't be claimed (and its BookingWaitlistEntry
   // marked "Booked") until payment actually confirms, which happens later
   // and in a different request (webhook/reconcile), so it has to be
   // persisted here rather than handled inline like the free booking path.
-  offerHoldId          String?                  @unique @map("offer_hold_id")
-  createdById          String?                  @map("created_by_id")
+  offerHoldId            String?                  @unique @map("offer_hold_id")
+  createdById            String?                  @map("created_by_id")
   // Set only by the staff-initiated card-payment path (an existing client
   // picked from the front-desk booking form) — the public flow never knows
   // an internal Client row at hold-creation time, so this stays null there
   // and the guest* snapshot fields remain the source of truth for contact
   // info either way. Read by confirmPaymentHold to link the eventual
   // Appointment to the right client instead of leaving it guest-only.
-  clientId             String?                  @map("client_id")
+  clientId               String?                  @map("client_id")
   // Set once an abandoned (Expired/Voided, never-paid) public hold has been
   // recovered into a Lead so staff can follow up — see
   // captureAbandonedPublicBookingLead in lead.booking.js. Doubles as the
   // idempotency marker: a hold with this set is never reprocessed.
-  leadId               String?                  @map("lead_id")
-  createdAt            DateTime                 @default(now()) @map("created_at")
-  updatedAt            DateTime                 @updatedAt @map("updated_at")
-  agency               Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignedTo           User                     @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
-  sessionType          BookingSessionType?      @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
-  appointment          Appointment?             @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  offerHold            BookingSlotHold?         @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
-  createdBy            User?                    @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
-  client               Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  lead                 Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  messageDeliveries    BookingMessageDelivery[]
+  leadId                 String?                  @map("lead_id")
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @updatedAt @map("updated_at")
+  agency                 Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignedTo             User                     @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
+  sessionType            BookingSessionType?      @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
+  appointment            Appointment?             @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  offerHold              BookingSlotHold?         @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
+  createdBy              User?                    @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
+  client                 Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  lead                   Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  messageDeliveries      BookingMessageDelivery[]
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
@@ -2845,6 +2886,8 @@ model FollowUp {
   assignedUserId       String?        @map("assigned_user_id")
   title                String
   description          String?
+  followUpType         String         @default("General follow-up") @map("follow_up_type")
+  priority             String         @default("Medium")
   dueDate              DateTime?      @map("due_date")
   status               FollowUpStatus
   completedAt          DateTime?      @map("completed_at")
@@ -3035,6 +3078,7 @@ model Lead {
   stage                    LeadStage                @default(NEW)
   priority                 LeadPriority             @default(NORMAL)
   temperature              LeadTemperature          @default(COLD)
+  inquiryDate              DateTime                 @default(now()) @map("inquiry_date")
   ownerUserId              String                   @map("owner_user_id")
   originalSourceId         String                   @map("original_source_id")
   campaignId               String?                  @map("campaign_id")
@@ -3080,6 +3124,7 @@ model Lead {
   duplicateCandidates      LeadDuplicateCandidate[]
   importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
   bookingPaymentHolds      BookingPaymentHold[]
+  manualLedgerEntries      CaseManualLedgerEntry[]
 
   @@unique([agencyId, leadNumber])
   @@index([agencyId, status])
@@ -3611,6 +3656,7 @@ model Notification {
   entityType      String?                @map("entity_type")
   entityId        String?                @map("entity_id")
   actionUrl       String?                @map("action_url")
+  destinationKey  String                 @default("cases") @map("destination_key")
   metadata        Json                   @default("{}")
   dedupeKey       String                 @map("dedupe_key")
   attentionLevel  String                 @default("update") @map("attention_level")
@@ -3631,6 +3677,7 @@ model Notification {
   @@index([recipientUserId, dismissedAt, createdAt])
   @@index([recipientUserId, readAt, createdAt])
   @@index([recipientUserId, attentionLevel, resolvedAt, lastOccurredAt])
+  @@index([recipientUserId, destinationKey, resolvedAt, readAt])
   @@index([expiresAt])
   @@index([agencyId, category, createdAt])
   @@map("notifications")

@@ -73,6 +73,7 @@ function titleFromAction(action) {
 function categoryFromAction(action) {
   const value = action.toLowerCase();
   if (value.includes("lead")) return "leads";
+  if (value.includes("payment") || value.includes("invoice") || value.includes("installment") || value.includes("refund") || value.includes("billing")) return "payments";
   if (value.includes("document") || value.includes("form")) return "documents";
   if (value.includes("appointment") || value.includes("consultation")) return "appointments";
   if (value.includes("communication") || value.includes("message") || value.includes("chat")) return "communications";
@@ -80,6 +81,100 @@ function categoryFromAction(action) {
   if (value.includes("questionnaire") || value.includes("assessment")) return "questionnaires";
   if (value.includes("member") || value.includes("password") || value.includes("settings")) return "security";
   return "cases";
+}
+
+export const SIDEBAR_DESTINATIONS = new Set([
+  "leads",
+  "leadIntake",
+  "clients",
+  "cases",
+  "followUps",
+  "calendar",
+  "documents",
+  "payments",
+  "caseEasyImport",
+  "settings",
+  "portalHome",
+  "portalDocuments",
+  "portalForms",
+  "portalAppointments",
+  "portalPayments",
+  "portalChat",
+]);
+
+function notificationPath(actionUrl) {
+  try {
+    return new URL(String(actionUrl || ""), "https://casedesk.local").pathname;
+  } catch {
+    return String(actionUrl || "").split("?")[0];
+  }
+}
+
+export function destinationFromNotification({ destinationKey, actionUrl, category, type }) {
+  if (SIDEBAR_DESTINATIONS.has(destinationKey)) return destinationKey;
+  const path = notificationPath(actionUrl);
+  if (path === "/app/cases" || path.startsWith("/app/cases/")) {
+    if (category === "documents") return "documents";
+    if (category === "appointments") return "calendar";
+    if (category === "payments") return "payments";
+    if (category === "work" && String(type || "").startsWith("follow_up.")) return "followUps";
+    return "cases";
+  }
+  const routes = [
+    ["/client-portal/documents", "portalDocuments"],
+    ["/client-portal/questionnaires", "portalForms"],
+    ["/client-portal/appointments", "portalAppointments"],
+    ["/client-portal/payments", "portalPayments"],
+    ["/client-portal/chat", "portalChat"],
+    ["/lead-intake", "leadIntake"],
+    ["/leads", "leads"],
+    ["/app/clients", "clients"],
+    ["/app/follow-ups", "followUps"],
+    ["/app/calendar", "calendar"],
+    ["/app/documents", "documents"],
+    ["/app/payments", "payments"],
+    ["/app/case-easy-import", "caseEasyImport"],
+    ["/app/settings", "settings"],
+    ["/client-portal", "portalHome"],
+  ];
+  const route = routes.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
+  if (route) return route[1];
+  if (category === "leads") return "leads";
+  if (category === "appointments") return "calendar";
+  if (category === "documents") return "documents";
+  if (category === "security") return "settings";
+  if (category === "work" && String(type || "").startsWith("follow_up.")) return "followUps";
+  return "cases";
+}
+
+export function caseTabFromNotification({ type, category, actionUrl }) {
+  let requestedTab = "";
+  try { requestedTab = new URL(String(actionUrl || ""), "https://casedesk.local").searchParams.get("tab") || ""; }
+  catch { /* use the event classification below */ }
+  const explicit = {
+    reminders: "reminders",
+    questionnaires: "questionnaires",
+    documents: "documents",
+    forms: "forms",
+    tasks: "tasks",
+    "agreements-letters": "agreementsLetters",
+    appointments: "appointments",
+    communication: "communication",
+    billing: "billing",
+    profile: "profile",
+  }[requestedTab];
+  if (explicit) return explicit;
+  const value = String(type || "").toLowerCase();
+  if (value.includes("questionnaire") || category === "questionnaires") return "questionnaires";
+  if (value.includes("case_form") || value.includes("form.")) return "forms";
+  if (value.includes("document") || category === "documents") return "documents";
+  if (value.includes("appointment") || value.includes("consultation") || category === "appointments") return "appointments";
+  if (value.includes("communication") || value.includes("message") || value.includes("chat") || category === "communications") return "communication";
+  if (value.includes("task") || value.includes("workflow") || category === "work") return "tasks";
+  if (value.includes("correspondence") || value.includes("agreement") || value.includes("letter")) return "agreementsLetters";
+  if (value.includes("payment") || value.includes("invoice") || value.includes("installment") || category === "payments") return "billing";
+  if (value.includes("reminder")) return "reminders";
+  return "profile";
 }
 
 function isAllowed(action, list) {
@@ -176,6 +271,7 @@ export async function notifyUsers({
   entityType = null,
   entityId = null,
   actionUrl = null,
+  destinationKey = null,
   metadata = {},
   dedupeKey,
   includeActor = false,
@@ -252,6 +348,7 @@ export async function notifyUsers({
       entityType: clean(entityType, 80) || null,
       entityId: clean(entityId, 120) || null,
       actionUrl: clean(actionUrl, 500) || null,
+      destinationKey: destinationFromNotification({ destinationKey, actionUrl, category, type }),
       metadata,
       dedupeKey: clean(dedupeKey, 300),
       attentionLevel: resolvedAttentionLevel,
@@ -282,6 +379,7 @@ export async function notifyUsers({
             body: createData.body,
             severity: createData.severity,
             actionUrl: createData.actionUrl,
+            destinationKey: createData.destinationKey,
             metadata,
             attentionLevel: resolvedAttentionLevel,
             occurrenceCount: { increment: 1 },

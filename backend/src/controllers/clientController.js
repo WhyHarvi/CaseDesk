@@ -185,7 +185,7 @@ function buildNextAction({
   client,
 }) {
   const openFollowUps = [...followUps]
-    .filter((followUp) => followUp.status !== "Completed")
+    .filter((followUp) => !["Completed", "Cancelled"].includes(followUp.status))
     .sort((left, right) => {
       if (!left.dueDate && !right.dueDate) {
         return (

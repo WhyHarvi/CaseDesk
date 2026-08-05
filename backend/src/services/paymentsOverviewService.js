@@ -2,11 +2,190 @@ import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 import { listFeeCategories } from "./feeCategoryService.js";
-import { quickBooksAppUrl } from "./quickbooksService.js";
+import {
+  getQuickBooksCustomer,
+  getQuickBooksRefundReceipt,
+  listQuickBooksInvoicesForCustomer,
+  listQuickBooksPaymentsForCustomer,
+  quickBooksAppUrl,
+} from "./quickbooksService.js";
 
 const MAX_ROWS_PER_SOURCE = 1000;
 
 const CASE_INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee disbursement" };
+
+export async function getConsultationRefundReview(agencyId, refundReceiptId) {
+  const refund = await getQuickBooksRefundReceipt(agencyId, refundReceiptId);
+  const refundAt = new Date(refund.createdAt || refund.transactionDate || Date.now());
+  const validRefundAt = Number.isNaN(refundAt.getTime()) ? new Date() : refundAt;
+
+  const [
+    matchedHold,
+    relatedHolds,
+    quickBooksCustomer,
+    quickBooksInvoices,
+    quickBooksPayments,
+    caseDeskClient,
+  ] = await Promise.all([
+    prisma.bookingPaymentHold.findFirst({
+      where: { agencyId, qbRefundReceiptId: refund.id },
+      include: {
+        client: { select: { id: true, fullName: true } },
+        appointment: {
+          select: {
+            id: true,
+            subject: true,
+            status: true,
+            startsAt: true,
+            clientId: true,
+            client: { select: { id: true, fullName: true } },
+          },
+        },
+      },
+    }),
+    refund.customerId
+      ? prisma.bookingPaymentHold.findMany({
+          where: {
+            agencyId,
+            qbCustomerId: refund.customerId,
+            createdAt: {
+              gte: new Date(validRefundAt.getTime() - 90 * 86_400_000),
+              lte: validRefundAt,
+            },
+          },
+          include: {
+            client: { select: { id: true, fullName: true } },
+            appointment: {
+              select: {
+                id: true,
+                subject: true,
+                status: true,
+                startsAt: true,
+                clientId: true,
+                client: { select: { id: true, fullName: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+        })
+      : [],
+    refund.customerId
+      ? getQuickBooksCustomer(agencyId, refund.customerId)
+      : null,
+    refund.customerId
+      ? listQuickBooksInvoicesForCustomer(agencyId, refund.customerId)
+      : [],
+    refund.customerId
+      ? listQuickBooksPaymentsForCustomer(agencyId, refund.customerId)
+      : [],
+    refund.customerId
+      ? prisma.client.findFirst({
+          where: { agencyId, qbCustomerId: refund.customerId },
+          select: {
+            id: true,
+            clientNumber: true,
+            fullName: true,
+            email: true,
+            status: true,
+          },
+        })
+      : null,
+  ]);
+
+  const holds = matchedHold
+    ? [matchedHold, ...relatedHolds.filter((item) => item.id !== matchedHold.id)]
+    : relatedHolds;
+  const refundTime = validRefundAt.getTime();
+  const likelyPayments = quickBooksPayments
+    .filter((payment) => Number(payment.totalAmount) === Number(refund.totalAmount))
+    .map((payment) => ({
+      ...payment,
+      distanceMs: Math.abs(
+        refundTime -
+          new Date(payment.createdAt || payment.transactionDate || 0).getTime(),
+      ),
+    }))
+    .filter(
+      (payment) =>
+        Number.isFinite(payment.distanceMs) &&
+        payment.distanceMs <= 7 * 86_400_000,
+    )
+    .sort((left, right) => left.distanceMs - right.distanceMs)
+    .slice(0, 5);
+  const invoiceById = new Map(
+    quickBooksInvoices.map((invoice) => [String(invoice.id), invoice]),
+  );
+
+  return {
+    refund: {
+      ...refund,
+      quickBooksUrl: quickBooksAppUrl("refundreceipt", refund.id),
+    },
+    customer: quickBooksCustomer
+      ? {
+          ...quickBooksCustomer,
+          caseDeskClient,
+        }
+      : refund.customerId
+        ? {
+            id: refund.customerId,
+            displayName: refund.customerName,
+            email: null,
+            caseDeskClient,
+          }
+        : null,
+    quickBooksPayments: likelyPayments.map((payment, index) => ({
+      id: payment.id,
+      totalAmount: payment.totalAmount,
+      unappliedAmount: payment.unappliedAmount,
+      transactionDate: payment.transactionDate,
+      createdAt: payment.createdAt,
+      paymentReference: payment.paymentReference,
+      methodName: payment.methodName,
+      cardStatus: payment.cardStatus,
+      currency: payment.currency,
+      quickBooksUrl: quickBooksAppUrl("recvpayment", payment.id),
+      likelyOrigin: index === 0,
+      linkedInvoices: payment.allocations.map((allocation) => {
+        const invoice = invoiceById.get(String(allocation.invoiceId));
+        return {
+          id: allocation.invoiceId,
+          amount: allocation.amount,
+          docNumber: invoice?.docNumber || null,
+          totalAmount: invoice?.totalAmount ?? null,
+          balance: invoice?.balance ?? null,
+          quickBooksUrl: quickBooksAppUrl("invoice", allocation.invoiceId),
+        };
+      }),
+    })),
+    state: matchedHold
+      ? "matched"
+      : holds.some((item) => Number(item.amount) === Number(refund.totalAmount))
+        ? "possible_match"
+        : "unmatched",
+    matchedHoldId: matchedHold?.id || null,
+    candidates: holds.map((hold) => ({
+      id: hold.id,
+      guestName:
+        hold.client?.fullName ||
+        hold.appointment?.client?.fullName ||
+        hold.guestName,
+      amount: Number(hold.amount),
+      status: hold.status,
+      createdAt: hold.createdAt,
+      paidAt: hold.paidAt,
+      appointment: hold.appointment,
+      clientId:
+        hold.client?.id ||
+        hold.appointment?.client?.id ||
+        hold.appointment?.clientId ||
+        null,
+      amountMatches: Number(hold.amount) === Number(refund.totalAmount),
+      isMatched: hold.id === matchedHold?.id,
+    })),
+  };
+}
 
 // Every source has its own status vocabulary — normalize to one set so the
 // admin table and filters don't need to know where a row came from.

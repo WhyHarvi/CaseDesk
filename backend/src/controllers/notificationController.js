@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { caseTabFromNotification, SIDEBAR_DESTINATIONS } from "../services/notificationService.js";
 import { createHttpError } from "../utils/http.js";
 
 const categories = new Set([
@@ -11,7 +12,76 @@ const categories = new Set([
   "work",
   "questionnaires",
   "security",
+  "payments",
+  "clients",
 ]);
+
+const CASE_TAB_KEYS = new Set([
+  "profile",
+  "reminders",
+  "questionnaires",
+  "documents",
+  "forms",
+  "tasks",
+  "agreementsLetters",
+  "appointments",
+  "communication",
+  "billing",
+]);
+
+export function focusedNotificationActionUrl(notification) {
+  if (
+    [
+      "booking_payment.refund_unmatched",
+      "booking_payment.refund_ambiguous",
+    ].includes(notification?.type) &&
+    notification.entityId
+  ) {
+    return `/app/payments?source=booking_payment&refund=${encodeURIComponent(notification.entityId)}`;
+  }
+  if (
+    notification?.type === "booking_payment.orphaned" &&
+    notification.entityId
+  ) {
+    return `/app/payments?source=booking_payment&hold=${encodeURIComponent(notification.entityId)}`;
+  }
+  if (notification?.entityType === "appointment" && notification.entityId) {
+    return `/app/calendar?appointment=${encodeURIComponent(notification.entityId)}`;
+  }
+  if (
+    notification?.entityType === "bookingPaymentHold" &&
+    notification.entityId
+  ) {
+    return `/app/payments?source=booking_payment&hold=${encodeURIComponent(notification.entityId)}`;
+  }
+  if (notification?.entityType === "lead" && notification.entityId) {
+    return `/leads?lead=${encodeURIComponent(notification.entityId)}`;
+  }
+  if (notification?.type === "lead.intake_failed" && notification.entityId) {
+    return `/lead-intake?tab=events&event=${encodeURIComponent(notification.entityId)}`;
+  }
+  return notification?.actionUrl || null;
+}
+
+function activeNotificationWhere(req) {
+  return {
+    agencyId: req.auth.agencyId,
+    recipientUserId: req.auth.userId,
+    dismissedAt: null,
+    resolvedAt: null,
+    OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+  };
+}
+
+function emptyCount() {
+  return { updates: 0, actions: 0, total: 0, focus: null };
+}
+
+function addCount(target, key, kind, amount = 1) {
+  if (!target[key]) target[key] = emptyCount();
+  target[key][kind] += amount;
+  target[key].total += amount;
+}
 
 function positiveInteger(value, fallback, maximum = 100) {
   const parsed = Number(value);
@@ -76,6 +146,7 @@ export async function listNotifications(req, res) {
         entityType: true,
         entityId: true,
         actionUrl: true,
+        destinationKey: true,
         metadata: true,
         attentionLevel: true,
         occurrenceCount: true,
@@ -115,6 +186,117 @@ export async function getUnreadNotificationCount(req, res) {
     },
   });
   res.json({ data: { unread } });
+}
+
+export async function getSidebarNotificationCounts(req, res) {
+  const where = activeNotificationWhere(req);
+  const [actionGroups, updateGroups, unreadActions, focusRows] = await Promise.all([
+    prisma.notification.groupBy({
+      by: ["destinationKey"],
+      // Sidebar badges describe new/unseen work. Resolved actions remain in
+      // the notification centre for follow-up, but must not permanently
+      // inflate navigation badges after the user has reviewed the page.
+      where: { ...where, attentionLevel: "action_required", readAt: null },
+      _count: { _all: true },
+    }),
+    prisma.notification.groupBy({
+      by: ["destinationKey"],
+      where: { ...where, attentionLevel: "update", readAt: null },
+      _count: { _all: true },
+    }),
+    prisma.notification.count({
+      where: { ...where, attentionLevel: "action_required", readAt: null },
+    }),
+    prisma.notification.findMany({
+      where: { ...where, readAt: null },
+      distinct: ["destinationKey"],
+      orderBy: [{ destinationKey: "asc" }, { lastOccurredAt: "desc" }],
+      select: {
+        destinationKey: true,
+        type: true,
+        title: true,
+        body: true,
+        actionUrl: true,
+        entityType: true,
+        entityId: true,
+        attentionLevel: true,
+        lastOccurredAt: true,
+      },
+    }),
+  ]);
+  const destinations = {};
+  for (const group of actionGroups) addCount(destinations, group.destinationKey, "actions", group._count._all);
+  for (const group of updateGroups) addCount(destinations, group.destinationKey, "updates", group._count._all);
+  for (const row of focusRows) {
+    if (!row.destinationKey || !destinations[row.destinationKey]) continue;
+    const focusActionUrl = focusedNotificationActionUrl(row);
+    destinations[row.destinationKey].focus = {
+      type: row.type,
+      title: row.title,
+      body: row.body,
+      actionUrl: focusActionUrl,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      attentionLevel: row.attentionLevel,
+      lastOccurredAt: row.lastOccurredAt,
+    };
+  }
+
+  const caseTabs = {};
+  const caseId = String(req.query.caseId || "").trim();
+  if (caseId) {
+    const caseUrl = `/app/cases/${caseId}`;
+    const rows = await prisma.notification.findMany({
+      where: {
+        ...where,
+        readAt: null,
+        actionUrl: { startsWith: caseUrl },
+        AND: [{ OR: [
+          { attentionLevel: "action_required" },
+          { attentionLevel: "update" },
+        ] }],
+      },
+      select: { type: true, category: true, actionUrl: true, attentionLevel: true },
+    });
+    for (const row of rows) {
+      addCount(caseTabs, caseTabFromNotification(row), row.attentionLevel === "action_required" ? "actions" : "updates");
+    }
+  }
+
+  const total = Object.values(destinations).reduce((sum, item) => sum + item.total, 0);
+  res.json({ data: { unread: unreadActions, total, destinations, caseTabs } });
+}
+
+export async function markDestinationUpdatesRead(req, res) {
+  const destinationKey = String(req.body?.destinationKey || "").trim();
+  const caseId = String(req.body?.caseId || "").trim();
+  const caseTabKey = String(req.body?.caseTabKey || "").trim();
+  if (!SIDEBAR_DESTINATIONS.has(destinationKey)) {
+    throw createHttpError(400, "Notification destination is invalid.", "VALIDATION_ERROR");
+  }
+  const where = {
+    ...activeNotificationWhere(req),
+    destinationKey,
+    readAt: null,
+  };
+  let ids = null;
+  if (caseId || caseTabKey) {
+    if (!caseId || !CASE_TAB_KEYS.has(caseTabKey)) {
+      throw createHttpError(400, "Case notification destination is invalid.", "VALIDATION_ERROR");
+    }
+    const rows = await prisma.notification.findMany({
+      where: { ...where, actionUrl: { startsWith: `/app/cases/${caseId}` } },
+      select: { id: true, type: true, category: true, actionUrl: true },
+    });
+    ids = rows.filter((row) => caseTabFromNotification(row) === caseTabKey).map((row) => row.id);
+  }
+  const result = ids && !ids.length
+    ? { count: 0 }
+    : await prisma.notification.updateMany({
+        where: { ...where, ...(ids ? { id: { in: ids } } : {}) },
+        data: { readAt: new Date() },
+      });
+  res.json({ data: { updated: result.count } });
 }
 
 export async function markNotificationRead(req, res) {

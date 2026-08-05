@@ -352,7 +352,7 @@ async function handleMeetingDeleted(payload) {
     severity: "warning",
     entityType: "appointment",
     entityId: appointment.id,
-    actionUrl: "/app/calendar",
+    actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}`,
     dedupeKey: `appointment:${appointment.id}:zoom-deleted:${payload.event_ts || meetingId}`,
     channels: ["in_app"],
   }).catch(() => {});

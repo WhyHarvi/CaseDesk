@@ -82,13 +82,43 @@ export function parseCreateLead(body = {}) {
   };
 }
 
+// Partial update — only fields actually present in the body are validated
+// and returned, so a caller can PATCH just a phone number without having to
+// resend every other field on the lead.
+export function parseUpdateLeadDetails(body = {}) {
+  const result = {};
+  if (body.firstName !== undefined) result.firstName = text(body.firstName, "firstName", { max: 100 });
+  if (body.lastName !== undefined) result.lastName = text(body.lastName, "lastName", { max: 100 });
+  if (body.phone !== undefined) {
+    const phone = text(body.phone, "phone", { max: 40 });
+    result.phone = phone;
+    result.phoneNormalized = phone ? normalizePhone(phone) : null;
+  }
+  if (body.email !== undefined) {
+    const email = text(body.email, "email", { max: 320 });
+    result.email = email;
+    result.emailNormalized = email ? normalizeEmail(email) : null;
+  }
+  if (body.country !== undefined) result.country = text(body.country, "country", { max: 100 });
+  if (body.province !== undefined) result.province = text(body.province, "province", { max: 100 });
+  if (body.preferredLanguage !== undefined) result.preferredLanguage = text(body.preferredLanguage, "preferredLanguage", { max: 100 });
+  if (body.currentImmigrationStatus !== undefined) result.currentImmigrationStatus = text(body.currentImmigrationStatus, "currentImmigrationStatus", { max: 150 });
+  if (body.immigrationInterest !== undefined) result.immigrationInterest = text(body.immigrationInterest, "immigrationInterest", { max: 150 });
+  if (body.inquiryDate !== undefined) result.inquiryDate = dateValue(body.inquiryDate, "inquiryDate", { required: true });
+  if (!Object.keys(result).length) throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
+  return result;
+}
+
 export function parseLeadListQuery(query = {}) {
   const page = Math.max(Number(query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
   const status = query.status ? enumValue(query.status, "status", LEAD_STATUSES) : null;
   const stage = query.stage ? enumValue(query.stage, "stage", LEAD_STAGES) : null;
-  const sortBy = ["createdAt", "updatedAt", "nextActionAt", "leadNumber"].includes(query.sortBy) ? query.sortBy : "createdAt";
+  const sortBy = ["createdAt", "updatedAt", "nextActionAt", "leadNumber", "inquiryDate"].includes(query.sortBy) ? query.sortBy : "createdAt";
   const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
+  const monthMatch = /^(\d{4})-(\d{2})$/.exec(String(query.month || "").trim());
+  const month = monthMatch ? { year: Number(monthMatch[1]), month: Number(monthMatch[2]) } : null;
+  if (query.month && !month) throw createHttpError(400, "month must be in YYYY-MM format.", "VALIDATION_ERROR");
   return {
     page,
     limit,
@@ -96,6 +126,7 @@ export function parseLeadListQuery(query = {}) {
     stage,
     sortBy,
     sortDirection,
+    month,
     search: text(query.search, "search", { max: 200 }) || "",
     sourceId: text(query.sourceId, "sourceId", { max: 100 }),
     // Dashboard drill-down flags — match reportingBounds()'s day/week windows

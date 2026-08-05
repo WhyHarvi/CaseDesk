@@ -430,12 +430,15 @@ function activeRole(user, agencyId) {
 
 function emptyWorkloadBucket() {
   return {
+    activeLeads: 0,
+    overdueLeadActions: 0,
     activeCases: 0,
     pendingTasks: 0,
     overdueTasks: 0,
     documentsWaitingReview: 0,
     pendingFollowUps: 0,
     upcomingAppointments: 0,
+    activeLeadItems: [],
     activeCaseItems: [],
     pendingTaskItems: [],
     overdueTaskItems: [],
@@ -485,7 +488,13 @@ export function resolveWorkOwner({
 
 function addWork(bucket, type, item, owner, now) {
   const decorated = { ...item, assignmentSource: owner.source };
-  if (type === "case") {
+  if (type === "lead") {
+    bucket.activeLeads += 1;
+    if (item.nextActionAt && new Date(item.nextActionAt) < now) {
+      bucket.overdueLeadActions += 1;
+    }
+    bucket.activeLeadItems.push(decorated);
+  } else if (type === "case") {
     bucket.activeCases += 1;
     bucket.activeCaseItems.push(decorated);
   } else if (type === "task") {
@@ -510,9 +519,19 @@ function addWork(bucket, type, item, owner, now) {
 
 function finalizeBucket(bucket, capacity = null) {
   const byDueDate = (left, right) =>
-    new Date(left.dueAt || left.dueDate || left.startsAt || 8640000000000000) -
     new Date(
-      right.dueAt || right.dueDate || right.startsAt || 8640000000000000,
+      left.dueAt ||
+        left.dueDate ||
+        left.startsAt ||
+        left.nextActionAt ||
+        8640000000000000,
+    ) -
+    new Date(
+      right.dueAt ||
+        right.dueDate ||
+        right.startsAt ||
+        right.nextActionAt ||
+        8640000000000000,
     );
   const byUpdatedAt = (left, right) =>
     new Date(left.updatedAt) - new Date(right.updatedAt);
@@ -527,6 +546,7 @@ function finalizeBucket(bucket, capacity = null) {
             Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100),
           ),
         }),
+    activeLeadItems: bucket.activeLeadItems.sort(byDueDate).slice(0, 10),
     activeCaseItems: bucket.activeCaseItems.sort(byUpdatedAt).slice(0, 10),
     pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, 10),
     overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, 10),
@@ -540,7 +560,7 @@ function finalizeBucket(bucket, capacity = null) {
 
 async function loadAgencyWorkloads(agencyId) {
   const now = new Date();
-  const [profiles, cases, tasks, documents, followUps, appointments] =
+  const [profiles, leads, cases, tasks, documents, followUps, appointments] =
     await prisma.$transaction([
       prisma.consultantProfile.findMany({
         where: {
@@ -554,6 +574,25 @@ async function loadAgencyWorkloads(agencyId) {
         },
         include: {
           user: { select: { id: true, fullName: true, email: true } },
+        },
+      }),
+      prisma.lead.findMany({
+        where: {
+          agencyId,
+          deletedAt: null,
+          status: "OPEN",
+        },
+        select: {
+          id: true,
+          leadNumber: true,
+          firstName: true,
+          lastName: true,
+          stage: true,
+          priority: true,
+          nextActionDescription: true,
+          nextActionAt: true,
+          updatedAt: true,
+          owner: { select: ownershipUserSelect },
         },
       }),
       prisma.case.findMany({
@@ -683,6 +722,17 @@ async function loadAgencyWorkloads(agencyId) {
       now,
     );
 
+  leads.forEach((item) =>
+    route(
+      "lead",
+      item,
+      resolveWorkOwner({
+        agencyId,
+        activeConsultantIds,
+        explicitUser: item.owner,
+      }),
+    ),
+  );
   cases.forEach((item) =>
     route(
       "case",
@@ -752,6 +802,10 @@ async function loadAgencyWorkloads(agencyId) {
   }));
   const summary = {
     activeConsultants: consultants.length,
+    activeLeads: leads.length,
+    overdueLeadActions: leads.filter(
+      (item) => item.nextActionAt && new Date(item.nextActionAt) < now,
+    ).length,
     activeCases: cases.length,
     pendingTasks: tasks.length,
     overdueTasks: tasks.filter(

@@ -12,7 +12,6 @@ import {
   FilterX,
   Funnel,
   Mail,
-  MoreVertical,
   Pencil,
   Phone,
   Plus,
@@ -292,37 +291,66 @@ function getCategory(text) {
   return "General";
 }
 
+function getCategoryForType(followUpType, text) {
+  if (followUpType === "Payment reminder") return "Payment";
+  if (followUpType === "Document request") return "Documents";
+  if (followUpType === "Client call") return "Call";
+  if (followUpType === "Case review") return "Review";
+  return getCategory(text);
+}
+
 function buildFollowUpViewModel(item, cases) {
   const tone = getStatusTone(item.status, item.dueDate);
   const linkedCase = item.case || cases.find((entry) => entry.id === item.caseId || entry.id === item.case?.id) || null;
   const text = `${item.title || ""} ${item.description || ""}`;
-  const category = getCategory(text);
-  const priority = inferPriority(item, tone);
+  const inferredCategory = getCategory(text);
+  const followUpType = item.followUpType || (
+    inferredCategory === "Payment"
+      ? "Payment reminder"
+      : inferredCategory === "Documents"
+        ? "Document request"
+        : inferredCategory === "Call"
+          ? "Client call"
+          : "General follow-up"
+  );
+  const category = getCategoryForType(followUpType, text);
+  const priority = item.priority || inferPriority(item, tone);
   const missingDocs = /missing|passport|certificate|document/i.test(text) ? 1 : 0;
 
   return {
     ...item,
     caseType: linkedCase?.caseType || item.case?.caseType || "General Matter",
     caseStage: linkedCase?.stage || item.case?.stage || "Workflow",
-    clientName: item.client?.fullName || "Unknown client",
+    clientName: item.client?.fullName || linkedCase?.client?.fullName || "Unknown client",
     assignedName: item.assignedUser?.fullName || "Unassigned",
     clientPhone: item.client?.phone || "No phone on file",
     clientEmail: item.client?.email || "No email on file",
-    initials: getInitials(item.client?.fullName),
+    initials: getInitials(item.client?.fullName || linkedCase?.client?.fullName),
     tone,
     priority,
     category,
     missingDocs,
-    followUpType:
-      category === "Payment"
-        ? "Payment reminder"
-        : category === "Documents"
-          ? "Document request"
-          : category === "Call"
-            ? "Client call"
-            : "General follow-up",
+    followUpType,
     dueLabel: getRelativeDueLabel(item.dueDate),
   };
+}
+
+async function loadAllFollowUps(fresh = false) {
+  const get = fresh ? api.getFresh : api.get;
+  const firstResponse = await get("/follow-ups", { params: { page: 1, limit: 100 } });
+  const firstPage = firstResponse.data.data || [];
+  const total = Number(firstResponse.data.meta?.total) || firstPage.length;
+  const pageCount = Math.ceil(total / 100);
+  if (pageCount <= 1) return firstPage;
+  const remainingResponses = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) =>
+      get("/follow-ups", { params: { page: index + 2, limit: 100 } })
+    )
+  );
+  return [
+    ...firstPage,
+    ...remainingResponses.flatMap((response) => response.data.data || []),
+  ];
 }
 
 function RequiredMark() {
@@ -437,6 +465,10 @@ function FollowUpDrawer({
   isEditing,
   closing,
 }) {
+  const availableCases = formState.clientId
+    ? cases.filter((item) => item.client?.id === formState.clientId)
+    : [];
+
   return (
     <DrawerShell
       title={isEditing ? "Edit Follow-up" : "Add Follow-up"}
@@ -465,7 +497,7 @@ function FollowUpDrawer({
       <form id="follow-up-form" className="space-y-5" onSubmit={onSubmit}>
         <label className="block">
           <FieldLabel required>Client</FieldLabel>
-          <select name="clientId" value={formState.clientId} onChange={onChange} className={fieldClassName}>
+          <select required name="clientId" value={formState.clientId} onChange={onChange} className={fieldClassName}>
             <option value="">Select client</option>
             {clients.map((client) => (
               <option key={client.id} value={client.id}>
@@ -477,11 +509,11 @@ function FollowUpDrawer({
 
         <label className="block">
           <FieldLabel>Case</FieldLabel>
-          <select name="caseId" value={formState.caseId} onChange={onChange} className={fieldClassName}>
-            <option value="">Select case</option>
-            {cases.map((item) => (
+          <select name="caseId" value={formState.caseId} onChange={onChange} disabled={!formState.clientId} className={`${fieldClassName} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`}>
+            <option value="">{formState.clientId ? "No case / select case" : "Select a client first"}</option>
+            {availableCases.map((item) => (
               <option key={item.id} value={item.id}>
-                {(item.client?.fullName || "Unknown client") + " • " + item.caseType}
+                {item.caseType + (item.archivedAt ? " • Archived" : "") + (["Completed", "Closed", "Cancelled", "Inactive"].includes(item.status) ? ` • ${item.status}` : "")}
               </option>
             ))}
           </select>
@@ -542,7 +574,7 @@ function FollowUpDrawer({
 
           <label className="block">
             <FieldLabel>Due time</FieldLabel>
-            <input type="time" name="dueTime" value={formState.dueTime} onChange={onChange} className={fieldClassName} />
+            <input type="time" name="dueTime" value={formState.dueTime} onChange={onChange} disabled={!formState.dueDate} className={`${fieldClassName} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`} />
           </label>
         </div>
 
@@ -624,7 +656,7 @@ function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMa
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">{item.caseStage}</span>
-            <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600">{item.category}</span>
+            <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600">{item.followUpType}</span>
             {item.missingDocs ? (
               <span className="rounded-md bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600">1 missing</span>
             ) : null}
@@ -696,13 +728,6 @@ function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMa
             >
               <Ban className="h-4 w-4" />
             </button>
-            <button
-              type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
-              aria-label={`More actions for ${item.title}`}
-            >
-              <MoreVertical className="h-4 w-4" />
-            </button>
           </div>
         </div>
       </div>
@@ -710,17 +735,14 @@ function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMa
   );
 }
 
-function TodayWorkRail({ items, overdueCount, missingDocItem, onCreate, onShowOverdue, onCopyMissing }) {
+function TodayWorkRail({ items, overdueCount, missingDocItem, onCreate, onShowOverdue, onCopyMissing, onSelect }) {
   return (
     <aside className="xl:sticky xl:top-5">
       <section className="overflow-hidden rounded-[22px] bg-slate-950 p-5 text-white shadow-[0_28px_70px_rgba(15,23,42,0.28)]">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/20 text-sky-300 ring-1 ring-sky-400/20">
             <CalendarClock className="h-6 w-6" />
           </div>
-          <button type="button" className="text-slate-500 transition hover:text-white" aria-label="Close today's work panel">
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
         <div className="mt-6">
@@ -734,7 +756,7 @@ function TodayWorkRail({ items, overdueCount, missingDocItem, onCreate, onShowOv
               const statusStyles = getStatusStyles(item.tone);
 
               return (
-                <button key={item.id} type="button" className="w-full py-4 text-left">
+                <button key={item.id} type="button" onClick={() => onSelect(item.id)} className="w-full py-4 text-left transition hover:bg-white/[0.04]">
                   <div className="flex items-start gap-3">
                     <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${getAvatarClass(item.clientName)}`}>
                       {item.initials}
@@ -871,15 +893,17 @@ export default function FollowUps() {
         setLoading(true);
       }
 
-      const requests = quiet
-        ? [api.getFresh("/follow-ups"), api.getFresh("/clients"), api.getFresh("/cases"), api.getFresh("/leads/staff")]
-        : [api.get("/follow-ups"), api.get("/clients"), api.get("/cases"), api.get("/leads/staff")];
-      const [followUpsResponse, clientsResponse, casesResponse, usersResponse] = await Promise.all(requests);
+      const get = quiet ? api.getFresh : api.get;
+      const [allFollowUps, optionsResponse] = await Promise.all([
+        loadAllFollowUps(quiet),
+        get("/follow-ups/options"),
+      ]);
+      const options = optionsResponse.data.data || {};
 
-      setFollowUps(followUpsResponse.data.data || []);
-      setClients(clientsResponse.data.data || []);
-      setCases(casesResponse.data.data || []);
-      setUsers(usersResponse.data.data || []);
+      setFollowUps(allFollowUps);
+      setClients(options.clients || []);
+      setCases(options.cases || []);
+      setUsers(options.users || []);
       setError("");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Unable to load follow-ups.");
@@ -921,6 +945,8 @@ export default function FollowUps() {
             item.clientPhone,
             item.clientEmail,
             item.assignedName,
+            item.followUpType,
+            item.category,
             item.title,
             item.description,
           ]
@@ -1061,7 +1087,7 @@ export default function FollowUps() {
   function openEditForm(item) {
     setEditingFollowUp(item);
     setFormState({
-      clientId: item.client?.id || "",
+      clientId: item.client?.id || item.case?.client?.id || "",
       caseId: item.case?.id || "",
       assignedUserId: item.assignedUser?.id || "",
       followUpType: item.followUpType || "General follow-up",
@@ -1088,10 +1114,38 @@ export default function FollowUps() {
 
   function handleInputChange(event) {
     const { name, value } = event.target;
-    setFormState((current) => ({
-      ...current,
-      [name]: value,
-    }));
+    setFormState((current) => {
+      if (name === "clientId") {
+        const selectedCase = cases.find((item) => item.id === current.caseId);
+        return {
+          ...current,
+          clientId: value,
+          caseId: selectedCase?.client?.id === value ? current.caseId : "",
+        };
+      }
+      if (name === "caseId") {
+        const selectedCase = cases.find((item) => item.id === value);
+        return {
+          ...current,
+          caseId: value,
+          clientId: selectedCase?.client?.id || current.clientId,
+        };
+      }
+      if (name === "dueDate" && !value) {
+        return { ...current, dueDate: "", dueTime: "" };
+      }
+      if (name === "status") {
+        const terminal = ["Completed", "Cancelled"].includes(value);
+        return {
+          ...current,
+          status: value,
+          completedAt: terminal
+            ? current.completedAt || formatDateForInput(new Date())
+            : "",
+        };
+      }
+      return { ...current, [name]: value };
+    });
   }
 
   function clearFilters() {
@@ -1105,14 +1159,16 @@ export default function FollowUps() {
 
   function buildDueDatePayload() {
     if (!formState.dueDate) {
-      return "";
+      return null;
     }
+    const parsed = new Date(`${formState.dueDate}T${formState.dueTime || "12:00"}:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
 
-    if (!formState.dueTime) {
-      return formState.dueDate;
-    }
-
-    return `${formState.dueDate}T${formState.dueTime}:00`;
+  function buildCompletedAtPayload() {
+    if (!formState.completedAt) return null;
+    const parsed = new Date(`${formState.completedAt}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
 
   async function handleSubmit(event) {
@@ -1124,21 +1180,16 @@ export default function FollowUps() {
 
       const payload = {
         clientId: formState.clientId,
-        caseId: formState.caseId,
-        assignedUserId: formState.assignedUserId,
+        caseId: formState.caseId || null,
+        assignedUserId: formState.assignedUserId || null,
+        followUpType: formState.followUpType,
         title: formState.title.trim(),
-        description: formState.description.trim(),
+        description: formState.description.trim() || null,
         dueDate: buildDueDatePayload(),
+        priority: formState.priority,
         status: formState.status,
-        completedAt: formState.completedAt,
+        completedAt: buildCompletedAtPayload(),
       };
-
-      if (!payload.clientId) delete payload.clientId;
-      if (!payload.caseId) delete payload.caseId;
-      if (!payload.assignedUserId) delete payload.assignedUserId;
-      if (!payload.description) delete payload.description;
-      if (!payload.dueDate) delete payload.dueDate;
-      if (!payload.completedAt) delete payload.completedAt;
 
       if (isEditing) {
         await api.patch(`/follow-ups/${editingFollowUp.id}`, payload);
@@ -1182,12 +1233,12 @@ export default function FollowUps() {
 
   async function handleMarkDone(item) {
     try {
-      await api.patch(`/follow-ups/${item.id}`, {
+      const response = await api.patch(`/follow-ups/${item.id}`, {
         status: "Completed",
         completedAt: new Date().toISOString(),
       });
-
-      await loadWorkspaceData({ quiet: true });
+      const completed = response.data.data;
+      setFollowUps((current) => current.map((entry) => entry.id === item.id ? completed : entry));
       setToast({ type: "success", message: "Follow-up marked complete" });
     } catch (requestError) {
       setToast({ type: "error", message: requestError.response?.data?.message || "Unable to update follow-up." });
@@ -1432,12 +1483,8 @@ export default function FollowUps() {
               </div>
 
               {!loading && filteredFollowUps.length ? (
-                <div className="mt-3 flex flex-col items-center justify-between gap-3 text-sm text-slate-500 sm:flex-row">
-                  <span>Showing 1-{filteredFollowUps.length} of {filteredFollowUps.length} tasks</span>
-                  <button type="button" className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">
-                    Load more
-                    <ChevronDown className="h-4 w-4" />
-                  </button>
+                <div className="mt-3 text-sm text-slate-500">
+                  <span>Showing all {filteredFollowUps.length} matching task{filteredFollowUps.length === 1 ? "" : "s"}</span>
                 </div>
               ) : null}
             </main>
@@ -1449,6 +1496,7 @@ export default function FollowUps() {
               onCreate={openCreateForm}
               onShowOverdue={() => setActiveChip("Overdue")}
               onCopyMissing={() => todayPanel.missingDocItem && handleCopyMessage(todayPanel.missingDocItem)}
+              onSelect={(id) => document.getElementById(`followup-row-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
             />
           </section>
         </div>

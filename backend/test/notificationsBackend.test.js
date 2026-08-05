@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  caseTabFromNotification,
+  destinationFromNotification,
+} from "../src/services/notificationService.js";
+import { focusedNotificationActionUrl } from "../src/controllers/notificationController.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
@@ -109,4 +114,94 @@ test("notification migration backfill preserves jsonb precedence and is retry sa
   assert.match(migration, /ADD COLUMN IF NOT EXISTS "due_at"/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "notifications"/);
   assert.match(migration, /COMMIT;\s*$/);
+});
+
+test("sidebar notification destinations follow the page that can resolve the update", () => {
+  assert.equal(destinationFromNotification({ actionUrl: "/app/payments", category: "appointments", type: "booking_payment.refunded" }), "payments");
+  assert.equal(destinationFromNotification({ actionUrl: "/app/cases/case-1", category: "documents", type: "client_document.portal_uploaded" }), "documents");
+  assert.equal(destinationFromNotification({ actionUrl: "/app/cases/case-1", category: "communications", type: "communication.portal_message_received" }), "cases");
+  assert.equal(destinationFromNotification({ actionUrl: "/client-portal/chat", category: "communications", type: "communication.staff_reply" }), "portalChat");
+  assert.equal(destinationFromNotification({ actionUrl: "/client-portal/payments", category: "payments", type: "invoice.created" }), "portalPayments");
+});
+
+test("financial exception notifications deep-link to the exact review surface", () => {
+  assert.equal(
+    focusedNotificationActionUrl({
+      type: "booking_payment.refund_unmatched",
+      entityId: "refund/42",
+      actionUrl: "/app/payments",
+    }),
+    "/app/payments?source=booking_payment&refund=refund%2F42",
+  );
+  assert.equal(
+    focusedNotificationActionUrl({
+      type: "booking_payment.refund_ambiguous",
+      entityId: "refund-2",
+      actionUrl: "/app/payments",
+    }),
+    "/app/payments?source=booking_payment&refund=refund-2",
+  );
+  assert.equal(
+    focusedNotificationActionUrl({
+      type: "booking_payment.orphaned",
+      entityId: "hold-7",
+      actionUrl: "/app/payments",
+    }),
+    "/app/payments?source=booking_payment&hold=hold-7",
+  );
+  assert.equal(
+    focusedNotificationActionUrl({
+      type: "appointment.meeting_sync_failed",
+      entityType: "appointment",
+      entityId: "appointment-4",
+      actionUrl: "/app/calendar",
+    }),
+    "/app/calendar?appointment=appointment-4",
+  );
+  assert.equal(
+    focusedNotificationActionUrl({
+      type: "lead.next_action_overdue",
+      entityType: "lead",
+      entityId: "lead-9",
+      actionUrl: "/leads",
+    }),
+    "/leads?lead=lead-9",
+  );
+});
+
+test("case workspace notifications map to the tab containing the affected record", () => {
+  assert.equal(caseTabFromNotification({ type: "client_document.portal_uploaded", category: "documents", actionUrl: "/app/cases/case-1" }), "documents");
+  assert.equal(caseTabFromNotification({ type: "case_form.review_comment_added", category: "documents", actionUrl: "/app/cases/case-1" }), "forms");
+  assert.equal(caseTabFromNotification({ type: "communication.portal_message_received", category: "communications", actionUrl: "/app/cases/case-1" }), "communication");
+  assert.equal(caseTabFromNotification({ type: "installment.invoiced", category: "payments", actionUrl: "/app/cases/case-1?tab=billing" }), "billing");
+});
+
+test("staff, case, and client sidebars consume one aggregated destination count system", async () => {
+  const [schema, migration, controller, routes, provider, staffSidebar, portalSidebar, portalBottom, caseTabs] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260805100000_notification_sidebar_destinations/migration.sql"),
+    source("../src/controllers/notificationController.js"),
+    source("../src/routes/notificationRoutes.js"),
+    source("../../frontend/src/components/notifications/NotificationProvider.jsx"),
+    source("../../frontend/src/components/layout/Sidebar.jsx"),
+    source("../../frontend/src/components/client-portal/ClientPortalSidebar.jsx"),
+    source("../../frontend/src/components/client-portal/ClientPortalBottomNav.jsx"),
+    source("../../frontend/src/components/case-profile/CaseWorkspaceTabs.jsx"),
+  ]);
+  assert.match(schema, /destinationKey\s+String/);
+  assert.match(migration, /destination_key/);
+  assert.match(controller, /attentionLevel: "action_required", readAt: null/);
+  assert.match(controller, /attentionLevel: "update", readAt: null/);
+  assert.match(controller, /focusRows/);
+  assert.match(routes, /sidebar-counts/);
+  assert.match(provider, /getSidebarNotificationCounts/);
+  assert.match(provider, /focusDestination/);
+  assert.doesNotMatch(provider, /getUnreadNotificationCount/);
+  assert.match(staffSidebar, /UpdateBadge/);
+  assert.match(staffSidebar, /focusDestination/);
+  assert.match(staffSidebar, /badgeKey: "payments"/);
+  assert.match(portalSidebar, /portalChat/);
+  assert.match(portalBottom, /portalDocuments/);
+  assert.match(caseTabs, /caseTabCounts/);
+  assert.match(caseTabs, /acknowledgeDestination/);
 });

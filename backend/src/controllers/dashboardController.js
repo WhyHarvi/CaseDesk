@@ -362,6 +362,7 @@ export async function getDashboardSummary(req, res) {
         status: true,
         meetingMode: true,
         guestName: true,
+        client: { select: { id: true, fullName: true } },
         case: { select: caseSummarySelect },
         assignedTo: { select: { id: true, fullName: true } },
         sessionType: { select: { name: true } },

@@ -10,7 +10,8 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { convertAppointmentToClient } from "../../api/bookingApi";
 
 const toneStyles = {
   info: "border-sky-100 bg-sky-50 text-sky-700",
@@ -24,19 +25,6 @@ const pipelineColors = ["bg-sky-400", "bg-emerald-400", "bg-violet-400", "bg-amb
 function formatDate(value, timezone, options) {
   if (!value) return "Not scheduled";
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, ...options }).format(new Date(value));
-}
-
-function calendarAppointmentPath(appointment, timezone) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-    .formatToParts(new Date(appointment.startsAt))
-    .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
-  const date = `${parts.year}-${parts.month}-${parts.day}`;
-  return `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${date}`;
 }
 
 function initials(name) {
@@ -148,13 +136,16 @@ function ClientWorkDrawer({ entry, timezone, onClose }) {
   );
 }
 
-export default function DashboardWorkRow({ dashboard, loading, role }) {
+export default function DashboardWorkRow({ dashboard, loading, role, onDashboardChanged }) {
+  const navigate = useNavigate();
   const isAdmin = role === "admin";
   const timezone = dashboard?.timezone || "America/Toronto";
   const appointments = dashboard?.upcomingAppointments || [];
   const priorityClients = dashboard?.priorityWork || [];
   const visibleClients = priorityClients.slice(0, PRIORITY_CLIENT_VISIBLE);
   const [selectedClientId, setSelectedClientId] = useState(null);
+  const [savingAppointmentId, setSavingAppointmentId] = useState(null);
+  const [appointmentSaveError, setAppointmentSaveError] = useState(null);
   const selectedEntry = visibleClients.find((entry) => entry.client.id === selectedClientId) || null;
   const pipelineStages = dashboard?.casePipeline || [];
   const pipelineMax = Math.max(...pipelineStages.map((stage) => stage.count), 1);
@@ -164,6 +155,20 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
     + (dashboard?.stats?.casesWaitingUpdate || 0);
   const visibleWorkCount = visibleClients.reduce((sum, entry) => sum + entry.totalCount, 0);
   const hiddenWorkCount = Math.max(0, workCount - visibleWorkCount);
+
+  async function saveAppointmentVisitor(item) {
+    setSavingAppointmentId(item.id);
+    setAppointmentSaveError(null);
+    try {
+      const result = await convertAppointmentToClient(item.id);
+      onDashboardChanged?.();
+      navigate(`/app/clients/${result.clientId}`);
+    } catch (error) {
+      setAppointmentSaveError({ id: item.id, message: error.response?.data?.message || "This visitor could not be saved as a client." });
+    } finally {
+      setSavingAppointmentId(null);
+    }
+  }
 
   return (
     <section aria-label="Dashboard work overview" className="mb-6 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-12">
@@ -177,19 +182,27 @@ export default function DashboardWorkRow({ dashboard, loading, role }) {
           chipClass="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700"
         />
         <div className="flex-1 space-y-3">
-          {appointments.length ? appointments.map((item) => (
-            <Link key={item.id} to={calendarAppointmentPath(item, timezone)} className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 transition hover:border-sky-200 hover:bg-sky-50/60">
+          {appointments.length ? appointments.map((item) => {
+            const client = item.client || item.case?.client || null;
+            const content = <>
               <div className="w-16 shrink-0 pt-0.5 text-xs font-semibold text-slate-950">
                 {formatDate(item.startsAt, timezone, { month: "short", day: "numeric" })}
                 <span className="mt-0.5 block font-normal text-slate-500">{formatDate(item.startsAt, timezone, { hour: "numeric", minute: "2-digit" })}</span>
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-slate-800">{item.case?.client?.fullName || item.guestName || "Appointment"}</p>
+                <p className="truncate text-sm font-semibold text-slate-800">{client?.fullName || item.guestName || "Appointment"}</p>
                 <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.subject}{isAdmin && item.isMine ? " · Your appointment" : ""}</p>
                 {item.description ? <p className="mt-1 line-clamp-2 text-xs text-slate-400">{item.description}</p> : null}
+                {!client ? <button type="button" disabled={savingAppointmentId === item.id} onClick={() => saveAppointmentVisitor(item)} className="mt-2 inline-flex h-8 items-center rounded-full bg-emerald-600 px-3 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50">{savingAppointmentId === item.id ? "Saving…" : "Save as client"}</button> : null}
+                {appointmentSaveError?.id === item.id ? <p className="mt-2 text-xs leading-5 text-rose-600">{appointmentSaveError.message}</p> : null}
               </div>
-            </Link>
-          )) : <EmptyState loading={loading}>No upcoming appointments.</EmptyState>}
+            </>;
+            return client ? (
+              <Link key={item.id} to={`/app/clients/${client.id}`} className="flex w-full items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 text-left transition hover:border-sky-200 hover:bg-sky-50/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">{content}</Link>
+            ) : (
+              <div key={item.id} className="flex w-full items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 text-left">{content}</div>
+            );
+          }) : <EmptyState loading={loading}>No upcoming appointments.</EmptyState>}
         </div>
         <div className="mt-4 border-t border-slate-100 pt-4">
           <Link to="/app/calendar" className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:text-sky-800">Open calendar <ArrowRight className="h-3.5 w-3.5" /></Link>
