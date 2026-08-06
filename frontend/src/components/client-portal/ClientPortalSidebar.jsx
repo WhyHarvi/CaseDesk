@@ -26,7 +26,7 @@ function PortalBadge({ count }) {
 // product family, not a bolted-on second design.
 export default function ClientPortalSidebar() {
   const { signOut } = useAuth();
-  const { sidebarCounts, acknowledgeDestination, focusDestination } = useNotifications();
+  const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const { overview } = usePortalData();
   const initials = (overview?.client?.fullName || overview?.client?.firstName || "You")
     .split(" ")
@@ -48,25 +48,30 @@ export default function ClientPortalSidebar() {
       <nav className="mt-8 flex-1 space-y-1" aria-label="Portal navigation">
         {items.map((item) => {
           const Icon = item.icon;
+          const count = sidebarCounts[item.badgeKey];
           return (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
-              onClick={(event) => {
-                focusDestination(item.badgeKey, item.label, { anchorRect: event.currentTarget.getBoundingClientRect() });
+              onClick={() => {
                 void acknowledgeDestination(item.badgeKey);
               }}
               className={({ isActive }) =>
                 [
                   "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all duration-200",
                   isActive ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-white hover:text-slate-800",
+                  count?.total
+                    ? count.actions
+                      ? "ring-1 ring-rose-300/80 bg-rose-50/70 shadow-[0_0_18px_rgba(244,63,94,0.22)]"
+                      : "ring-1 ring-sky-300/80 bg-sky-50/70 shadow-[0_0_18px_rgba(14,165,233,0.2)]"
+                    : "",
                 ].join(" ")
               }
             >
               <Icon className="h-[18px] w-[18px] shrink-0" />
               <span className="truncate">{item.label}</span>
-              <PortalBadge count={sidebarCounts[item.badgeKey]} />
+              <PortalBadge count={count} />
             </NavLink>
           );
         })}

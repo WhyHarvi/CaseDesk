@@ -209,7 +209,7 @@ function UpdateBadge({ count, collapsed = false }) {
       title={title}
       aria-label={title}
       className={[
-        "inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-none text-white shadow-sm transition-all duration-200",
+        "inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-none text-white shadow-sm transition-all duration-200 motion-safe:animate-pulse",
         needsAction ? "bg-rose-500 shadow-rose-200" : "bg-sky-500 shadow-sky-200",
         collapsed ? "absolute -right-1 -top-1 ring-2 ring-slate-50" : "ml-auto",
       ].join(" ")}
@@ -221,18 +221,8 @@ function UpdateBadge({ count, collapsed = false }) {
 
 function NavItem({ item, collapsed, onNavigate, role }) {
   const Icon = item.icon;
-  const focusUrl = String(item.badge?.focus?.actionUrl || "");
-  // item.badge is already scoped to this exact nav item's destinationKey by
-  // the backend (sidebarCounts[item.badgeKey].focus), so any safe same-origin
-  // URL here is trusted outright. Previously this also required the focus
-  // URL's path to start with this item's own route, which silently broke
-  // every case-scoped focus link — documents/tasks/reminders/billing
-  // notifications correctly deep-link into /app/cases/:id, never into their
-  // own module route, so that check rejected them and fell back to the
-  // floating toast every time.
-  const target = item.badge?.total && focusUrl.startsWith("/") && !focusUrl.startsWith("//")
-    ? focusUrl
-    : item.to;
+  const hasUnread = Boolean(item.badge?.total);
+  const needsAction = Boolean(item.badge?.actions);
 
   if (item.disabled) {
     return (
@@ -268,8 +258,8 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 
   return (
     <NavLink
-      to={target}
-      onClick={(event) => onNavigate?.({ hasDirectFocus: target !== item.to, anchorRect: event.currentTarget.getBoundingClientRect() })}
+      to={item.to}
+      onClick={() => onNavigate?.()}
       onMouseEnter={() => prefetchRoute(item.to, role)}
       onFocus={() => prefetchRoute(item.to, role)}
       className={({ isActive }) =>
@@ -281,6 +271,11 @@ function NavItem({ item, collapsed, onNavigate, role }) {
               ? "text-slate-900"
               : "bg-sky-100 text-slate-900"
             : "text-slate-500 hover:bg-sky-50 hover:text-slate-700",
+          hasUnread
+            ? needsAction
+              ? "ring-1 ring-rose-300/80 bg-rose-50/70 shadow-[0_0_18px_rgba(244,63,94,0.22)]"
+              : "ring-1 ring-sky-300/80 bg-sky-50/70 shadow-[0_0_18px_rgba(14,165,233,0.2)]"
+            : "",
         ].join(" ")
       }
     >
@@ -326,7 +321,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
   const { role, appUser, membership, signOut } = useAuth();
   const access = getPortalAccess(role, membership?.permissions);
-  const { sidebarCounts, acknowledgeDestination, focusDestination } = useNotifications();
+  const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const navigation = (
     role === "admin" ? adminNavigation : memberNavigation
   ).filter((item) => !item.accessKey || access.pages[item.accessKey]);
@@ -383,9 +378,8 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
             key={item.label}
             item={{ ...item, badge: item.badgeKey ? sidebarCounts[item.badgeKey] : null }}
             collapsed={collapsed}
-            onNavigate={({ hasDirectFocus, anchorRect }) => {
+            onNavigate={() => {
               if (item.badgeKey) {
-                focusDestination(item.badgeKey, item.label, { hasDirectFocus, anchorRect });
                 void acknowledgeDestination(item.badgeKey);
               }
               if (mobile) onCloseMobile?.();

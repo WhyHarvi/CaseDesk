@@ -26,7 +26,6 @@ import {
   notificationLeaseKey,
   releaseNotificationPollLease,
 } from "../../services/notificationPolling";
-import SidebarFocusNotice from "./SidebarFocusNotice";
 
 const NotificationContext = createContext(null);
 
@@ -74,28 +73,6 @@ export function actionPathForNotification(notification) {
   return String(notification?.actionUrl || "");
 }
 
-function destinationForPath(pathname) {
-  const routes = [
-    ["/client-portal/documents", "portalDocuments"],
-    ["/client-portal/questionnaires", "portalForms"],
-    ["/client-portal/appointments", "portalAppointments"],
-    ["/client-portal/payments", "portalPayments"],
-    ["/client-portal/chat", "portalChat"],
-    ["/lead-intake", "leadIntake"],
-    ["/leads", "leads"],
-    ["/app/clients", "clients"],
-    ["/app/follow-ups", "followUps"],
-    ["/app/calendar", "calendar"],
-    ["/app/documents", "documents"],
-    ["/app/payments", "payments"],
-    ["/app/case-easy-import", "caseEasyImport"],
-    ["/app/settings", "settings"],
-    ["/app/cases", "cases"],
-    ["/client-portal", "portalHome"],
-  ];
-  return routes.find(([path]) => pathname === path)?.[1] || null;
-}
-
 export function NotificationProvider({ children }) {
   const { isAuthenticated, role, membership } = useAuth();
   const navigate = useNavigate();
@@ -110,9 +87,7 @@ export function NotificationProvider({ children }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
-  const [focusNotice, setFocusNotice] = useState(null);
   const pendingRef = useRef(new Set());
-  const acknowledgedRouteRef = useRef("");
   const pollOwnerRef = useRef(createNotificationPollOwner());
   const filterRef = useRef(filter);
   filterRef.current = filter;
@@ -381,48 +356,9 @@ export function NotificationProvider({ children }) {
     }
   }, [sidebarCounts]);
 
-  const focusDestination = useCallback((destinationKey, label, { hasDirectFocus = false, anchorRect = null } = {}) => {
-    const count = sidebarCounts[destinationKey];
-    if (!count?.total) return;
-    // When the destination can open and highlight the real record, keep the
-    // interface out of the user's way. The compact fallback is only for
-    // aggregate updates that do not have a record-level destination.
-    if (hasDirectFocus) {
-      setFocusNotice(null);
-      return;
-    }
-    setFocusNotice({
-      key: `${destinationKey}:${Date.now()}`,
-      destinationKey,
-      label,
-      anchorRect: anchorRect ? {
-        top: anchorRect.top,
-        right: anchorRect.right,
-        bottom: anchorRect.bottom,
-        left: anchorRect.left,
-      } : null,
-      ...count,
-    });
-  }, [sidebarCounts]);
-  const dismissFocusNotice = useCallback(() => setFocusNotice(null), []);
-
-  useEffect(() => {
-    const destinationKey = destinationForPath(location.pathname);
-    // Passive informational updates can be acknowledged while their page is
-    // already open. Action-required items are acknowledged only by an
-    // explicit sidebar click (or by opening the notification itself), so a
-    // newly arriving exception cannot disappear unnoticed.
-    if (!destinationKey || !sidebarCounts[destinationKey]?.updates) return;
-    const routeKey = `${location.key}:${destinationKey}`;
-    if (acknowledgedRouteRef.current === routeKey) return;
-    acknowledgedRouteRef.current = routeKey;
-    void acknowledgeDestination(destinationKey);
-  }, [acknowledgeDestination, location.key, location.pathname, sidebarCounts]);
-
   const openNotification = useCallback(
     (notification) => {
       if (!notification.readAt) markRead(notification.id, true);
-      setFocusNotice(null);
       setPanelOpen(false);
       const raw = actionPathForNotification(notification);
       const safe = raw.startsWith("/") && !raw.startsWith("//");
@@ -463,7 +399,6 @@ export function NotificationProvider({ children }) {
       markAllRead,
       dismiss,
       acknowledgeDestination,
-      focusDestination,
       openNotification,
       retry: () => loadPage(1, filterRef.current),
     }),
@@ -485,7 +420,6 @@ export function NotificationProvider({ children }) {
       markAllRead,
       dismiss,
       acknowledgeDestination,
-      focusDestination,
       openNotification,
       loadPage,
     ],
@@ -494,7 +428,6 @@ export function NotificationProvider({ children }) {
   return (
     <NotificationContext.Provider value={value}>
       {children}
-      <SidebarFocusNotice notice={focusNotice} onDismiss={dismissFocusNotice} />
     </NotificationContext.Provider>
   );
 }

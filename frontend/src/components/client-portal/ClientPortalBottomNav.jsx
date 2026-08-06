@@ -12,19 +12,19 @@ const items = [
 ];
 
 export default function ClientPortalBottomNav() {
-  const { sidebarCounts, acknowledgeDestination, focusDestination } = useNotifications();
+  const { sidebarCounts, acknowledgeDestination } = useNotifications();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]" aria-label="Portal navigation">
       <div className="flex w-full max-w-[520px] items-center justify-between rounded-[1.6rem] border border-white/70 bg-white/80 px-2 py-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.16)] backdrop-blur-2xl">
         {items.map((item) => {
           const Icon = item.icon;
+          const count = sidebarCounts[item.badgeKey];
           return (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
-              onClick={(event) => {
-                focusDestination(item.badgeKey, item.label, { anchorRect: event.currentTarget.getBoundingClientRect() });
+              onClick={() => {
                 void acknowledgeDestination(item.badgeKey);
               }}
               className={({ isActive }) =>
@@ -36,9 +36,9 @@ export default function ClientPortalBottomNav() {
             >
               {({ isActive }) => (
                 <>
-                  <span className={["relative flex h-8 w-14 items-center justify-center rounded-full transition-all duration-200", isActive ? "bg-sky-100" : "bg-transparent"].join(" ")}>
+                  <span className={["relative flex h-8 w-14 items-center justify-center rounded-full transition-all duration-200", isActive ? "bg-sky-100" : "bg-transparent", count?.total ? count.actions ? "shadow-[0_0_16px_rgba(244,63,94,0.38)]" : "shadow-[0_0_16px_rgba(14,165,233,0.34)]" : ""].join(" ")}>
                     <Icon className="h-[18px] w-[18px]" />
-                    {sidebarCounts[item.badgeKey]?.total ? <span aria-label={`${sidebarCounts[item.badgeKey].total} unread items`} className={`absolute -right-0.5 -top-1 inline-flex min-h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ring-2 ring-white ${sidebarCounts[item.badgeKey].actions ? "bg-rose-500" : "bg-sky-500"}`}>{sidebarCounts[item.badgeKey].total > 99 ? "99+" : sidebarCounts[item.badgeKey].total}</span> : null}
+                    {count?.total ? <span aria-label={`${count.total} unread items`} className={`absolute -right-0.5 -top-1 inline-flex min-h-[17px] min-w-[17px] animate-pulse items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ring-2 ring-white ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span> : null}
                   </span>
                   <span className="truncate">{item.label}</span>
                 </>

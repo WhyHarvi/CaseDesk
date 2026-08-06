@@ -223,10 +223,12 @@ test("staff and portal document uploads pass the real document id into case noti
   assert.match(portalUpload, /entityType: "client_document",\s*entityId: existing\.id,\s*action: "client_document\.portal_uploaded"/);
 });
 
-test("sidebar nav trusts a scoped focus link outright instead of re-checking it against the clicked item's own route", async () => {
+test("sidebar badges mark attention but always open the normal section route", async () => {
   const sidebar = await source("../../frontend/src/components/layout/Sidebar.jsx");
-  assert.doesNotMatch(sidebar, /focusPath === item\.to \|\| focusPath\.startsWith/);
-  assert.match(sidebar, /item\.badge\?\.total && focusUrl\.startsWith\("\/"\) && !focusUrl\.startsWith\("\/\/"\)\s*\n\s*\? focusUrl\s*\n\s*: item\.to/);
+  assert.match(sidebar, /to=\{item\.to\}/);
+  assert.doesNotMatch(sidebar, /focusUrl|badge\?\.focus\?\.actionUrl/);
+  assert.match(sidebar, /motion-safe:animate-pulse/);
+  assert.match(sidebar, /acknowledgeDestination\(item\.badgeKey\)/);
 });
 
 test("staff, case, and client sidebars consume one aggregated destination count system", async () => {
@@ -248,10 +250,11 @@ test("staff, case, and client sidebars consume one aggregated destination count 
   assert.match(controller, /focusRows/);
   assert.match(routes, /sidebar-counts/);
   assert.match(provider, /getSidebarNotificationCounts/);
-  assert.match(provider, /focusDestination/);
+  assert.match(provider, /acknowledgeDestination/);
+  assert.doesNotMatch(provider, /focusDestination|SidebarFocusNotice/);
   assert.doesNotMatch(provider, /getUnreadNotificationCount/);
   assert.match(staffSidebar, /UpdateBadge/);
-  assert.match(staffSidebar, /focusDestination/);
+  assert.doesNotMatch(staffSidebar, /focusDestination/);
   assert.match(staffSidebar, /badgeKey: "payments"/);
   assert.match(portalSidebar, /portalChat/);
   assert.match(portalBottom, /portalDocuments/);
