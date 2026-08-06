@@ -28,14 +28,27 @@ test("lead dashboard and report endpoints are admin-only", async () => {
   }
 });
 
-test("manual stage change is a real endpoint, gated to staff, with a UI entry point on the lead sheet", async () => {
-  const [routes, leadDetail] = await Promise.all([
+test("stage, priority, and owner each have a real endpoint with the right role gate and a UI entry point on the lead sheet", async () => {
+  const [routes, leadDetail, actionSheets] = await Promise.all([
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/modules/leads/components/LeadActionSheets.jsx", import.meta.url), "utf8"),
   ]);
+  // Owner reassignment is admin-only; stage and priority are admin or the
+  // consultant currently assigned to the lead.
+  assert.match(routes, /router\.post\("\/:id\/assign", requireRole\("admin"\), asyncHandler\(assignLead\)\)/);
   assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadStage\)\)/);
-  assert.match(leadDetail, /setActiveAction\("change-stage"\)/);
-  assert.match(leadDetail, /Change stage/);
+  assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadPriority\)\)/);
+
+  assert.match(leadDetail, /canReassign = isWorkable && role === "admin"/);
+  assert.match(leadDetail, /canEditWorkflow = isWorkable && \(role === "admin" \|\| \(role === "consultant" && ownsLead\)\)/);
+  assert.match(leadDetail, /onEdit=\{canEditWorkflow \? \(\) => setActiveAction\("change-stage"\) : null\}/);
+  assert.match(leadDetail, /onEdit=\{canReassign \? \(\) => setActiveAction\("reassign"\) : null\}/);
+  assert.match(leadDetail, /onEdit=\{canEditWorkflow \? \(\) => setActiveAction\("change-priority"\) : null\}/);
+
+  assert.match(actionSheets, /title="Change stage"/);
+  assert.match(actionSheets, /title="Change priority"/);
+  assert.match(actionSheets, /api\.patch\(`\/leads\/\$\{lead\.id\}\/priority`, form\)/);
 });
 
 test("Import Review has its own promote action, ledger view, sidebar entry, and route — separate from the standard Leads page", async () => {

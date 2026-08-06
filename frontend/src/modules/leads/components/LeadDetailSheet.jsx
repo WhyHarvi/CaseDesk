@@ -9,7 +9,6 @@ import {
   HeartHandshake,
   Inbox,
   Landmark,
-  Layers3,
   Mail,
   MapPin,
   MessageSquareText,
@@ -29,7 +28,7 @@ import { formatDueDate, humanize, initials, leadName, statusTone } from "../lead
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { ChangeStageSheet, CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { ChangePrioritySheet, ChangeStageSheet, CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 
@@ -41,10 +40,13 @@ const tabs = [
   { id: "messages", label: "Messages", icon: MessageSquareText },
 ];
 
-function SummaryValue({ label, value }) {
+function SummaryValue({ label, value, onEdit }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+      <div className="flex items-center gap-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+        {onEdit ? <button type="button" onClick={onEdit} aria-label={`Change ${label.toLowerCase()}`} className="text-slate-300 transition hover:text-brand-600"><Pencil className="h-3 w-3" /></button> : null}
+      </div>
       <p className="mt-1 truncate text-sm font-semibold text-slate-800">{value || "—"}</p>
     </div>
   );
@@ -148,7 +150,11 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   ].sort((left, right) => new Date(right.sentAt || right.failedAt || right.createdAt).getTime() - new Date(left.sentAt || left.failedAt || left.createdAt).getTime()), [lead.appointments, lead.messageDeliveries]);
   const isWorkable = ["OPEN", "NURTURE"].includes(lead.status);
   const ownsLead = lead.ownerUserId === appUser?.id;
-  const canReassign = isWorkable && (!isFrontdesk || ownsLead);
+  // Owner changes are admin-only; stage and priority are also open to the
+  // consultant currently assigned to this lead. Frontdesk gets neither —
+  // they triage the incoming queue, they don't drive the pipeline.
+  const canReassign = isWorkable && role === "admin";
+  const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
   const canCloseFollowUp = (item) => item.status === "PENDING" && (!isFrontdesk || item.assignedUserId === appUser?.id);
   const workActions = isWorkable
     ? [
@@ -218,14 +224,11 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     </section>
                   ) : null}
 
-                  <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
-                    {isWorkable ? <div className="mb-4 flex items-center justify-end"><button type="button" onClick={() => setActiveAction("change-stage")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"><Layers3 className="h-3.5 w-3.5" />Change stage</button></div> : null}
-                    <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4">
-                      <SummaryValue label="Stage" value={humanize(lead.stage)} />
-                      <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} />
-                      <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
-                      <SummaryValue label="Priority" value={humanize(lead.priority)} />
-                    </div>
+                  <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-2xl border border-slate-200/70 bg-white p-5 sm:grid-cols-4">
+                    <SummaryValue label="Stage" value={humanize(lead.stage)} onEdit={canEditWorkflow ? () => setActiveAction("change-stage") : null} />
+                    <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} onEdit={canReassign ? () => setActiveAction("reassign") : null} />
+                    <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
+                    <SummaryValue label="Priority" value={humanize(lead.priority)} onEdit={canEditWorkflow ? () => setActiveAction("change-priority") : null} />
                   </section>
 
                   {!isFrontdesk && (lead.status === "OPEN" || lead.qualification) ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
@@ -378,6 +381,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "change-stage" ? <ChangeStageSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "change-priority" ? <ChangePrioritySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}

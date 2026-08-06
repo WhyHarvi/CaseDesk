@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, Layers3, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, ClipboardCheck, Flame, HeartHandshake, Layers3, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -211,6 +211,22 @@ export function ChangeStageSheet({ lead, onClose, onSaved }) {
     <ActionModal title="Change stage" subtitle="Move this lead to any stage directly — useful when the real-world status is ahead of what's logged here." icon={Layers3} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save stage">
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Stage<select required name="stage" value={form.stage} onChange={update} className={fieldClass}>{LEAD_STAGES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason (optional)<textarea maxLength={1000} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Client confirmed by phone before this lead was entered" /></label>
+    </ActionModal>
+  );
+}
+
+export function ChangePrioritySheet({ lead, onClose, onSaved }) {
+  const [form, setForm] = useState({ priority: lead.priority, reason: "" });
+  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const { saving, error, submit } = useSubmit(
+    () => api.patch(`/leads/${lead.id}/priority`, form),
+    onSaved,
+  );
+
+  return (
+    <ActionModal title="Change priority" subtitle="Adjust how urgently this lead needs follow-up." icon={Flame} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save priority">
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Priority<select required name="priority" value={form.priority} onChange={update} className={fieldClass}>{PRIORITIES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason (optional)<textarea maxLength={1000} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Client asked for an expedited timeline" /></label>
     </ActionModal>
   );
 }

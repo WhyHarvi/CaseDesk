@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -109,11 +109,11 @@ test("qualified outcome advances an earlier lead and records history atomically"
   assert.ok(calls.some(([kind]) => kind === "audit"));
 });
 
-test("manual stage change is allowed for any open lead and records history atomically", async () => {
+test("manual stage change is allowed for the assigned consultant and records history atomically", async () => {
   const calls = [];
   const tx = {
     lead: {
-      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "NEW" }),
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "NEW", ownerUserId: "user-1" }),
       update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
     },
     leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
@@ -135,6 +135,50 @@ test("manual stage change is allowed for any open lead and records history atomi
   assert.equal(stageHistory.newStage, "CONTACTING");
   assert.ok(calls.some(([kind]) => kind === "activity"));
   assert.ok(calls.some(([kind]) => kind === "audit"));
+});
+
+test("manual stage change rejects a consultant who does not own the lead", async () => {
+  const tx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "NEW", ownerUserId: "someone-else" }) },
+  };
+  await assert.rejects(
+    () => changeLeadStage({ auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { stage: "CONTACTING" } }, { $transaction: (op) => op(tx) }),
+    /Only an admin or this lead's assigned consultant/,
+  );
+});
+
+test("manual priority change is admin-accessible on any lead and records an audit trail", async () => {
+  const calls = [];
+  const tx = {
+    lead: {
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", priority: "NORMAL", ownerUserId: "someone-else" }),
+      update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
+    },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = {
+    auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" },
+    params: { id: "lead-1" },
+    body: { priority: "URGENT" },
+  };
+
+  const result = await changeLeadPriority(req, db);
+
+  assert.equal(result.priority, "URGENT");
+  assert.ok(calls.some(([kind]) => kind === "activity"));
+  assert.ok(calls.some(([kind]) => kind === "audit"));
+});
+
+test("manual priority change rejects a consultant who does not own the lead", async () => {
+  const tx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", priority: "NORMAL", ownerUserId: "someone-else" }) },
+  };
+  await assert.rejects(
+    () => changeLeadPriority({ auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { priority: "HIGH" } }, { $transaction: (op) => op(tx) }),
+    /Only an admin or this lead's assigned consultant/,
+  );
 });
 
 test("manual stage change rejects a no-op and leads that are not open or nurturing", async () => {

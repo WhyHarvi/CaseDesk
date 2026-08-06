@@ -350,6 +350,7 @@ enum LeadActivityType {
   LEAD_REACTIVATED
   LEAD_MERGED
   LEAD_PROMOTED_TO_PIPELINE
+  PRIORITY_CHANGED
 }
 
 enum LeadActivityDirection {

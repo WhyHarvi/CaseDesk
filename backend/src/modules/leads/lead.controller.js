@@ -134,3 +134,7 @@ export async function promoteLeadToPipeline(req, res) {
 export async function changeLeadStage(req, res) {
   res.json({ data: await service.changeLeadStage(req) });
 }
+
+export async function changeLeadPriority(req, res) {
+  res.json({ data: await service.changeLeadPriority(req) });
+}

@@ -298,6 +298,13 @@ export function parseLeadStageChange(body = {}) {
   };
 }
 
+export function parseLeadPriorityChange(body = {}) {
+  return {
+    priority: enumValue(body.priority, "priority", LEAD_PRIORITIES),
+    reason: text(body.reason, "reason", { max: 1000 }),
+  };
+}
+
 export function parseLeadLost(body = {}) {
   return {
     reasonCode: enumValue(body.reasonCode, "reasonCode", LOST_REASONS),

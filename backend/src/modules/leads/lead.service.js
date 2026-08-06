@@ -1,10 +1,10 @@
 import prisma from "../../services/prisma/client.js";
 import { createHttpError } from "../../utils/http.js";
 import { nextClientNumber } from "../../services/clientNumberService.js";
-import { canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
+import { assertLeadWorkflowEditable, canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
+import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 import { notifyUsers } from "../../services/notificationService.js";
@@ -476,6 +476,7 @@ export async function changeLeadStage(req, db = prisma) {
   const actorId = req.auth.userId;
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
+    assertLeadWorkflowEditable(req, lead);
     if (!["OPEN", "NURTURE"].includes(lead.status)) throw createHttpError(409, "Only open or nurtured leads can have their stage changed.", "LEAD_NOT_OPEN");
     if (values.stage === lead.stage) throw createHttpError(409, "This lead is already at that stage.", "LEAD_STAGE_UNCHANGED");
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { stage: values.stage, version: { increment: 1 } }, include: leadInclude });
@@ -483,6 +484,22 @@ export async function changeLeadStage(req, db = prisma) {
     const stageLabel = values.stage.toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "STAGE_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: `Stage changed to ${stageLabel}`, description: values.reason, performedById: actorId, metadata: { previousStage: lead.stage, newStage: values.stage, manual: true } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.stage_changed", details: `${lead.leadNumber}: ${lead.stage} → ${values.stage}`, entityType: "lead", entityId: lead.id, metadata: { previousStage: lead.stage, newStage: values.stage } } });
+    return updated;
+  }, leadTransactionOptions);
+}
+
+export async function changeLeadPriority(req, db = prisma) {
+  const values = parseLeadPriorityChange(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    assertLeadWorkflowEditable(req, lead);
+    if (!["OPEN", "NURTURE"].includes(lead.status)) throw createHttpError(409, "Only open or nurtured leads can have their priority changed.", "LEAD_NOT_OPEN");
+    if (values.priority === lead.priority) throw createHttpError(409, "This lead is already at that priority.", "LEAD_PRIORITY_UNCHANGED");
+    const updated = await tx.lead.update({ where: { id: lead.id }, data: { priority: values.priority, version: { increment: 1 } }, include: leadInclude });
+    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "PRIORITY_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: `Priority changed to ${values.priority.charAt(0)}${values.priority.slice(1).toLowerCase()}`, description: values.reason, performedById: actorId, metadata: { previousPriority: lead.priority, newPriority: values.priority } } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.priority_changed", details: `${lead.leadNumber}: ${lead.priority} → ${values.priority}`, entityType: "lead", entityId: lead.id, metadata: { previousPriority: lead.priority, newPriority: values.priority } } });
     return updated;
   }, leadTransactionOptions);
 }

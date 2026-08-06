@@ -1,4 +1,5 @@
 import { portalDataScope } from "../../services/portalAccessService.js";
+import { createHttpError } from "../../utils/http.js";
 
 // Role-based visibility only — deliberately NOT scoped by pipelineSegment.
 // A lead's segment (STANDARD vs IMPORT_REVIEW) only matters for list/report
@@ -33,4 +34,15 @@ export function leadSegmentWhere(segment = "STANDARD") {
 
 export function canCreateLead(req) {
   return ["admin", "consultant", "frontdesk"].includes(req.auth.role);
+}
+
+// Workflow fields (stage, priority) an admin can always edit; a consultant
+// only on leads they currently own. Frontdesk never — they triage the queue,
+// they don't drive the pipeline. Ownership reassignment is stricter still
+// (admin only, see lead.routes.js) since it's the one workflow edit that
+// changes who else can act on the lead at all.
+export function assertLeadWorkflowEditable(req, lead) {
+  if (req.auth.role === "admin") return;
+  if (req.auth.role === "consultant" && lead.ownerUserId === req.auth.userId) return;
+  throw createHttpError(403, "Only an admin or this lead's assigned consultant can change that.", "FORBIDDEN");
 }

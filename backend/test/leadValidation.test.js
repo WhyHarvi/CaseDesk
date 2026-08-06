@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeEmail, normalizePhone, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadConversion, parseLeadListQuery, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation } from "../src/modules/leads/lead.validation.js";
+import { normalizeEmail, normalizePhone, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadConversion, parseLeadListQuery, parseLeadPriorityChange, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation } from "../src/modules/leads/lead.validation.js";
 import { leadSearchWhere } from "../src/modules/leads/lead.service.js";
 
 test("lead input normalizes email and common phone formatting", () => {
@@ -64,6 +64,12 @@ test("stage change accepts any real stage and rejects anything else", () => {
   assert.equal(parseLeadStageChange({ stage: "CONTACTING", reason: "Already spoke to them" }).reason, "Already spoke to them");
   assert.throws(() => parseLeadStageChange({ stage: "MADE_UP_STAGE" }), /stage is invalid/);
   assert.throws(() => parseLeadStageChange({}), /stage is invalid/);
+});
+
+test("priority change accepts only the real priority values", () => {
+  assert.equal(parseLeadPriorityChange({ priority: "URGENT" }).priority, "URGENT");
+  assert.throws(() => parseLeadPriorityChange({ priority: "SUPER_URGENT" }), /priority is invalid/);
+  assert.throws(() => parseLeadPriorityChange({}), /priority is invalid/);
 });
 
 test("consultation validation enforces time ranges and completed outcomes", () => {
