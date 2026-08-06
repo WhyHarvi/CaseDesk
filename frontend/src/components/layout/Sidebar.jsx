@@ -222,13 +222,17 @@ function UpdateBadge({ count, collapsed = false }) {
 function NavItem({ item, collapsed, onNavigate, role }) {
   const Icon = item.icon;
   const focusUrl = String(item.badge?.focus?.actionUrl || "");
-  let target = item.to;
-  if (item.badge?.total && focusUrl.startsWith("/") && !focusUrl.startsWith("//")) {
-    try {
-      const focusPath = new URL(focusUrl, window.location.origin).pathname;
-      if (focusPath === item.to || focusPath.startsWith(`${item.to}/`)) target = focusUrl;
-    } catch { /* keep the module route */ }
-  }
+  // item.badge is already scoped to this exact nav item's destinationKey by
+  // the backend (sidebarCounts[item.badgeKey].focus), so any safe same-origin
+  // URL here is trusted outright. Previously this also required the focus
+  // URL's path to start with this item's own route, which silently broke
+  // every case-scoped focus link — documents/tasks/reminders/billing
+  // notifications correctly deep-link into /app/cases/:id, never into their
+  // own module route, so that check rejected them and fell back to the
+  // floating toast every time.
+  const target = item.badge?.total && focusUrl.startsWith("/") && !focusUrl.startsWith("//")
+    ? focusUrl
+    : item.to;
 
   if (item.disabled) {
     return (

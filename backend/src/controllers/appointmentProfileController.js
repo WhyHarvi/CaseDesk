@@ -1,6 +1,6 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
-import { notifyUsers } from "../services/notificationService.js";
+import { caseNotificationActionUrl, notifyUsers } from "../services/notificationService.js";
 import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 import { requireAppointmentProfile } from "../services/appointmentProfileService.js";
 
@@ -118,7 +118,9 @@ export async function createAppointmentFollowUp(req, res) {
     severity: "info",
     entityType: "follow_up",
     entityId: data.id,
-    actionUrl: appointment.caseId ? `/app/cases/${appointment.caseId}` : "/app/follow-ups",
+    actionUrl: appointment.caseId
+      ? caseNotificationActionUrl(appointment.caseId, { type: "follow_up.assigned", category: "work", entityId: data.id })
+      : `/app/follow-ups?highlight=${encodeURIComponent(data.id)}`,
     dedupeKey: `follow-up:${data.id}:assigned:${assignedUserId}`,
   });
   res.status(201).json({ data });

@@ -8,7 +8,7 @@ import { normalizeDocumentName } from "../utils/documentNames.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, formPermissionKeys, getFormPermissions, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
-import { adminRecipientIds, internalCaseRecipientIds, notifyUsers } from "../services/notificationService.js";
+import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds, notifyUsers } from "../services/notificationService.js";
 
 const maxFileSize = 25 * 1024 * 1024;
 const statuses = new Set(["Assigned", "InformationMissing", "ReadyToFill", "InProgress", "ReadyForReview", "ChangesRequested", "Approved", "SignatureRequired", "Signed", "Finalized", "NotRequired"]);
@@ -346,7 +346,7 @@ export async function monitorAssignedCaseFormRevisions({ agencyId = null, formId
       await recordFormAudit({ form: updated, event: "RevisionStatusChanged", details: `Revision status changed from ${form.versionStatus} to ${versionStatus}`, metadata: { from: form.versionStatus, to: versionStatus, availableRevision } });
       if (["UpdateAvailable", "UnsupportedRevision", "SourceUnavailable"].includes(versionStatus)) {
         const caseRecipients = await internalCaseRecipientIds(form.agencyId, form.caseId);
-        await notifyUsers({ agencyId: form.agencyId, recipientIds: caseRecipients.length ? caseRecipients : await adminRecipientIds(form.agencyId), type: `case_form.revision_${versionStatus.toLowerCase()}`, category: "documents", title: versionStatus === "UpdateAvailable" ? `New official form revision: ${form.title}` : `Official form needs attention: ${form.title}`, body: availableRevision ? `Revision ${availableRevision} is available.` : `Revision status: ${versionStatus}.`, severity: versionStatus === "UpdateAvailable" ? "warning" : "critical", entityType: "case_form", entityId: form.id, actionUrl: `/app/cases/${form.caseId}`, dedupeKey: `case-form:${form.id}:revision:${versionStatus}:${availableRevision || "none"}` });
+        await notifyUsers({ agencyId: form.agencyId, recipientIds: caseRecipients.length ? caseRecipients : await adminRecipientIds(form.agencyId), type: `case_form.revision_${versionStatus.toLowerCase()}`, category: "documents", title: versionStatus === "UpdateAvailable" ? `New official form revision: ${form.title}` : `Official form needs attention: ${form.title}`, body: availableRevision ? `Revision ${availableRevision} is available.` : `Revision status: ${versionStatus}.`, severity: versionStatus === "UpdateAvailable" ? "warning" : "critical", entityType: "case_form", entityId: form.id, actionUrl: caseNotificationActionUrl(form.caseId, { type: `case_form.revision_${versionStatus.toLowerCase()}`, category: "documents" }), dedupeKey: `case-form:${form.id}:revision:${versionStatus}:${availableRevision || "none"}` });
       }
     }
   }

@@ -170,11 +170,38 @@ export function caseTabFromNotification({ type, category, actionUrl }) {
   if (value.includes("document") || category === "documents") return "documents";
   if (value.includes("appointment") || value.includes("consultation") || category === "appointments") return "appointments";
   if (value.includes("communication") || value.includes("message") || value.includes("chat") || category === "communications") return "communication";
+  // follow_up.* shares the "work" category with task.*, so it must be
+  // checked first — otherwise the category === "work" fallback below claims
+  // every follow-up notification as the Tasks tab before this line runs.
+  if (value.includes("follow_up") || value.includes("reminder")) return "reminders";
   if (value.includes("task") || value.includes("workflow") || category === "work") return "tasks";
   if (value.includes("correspondence") || value.includes("agreement") || value.includes("letter")) return "agreementsLetters";
   if (value.includes("payment") || value.includes("invoice") || value.includes("installment") || category === "payments") return "billing";
-  if (value.includes("reminder")) return "reminders";
   return "profile";
+}
+
+const CASE_TAB_ID_TO_SLUG = {
+  profile: "profile",
+  reminders: "reminders",
+  questionnaires: "questionnaires",
+  documents: "documents",
+  forms: "forms",
+  tasks: "tasks",
+  agreementsLetters: "agreements-letters",
+  appointments: "appointments",
+  communication: "communication",
+  billing: "billing",
+};
+
+// Builds a case deep-link that lands on the tab a notification is actually
+// about instead of always the Profile tab, and highlights the specific row
+// when that tab's frontend workspace supports it (tasks, reminders,
+// documents, billing today — see useFadingHighlight.js consumers). Tabs
+// without row-highlight support yet still get routed to the correct tab.
+export function caseNotificationActionUrl(caseId, { type, category, entityId } = {}) {
+  const slug = CASE_TAB_ID_TO_SLUG[caseTabFromNotification({ type, category })] || "profile";
+  const highlight = entityId ? `&highlight=${encodeURIComponent(entityId)}` : "";
+  return `/app/cases/${caseId}?tab=${slug}${highlight}`;
 }
 
 function isAllowed(action, list) {
@@ -478,7 +505,7 @@ export async function dispatchActivityNotification(activity) {
     operations.push(notifyUsers({
       ...common,
       recipientIds: recipients.length ? recipients : await adminRecipientIds(agencyId),
-      actionUrl: `/app/cases/${caseId}`,
+      actionUrl: caseNotificationActionUrl(caseId, { type: action, category: common.category, entityId: entityId || null }),
       dedupeKey: `activity:${id}:internal`,
     }));
   }

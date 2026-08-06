@@ -2,7 +2,7 @@ import prisma from "../services/prisma/client.js";
 import { assignDefaultWorkflowToCase } from "../services/workflowService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { notifyUsers } from "../services/notificationService.js";
+import { caseNotificationActionUrl, notifyUsers } from "../services/notificationService.js";
 
 const workflowStepInclude = {
   template: {
@@ -361,7 +361,7 @@ export async function updateCaseWorkflowStep(req, res) {
       details: Object.prototype.hasOwnProperty.call(payload, "status") ? `${data.title} marked ${data.status.toLowerCase()}` : `${data.title} updated`,
     });
     if (data.assignedToId && data.assignedToId !== existing.assignedToId) {
-      await notifyUsers({ agencyId, recipientIds: [data.assignedToId], actorUserId: req.user.id, type: "task.reassigned", category: "work", title: `Task assigned: ${data.title}`, body: data.dueAt ? `Due ${data.dueAt.toISOString()}` : data.description, severity: data.priority === "Urgent" ? "critical" : data.priority === "High" ? "warning" : "info", entityType: "task", entityId: data.id, actionUrl: `/app/cases/${scopedCase.id}`, dedupeKey: `task:${data.id}:assigned:${data.assignedToId}:${data.updatedAt.toISOString()}` });
+      await notifyUsers({ agencyId, recipientIds: [data.assignedToId], actorUserId: req.user.id, type: "task.reassigned", category: "work", title: `Task assigned: ${data.title}`, body: data.dueAt ? `Due ${data.dueAt.toISOString()}` : data.description, severity: data.priority === "Urgent" ? "critical" : data.priority === "High" ? "warning" : "info", entityType: "task", entityId: data.id, actionUrl: caseNotificationActionUrl(scopedCase.id, { type: "task.reassigned", category: "work", entityId: data.id }), dedupeKey: `task:${data.id}:assigned:${data.assignedToId}:${data.updatedAt.toISOString()}` });
     }
   } else if (Object.prototype.hasOwnProperty.call(payload, "status")) {
     await recordActivity({
@@ -396,7 +396,7 @@ export async function createCaseTask(req, res) {
   const data = await prisma.caseWorkflowStep.create({ data: { agencyId, caseId: scopedCase.id, title, description, priority, status, completedAt: status === "Completed" ? new Date() : null, sortOrder: (latest._max.sortOrder || 0) + 1, isStandaloneTask: true, isActive: status !== "Cancelled", assignedToId, dueAt }, include: workflowStepInclude });
   await recordActivity({ agencyId, userId: req.user.id, clientId: scopedCase.clientId, caseId: scopedCase.id, action: "task.created", details: `${data.title} created${data.assignedTo ? ` and assigned to ${data.assignedTo.fullName}` : ""}` });
   if (data.assignedToId) {
-    await notifyUsers({ agencyId, recipientIds: [data.assignedToId], actorUserId: req.user.id, type: "task.assigned", category: "work", title: `Task assigned: ${data.title}`, body: data.dueAt ? `Due ${data.dueAt.toISOString()}` : data.description, severity: data.priority === "Urgent" ? "critical" : data.priority === "High" ? "warning" : "info", entityType: "task", entityId: data.id, actionUrl: `/app/cases/${scopedCase.id}`, dedupeKey: `task:${data.id}:assigned:${data.assignedToId}` });
+    await notifyUsers({ agencyId, recipientIds: [data.assignedToId], actorUserId: req.user.id, type: "task.assigned", category: "work", title: `Task assigned: ${data.title}`, body: data.dueAt ? `Due ${data.dueAt.toISOString()}` : data.description, severity: data.priority === "Urgent" ? "critical" : data.priority === "High" ? "warning" : "info", entityType: "task", entityId: data.id, actionUrl: caseNotificationActionUrl(scopedCase.id, { type: "task.assigned", category: "work", entityId: data.id }), dedupeKey: `task:${data.id}:assigned:${data.assignedToId}` });
   }
   res.status(201).json({ data });
 }

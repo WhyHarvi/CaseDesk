@@ -2,7 +2,7 @@ import { createCrudController, fieldParsers, recordActivity } from "../utils/pri
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
-import { notifyUsers, resolveNotifications } from "../services/notificationService.js";
+import { caseNotificationActionUrl, notifyUsers, resolveNotifications } from "../services/notificationService.js";
 import { appointmentProfileAccessWhere } from "../services/appointmentProfileService.js";
 import { portalDataScope } from "../services/portalAccessService.js";
 
@@ -114,7 +114,9 @@ const controller = createCrudController({
       severity: data.priority === "High" ? "warning" : "info",
       entityType: "follow_up",
       entityId: data.id,
-      actionUrl: data.caseId ? `/app/cases/${data.caseId}` : "/app/follow-ups",
+      actionUrl: data.caseId
+        ? caseNotificationActionUrl(data.caseId, { type: "follow_up.assigned", category: "work", entityId: data.id })
+        : `/app/follow-ups?highlight=${encodeURIComponent(data.id)}`,
       dedupeKey: `follow-up:${data.id}:assigned:${data.assignedUserId}`,
     });
   },
@@ -144,7 +146,9 @@ const controller = createCrudController({
         severity: data.priority === "High" ? "warning" : "info",
         entityType: "follow_up",
         entityId: data.id,
-        actionUrl: data.caseId ? `/app/cases/${data.caseId}` : "/app/follow-ups",
+        actionUrl: data.caseId
+          ? caseNotificationActionUrl(data.caseId, { type: "follow_up.reassigned", category: "work", entityId: data.id })
+          : `/app/follow-ups?highlight=${encodeURIComponent(data.id)}`,
         dedupeKey: `follow-up:${data.id}:assigned:${data.assignedUserId}:${data.updatedAt.toISOString()}`,
       });
     }

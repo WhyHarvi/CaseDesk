@@ -2,7 +2,7 @@ import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
-import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import { adminRecipientIds, caseNotificationActionUrl, notifyUsers } from "./notificationService.js";
 
 function frontendBase() {
   return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -176,7 +176,7 @@ export async function notifyStaffInstallmentVoided({ agencyId, installment, acto
       severity: "warning",
       entityType: "casePaymentInstallment",
       entityId: installment.id,
-      actionUrl: `/app/cases/${installment.caseId}?tab=billing`,
+      actionUrl: caseNotificationActionUrl(installment.caseId, { type: "installment.voided", category: "payments", entityId: installment.caseInvoiceId || null }),
       dedupeKey: `installment-voided:${installment.id}`,
     });
   } catch (error) {

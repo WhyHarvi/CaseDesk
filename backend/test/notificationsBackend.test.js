@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  caseNotificationActionUrl,
   caseTabFromNotification,
   destinationFromNotification,
 } from "../src/services/notificationService.js";
@@ -174,6 +175,48 @@ test("case workspace notifications map to the tab containing the affected record
   assert.equal(caseTabFromNotification({ type: "case_form.review_comment_added", category: "documents", actionUrl: "/app/cases/case-1" }), "forms");
   assert.equal(caseTabFromNotification({ type: "communication.portal_message_received", category: "communications", actionUrl: "/app/cases/case-1" }), "communication");
   assert.equal(caseTabFromNotification({ type: "installment.invoiced", category: "payments", actionUrl: "/app/cases/case-1?tab=billing" }), "billing");
+  // follow_up.* shares the "work" category with task.* — a follow-up must
+  // still resolve to the Reminders tab, not fall through to Tasks just
+  // because of the shared category.
+  assert.equal(caseTabFromNotification({ type: "follow_up.due", category: "work" }), "reminders");
+  assert.equal(caseTabFromNotification({ type: "follow_up.overdue", category: "work" }), "reminders");
+  assert.equal(caseTabFromNotification({ type: "task.overdue", category: "work" }), "tasks");
+});
+
+test("case notification links land on the right tab and highlight the specific row when the workspace supports it", () => {
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "task.overdue", category: "work", entityId: "task-1" }),
+    "/app/cases/case-1?tab=tasks&highlight=task-1",
+  );
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "follow_up.reminder", category: "work", entityId: "followup-1" }),
+    "/app/cases/case-1?tab=reminders&highlight=followup-1",
+  );
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "client_document.file_uploaded", category: "documents", entityId: "doc-1" }),
+    "/app/cases/case-1?tab=documents&highlight=doc-1",
+  );
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "installment.voided", category: "payments", entityId: "invoice-1" }),
+    "/app/cases/case-1?tab=billing&highlight=invoice-1",
+  );
+  // No entityId (or a tab whose workspace has no row-highlight support yet,
+  // e.g. Forms/Agreements/Communication) still lands on the correct tab —
+  // it just has nothing to append after it.
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "case_form.revision_updateavailable", category: "documents" }),
+    "/app/cases/case-1?tab=forms",
+  );
+  assert.equal(
+    caseNotificationActionUrl("case-1", { type: "case.updated", category: "cases" }),
+    "/app/cases/case-1?tab=profile",
+  );
+});
+
+test("sidebar nav trusts a scoped focus link outright instead of re-checking it against the clicked item's own route", async () => {
+  const sidebar = await source("../../frontend/src/components/layout/Sidebar.jsx");
+  assert.doesNotMatch(sidebar, /focusPath === item\.to \|\| focusPath\.startsWith/);
+  assert.match(sidebar, /item\.badge\?\.total && focusUrl\.startsWith\("\/"\) && !focusUrl\.startsWith\("\/\/"\)\s*\n\s*\? focusUrl\s*\n\s*: item\.to/);
 });
 
 test("staff, case, and client sidebars consume one aggregated destination count system", async () => {

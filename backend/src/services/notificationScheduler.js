@@ -2,6 +2,7 @@ import prisma from "./prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import {
   adminRecipientIds,
+  caseNotificationActionUrl,
   clientRecipientIds,
   internalCaseRecipientIds,
   notifyUsers,
@@ -12,7 +13,6 @@ let timer = null;
 let running = false;
 
 const isoKey = (value) => new Date(value).toISOString();
-const caseUrl = (caseId) => `/app/cases/${caseId}`;
 const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]);
@@ -110,7 +110,7 @@ async function taskNotifications(now, horizon) {
       severity: overdue ? "critical" : "warning",
       entityType: "task",
       entityId: task.id,
-      actionUrl: caseUrl(task.caseId),
+      actionUrl: caseNotificationActionUrl(task.caseId, { type: overdue ? "task.overdue" : "task.due_soon", category: "work", entityId: task.id }),
       dedupeKey: `task:${task.id}:${overdue ? "overdue" : "due"}:${isoKey(task.dueAt)}`,
       scheduledFor: overdue ? null : task.dueAt,
       attentionLevel: overdue ? "action_required" : "update",
@@ -147,7 +147,9 @@ async function followUpNotifications(now, horizon) {
       severity: milestone === "overdue" ? "critical" : "warning",
       entityType: "follow_up",
       entityId: item.id,
-      actionUrl: item.caseId ? caseUrl(item.caseId) : "/app/follow-ups",
+      actionUrl: item.caseId
+        ? caseNotificationActionUrl(item.caseId, { type: `follow_up.${milestone}`, category: "work", entityId: item.id })
+        : `/app/follow-ups?highlight=${encodeURIComponent(item.id)}`,
       dedupeKey: `follow-up:${item.id}:${milestone}:${isoKey(item.reminderAt || item.dueDate)}`,
       scheduledFor: milestone === "due" ? item.dueDate : null,
       attentionLevel: milestone === "overdue" || milestone === "reminder" ? "action_required" : "update",
@@ -305,14 +307,20 @@ async function communicationSlaNotifications(now, horizon) {
   const conversations = await prisma.communicationConversation.findMany({
     where: { state: { in: ["Open", "WaitingOnAgency"] }, deletedAt: null, OR: [{ responseDueAt: { not: null, lte: horizon } }, { resolutionDueAt: { not: null, lte: horizon } }] },
     take: 500,
-    select: { id: true, agencyId: true, caseId: true, assignedToId: true, subject: true, responseDueAt: true, resolutionDueAt: true },
+    select: { id: true, agencyId: true, clientId: true, caseId: true, assignedToId: true, subject: true, responseDueAt: true, resolutionDueAt: true },
   });
   for (const item of conversations) {
     const recipients = item.assignedToId ? [item.assignedToId] : await internalCaseRecipientIds(item.agencyId, item.caseId);
     for (const [kind, dueAt] of [["response", item.responseDueAt], ["resolution", item.resolutionDueAt]]) {
       if (!dueAt || dueAt > horizon) continue;
       const overdue = dueAt < now;
-      await notifyUsers({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(item.agencyId), type: `communication.${kind}_${overdue ? "breached" : "due"}`, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl: caseUrl(item.caseId), dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
+      const type = `communication.${kind}_${overdue ? "breached" : "due"}`;
+      // Conversations aren't always case-scoped — client-only chats have no
+      // caseId, and building a case link for those produced "/app/cases/null".
+      const actionUrl = item.caseId
+        ? caseNotificationActionUrl(item.caseId, { type, category: "communications" })
+        : `/app/clients/${item.clientId}?conversation=${encodeURIComponent(item.id)}`;
+      await notifyUsers({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(item.agencyId), type, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl, dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
     }
   }
 }
