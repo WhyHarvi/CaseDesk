@@ -220,7 +220,7 @@ function UpdateBadge({ count, collapsed = false }) {
       title={title}
       aria-label={title}
       className={[
-        "inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-none text-white shadow-sm transition-all duration-200 motion-safe:animate-pulse",
+        "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold tabular-nums leading-none text-white shadow-sm",
         needsAction ? "bg-rose-500 shadow-rose-200" : "bg-sky-500 shadow-sky-200",
         collapsed ? "absolute -right-1 -top-1 ring-2 ring-slate-50" : "ml-auto",
       ].join(" ")}

@@ -36,9 +36,9 @@ export default function ClientPortalBottomNav() {
             >
               {({ isActive }) => (
                 <>
-                  <span className={["relative flex h-8 w-14 items-center justify-center rounded-full transition-all duration-200", isActive ? "bg-sky-100" : "bg-transparent", count?.total ? count.actions ? "shadow-[0_0_16px_rgba(244,63,94,0.38)]" : "shadow-[0_0_16px_rgba(14,165,233,0.34)]" : ""].join(" ")}>
+                  <span className={["relative flex h-8 w-14 items-center justify-center rounded-full transition-all duration-200", isActive ? "bg-sky-100" : "bg-transparent"].join(" ")}>
                     <Icon className="h-[18px] w-[18px]" />
-                    {count?.total ? <span aria-label={`${count.total} unread items`} className={`absolute -right-0.5 -top-1 inline-flex min-h-[17px] min-w-[17px] animate-pulse items-center justify-center rounded-full px-1 text-[9px] font-bold text-white ring-2 ring-white ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span> : null}
+                    {count?.total ? <span aria-label={`${count.total} unread items`} className={`absolute -right-0.5 -top-1 inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums text-white ring-2 ring-white ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span> : null}
                   </span>
                   <span className="truncate">{item.label}</span>
                 </>

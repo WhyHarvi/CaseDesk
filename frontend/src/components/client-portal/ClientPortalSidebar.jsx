@@ -16,7 +16,7 @@ const items = [
 function PortalBadge({ count }) {
   if (!count?.total) return null;
   const title = `${count.total} unread ${count.total === 1 ? "item" : "items"}${count.actions ? ` · ${count.actions} require action` : ""}`;
-  return <span title={title} aria-label={title} className={`ml-auto inline-flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold text-white shadow-sm ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span>;
+  return <span title={title} aria-label={title} className={`ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-bold tabular-nums text-white shadow-sm ${count.actions ? "bg-rose-500" : "bg-sky-500"}`}>{count.total > 99 ? "99+" : count.total}</span>;
 }
 
 // Desktop-only companion to ClientPortalBottomNav.jsx (mobile keeps the
@@ -61,11 +61,6 @@ export default function ClientPortalSidebar() {
                 [
                   "flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-all duration-200",
                   isActive ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-white hover:text-slate-800",
-                  count?.total
-                    ? count.actions
-                      ? "ring-1 ring-rose-300/80 bg-rose-50/70 shadow-[0_0_18px_rgba(244,63,94,0.22)]"
-                      : "ring-1 ring-sky-300/80 bg-sky-50/70 shadow-[0_0_18px_rgba(14,165,233,0.2)]"
-                    : "",
                 ].join(" ")
               }
             >

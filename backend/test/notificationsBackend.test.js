@@ -227,7 +227,8 @@ test("sidebar badges mark attention but always open the normal section route", a
   const sidebar = await source("../../frontend/src/components/layout/Sidebar.jsx");
   assert.match(sidebar, /to=\{item\.to\}/);
   assert.doesNotMatch(sidebar, /focusUrl|badge\?\.focus\?\.actionUrl/);
-  assert.match(sidebar, /motion-safe:animate-pulse/);
+  assert.match(sidebar, /tabular-nums/);
+  assert.doesNotMatch(sidebar, /animate-pulse|shadow-\[0_0_18px/);
   assert.match(sidebar, /acknowledgeDestination\(item\.badgeKey\)/);
 });
 
@@ -257,7 +258,9 @@ test("staff, case, and client sidebars consume one aggregated destination count 
   assert.doesNotMatch(staffSidebar, /focusDestination/);
   assert.match(staffSidebar, /badgeKey: "payments"/);
   assert.match(portalSidebar, /portalChat/);
+  assert.doesNotMatch(portalSidebar, /animate-pulse|shadow-\[0_0_18px/);
   assert.match(portalBottom, /portalDocuments/);
+  assert.doesNotMatch(portalBottom, /animate-pulse|shadow-\[0_0_16px/);
   assert.match(caseTabs, /caseTabCounts/);
   assert.match(caseTabs, /acknowledgeDestination/);
 });
