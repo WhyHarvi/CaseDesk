@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BriefcaseBusiness,
   CalendarClock,
@@ -16,12 +16,13 @@ import {
   DatabaseZap,
   Inbox,
 } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import logo from "../../assets/logo.png";
 import { useAuth } from "../../auth/AuthContext";
 import { prefetchRoute } from "../../services/routePrefetch";
 import { getPortalAccess } from "../../auth/portalAccess";
 import { useNotifications } from "../notifications/NotificationProvider";
+import api from "../../services/api";
 
 const adminNavigation = [
   {
@@ -75,6 +76,7 @@ const adminNavigation = [
     icon: Inbox,
     description: "Bulk-imported leads awaiting cleanup",
     disabled: false,
+    badgeKey: "importReview",
   },
   {
     label: "Cases",
@@ -148,7 +150,7 @@ const memberNavigation = [
     accessKey: "dashboard",
   },
   { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads" },
-  { label: "Import Review", to: "/leads/review", icon: Inbox, accessKey: "leads" },
+  { label: "Import Review", to: "/leads/review", icon: Inbox, accessKey: "leads", badgeKey: "importReview" },
   {
     label: "Lead Intake",
     to: "/lead-intake",
@@ -230,8 +232,6 @@ function UpdateBadge({ count, collapsed = false }) {
 
 function NavItem({ item, collapsed, onNavigate, role }) {
   const Icon = item.icon;
-  const hasUnread = Boolean(item.badge?.total);
-  const needsAction = Boolean(item.badge?.actions);
 
   if (item.disabled) {
     return (
@@ -280,11 +280,6 @@ function NavItem({ item, collapsed, onNavigate, role }) {
               ? "text-slate-900"
               : "bg-sky-100 text-slate-900"
             : "text-slate-500 hover:bg-sky-50 hover:text-slate-700",
-          hasUnread
-            ? needsAction
-              ? "ring-1 ring-rose-300/80 bg-rose-50/70 shadow-[0_0_18px_rgba(244,63,94,0.22)]"
-              : "ring-1 ring-sky-300/80 bg-sky-50/70 shadow-[0_0_18px_rgba(14,165,233,0.2)]"
-            : "",
         ].join(" ")
       }
     >
@@ -331,9 +326,25 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
   const { role, appUser, membership, signOut } = useAuth();
   const access = getPortalAccess(role, membership?.permissions);
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
+  const location = useLocation();
   const navigation = (
     role === "admin" ? adminNavigation : memberNavigation
   ).filter((item) => !item.accessKey || access.pages[item.accessKey]);
+
+  // Import Review isn't a notification stream (no read/unread state), just a
+  // backlog size — so it rides on its own lightweight count instead of the
+  // notification system, refreshed whenever the user leaves that page since
+  // that's when a promotion (the only thing that changes the count) happens.
+  const [importReviewCount, setImportReviewCount] = useState(0);
+  useEffect(() => {
+    if (!access.pages.leads) return;
+    let active = true;
+    api.get("/leads?segment=IMPORT_REVIEW&limit=1")
+      .then((response) => { if (active) setImportReviewCount(response.data.meta?.total || 0); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [access.pages.leads, location.pathname]);
+  const badgeCounts = { ...sidebarCounts, importReview: { total: importReviewCount, actions: importReviewCount } };
   const initials =
     appUser?.fullName
       ?.split(" ")
@@ -385,7 +396,7 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
         {navigation.map((item) => (
           <NavItem
             key={item.label}
-            item={{ ...item, badge: item.badgeKey ? sidebarCounts[item.badgeKey] : null }}
+            item={{ ...item, badge: item.badgeKey ? badgeCounts[item.badgeKey] : null }}
             collapsed={collapsed}
             onNavigate={() => {
               if (item.badgeKey) {
