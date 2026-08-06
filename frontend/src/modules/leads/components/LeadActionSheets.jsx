@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, ClipboardCheck, Flame, HeartHandshake, Layers3, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -12,7 +12,6 @@ const FOLLOW_UP_TYPES = ["PHONE_CALL", "EMAIL", "SMS", "WHATSAPP", "MEETING", "D
 const LOST_REASONS = ["NO_RESPONSE", "NOT_INTERESTED", "NOT_ELIGIBLE", "PRICE_CONCERN", "SELECTED_ANOTHER_CONSULTANT", "CONSULTATION_NO_SHOW", "AGREEMENT_NOT_SIGNED", "PAYMENT_NOT_COMPLETED", "SERVICE_NOT_OFFERED", "WRONG_CONTACT_INFORMATION", "DUPLICATE", "DO_NOT_CONTACT", "OTHER"];
 const QUALIFICATION_OUTCOMES = ["QUALIFIED", "MORE_INFORMATION_REQUIRED", "CONSULTATION_REQUIRED", "NOT_ELIGIBLE", "FUTURE_OPPORTUNITY", "SERVICE_NOT_OFFERED"];
 const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"];
-const LEAD_STAGES = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
 
 function localInput(offsetMs = 0) {
   const date = new Date(Date.now() + offsetMs);
@@ -199,37 +198,6 @@ export function QualifyLeadSheet({ lead, onClose, onSaved }) {
   );
 }
 
-export function ChangeStageSheet({ lead, onClose, onSaved }) {
-  const [form, setForm] = useState({ stage: lead.stage, reason: "" });
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
-  const { saving, error, submit } = useSubmit(
-    () => api.patch(`/leads/${lead.id}/stage`, form),
-    onSaved,
-  );
-
-  return (
-    <ActionModal title="Change stage" subtitle="Move this lead to any stage directly — useful when the real-world status is ahead of what's logged here." icon={Layers3} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save stage">
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Stage<select required name="stage" value={form.stage} onChange={update} className={fieldClass}>{LEAD_STAGES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason (optional)<textarea maxLength={1000} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Client confirmed by phone before this lead was entered" /></label>
-    </ActionModal>
-  );
-}
-
-export function ChangePrioritySheet({ lead, onClose, onSaved }) {
-  const [form, setForm] = useState({ priority: lead.priority, reason: "" });
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
-  const { saving, error, submit } = useSubmit(
-    () => api.patch(`/leads/${lead.id}/priority`, form),
-    onSaved,
-  );
-
-  return (
-    <ActionModal title="Change priority" subtitle="Adjust how urgently this lead needs follow-up." icon={Flame} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save priority">
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Priority<select required name="priority" value={form.priority} onChange={update} className={fieldClass}>{PRIORITIES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason (optional)<textarea maxLength={1000} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Client asked for an expedited timeline" /></label>
-    </ActionModal>
-  );
-}
 
 export function CreateFollowUpSheet({ lead, staff, currentUserId, onClose, onSaved }) {
   const [form, setForm] = useState({ assignedUserId: currentUserId || lead.ownerUserId || "", type: "PHONE_CALL", description: "", dueAt: localInput(24 * 60 * 60_000) });

@@ -24,11 +24,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../auth/AuthContext";
 import api from "../../../services/api";
-import { formatDueDate, humanize, initials, leadName, statusTone } from "../leadPresentation";
+import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, statusTone } from "../leadPresentation";
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { ChangePrioritySheet, ChangeStageSheet, CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 
@@ -40,14 +40,30 @@ const tabs = [
   { id: "messages", label: "Messages", icon: MessageSquareText },
 ];
 
-function SummaryValue({ label, value, onEdit }) {
+// `select`, when present, replaces the plain value with a real <select> —
+// pick the new value directly in the grid, no popup panel. Used for Stage
+// and Priority, which are short fixed lists; Owner stays a pencil-icon
+// button into a proper sheet since reassigning needs a reason on record.
+function SummaryValue({ label, value, onEdit, select }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-1.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
         {onEdit ? <button type="button" onClick={onEdit} aria-label={`Change ${label.toLowerCase()}`} className="text-slate-300 transition hover:text-brand-600"><Pencil className="h-3 w-3" /></button> : null}
       </div>
-      <p className="mt-1 truncate text-sm font-semibold text-slate-800">{value || "—"}</p>
+      {select ? (
+        <select
+          value={select.value}
+          disabled={select.disabled}
+          onChange={(event) => select.onChange(event.target.value)}
+          aria-label={`Change ${label.toLowerCase()}`}
+          className="mt-1 -ml-1.5 w-[calc(100%+0.75rem)] max-w-full truncate rounded-lg border border-transparent bg-transparent py-0.5 pl-1.5 pr-1 text-sm font-semibold text-slate-800 outline-none transition hover:border-slate-200 hover:bg-slate-50 focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100 disabled:opacity-60"
+        >
+          {select.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      ) : (
+        <p className="mt-1 truncate text-sm font-semibold text-slate-800">{value || "—"}</p>
+      )}
     </div>
   );
 }
@@ -84,6 +100,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [selectedAppointmentTab, setSelectedAppointmentTab] = useState("details");
   const [promoting, setPromoting] = useState(false);
   const [promoteError, setPromoteError] = useState("");
+  const [stageSaving, setStageSaving] = useState(false);
+  const [prioritySaving, setPrioritySaving] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
@@ -132,6 +151,36 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       setPromoteError(requestError.response?.data?.message || "This lead could not be promoted.");
     } finally {
       setPromoting(false);
+    }
+  }
+
+  async function updateStage(nextStage) {
+    if (nextStage === lead.stage) return;
+    try {
+      setStageSaving(true);
+      setWorkflowError("");
+      const response = await api.patch(`/leads/${lead.id}/stage`, { stage: nextStage });
+      setLead((current) => ({ ...current, ...response.data.data }));
+      onChanged();
+    } catch (requestError) {
+      setWorkflowError(requestError.response?.data?.message || "Stage could not be changed.");
+    } finally {
+      setStageSaving(false);
+    }
+  }
+
+  async function updatePriority(nextPriority) {
+    if (nextPriority === lead.priority) return;
+    try {
+      setPrioritySaving(true);
+      setWorkflowError("");
+      const response = await api.patch(`/leads/${lead.id}/priority`, { priority: nextPriority });
+      setLead((current) => ({ ...current, ...response.data.data }));
+      onChanged();
+    } catch (requestError) {
+      setWorkflowError(requestError.response?.data?.message || "Priority could not be changed.");
+    } finally {
+      setPrioritySaving(false);
     }
   }
 
@@ -224,11 +273,22 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     </section>
                   ) : null}
 
-                  <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-2xl border border-slate-200/70 bg-white p-5 sm:grid-cols-4">
-                    <SummaryValue label="Stage" value={humanize(lead.stage)} onEdit={canEditWorkflow ? () => setActiveAction("change-stage") : null} />
-                    <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} onEdit={canReassign ? () => setActiveAction("reassign") : null} />
-                    <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
-                    <SummaryValue label="Priority" value={humanize(lead.priority)} onEdit={canEditWorkflow ? () => setActiveAction("change-priority") : null} />
+                  <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
+                    {workflowError ? <p className="mb-3 text-xs font-medium text-rose-600">{workflowError}</p> : null}
+                    <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4">
+                      <SummaryValue
+                        label="Stage"
+                        value={humanize(lead.stage)}
+                        select={canEditWorkflow ? { value: lead.stage, disabled: stageSaving, onChange: updateStage, options: LEAD_STAGES.map((value) => ({ value, label: humanize(value) })) } : null}
+                      />
+                      <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} onEdit={canReassign ? () => setActiveAction("reassign") : null} />
+                      <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
+                      <SummaryValue
+                        label="Priority"
+                        value={humanize(lead.priority)}
+                        select={canEditWorkflow ? { value: lead.priority, disabled: prioritySaving, onChange: updatePriority, options: LEAD_PRIORITIES.map((value) => ({ value, label: humanize(value) })) } : null}
+                      />
+                    </div>
                   </section>
 
                   {!isFrontdesk && (lead.status === "OPEN" || lead.qualification) ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
@@ -380,8 +440,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "change-stage" ? <ChangeStageSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "change-priority" ? <ChangePrioritySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}

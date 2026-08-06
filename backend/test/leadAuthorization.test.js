@@ -29,10 +29,9 @@ test("lead dashboard and report endpoints are admin-only", async () => {
 });
 
 test("stage, priority, and owner each have a real endpoint with the right role gate and a UI entry point on the lead sheet", async () => {
-  const [routes, leadDetail, actionSheets] = await Promise.all([
+  const [routes, leadDetail] = await Promise.all([
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
-    readFile(new URL("../../frontend/src/modules/leads/components/LeadActionSheets.jsx", import.meta.url), "utf8"),
   ]);
   // Owner reassignment is admin-only; stage and priority are admin or the
   // consultant currently assigned to the lead.
@@ -40,15 +39,15 @@ test("stage, priority, and owner each have a real endpoint with the right role g
   assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadStage\)\)/);
   assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadPriority\)\)/);
 
+  // Owner still opens a proper sheet (needs a reason on record); stage and
+  // priority are inline <select>s directly in the summary grid — no popup.
   assert.match(leadDetail, /canReassign = isWorkable && role === "admin"/);
   assert.match(leadDetail, /canEditWorkflow = isWorkable && \(role === "admin" \|\| \(role === "consultant" && ownsLead\)\)/);
-  assert.match(leadDetail, /onEdit=\{canEditWorkflow \? \(\) => setActiveAction\("change-stage"\) : null\}/);
   assert.match(leadDetail, /onEdit=\{canReassign \? \(\) => setActiveAction\("reassign"\) : null\}/);
-  assert.match(leadDetail, /onEdit=\{canEditWorkflow \? \(\) => setActiveAction\("change-priority"\) : null\}/);
-
-  assert.match(actionSheets, /title="Change stage"/);
-  assert.match(actionSheets, /title="Change priority"/);
-  assert.match(actionSheets, /api\.patch\(`\/leads\/\$\{lead\.id\}\/priority`, form\)/);
+  assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.stage, disabled: stageSaving, onChange: updateStage,/);
+  assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.priority, disabled: prioritySaving, onChange: updatePriority,/);
+  assert.match(leadDetail, /api\.patch\(`\/leads\/\$\{lead\.id\}\/stage`, \{ stage: nextStage \}\)/);
+  assert.match(leadDetail, /api\.patch\(`\/leads\/\$\{lead\.id\}\/priority`, \{ priority: nextPriority \}\)/);
 });
 
 test("Import Review has its own promote action, ledger view, sidebar entry, and route — separate from the standard Leads page", async () => {
