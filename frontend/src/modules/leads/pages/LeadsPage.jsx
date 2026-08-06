@@ -1,5 +1,5 @@
 import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, FilterX, Layers3, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import QuickAddLeadSheet from "../components/QuickAddLeadSheet";
@@ -9,6 +9,12 @@ import { formatDueDate, humanize, initials, leadName, LEAD_STAGES, LEAD_STATUSES
 
 function ListSkeleton() {
   return <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-[72px] animate-pulse rounded-xl bg-slate-100" />)}</div>;
+}
+
+function SelectAllCheckbox({ checked, indeterminate, onChange }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate; }, [indeterminate]);
+  return <input ref={ref} type="checkbox" checked={checked} onChange={onChange} className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" aria-label="Select all leads on this page" />;
 }
 
 const SEGMENT_COPY = {
@@ -42,6 +48,10 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   const [supportingDataError, setSupportingDataError] = useState("");
   const [selectedLead, setSelectedLead] = useState(null);
   const requestedLeadId = params.get("lead") || "";
+  const canBulkPromote = segment === "IMPORT_REVIEW";
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkPromoting, setBulkPromoting] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
 
   // segment is a route-level prop (which sidebar page you're on), not a
   // user-toggleable filter, so it rides along on every fetch without ever
@@ -75,6 +85,9 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   }, [queryString]);
 
   useEffect(() => { loadLeads(); }, [loadLeads]);
+  // Selection is page/filter-scoped — leaving it around after the visible
+  // set changes would let someone "promote" a lead they can no longer see.
+  useEffect(() => { setSelectedIds(new Set()); setBulkResult(null); }, [leads]);
   useEffect(() => {
     if (!requestedLeadId || selectedLead?.id === requestedLeadId) return;
     let active = true;
@@ -152,6 +165,35 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     setParams({});
   }
 
+  function toggleSelected(id) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds((current) => (current.size === leads.length ? new Set() : new Set(leads.map((lead) => lead.id))));
+  }
+
+  async function promoteSelected() {
+    if (!selectedIds.size) return;
+    try {
+      setBulkPromoting(true);
+      setBulkResult(null);
+      const response = await api.post("/leads/promote-bulk", { leadIds: [...selectedIds] });
+      setBulkResult(response.data.data);
+      setSelectedIds(new Set());
+      loadLeads();
+    } catch (requestError) {
+      setBulkResult({ promoted: [], skipped: [], error: requestError.response?.data?.message || "Leads could not be promoted." });
+    } finally {
+      setBulkPromoting(false);
+    }
+  }
+
   return (
     <section className="space-y-5 pb-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -185,17 +227,39 @@ export default function LeadsPage({ segment = "STANDARD" }) {
           </div>
         </div>
 
+        {canBulkPromote && selectedIds.size > 0 ? (
+          <div className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3">
+            <p className="text-sm font-semibold text-brand-900">{selectedIds.size} lead{selectedIds.size === 1 ? "" : "s"} selected</p>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setSelectedIds(new Set())} className="text-xs font-semibold text-brand-700 hover:underline">Clear</button>
+              <button type="button" disabled={bulkPromoting} onClick={promoteSelected} className="inline-flex h-9 items-center justify-center rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60">{bulkPromoting ? "Promoting…" : `Promote ${selectedIds.size} to pipeline`}</button>
+            </div>
+          </div>
+        ) : null}
+        {bulkResult ? (
+          <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 text-sm ${bulkResult.error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+            {bulkResult.error ? bulkResult.error : (
+              <>
+                <p className="font-semibold">{bulkResult.promoted.length} lead{bulkResult.promoted.length === 1 ? "" : "s"} promoted to the active pipeline.</p>
+                {bulkResult.skipped.length ? <p className="mt-1 text-xs text-emerald-800">{bulkResult.skipped.length} skipped (already promoted or no longer accessible).</p> : null}
+              </>
+            )}
+            <button type="button" onClick={() => setBulkResult(null)} className="mt-1.5 text-xs font-semibold underline">Dismiss</button>
+          </div>
+        ) : null}
+
         {error ? <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><p>{error}</p><button type="button" onClick={loadLeads} className="mt-2 font-semibold">Try again</button></div> : null}
         {loading ? <ListSkeleton /> : !leads.length ? (
           <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UserRoundSearch className="h-5 w-5" /></div><h2 className="mt-4 text-base font-semibold text-slate-900">{hasFilters ? "No matching leads" : copy.emptyTitle}</h2><p className="mt-1 max-w-sm text-sm text-slate-500">{hasFilters ? "Adjust or clear the filters to see more results." : copy.emptyDescription}</p></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-left">
-              <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"><th className="px-5 py-3">Lead</th><th className="px-4 py-3">Source and interest</th><th className="px-4 py-3">Progress</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Next action</th></tr></thead>
+              <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{canBulkPromote ? <th className="w-10 px-5 py-3"><SelectAllCheckbox checked={selectedIds.size > 0 && selectedIds.size === leads.length} indeterminate={selectedIds.size > 0 && selectedIds.size < leads.length} onChange={toggleSelectAll} /></th> : null}<th className="px-5 py-3">Lead</th><th className="px-4 py-3">Source and interest</th><th className="px-4 py-3">Progress</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Next action</th></tr></thead>
               <tbody>{groupedLeads.map((group) => (
                 <Fragment key={group.key ?? "all"}>
-                  {group.label ? <tr><td colSpan={5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
+                  {group.label ? <tr><td colSpan={canBulkPromote ? 6 : 5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
                   {group.items.map((lead) => { const due = formatDueDate(lead.nextActionAt); return <tr key={lead.id} role="button" tabIndex={0} onClick={() => setSelectedLead(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLead(lead); } }} className="cursor-pointer border-b border-slate-100 text-sm outline-none transition last:border-0 hover:bg-brand-50/45 focus:bg-brand-50/70">
+                    {canBulkPromote ? <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelected(lead.id)} className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" aria-label={`Select ${leadName(lead)}`} /></td> : null}
                     <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div></div></td>
                     <td className="px-4 py-4"><p className="font-medium text-slate-700">{lead.originalSource?.name || "Unknown source"}</p><p className="mt-0.5 max-w-[190px] truncate text-xs text-slate-400">{lead.immigrationInterest || "Interest not specified"}</p></td>
                     <td className="px-4 py-4"><div className="flex items-center gap-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusTone[lead.status] || statusTone.ARCHIVED}`}>{humanize(lead.status)}</span><span className="text-xs font-medium text-slate-600">{humanize(lead.stage)}</span></div><p className="mt-1.5 text-xs text-slate-400">{humanize(lead.temperature)} · {humanize(lead.priority)}</p></td>

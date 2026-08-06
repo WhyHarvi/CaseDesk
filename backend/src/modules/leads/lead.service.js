@@ -470,6 +470,37 @@ export async function promoteLeadToPipeline(req, db = prisma) {
   }, leadTransactionOptions);
 }
 
+// One transaction per lead rather than one giant transaction for the whole
+// batch — a single bad id (already promoted, deleted, out of access scope)
+// shouldn't roll back everyone else's promotion. Sequential, not
+// Promise.all, since the dev DB pool is sized down to a single connection
+// (see runtimeDatabaseUrl in prisma/client.js) and concurrent transactions
+// there would just serialize behind the pool anyway — better to be
+// deliberate about it than rely on that happening to work out.
+export async function bulkPromoteLeadsToPipeline(req, db = prisma) {
+  const ids = [...new Set((Array.isArray(req.body?.leadIds) ? req.body.leadIds : []).filter((id) => typeof id === "string" && id))].slice(0, 500);
+  if (!ids.length) throw createHttpError(400, "Select at least one lead to promote.", "VALIDATION_ERROR");
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  const promoted = [];
+  const skipped = [];
+  for (const id of ids) {
+    try {
+      await db.$transaction(async (tx) => {
+        const lead = await requireLead(tx, req, id);
+        if (lead.pipelineSegment === "STANDARD") { skipped.push({ id, leadNumber: lead.leadNumber, reason: "Already in the active pipeline." }); return; }
+        await tx.lead.update({ where: { id: lead.id }, data: { pipelineSegment: "STANDARD", version: { increment: 1 } } });
+        await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_PROMOTED_TO_PIPELINE", direction: "INTERNAL", channel: "SYSTEM", title: "Promoted to active pipeline", performedById: actorId, metadata: { bulk: true } } });
+        await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.promoted_to_pipeline", details: `${lead.leadNumber} moved from Import Review to the active pipeline (bulk)`, entityType: "lead", entityId: lead.id } });
+        promoted.push({ id, leadNumber: lead.leadNumber });
+      }, leadTransactionOptions);
+    } catch (error) {
+      skipped.push({ id, reason: error.message || "Could not be promoted." });
+    }
+  }
+  return { promoted, skipped };
+}
+
 export async function changeLeadStage(req, db = prisma) {
   const values = parseLeadStageChange(req.body);
   const agencyId = req.auth.agencyId;

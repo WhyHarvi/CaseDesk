@@ -131,6 +131,10 @@ export async function promoteLeadToPipeline(req, res) {
   res.json({ data: await service.promoteLeadToPipeline(req) });
 }
 
+export async function bulkPromoteLeadsToPipeline(req, res) {
+  res.json({ data: await service.bulkPromoteLeadsToPipeline(req) });
+}
+
 export async function changeLeadStage(req, res) {
   res.json({ data: await service.changeLeadStage(req) });
 }

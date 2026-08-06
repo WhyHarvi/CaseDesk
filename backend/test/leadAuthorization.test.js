@@ -59,11 +59,14 @@ test("Import Review has its own promote action, ledger view, sidebar entry, and 
     readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
   ]);
   assert.match(routes, /router\.post\("\/:id\/promote", asyncHandler\(promoteLeadToPipeline\)\)/);
+  assert.match(routes, /router\.post\("\/promote-bulk", asyncHandler\(bulkPromoteLeadsToPipeline\)\)/);
   assert.match(routes, /router\.get\("\/ledger\/import-review", requireRole\("admin"\), asyncHandler\(listImportReviewLedgerEntries\)\)/);
   assert.match(sidebar, /to: "\/leads\/review"/);
   assert.match(appRoutes, /path="\/leads\/review"/);
   assert.match(appRoutes, /<LeadsPage segment="IMPORT_REVIEW" \/>/);
   assert.match(leadsPage, /segment !== "STANDARD"/);
+  assert.match(leadsPage, /canBulkPromote = segment === "IMPORT_REVIEW"/);
+  assert.match(leadsPage, /api\.post\("\/leads\/promote-bulk", \{ leadIds: \[\.\.\.selectedIds\] \}\)/);
   assert.match(leadDetail, /lead\.pipelineSegment === "IMPORT_REVIEW"/);
   assert.match(leadDetail, /Promote to pipeline/);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -169,6 +169,40 @@ test("manual priority change is admin-accessible on any lead and records an audi
   assert.equal(result.priority, "URGENT");
   assert.ok(calls.some(([kind]) => kind === "activity"));
   assert.ok(calls.some(([kind]) => kind === "audit"));
+});
+
+test("bulk promote processes each lead independently, skipping ones already promoted or not found", async () => {
+  const activityCalls = [];
+  const leadsById = {
+    "lead-1": { id: "lead-1", leadNumber: "LD-2026-000001", pipelineSegment: "IMPORT_REVIEW" },
+    "lead-2": { id: "lead-2", leadNumber: "LD-2026-000002", pipelineSegment: "STANDARD" },
+  };
+  const tx = {
+    lead: {
+      findFirst: async ({ where }) => leadsById[where.id] || null,
+      update: async ({ where, data }) => { Object.assign(leadsById[where.id], data); return leadsById[where.id]; },
+    },
+    leadActivity: { create: async ({ data }) => activityCalls.push(data) },
+    activityLog: { create: async () => {} },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = { auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" }, body: { leadIds: ["lead-1", "lead-2", "missing-lead"] } };
+
+  const result = await bulkPromoteLeadsToPipeline(req, db);
+
+  assert.deepEqual(result.promoted.map((item) => item.id), ["lead-1"]);
+  assert.equal(result.skipped.length, 2);
+  assert.ok(result.skipped.some((item) => item.id === "lead-2" && /already/i.test(item.reason)));
+  assert.ok(result.skipped.some((item) => item.id === "missing-lead"));
+  assert.equal(leadsById["lead-1"].pipelineSegment, "STANDARD");
+  assert.equal(activityCalls.length, 1);
+});
+
+test("bulk promote requires at least one lead id", async () => {
+  await assert.rejects(
+    () => bulkPromoteLeadsToPipeline({ auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" }, body: { leadIds: [] } }, {}),
+    /Select at least one lead/,
+  );
 });
 
 test("manual priority change rejects a consultant who does not own the lead", async () => {

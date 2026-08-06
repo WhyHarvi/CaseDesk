@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { assignLead, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
+import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, getImport, getOperations, listEvents, listForms, listImports, previewImport, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
@@ -50,6 +50,7 @@ router.post("/:id/assign", requireRole("admin"), asyncHandler(assignLead));
 router.post("/:id/nurture", asyncHandler(moveLeadToNurture));
 router.post("/:id/lost", asyncHandler(markLeadLost));
 router.post("/:id/promote", asyncHandler(promoteLeadToPipeline));
+router.post("/promote-bulk", asyncHandler(bulkPromoteLeadsToPipeline));
 router.post("/:id/qualify", requireRole("admin", "consultant"), asyncHandler(qualifyLead));
 router.patch("/:id/stage", requireRole("admin", "consultant"), asyncHandler(changeLeadStage));
 router.patch("/:id/priority", requireRole("admin", "consultant"), asyncHandler(changeLeadPriority));
