@@ -41,6 +41,15 @@ export async function createLeadLedgerEntry(req, res) {
   res.status(201).json({ data: entry });
 }
 
+export async function listImportReviewLedgerEntries(req, res) {
+  const data = await prisma.caseManualLedgerEntry.findMany({
+    where: { agencyId: req.auth.agencyId, lead: { pipelineSegment: "IMPORT_REVIEW" } },
+    orderBy: { createdAt: "asc" },
+    include: { lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true } } },
+  });
+  res.json({ data });
+}
+
 export async function listCaseLedgerEntries(req, res) {
   const kase = await requireCaseForLedger(req);
   const data = await prisma.caseManualLedgerEntry.findMany({ where: { agencyId: req.auth.agencyId, caseId: kase.id }, orderBy: { createdAt: "asc" } });

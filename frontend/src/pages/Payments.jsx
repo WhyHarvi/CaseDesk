@@ -27,6 +27,8 @@ import {
   getPaymentsOverview,
   getPaymentsOverviewSummary,
 } from "../api/paymentsOverviewApi";
+import api from "../services/api";
+import { leadName } from "../modules/leads/leadPresentation";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
 const moneyWhole = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
@@ -756,11 +758,85 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
   );
 }
 
+const LEDGER_STATUS_TONE = {
+  Unpaid: "bg-slate-100 text-slate-600 ring-slate-200",
+  "Partially Paid": "bg-amber-50 text-amber-600 ring-amber-100",
+  Paid: "bg-emerald-50 text-emerald-600 ring-emerald-100",
+};
+
+// Read-only by design — "just render what's there" for the Import Review
+// batch's ledger entries. Editing still happens on the lead itself (the
+// same ManualLedgerPanel used in LeadDetailSheet's Payments tab); this view
+// exists so staff can scan collected/outstanding amounts across the whole
+// batch without leaving the Payments page or polluting its default view.
+function ImportReviewLedgerSection() {
+  const [entries, setEntries] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api.get("/leads/ledger/import-review")
+      .then((response) => { if (active) setEntries(response.data.data); })
+      .catch((requestError) => active && setError(requestError.response?.data?.message || "Import review ledger could not be loaded."));
+    return () => { active = false; };
+  }, []);
+
+  const totals = useMemo(() => {
+    if (!entries) return { owed: 0, paid: 0 };
+    return entries.reduce((sum, entry) => ({ owed: sum.owed + Number(entry.amountOwed), paid: sum.paid + Number(entry.amountPaid) }), { owed: 0, paid: 0 });
+  }, [entries]);
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "overflow-hidden p-5 sm:p-7")}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-950">Import review ledger</h2>
+          <p className="mt-1 text-sm text-slate-500">Payment entries recorded against leads still in Import Review. Edit these from the lead itself.</p>
+        </div>
+        {entries?.length ? (
+          <div className="flex gap-4 text-sm">
+            <div><p className="text-xs text-slate-400">Owed</p><p className="font-semibold text-slate-900">{money.format(totals.owed)}</p></div>
+            <div><p className="text-xs text-slate-400">Paid</p><p className="font-semibold text-emerald-600">{money.format(totals.paid)}</p></div>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? <p className="mt-4 text-sm text-rose-600">{error}</p> : null}
+      {!error && !entries ? <p className="mt-4 text-sm text-slate-500">Loading…</p> : null}
+      {entries && !entries.length ? <p className="mt-4 text-sm text-slate-500">No ledger entries recorded for Import Review leads yet.</p> : null}
+
+      {entries?.length ? (
+        <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200/70">
+          <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+            <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"><th className="px-4 py-3">Lead</th><th className="px-4 py-3">Label</th><th className="px-4 py-3">Owed</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Status</th></tr></thead>
+            <tbody>{entries.map((entry, index) => (
+              <tr key={entry.id} className={cx("text-slate-700", index ? "border-t border-slate-100" : "")}>
+                <td className="px-4 py-3"><p className="font-medium text-slate-900">{leadName(entry.lead || {})}</p><p className="text-xs text-slate-400">{entry.lead?.leadNumber}</p></td>
+                <td className="px-4 py-3">{entry.label}</td>
+                <td className="px-4 py-3 font-medium">{money.format(Number(entry.amountOwed))}</td>
+                <td className="px-4 py-3 font-medium text-emerald-600">{money.format(Number(entry.amountPaid))}</td>
+                <td className="px-4 py-3"><span className={cx("inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset", LEDGER_STATUS_TONE[entry.status] || LEDGER_STATUS_TONE.Unpaid)}>{entry.status}</span></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : null}
+    </motion.section>
+  );
+}
+
 export default function Payments() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedHoldId = searchParams.get("hold") || "";
   const selectedRefundId = searchParams.get("refund") || "";
+  const view = searchParams.get("view") === "import-review" ? "import-review" : "payments";
+  const setView = (nextView) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextView === "import-review") next.set("view", "import-review");
+    else next.delete("view");
+    setSearchParams(next);
+  };
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
@@ -821,12 +897,24 @@ export default function Payments() {
     <main className="min-w-0 bg-[radial-gradient(circle_at_12%_-4%,rgba(56,130,246,0.10),transparent_36%),radial-gradient(circle_at_92%_16%,rgba(139,92,246,0.08),transparent_38%)] px-3 py-4 sm:px-5 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1680px] min-w-0 flex-col gap-5">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "overflow-hidden p-5 sm:p-7 lg:p-8")}>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Payments</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-500 sm:text-base">
-            Every case invoice, consultation booking payment, and legacy retainer across the agency — trends first, details below.
-          </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Payments</h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-500 sm:text-base">
+                Every case invoice, consultation booking payment, and legacy retainer across the agency — trends first, details below.
+              </p>
+            </div>
+            <FilterDropdown
+              value={view}
+              onChange={setView}
+              options={[{ value: "payments", label: "Payments" }, { value: "import-review", label: "Import review ledger" }]}
+              placeholder="Payments"
+            />
+          </div>
         </motion.div>
 
+        {view === "payments" ? (
+        <>
         {summary?.manualBookingCount > 0 ? (
           <motion.section
             initial={{ opacity: 0, y: 12 }}
@@ -1043,6 +1131,10 @@ export default function Payments() {
             </div>
           ) : null}
         </motion.section>
+        </>
+        ) : (
+          <ImportReviewLedgerSection />
+        )}
       </div>
       <AnimatePresence>{selectedHoldId ? <PaymentHoldDrawer key={selectedHoldId} holdId={selectedHoldId} onClose={closePaymentHold} onChanged={() => setRefreshKey((value) => value + 1)} /> : null}</AnimatePresence>
       <AnimatePresence>{selectedRefundId ? <RefundReviewDrawer key={selectedRefundId} refundReceiptId={selectedRefundId} onClose={closeRefundReview} /> : null}</AnimatePresence>

@@ -114,6 +114,7 @@ export function parseLeadListQuery(query = {}) {
   const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
   const status = query.status ? enumValue(query.status, "status", LEAD_STATUSES) : null;
   const stage = query.stage ? enumValue(query.stage, "stage", LEAD_STAGES) : null;
+  const segment = enumValue(query.segment, "segment", ["STANDARD", "IMPORT_REVIEW"], "STANDARD");
   const sortBy = ["createdAt", "updatedAt", "nextActionAt", "leadNumber", "inquiryDate"].includes(query.sortBy) ? query.sortBy : "createdAt";
   const sortDirection = query.sortDirection === "asc" ? "asc" : "desc";
   const monthMatch = /^(\d{4})-(\d{2})$/.exec(String(query.month || "").trim());
@@ -124,6 +125,7 @@ export function parseLeadListQuery(query = {}) {
     limit,
     status,
     stage,
+    segment,
     sortBy,
     sortDirection,
     month,

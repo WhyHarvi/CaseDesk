@@ -1,6 +1,6 @@
 import prisma from "../../services/prisma/client.js";
 import { createHttpError } from "../../utils/http.js";
-import { leadAccessWhere } from "./lead.permissions.js";
+import { leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { conversionRate, DEFAULT_INACTIVE_LEAD_DAYS, INVALID_CONVERSION_STATUSES, reportingBounds } from "./lead.metrics.js";
 
 const DRILLDOWN_METRICS = ["followUpsDueToday", "overdueFollowUps", "slaMissed", "consultationsToday"];
@@ -33,9 +33,9 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
   const { todayStart, tomorrowStart, weekStart } = reportingBounds(now, timezone);
   const inactiveBefore = new Date(now.getTime() - DEFAULT_INACTIVE_LEAD_DAYS * 24 * 60 * 60_000);
   const access = leadAccessWhere(req);
-  const baseLeadWhere = { agencyId, deletedAt: null, ...access };
+  const baseLeadWhere = { agencyId, deletedAt: null, ...access, ...leadSegmentWhere() };
   const openLeadWhere = { ...baseLeadWhere, status: "OPEN" };
-  const relatedLeadWhere = { agencyId, deletedAt: null, ...access };
+  const relatedLeadWhere = { agencyId, deletedAt: null, ...access, ...leadSegmentWhere() };
 
   const [
     newToday,
@@ -156,7 +156,7 @@ export async function getLeadDashboardDrilldown(req, db = prisma, now = new Date
   const timezone = agency?.timezone || "America/Toronto";
   const { todayStart, tomorrowStart } = reportingBounds(now, timezone);
   const access = leadAccessWhere(req);
-  const relatedLeadWhere = { agencyId, deletedAt: null, ...access };
+  const relatedLeadWhere = { agencyId, deletedAt: null, ...access, ...leadSegmentWhere() };
 
   if (metric === "followUpsDueToday" || metric === "overdueFollowUps") {
     const dueAt = metric === "followUpsDueToday" ? { gte: todayStart, lt: tomorrowStart } : { lt: now };

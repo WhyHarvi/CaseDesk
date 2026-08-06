@@ -274,6 +274,18 @@ enum LeadStage {
   READY_TO_CONVERT
 }
 
+// Which working queue a lead lives in — not a funnel stage. STANDARD is the
+// normal, staff-worked pipeline (Leads page/dashboard/reports). IMPORT_REVIEW
+// is a holding area for bulk-imported batches with data-quality problems
+// (missing contact info, unverified stages) that need staff review/cleanup
+// before they're trusted enough to show up alongside real leads. Promoting a
+// lead just flips this back to STANDARD — everything else about it (stage,
+// activities, follow-ups, ledger) carries over unchanged.
+enum LeadPipelineSegment {
+  STANDARD
+  IMPORT_REVIEW
+}
+
 enum LeadPriority {
   LOW
   NORMAL
@@ -337,6 +349,7 @@ enum LeadActivityType {
   LEAD_MOVED_TO_NURTURE
   LEAD_REACTIVATED
   LEAD_MERGED
+  LEAD_PROMOTED_TO_PIPELINE
 }
 
 enum LeadActivityDirection {
@@ -3076,6 +3089,7 @@ model Lead {
   immigrationInterest      String?                  @map("immigration_interest")
   status                   LeadStatus               @default(OPEN)
   stage                    LeadStage                @default(NEW)
+  pipelineSegment          LeadPipelineSegment      @default(STANDARD) @map("pipeline_segment")
   priority                 LeadPriority             @default(NORMAL)
   temperature              LeadTemperature          @default(COLD)
   inquiryDate              DateTime                 @default(now()) @map("inquiry_date")
@@ -3129,6 +3143,7 @@ model Lead {
   @@unique([agencyId, leadNumber])
   @@index([agencyId, status])
   @@index([agencyId, stage])
+  @@index([agencyId, pipelineSegment])
   @@index([agencyId, ownerUserId])
   @@index([agencyId, nextActionAt])
   @@index([agencyId, createdAt])

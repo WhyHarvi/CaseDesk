@@ -1,7 +1,7 @@
 import prisma from "../../services/prisma/client.js";
 import { createHttpError } from "../../utils/http.js";
 import { nextClientNumber } from "../../services/clientNumberService.js";
-import { canCreateLead, leadAccessWhere } from "./lead.permissions.js";
+import { canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
 import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
@@ -155,7 +155,7 @@ export function leadSearchWhere(search) {
 }
 
 export async function listLeads(req) {
-  const { page, limit, search, status, stage, sourceId, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
+  const { page, limit, search, status, stage, segment, sourceId, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
 
   // Only computed when a date-scoped dashboard flag is present — same
   // bounds getLeadDashboard() uses, so a stat card's count and this list
@@ -173,6 +173,7 @@ export async function listLeads(req) {
       leadAccessWhere(req),
       ...(search ? [leadSearchWhere(search)] : []),
     ],
+    ...leadSegmentWhere(segment),
     ...(status ? { status } : {}),
     ...(stage ? { stage } : {}),
     ...(sourceId ? { originalSourceId: sourceId } : {}),
@@ -452,6 +453,19 @@ export async function markLeadLost(req, db = prisma) {
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { status: "LOST", lostAt, nurtureUntil: null, nextActionType: null, nextActionDescription: null, nextActionAt: null, nextActionOwnerId: null, version: { increment: 1 } }, include: leadInclude });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_LOST", direction: "INTERNAL", channel: "SYSTEM", outcome: values.reasonCode, title: "Lead marked lost", description: values.notes, performedById: actorId, metadata: { reasonCode: values.reasonCode } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.marked_lost", details: `${lead.leadNumber}: ${values.reasonCode}`, entityType: "lead", entityId: lead.id, metadata: { reasonCode: values.reasonCode } } });
+    return updated;
+  }, leadTransactionOptions);
+}
+
+export async function promoteLeadToPipeline(req, db = prisma) {
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    if (lead.pipelineSegment === "STANDARD") throw createHttpError(409, "This lead is already in the active pipeline.", "LEAD_ALREADY_STANDARD");
+    const updated = await tx.lead.update({ where: { id: lead.id }, data: { pipelineSegment: "STANDARD", version: { increment: 1 } }, include: leadInclude });
+    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_PROMOTED_TO_PIPELINE", direction: "INTERNAL", channel: "SYSTEM", title: "Promoted to active pipeline", performedById: actorId } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.promoted_to_pipeline", details: `${lead.leadNumber} moved from Import Review to the active pipeline`, entityType: "lead", entityId: lead.id } });
     return updated;
   }, leadTransactionOptions);
 }

@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { leadSegmentWhere } from "../modules/leads/lead.permissions.js";
 import {
   deleteAuthUser,
   findAuthUserByEmail,
@@ -581,8 +582,7 @@ async function loadAgencyWorkloads(agencyId) {
           agencyId,
           deletedAt: null,
           status: "OPEN",
-          importedRows: { none: {} },
-          activities: { none: { title: "Admissions detail (imported)" } },
+          ...leadSegmentWhere(),
         },
         select: {
           id: true,

@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   HeartHandshake,
+  Inbox,
   Landmark,
   Mail,
   MapPin,
@@ -78,6 +79,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [closingFollowUp, setClosingFollowUp] = useState(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
   const [selectedAppointmentTab, setSelectedAppointmentTab] = useState("details");
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
@@ -113,6 +116,20 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   function refreshLead() {
     api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {});
     onChanged();
+  }
+
+  async function promoteLead() {
+    try {
+      setPromoting(true);
+      setPromoteError("");
+      const response = await api.post(`/leads/${lead.id}/promote`);
+      setLead((current) => ({ ...current, ...response.data.data }));
+      onChanged();
+    } catch (requestError) {
+      setPromoteError(requestError.response?.data?.message || "This lead could not be promoted.");
+    } finally {
+      setPromoting(false);
+    }
   }
 
   function actionCompleted() {
@@ -187,6 +204,19 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
               {tab === "overview" ? (
                 <div className="space-y-5">
+                  {lead.pipelineSegment === "IMPORT_REVIEW" ? (
+                    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-900"><Inbox className="h-4 w-4" />Import Review</h3>
+                          <p className="mt-1 text-xs leading-5 text-amber-700">This lead came from the bulk import and isn't part of the active pipeline yet. Fix up its details, then promote it once it's ready to work like any other lead.</p>
+                        </div>
+                        {!isFrontdesk ? <button type="button" onClick={promoteLead} disabled={promoting} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-amber-600 px-4 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-60">{promoting ? "Promoting…" : "Promote to pipeline"}</button> : null}
+                      </div>
+                      {promoteError ? <p className="mt-3 text-xs font-medium text-rose-700">{promoteError}</p> : null}
+                    </section>
+                  ) : null}
+
                   <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-2xl border border-slate-200/70 bg-white p-5 sm:grid-cols-4">
                     <SummaryValue label="Stage" value={humanize(lead.stage)} />
                     <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} />

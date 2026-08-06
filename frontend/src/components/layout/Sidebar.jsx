@@ -14,6 +14,7 @@ import {
   BarChart3,
   Waypoints,
   DatabaseZap,
+  Inbox,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/logo.png";
@@ -67,6 +68,13 @@ const adminNavigation = [
     description: "Inquiry pipeline",
     disabled: false,
     badgeKey: "leads",
+  },
+  {
+    label: "Import Review",
+    to: "/leads/review",
+    icon: Inbox,
+    description: "Bulk-imported leads awaiting cleanup",
+    disabled: false,
   },
   {
     label: "Cases",
@@ -140,6 +148,7 @@ const memberNavigation = [
     accessKey: "dashboard",
   },
   { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads" },
+  { label: "Import Review", to: "/leads/review", icon: Inbox, accessKey: "leads" },
   {
     label: "Lead Intake",
     to: "/lead-intake",

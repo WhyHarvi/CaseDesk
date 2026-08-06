@@ -18,18 +18,17 @@ const source = (relativePath) =>
   readFile(new URL(relativePath, import.meta.url), "utf8");
 
 test("front desk receives agency-wide lead access without changing consultant scope", () => {
-  const hideImported = { importedRows: { none: {} }, activities: { none: { title: "Admissions detail (imported)" } } };
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "admin", userId: "admin-1" } }),
-    hideImported,
+    {},
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }),
-    { ownerUserId: "consultant-1", ...hideImported },
+    { ownerUserId: "consultant-1" },
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "frontdesk", userId: "frontdesk-1" } }),
-    hideImported,
+    {},
   );
   assert.equal(canCreateLead({ auth: { role: "frontdesk" } }), true);
   assert.equal(canCreateLead({ auth: { role: "client" } }), false);

@@ -3,7 +3,7 @@ import {
   clientAccessWhere,
   relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
-import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
+import { leadAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
 import prisma from "../services/prisma/client.js";
 import {
   hasPortalCapability,
@@ -33,6 +33,7 @@ async function searchLeads(req, query, digits) {
     where: {
       agencyId: req.auth.agencyId,
       deletedAt: null,
+      ...leadSegmentWhere(),
       AND: [
         leadAccessWhere(req),
         {

@@ -368,6 +368,14 @@ export default function AppRoutes() {
           }
         />
         <Route
+          path="/leads/review"
+          element={
+            <Access page="leads">
+              <LeadsPage segment="IMPORT_REVIEW" />
+            </Access>
+          }
+        />
+        <Route
           path="/lead-dashboard"
           element={
             <AdminRoute>

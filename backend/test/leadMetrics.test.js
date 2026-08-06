@@ -23,7 +23,7 @@ test("consultant dashboard queries stay agency and owner scoped", async () => {
     lead: {
       count: async ({ where }) => {
         leadWheres.push(where);
-        const exactOpenQueue = Object.keys(where).sort().join(",") === "activities,agencyId,deletedAt,importedRows,ownerUserId,status" && where.status === "OPEN";
+        const exactOpenQueue = Object.keys(where).sort().join(",") === "agencyId,deletedAt,ownerUserId,pipelineSegment,status" && where.status === "OPEN";
         return exactOpenQueue ? 17 : 0;
       },
       aggregate: async ({ where }) => { leadWheres.push(where); return { _sum: { estimatedValue: 2000 } }; },

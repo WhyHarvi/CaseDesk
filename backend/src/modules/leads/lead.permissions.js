@@ -1,21 +1,11 @@
 import { portalDataScope } from "../../services/portalAccessService.js";
 
-// Leads bulk-imported from the Aug 2026 Admissions spreadsheet cleanup have
-// widespread data-quality problems (missing contact info, missing payment
-// records) and are hidden from every lead-facing surface — list, dashboard,
-// reports, search, and direct lookups — until that batch is reviewed.
-// LeadImportRow.createdLeadId covers everything that went through the
-// CSV/Excel pipeline; the ~5 "confirmed student" placeholder leads (zero
-// contact info anywhere in the source file) were created directly by a
-// one-off script instead, so they carry no import-row link — every lead from
-// that batch does carry an "Admissions detail (imported)" activity though,
-// so that closes the gap. Both are exact provenance matches, not heuristics.
-// Remove this clause once the batch has been cleaned up.
-const HIDE_IMPORTED_LEADS = {
-  importedRows: { none: {} },
-  activities: { none: { title: "Admissions detail (imported)" } },
-};
-
+// Role-based visibility only — deliberately NOT scoped by pipelineSegment.
+// A lead's segment (STANDARD vs IMPORT_REVIEW) only matters for list/report
+// surfaces, which merge in leadSegmentWhere() below explicitly; a single
+// record (getLead/requireLead and every action built on it — edit, activity,
+// follow-up, qualify, ledger) stays reachable regardless of segment once you
+// already have its id, e.g. from the Import Review list.
 export function leadAccessWhere(req) {
   // Frontdesk works the incoming lead queue for the whole agency, not just
   // whichever single user a website/intake connection happened to name as
@@ -24,13 +14,21 @@ export function leadAccessWhere(req) {
   // like a consultant (owned leads only) left frontdesk staff seeing an
   // empty list whenever they weren't the configured connection owner.
   const scope = portalDataScope(req, "leads");
-  if (req.auth.role === "admin" || scope === "all") return { ...HIDE_IMPORTED_LEADS };
+  if (req.auth.role === "admin" || scope === "all") return {};
   if (
     ["consultant", "frontdesk"].includes(req.auth.role) &&
     scope === "assigned"
   )
-    return { ownerUserId: req.auth.userId, ...HIDE_IMPORTED_LEADS };
+    return { ownerUserId: req.auth.userId };
   return { id: "__denied__" };
+}
+
+// Which working queue a list/report query should draw from. Defaults to the
+// normal staff-worked pipeline; the Import Review page explicitly passes
+// "IMPORT_REVIEW" to see the bulk-imported batch instead. See the
+// LeadPipelineSegment comment in schema.prisma for the full rationale.
+export function leadSegmentWhere(segment = "STANDARD") {
+  return { pipelineSegment: segment };
 }
 
 export function canCreateLead(req) {

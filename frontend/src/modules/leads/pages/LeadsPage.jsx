@@ -11,7 +11,25 @@ function ListSkeleton() {
   return <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-[72px] animate-pulse rounded-xl bg-slate-100" />)}</div>;
 }
 
-export default function LeadsPage() {
+const SEGMENT_COPY = {
+  STANDARD: {
+    eyebrow: "Lead management",
+    title: "Leads",
+    description: "Every inquiry, one owner, one next action.",
+    emptyTitle: "No leads yet",
+    emptyDescription: "Capture the first inquiry with Quick Add.",
+  },
+  IMPORT_REVIEW: {
+    eyebrow: "Needs cleanup before it rejoins the pipeline",
+    title: "Import Review",
+    description: "Bulk-imported leads awaiting contact and cleanup. Fix a record, then promote it back into the active pipeline.",
+    emptyTitle: "Nothing left to review",
+    emptyDescription: "Every imported lead has been promoted back into the active pipeline.",
+  },
+};
+
+export default function LeadsPage({ segment = "STANDARD" }) {
+  const copy = SEGMENT_COPY[segment] || SEGMENT_COPY.STANDARD;
   const [params, setParams] = useSearchParams();
   const [leads, setLeads] = useState([]);
   const [meta, setMeta] = useState({ page: 1, limit: 25, total: 0 });
@@ -25,7 +43,14 @@ export default function LeadsPage() {
   const [selectedLead, setSelectedLead] = useState(null);
   const requestedLeadId = params.get("lead") || "";
 
-  const queryString = params.toString();
+  // segment is a route-level prop (which sidebar page you're on), not a
+  // user-toggleable filter, so it rides along on every fetch without ever
+  // going into the URL's own searchParams.
+  const queryString = useMemo(() => {
+    const merged = new URLSearchParams(params);
+    if (segment !== "STANDARD") merged.set("segment", segment);
+    return merged.toString();
+  }, [params, segment]);
   const updateParams = useCallback((changes) => {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -131,11 +156,11 @@ export default function LeadsPage() {
     <section className="space-y-5 pb-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">Lead management</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">Leads</h1>
-          <p className="mt-1.5 text-sm text-slate-500">Every inquiry, one owner, one next action.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">{copy.eyebrow}</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">{copy.title}</h1>
+          <p className="mt-1.5 max-w-xl text-sm text-slate-500">{copy.description}</p>
         </div>
-        <button type="button" disabled={Boolean(supportingDataError) || !sources.length || !staff.length} onClick={() => setQuickAddOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(73,104,149,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"><CirclePlus className="h-4 w-4" />Quick add</button>
+        {segment === "STANDARD" ? <button type="button" disabled={Boolean(supportingDataError) || !sources.length || !staff.length} onClick={() => setQuickAddOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(73,104,149,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"><CirclePlus className="h-4 w-4" />Quick add</button> : null}
       </header>
 
       {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{supportingDataError} Refresh the page before adding a lead.</div> : null}
@@ -162,7 +187,7 @@ export default function LeadsPage() {
 
         {error ? <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><p>{error}</p><button type="button" onClick={loadLeads} className="mt-2 font-semibold">Try again</button></div> : null}
         {loading ? <ListSkeleton /> : !leads.length ? (
-          <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UserRoundSearch className="h-5 w-5" /></div><h2 className="mt-4 text-base font-semibold text-slate-900">{hasFilters ? "No matching leads" : "No leads yet"}</h2><p className="mt-1 max-w-sm text-sm text-slate-500">{hasFilters ? "Adjust or clear the filters to see more results." : "Capture the first inquiry with Quick Add."}</p></div>
+          <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UserRoundSearch className="h-5 w-5" /></div><h2 className="mt-4 text-base font-semibold text-slate-900">{hasFilters ? "No matching leads" : copy.emptyTitle}</h2><p className="mt-1 max-w-sm text-sm text-slate-500">{hasFilters ? "Adjust or clear the filters to see more results." : copy.emptyDescription}</p></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-left">

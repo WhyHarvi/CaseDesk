@@ -68,7 +68,7 @@ test("page middleware and data scopes enforce the membership policy", () => {
     assignedUserId: "staff-1",
   });
   assert.ok(Array.isArray(caseAccessWhere(req).OR));
-  assert.deepEqual(leadAccessWhere(req), { importedRows: { none: {} }, activities: { none: { title: "Admissions detail (imported)" } } });
+  assert.deepEqual(leadAccessWhere(req), {});
 
   let nextCalled = false;
   requirePortalPage("clients")(req, {}, () => {
