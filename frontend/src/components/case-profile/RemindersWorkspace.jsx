@@ -1,6 +1,6 @@
 import { Bell, CalendarClock, FileText, Plus, Search, Send, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { formatDate } from "./caseProfileUtils";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
@@ -11,6 +11,13 @@ const templates = [
   { name: "Appointment reminder", subject: "Upcoming appointment reminder", message: "Hello, this is a reminder about your upcoming appointment. Please let us know if you need to reschedule." },
 ];
 const blankForm = { expires: "", sendReminder: "", reminderDate: "", notifications: "Email", subject: "", message: "" };
+
+function reminderView(reminder, now = new Date()) {
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const due = reminder?.dueDate ? new Date(reminder.dueDate) : null;
+  return reminder?.status !== "Completed" && due && due < startOfToday ? "past" : "upcoming";
+}
 
 function ReminderOverlay({ saving, error, onClose, onSave }) {
   const [form, setForm] = useState(blankForm); const [templateSearch, setTemplateSearch] = useState(""); const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -23,7 +30,10 @@ function ReminderOverlay({ saving, error, onClose, onSave }) {
 
 export default function RemindersWorkspace({ reminders, saving, error, highlightId, onCreate }) {
   const [view, setView] = useState("upcoming"); const [overlayOpen, setOverlayOpen] = useState(false);
-  const filtered = useMemo(() => { const today = new Date(); today.setHours(0, 0, 0, 0); return reminders.filter((item) => { const due = item.dueDate ? new Date(item.dueDate) : null; return view === "past" ? item.status !== "Completed" && due && due < today : item.status !== "Completed" && (!due || due >= today); }).sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0)); }, [reminders, view]);
-  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-followup-" });
+  const highlightedReminder = useMemo(() => reminders.find((item) => item.id === highlightId) || null, [highlightId, reminders]);
+  useEffect(() => { if (highlightedReminder) setView(reminderView(highlightedReminder)); }, [highlightedReminder]);
+  const filtered = useMemo(() => reminders.filter((item) => reminderView(item) === view && item.status !== "Completed").sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0)), [reminders, view]);
+  const highlightReady = Boolean(highlightId && filtered.some((item) => item.id === highlightId));
+  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-followup-", ready: highlightReady, deps: [view, filtered.length] });
   return <div className="space-y-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="relative inline-flex w-fit rounded-full bg-slate-100 p-1"><motion.div layout transition={{ type: "spring", stiffness: 420, damping: 32 }} className={`absolute inset-y-1 w-[calc(50%-0.25rem)] rounded-full bg-white shadow-sm ${view === "upcoming" ? "left-1" : "left-[calc(50%+0.05rem)]"}`} /><button type="button" onClick={() => setView("upcoming")} className={`relative z-10 rounded-full px-3 py-1.5 text-xs font-semibold transition ${view === "upcoming" ? "text-slate-950" : "text-slate-500"}`}>Upcoming</button><button type="button" onClick={() => setView("past")} className={`relative z-10 rounded-full px-3 py-1.5 text-xs font-semibold transition ${view === "past" ? "text-slate-950" : "text-slate-500"}`}>Past due</button></div><button type="button" onClick={() => setOverlayOpen(true)} className="inline-flex w-fit items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"><Plus className="h-3.5 w-3.5" /> Add reminder</button></div><section className="overflow-hidden rounded-[1.5rem] border border-slate-100 bg-white"><div className="flex items-center justify-between border-b border-slate-100 px-4 py-4"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{view === "upcoming" ? "Upcoming reminders" : "Past-due reminders"}</p><h3 className="mt-1 text-base font-semibold text-slate-950">{filtered.length} reminders</h3></div><button type="button" onClick={() => setOverlayOpen(true)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"><Plus className="h-3.5 w-3.5" /> Add</button></div>{filtered.length ? <div className="divide-y divide-slate-100">{filtered.map((reminder) => <div key={reminder.id} id={`case-followup-${reminder.id}`} className={`flex items-center justify-between gap-4 px-4 py-3 ${fadingHighlightClass(reminder.id === activeHighlightId)}`}><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-950">{reminder.title}</p><p className="mt-1 truncate text-xs text-slate-500">{reminder.description || "No message"}</p></div><span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${view === "past" ? "bg-rose-50 text-rose-700" : "bg-slate-50 text-slate-600"}`}><CalendarClock className="h-3.5 w-3.5" />{formatDate(reminder.dueDate)}</span></div>)}</div> : <div className="px-5 py-10 text-center"><Bell className="mx-auto h-6 w-6 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-800">No {view === "upcoming" ? "upcoming" : "past-due"} reminders</p><button type="button" onClick={() => setOverlayOpen(true)} className="mt-3 text-sm font-semibold text-slate-700 underline">Add a reminder</button></div>}</section>{overlayOpen ? <ReminderOverlay saving={saving} error={error} onClose={() => setOverlayOpen(false)} onSave={async (form) => { await onCreate(form); setOverlayOpen(false); }} /> : null}</div>;
 }

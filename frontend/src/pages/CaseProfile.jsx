@@ -186,6 +186,16 @@ export default function CaseProfile() {
 
   const loadCaseProfile = useCallback(async ({ recovery = false } = {}) => {
     const generation = ++loadGenerationRef.current;
+    const queueRecovery = (message) => {
+      const attempt = recoveryAttemptRef.current;
+      const delayMs = CASE_RECOVERY_DELAYS_MS[Math.min(attempt, CASE_RECOVERY_DELAYS_MS.length - 1)];
+      recoveryAttemptRef.current += 1;
+      setError(`${message} Retrying automatically…`);
+      recoveryTimerRef.current = window.setTimeout(() => {
+        recoveryTimerRef.current = null;
+        void loadCaseProfile({ recovery: true });
+      }, delayMs);
+    };
     if (recoveryTimerRef.current) {
       window.clearTimeout(recoveryTimerRef.current);
       recoveryTimerRef.current = null;
@@ -271,20 +281,20 @@ export default function CaseProfile() {
         );
       }
 
-      setError("");
-      recoveryAttemptRef.current = 0;
+      const recoverablePanelFailure = results.find(
+        (result) => result.status === "rejected" && isRecoverableCaseLoadError(result.reason),
+      );
+      if (recoverablePanelFailure) {
+        queueRecovery("Some case details could not load.");
+      } else {
+        setError("");
+        recoveryAttemptRef.current = 0;
+      }
     } catch (requestError) {
       if (!mountedRef.current || generation !== loadGenerationRef.current) return;
       const message = requestError.response?.data?.message || "Unable to load this case.";
       if (isRecoverableCaseLoadError(requestError)) {
-        const attempt = recoveryAttemptRef.current;
-        const delayMs = CASE_RECOVERY_DELAYS_MS[Math.min(attempt, CASE_RECOVERY_DELAYS_MS.length - 1)];
-        recoveryAttemptRef.current += 1;
-        setError(`${message} Retrying automatically…`);
-        recoveryTimerRef.current = window.setTimeout(() => {
-          recoveryTimerRef.current = null;
-          void loadCaseProfile({ recovery: true });
-        }, delayMs);
+        queueRecovery(message);
       } else {
         setError(message);
       }
