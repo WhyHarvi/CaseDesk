@@ -33,7 +33,49 @@ function inQuietHours(preference, now) {
   return start <= end ? current >= start && current < end : current >= start || current < end;
 }
 
+async function terminalEntityReason(notification) {
+  if (notification.entityType !== "follow_up" || !notification.entityId) return null;
+  const followUp = await prisma.followUp.findFirst({
+    where: { id: notification.entityId, agencyId: notification.agencyId },
+    select: { status: true },
+  });
+  return !followUp || ["Completed", "Cancelled"].includes(followUp.status)
+    ? "Cancelled because the follow-up is no longer pending"
+    : null;
+}
+
+async function cancelDelivery(job, reason) {
+  await prisma.notificationDelivery.updateMany({
+    where: { id: job.id, status: { in: ["pending", "retry", "processing"] } },
+    data: { status: "cancelled", lastError: reason },
+  });
+}
+
 async function deliver(job) {
+  if (job.channel === "sms" && !job.recipient.phone) throw new Error("Recipient has no phone number");
+  const clientLinks = ["email", "sms"].includes(job.channel)
+    ? await prisma.clientUser.findMany({
+        where: { agencyId: job.agencyId, userId: job.recipientUserId },
+        select: { clientId: true },
+      })
+    : [];
+  if (clientLinks.length) {
+    const channel = job.channel === "sms" ? "Sms" : "Email";
+    const address = job.channel === "sms"
+      ? String(job.recipient.phone || "").replace(/[^+\d]/g, "")
+      : String(job.recipient.email || "").trim().toLowerCase();
+    const consent = await prisma.communicationConsent.findFirst({
+      where: {
+        agencyId: job.agencyId,
+        clientId: { in: clientLinks.map((item) => item.clientId) },
+        channel,
+        address,
+        status: "Consented",
+      },
+      select: { id: true },
+    });
+    if (!consent) throw new Error(`Recipient has not consented to ${channel === "Sms" ? "SMS" : "email"} notifications`);
+  }
   if (job.channel === "email") {
     const config = await resolveAgencyMailConfig(job.agencyId);
     const frontendUrl = String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -48,12 +90,6 @@ async function deliver(job) {
     return result.messageId || null;
   }
   if (job.channel === "sms") {
-    if (!job.recipient.phone) throw new Error("Recipient has no phone number");
-    const clientLinks = await prisma.clientUser.findMany({ where: { agencyId: job.agencyId, userId: job.recipientUserId }, select: { clientId: true } });
-    if (clientLinks.length) {
-      const consent = await prisma.communicationConsent.findFirst({ where: { agencyId: job.agencyId, clientId: { in: clientLinks.map((item) => item.clientId) }, channel: "Sms", address: job.recipient.phone, status: "Consented" }, select: { id: true } });
-      if (!consent) throw new Error("Recipient has not consented to SMS notifications");
-    }
     const result = await sendAgencyOomaSms({
       agencyId: job.agencyId,
       to: job.recipient.phone,
@@ -79,6 +115,15 @@ export async function processNotificationDeliveries(now = new Date()) {
       },
     });
     for (const job of jobs) {
+      if (job.notification.resolvedAt) {
+        await cancelDelivery(job, "Cancelled because the notification was resolved");
+        continue;
+      }
+      const terminalReason = await terminalEntityReason(job.notification);
+      if (terminalReason) {
+        await cancelDelivery(job, terminalReason);
+        continue;
+      }
       if (inQuietHours(preferenceFor(job), now)) {
         await prisma.notificationDelivery.update({ where: { id: job.id }, data: { availableAt: new Date(now.getTime() + 15 * 60_000) } });
         continue;
@@ -89,6 +134,19 @@ export async function processNotificationDeliveries(now = new Date()) {
       });
       if (!claimed.count) continue;
       try {
+        const stillOpen = await prisma.notification.findFirst({
+          where: { id: job.notificationId, resolvedAt: null },
+          select: { id: true },
+        });
+        if (!stillOpen) {
+          await cancelDelivery(job, "Cancelled because the notification was resolved");
+          continue;
+        }
+        const claimedTerminalReason = await terminalEntityReason(job.notification);
+        if (claimedTerminalReason) {
+          await cancelDelivery(job, claimedTerminalReason);
+          continue;
+        }
         if (job.recipient.status !== "active") throw new Error("Recipient account is inactive");
         const providerId = await deliver(job);
         await prisma.notificationDelivery.update({

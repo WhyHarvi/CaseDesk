@@ -52,7 +52,7 @@ const KIND_CONFIG = {
     icon: CalendarClock,
     empty: "No follow-ups are due today.",
     getItems: (dashboard) => dashboard?.followUpsDueTodayList || [],
-    getTo: (item) => (item.case ? `/app/cases/${item.case.id}?tab=reminders&highlight=${item.id}` : `/app/follow-ups?highlight=${item.id}`),
+    getTo: (item) => item.openUrl || (item.case ? `/app/cases/${item.case.id}?tab=reminders&highlight=${item.id}` : `/app/follow-ups?highlight=${item.id}`),
     getPrimary: (item) => item.client?.fullName || item.case?.caseType || "Follow-up",
     getSecondary: (item) => item.title,
     getMeta: (item, timezone) => formatTime(item.dueDate, timezone),

@@ -756,6 +756,7 @@ model CaseInvoice {
   client               Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy            User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   installments         CasePaymentInstallment[]
+  followUps            FollowUp[]
 
   @@unique([agencyId, qbInvoiceId])
   @@index([agencyId, caseId])
@@ -1107,6 +1108,9 @@ model User {
   notes                                Note[]                          @relation("AuthoredNotes")
   deletedNotes                         Note[]                          @relation("DeletedNotes")
   assignedFollowUps                    FollowUp[]                      @relation("AssignedFollowUpUser")
+  createdFollowUps                     FollowUp[]                      @relation("CreatedFollowUpUser")
+  completedFollowUps                   FollowUp[]                      @relation("CompletedFollowUpUser")
+  cancelledFollowUps                   FollowUp[]                      @relation("CancelledFollowUpUser")
   activityLogs                         ActivityLog[]
   caseAssessments                      CaseAssessment[]
   uploadedDocuments                    ClientDocument[]                @relation("UploadedDocumentUser")
@@ -2501,6 +2505,7 @@ model ClientDocument {
   sourceSharedLibraryDocument   SharedLibraryDocument? @relation(fields: [sourceSharedLibraryDocumentId], references: [id], onDelete: Restrict)
   writtenDocument               WrittenDocument?       @relation("WorkingWrittenDocument")
   issuedWrittenDocument         WrittenDocument?       @relation("IssuedWrittenDocument")
+  followUps                     FollowUp[]
 
   @@unique([caseId, normalizedName])
   @@index([agencyId])
@@ -2892,36 +2897,53 @@ model Note {
 }
 
 model FollowUp {
-  id                   String         @id @default(uuid())
-  agencyId             String         @map("agency_id")
-  clientId             String?        @map("client_id")
-  caseId               String?        @map("case_id")
-  appointmentId        String?        @map("appointment_id")
-  assignedUserId       String?        @map("assigned_user_id")
+  id                   String          @id @default(uuid())
+  agencyId             String          @map("agency_id")
+  clientId             String?         @map("client_id")
+  caseId               String?         @map("case_id")
+  appointmentId        String?         @map("appointment_id")
+  documentId           String?         @map("document_id")
+  caseInvoiceId        String?         @map("case_invoice_id")
+  assignedUserId       String?         @map("assigned_user_id")
+  createdById          String?         @map("created_by_id")
+  completedById        String?         @map("completed_by_id")
+  cancelledById        String?         @map("cancelled_by_id")
   title                String
   description          String?
-  followUpType         String         @default("General follow-up") @map("follow_up_type")
-  priority             String         @default("Medium")
-  dueDate              DateTime?      @map("due_date")
+  followUpType         String          @default("General follow-up") @map("follow_up_type")
+  priority             String          @default("Medium")
+  dueDate              DateTime?       @map("due_date")
   status               FollowUpStatus
-  completedAt          DateTime?      @map("completed_at")
-  reminderAt           DateTime?      @map("reminder_at")
-  notificationChannels String[]       @default(["in_app"]) @map("notification_channels")
-  notifyClient         Boolean        @default(false) @map("notify_client")
-  createdAt            DateTime       @default(now()) @map("created_at")
-  updatedAt            DateTime       @updatedAt @map("updated_at")
-  agency               Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client               Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case                 Case?          @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  appointment          Appointment?   @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  assignedUser         User?          @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  completedAt          DateTime?       @map("completed_at")
+  completionOutcome    String?         @map("completion_outcome")
+  cancellationReason   String?         @map("cancellation_reason")
+  reminderAt           DateTime?       @map("reminder_at")
+  expiresAt            DateTime?       @map("expires_at")
+  notificationChannels String[]        @default(["in_app"]) @map("notification_channels")
+  notifyClient         Boolean         @default(false) @map("notify_client")
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
+  agency               Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                 Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment          Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  document             ClientDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  caseInvoice          CaseInvoice?    @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
+  assignedUser         User?           @relation("AssignedFollowUpUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  createdBy            User?           @relation("CreatedFollowUpUser", fields: [createdById], references: [id], onDelete: SetNull)
+  completedBy          User?           @relation("CompletedFollowUpUser", fields: [completedById], references: [id], onDelete: SetNull)
+  cancelledBy          User?           @relation("CancelledFollowUpUser", fields: [cancelledById], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([clientId])
   @@index([caseId])
   @@index([appointmentId])
+  @@index([documentId])
+  @@index([caseInvoiceId])
   @@index([assignedUserId])
+  @@index([createdById])
   @@index([agencyId, status, reminderAt])
+  @@index([agencyId, status, dueDate])
   @@map("follow_ups")
 }
 
@@ -3086,6 +3108,9 @@ model Lead {
   country                  String?
   province                 String?
   preferredLanguage        String?                  @map("preferred_language")
+  preferredContactTime     String?                  @map("preferred_contact_time")
+  consentGiven             Boolean?                 @map("consent_given")
+  consentGivenAt           DateTime?                @map("consent_given_at")
   currentImmigrationStatus String?                  @map("current_immigration_status")
   immigrationInterest      String?                  @map("immigration_interest")
   status                   LeadStatus               @default(OPEN)

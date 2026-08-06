@@ -73,8 +73,18 @@ function useSubmit(request, onDone) {
 }
 
 export function LogActivitySheet({ lead, onClose, onSaved }) {
-  const [form, setForm] = useState({ activityType: "INCOMING_CALL", direction: "INBOUND", channel: "PHONE", title: "", description: "", outcome: "", durationMinutes: "", occurredAt: localInput() });
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const [form, setForm] = useState({ activityType: "INCOMING_CALL", direction: "INBOUND", channel: "PHONE", title: "", description: "", outcome: "", durationMinutes: "", occurredAt: localInput(), connected: true });
+  const update = (event) => {
+    const { name, type, checked, value } = event.target;
+    setForm((current) => {
+      if (name === "activityType") {
+        const received = ["INCOMING_CALL", "WHATSAPP_RECEIVED", "SMS_RECEIVED", "EMAIL_RECEIVED"].includes(value);
+        const cannotConnect = ["MISSED_CALL", "INTERNAL_NOTE"].includes(value);
+        return { ...current, activityType: value, connected: received ? true : cannotConnect ? false : current.connected };
+      }
+      return { ...current, [name]: type === "checkbox" ? checked : value };
+    });
+  };
   const { saving, error, submit } = useSubmit(
     () => api.post(`/leads/${lead.id}/activities`, {
       activityType: form.activityType,
@@ -85,6 +95,7 @@ export function LogActivitySheet({ lead, onClose, onSaved }) {
       outcome: form.outcome,
       durationSeconds: form.durationMinutes === "" ? undefined : Math.round(Number(form.durationMinutes) * 60),
       occurredAt: new Date(form.occurredAt).toISOString(),
+      connected: form.connected,
     }),
     onSaved,
   );
@@ -99,6 +110,7 @@ export function LogActivitySheet({ lead, onClose, onSaved }) {
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Details<textarea name="description" value={form.description} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="What was discussed?" /></label>
       <label className="text-sm font-medium text-slate-700">Outcome<input maxLength={160} name="outcome" value={form.outcome} onChange={update} className={fieldClass} placeholder="Follow-up required" /></label>
       <label className="text-sm font-medium text-slate-700">Duration (minutes)<input type="number" min="0" max="1440" name="durationMinutes" value={form.durationMinutes} onChange={update} className={fieldClass} placeholder="4" /></label>
+      <label className="flex items-center gap-3 rounded-xl bg-sky-50 px-4 py-3 text-sm font-medium text-sky-800 sm:col-span-2"><input type="checkbox" name="connected" checked={form.connected} onChange={update} className="h-4 w-4 rounded border-sky-300 text-sky-600" />We actually spoke or exchanged messages</label>
     </ActionModal>
   );
 }
@@ -108,6 +120,7 @@ export function EditLeadDetailsSheet({ lead, onClose, onSaved }) {
     firstName: lead.firstName || "", lastName: lead.lastName || "", phone: lead.phone || "", email: lead.email || "",
     country: lead.country || "", province: lead.province || "", preferredLanguage: lead.preferredLanguage || "",
     currentImmigrationStatus: lead.currentImmigrationStatus || "", immigrationInterest: lead.immigrationInterest || "",
+    preferredContactTime: lead.preferredContactTime || "", estimatedValue: lead.estimatedValue ?? "", temperature: lead.temperature || "COLD",
     inquiryDate: lead.inquiryDate ? lead.inquiryDate.slice(0, 10) : "",
   });
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -127,6 +140,9 @@ export function EditLeadDetailsSheet({ lead, onClose, onSaved }) {
       <label className="text-sm font-medium text-slate-700">Preferred language<input maxLength={100} name="preferredLanguage" value={form.preferredLanguage} onChange={update} className={fieldClass} /></label>
       <label className="text-sm font-medium text-slate-700">Current immigration status<input maxLength={150} name="currentImmigrationStatus" value={form.currentImmigrationStatus} onChange={update} className={fieldClass} /></label>
       <label className="text-sm font-medium text-slate-700">Interest<input maxLength={150} name="immigrationInterest" value={form.immigrationInterest} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Preferred contact time<input maxLength={150} name="preferredContactTime" value={form.preferredContactTime} onChange={update} className={fieldClass} placeholder="Weekday afternoons" /></label>
+      <label className="text-sm font-medium text-slate-700">Estimated value (CAD)<input type="number" min="0" name="estimatedValue" value={form.estimatedValue} onChange={update} className={fieldClass} /></label>
+      <label className="text-sm font-medium text-slate-700">Temperature<select name="temperature" value={form.temperature} onChange={update} className={fieldClass}>{["COLD", "WARM", "HOT"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
       <label className="text-sm font-medium text-slate-700">Inquiry date<input type="date" name="inquiryDate" value={form.inquiryDate} onChange={update} className={fieldClass} /></label>
     </ActionModal>
   );
@@ -217,11 +233,33 @@ export function CreateFollowUpSheet({ lead, staff, currentUserId, onClose, onSav
   );
 }
 
-export function CloseFollowUpSheet({ lead, followUp, onClose, onSaved }) {
-  const [form, setForm] = useState({ status: "COMPLETED", completionOutcome: "" });
+export function CloseFollowUpSheet({ lead, followUp, staff, onClose, onSaved }) {
+  const requiresNextFollowUp =
+    (lead.status === "OPEN" || (lead.status === "NURTURE" && followUp.type === "REACTIVATE")) &&
+    !(lead.followUps || []).some((item) => item.id !== followUp.id && item.status === "PENDING");
+  const [form, setForm] = useState({
+    status: "COMPLETED",
+    completionOutcome: "",
+    nextFollowUp: {
+      assignedUserId: followUp.assignedUserId || lead.ownerUserId || "",
+      type: "PHONE_CALL",
+      description: "",
+      dueAt: localInput(24 * 60 * 60_000),
+    },
+  });
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const updateNext = (event) => setForm((current) => ({
+    ...current,
+    nextFollowUp: { ...current.nextFollowUp, [event.target.name]: event.target.value },
+  }));
   const { saving, error, submit } = useSubmit(
-    () => api.patch(`/leads/${lead.id}/follow-ups/${followUp.id}`, form),
+    () => api.patch(`/leads/${lead.id}/follow-ups/${followUp.id}`, {
+      status: form.status,
+      completionOutcome: form.completionOutcome,
+      ...(requiresNextFollowUp
+        ? { nextFollowUp: { ...form.nextFollowUp, dueAt: new Date(form.nextFollowUp.dueAt).toISOString() } }
+        : {}),
+    }),
     onSaved,
   );
 
@@ -229,6 +267,7 @@ export function CloseFollowUpSheet({ lead, followUp, onClose, onSaved }) {
     <ActionModal title="Close follow-up" subtitle={followUp.description} icon={CheckCircle2} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel={form.status === "COMPLETED" ? "Mark completed" : "Cancel follow-up"}>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Result<select name="status" value={form.status} onChange={update} className={fieldClass}><option value="COMPLETED">Completed</option><option value="CANCELLED">Cancelled</option></select></label>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Outcome<textarea required maxLength={500} name="completionOutcome" value={form.completionOutcome} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Consultation scheduled" /></label>
+      {requiresNextFollowUp ? <><div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:col-span-2"><b>Add the next action.</b> An open lead cannot be left without an assigned follow-up.</div><label className="text-sm font-medium text-slate-700 sm:col-span-2">Assigned to<select required name="assignedUserId" value={form.nextFollowUp.assignedUserId} onChange={updateNext} className={fieldClass}><option value="">Select team member</option>{(staff || []).map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Type<select required name="type" value={form.nextFollowUp.type} onChange={updateNext} className={fieldClass}>{FOLLOW_UP_TYPES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Due<input required type="datetime-local" name="dueAt" value={form.nextFollowUp.dueAt} onChange={updateNext} className={fieldClass} /></label><label className="text-sm font-medium text-slate-700 sm:col-span-2">Instruction<textarea required maxLength={1000} name="description" value={form.nextFollowUp.description} onChange={updateNext} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="What needs to happen next?" /></label></> : null}
     </ActionModal>
   );
 }
@@ -266,8 +305,8 @@ export function NurtureLeadSheet({ lead, onClose, onSaved }) {
   );
 }
 
-export function MarkLostSheet({ lead, onClose, onSaved }) {
-  const [form, setForm] = useState({ reasonCode: "NO_RESPONSE", notes: "", lastContactAt: "", attemptCount: "", reactivationAllowed: false, reactivationAt: "" });
+export function MarkLostSheet({ lead, initialReasonCode = "NO_RESPONSE", onClose, onSaved }) {
+  const [form, setForm] = useState({ reasonCode: initialReasonCode, notes: "", lastContactAt: "", attemptCount: "", reactivationAllowed: false, reactivationAt: "" });
   const update = (event) => {
     const { name, type, checked, value } = event.target;
     setForm((current) => ({ ...current, [name]: type === "checkbox" ? checked : value }));
@@ -296,4 +335,15 @@ export function MarkLostSheet({ lead, onClose, onSaved }) {
       </div>
     </ActionModal>
   );
+}
+
+export function ReactivateLeadSheet({ lead, onClose, onSaved }) {
+  const [reason, setReason] = useState("");
+  const { saving, error, submit } = useSubmit(
+    () => api.post(`/leads/${lead.id}/reactivate`, { reason }),
+    onSaved,
+  );
+  return <ActionModal title="Reactivate lead" subtitle="Return this lead to the active pipeline with a clear next step." icon={HeartHandshake} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Reactivate lead">
+    <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason<textarea required maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} rows={4} className={`${fieldClass} h-auto py-3`} placeholder="The prospective client is ready to continue." /></label>
+  </ActionModal>;
 }

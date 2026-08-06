@@ -20,7 +20,25 @@ export function leadAccessWhere(req) {
     ["consultant", "frontdesk"].includes(req.auth.role) &&
     scope === "assigned"
   )
-    return { ownerUserId: req.auth.userId };
+    return {
+      AND: [
+        {
+          OR: [
+            { ownerUserId: req.auth.userId },
+            { followUps: { some: { assignedUserId: req.auth.userId, status: "PENDING" } } },
+          ],
+        },
+      ],
+    };
+  return { id: "__denied__" };
+}
+
+export function leadFollowUpAccessWhere(req) {
+  const scope = portalDataScope(req, "leads");
+  if (req.auth.role === "admin" || scope === "all") return {};
+  if (["consultant", "frontdesk"].includes(req.auth.role) && scope === "assigned") {
+    return { assignedUserId: req.auth.userId };
+  }
   return { id: "__denied__" };
 }
 

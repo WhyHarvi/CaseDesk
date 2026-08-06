@@ -127,6 +127,10 @@ export async function markLeadLost(req, res) {
   res.json({ data: await service.markLeadLost(req) });
 }
 
+export async function reactivateLead(req, res) {
+  res.json({ data: await service.reactivateLead(req) });
+}
+
 export async function promoteLeadToPipeline(req, res) {
   res.json({ data: await service.promoteLeadToPipeline(req) });
 }

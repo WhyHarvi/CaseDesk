@@ -8,6 +8,7 @@ import {
   internalCaseRecipientIds,
   notifyUsers,
 } from "./notificationService.js";
+import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
 let timer = null;
@@ -122,8 +123,10 @@ async function taskNotifications(now, horizon) {
 async function followUpNotifications(now, horizon) {
   const followUps = await prisma.followUp.findMany({
     where: {
-      status: { in: ["Pending", "Overdue"] },
+      status: "Pending",
+      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }],
       OR: [
+        { dueDate: { not: null, lt: now } },
         { reminderAt: { not: null, lte: now } },
         { reminderAt: null, dueDate: { not: null, lte: horizon } },
       ],
@@ -131,11 +134,16 @@ async function followUpNotifications(now, horizon) {
     take: 500,
     select: {
       id: true, agencyId: true, clientId: true, caseId: true, assignedUserId: true,
-      title: true, dueDate: true, reminderAt: true, notificationChannels: true, notifyClient: true,
+      title: true, description: true, dueDate: true, reminderAt: true, expiresAt: true, notificationChannels: true, notifyClient: true,
+      client: { select: { email: true } },
     },
   });
   for (const item of followUps) {
-    const milestone = item.reminderAt && item.reminderAt <= now ? "reminder" : item.dueDate < now ? "overdue" : "due";
+    const milestone = item.dueDate && item.dueDate < now
+      ? "overdue"
+      : item.reminderAt && item.reminderAt <= now
+        ? "reminder"
+        : "due";
     const recipients = item.assignedUserId
       ? [item.assignedUserId]
       : item.caseId ? await internalCaseRecipientIds(item.agencyId, item.caseId) : await adminRecipientIds(item.agencyId);
@@ -154,12 +162,14 @@ async function followUpNotifications(now, horizon) {
       dedupeKey: `follow-up:${item.id}:${milestone}:${isoKey(item.reminderAt || item.dueDate)}`,
       scheduledFor: milestone === "due" ? item.dueDate : null,
       attentionLevel: milestone === "overdue" || milestone === "reminder" ? "action_required" : "update",
+      expiresAt: item.expiresAt || undefined,
     });
     if (item.notifyClient && item.clientId) {
       const channels = item.notificationChannels?.length ? item.notificationChannels : ["in_app"];
+      const portalRecipientIds = await clientRecipientIds(item.agencyId, item.clientId);
       await notifyUsers({
         agencyId: item.agencyId,
-        recipientIds: await clientRecipientIds(item.agencyId, item.clientId),
+        recipientIds: portalRecipientIds,
         type: `client_reminder.${milestone}`,
         category: "work",
         title: item.title,
@@ -172,7 +182,15 @@ async function followUpNotifications(now, horizon) {
         dedupeKey: `follow-up:${item.id}:${milestone}:client:${isoKey(item.reminderAt || item.dueDate)}`,
         scheduledFor: milestone === "due" ? item.dueDate : null,
         attentionLevel: milestone === "overdue" ? "action_required" : "update",
+        expiresAt: item.expiresAt || undefined,
       });
+      if (!portalRecipientIds.length && channels.includes("email")) {
+        await queueDirectFollowUpEmail({
+          followUp: item,
+          milestone,
+          scheduledKey: isoKey(item.reminderAt || item.dueDate),
+        });
+      }
     }
   }
 }
@@ -219,6 +237,16 @@ export async function resolveCompletedAndExpiredNotifications(now = new Date()) 
       data: { resolvedAt: now, readAt: now },
     });
   }
+  await prisma.notificationDelivery.updateMany({
+    where: {
+      status: { in: ["pending", "retry"] },
+      notification: { resolvedAt: { not: null } },
+    },
+    data: {
+      status: "cancelled",
+      lastError: "Cancelled because the notification was resolved",
+    },
+  });
 }
 
 async function documentNotifications(now, horizon) {

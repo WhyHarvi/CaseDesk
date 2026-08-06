@@ -1,5 +1,7 @@
 import prisma from "../services/prisma/client.js";
 import { leadSegmentWhere } from "../modules/leads/lead.permissions.js";
+import { assignLead } from "../modules/leads/lead.service.js";
+import { updateFollowUp } from "./followUpController.js";
 import {
   deleteAuthUser,
   findAuthUserByEmail,
@@ -380,12 +382,21 @@ export async function resetConsultantPassword(req, res) {
 }
 
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
+// Requested/ChangesRequested mean CaseDesk is waiting on the client to act;
+// Uploaded/UnderReview mean a staff member needs to review something the
+// client already provided. Counting all four together as one "document
+// workload" number inflates it with items that aren't actually the
+// consultant's to act on right now.
+const CLIENT_WAITING_STATUSES = ["Requested", "ChangesRequested"];
+const STAFF_REVIEW_STATUSES = ["Uploaded", "UnderReview"];
 const ACTION_DOCUMENT_STATUSES = [
-  "Requested",
-  "Uploaded",
-  "UnderReview",
-  "ChangesRequested",
+  ...CLIENT_WAITING_STATUSES,
+  ...STAFF_REVIEW_STATUSES,
 ];
+// A document has no built-in due date — treat a staff-review document whose
+// updatedAt is older than this as review-overdue, the closest available
+// signal without adding a new due-date column.
+const REVIEW_OVERDUE_DAYS = 3;
 
 const ownershipUserSelect = {
   id: true,
@@ -424,7 +435,13 @@ function activeRole(user, agencyId) {
       (membership) =>
         membership.agencyId === agencyId &&
         membership.isActive &&
-        ["admin", "consultant"].includes(membership.role),
+        // Front-desk staff can be a real, explicit owner of work (a task,
+        // follow-up, or appointment assignedUserId) — recognize them here
+        // so that work doesn't fall through to case/client inheritance or
+        // Unassigned. They're routed to a separate operations bucket in
+        // resolveWorkOwner()/route(), not a numbered consultant slot, since
+        // they aren't in activeConsultantIds and don't carry case capacity.
+        ["admin", "consultant", "frontdesk"].includes(membership.role),
     )?.role || null
   );
 }
@@ -434,17 +451,44 @@ function emptyWorkloadBucket() {
     activeLeads: 0,
     overdueLeadActions: 0,
     activeCases: 0,
+    // pendingTasks counts every Pending task, including overdue ones — kept
+    // for backward compatibility with any existing caller. pendingTasks
+    // ExcludingOverdue is the number that actually matches pendingTaskItems
+    // (the "Pending Tasks" list), since overdue tasks are shown in their own
+    // section. Use the Excluding field wherever the UI means "still pending,
+    // not yet overdue."
     pendingTasks: 0,
+    pendingTasksExcludingOverdue: 0,
     overdueTasks: 0,
+    // documentsWaitingReview counts every action-needed document, client-
+    // waiting and staff-review combined — kept for backward compatibility.
+    // Split into documentsWaitingOnClient (informational, not the
+    // consultant's to act on) and documentsReadyForReview (actually theirs).
     documentsWaitingReview: 0,
+    documentsWaitingOnClient: 0,
+    documentsReadyForReview: 0,
+    documentsReviewOverdue: 0,
+    documentWaitingItems: [],
+    // Collaborating cases (supporting/reviewer CaseAssignment rows) are
+    // tracked separately from activeCases — a consultant contributing to a
+    // case they don't accountably own gets visible credit, but it doesn't
+    // inflate the case-capacity percentage tied to accountable ownership.
+    collaboratingCases: 0,
+    collaboratingCaseItems: [],
     pendingFollowUps: 0,
+    overdueFollowUps: 0,
+    followUpsDueToday: 0,
+    highPriorityOverdueFollowUps: 0,
     upcomingAppointments: 0,
+    appointmentsToday: 0,
+    appointmentsThisWeek: 0,
     activeLeadItems: [],
     activeCaseItems: [],
     pendingTaskItems: [],
     overdueTaskItems: [],
     documentReviewItems: [],
     followUpItems: [],
+    overdueFollowUpItems: [],
     appointmentItems: [],
   };
 }
@@ -457,17 +501,19 @@ export function resolveWorkOwner({
   clientUser = null,
 }) {
   const explicitRole = activeRole(explicitUser, agencyId);
+  if (explicitRole === "frontdesk")
+    return { consultantId: null, source: "front_desk", frontDeskUserId: explicitUser.id };
   if (explicitRole) {
     return activeConsultantIds.has(explicitUser.id)
       ? { consultantId: explicitUser.id, source: "explicit" }
       : { consultantId: null, source: "outside_team" };
   }
-  const caseOwnerRole = activeRole(caseItem?.assignedUser, agencyId);
-  if (caseOwnerRole) {
-    return activeConsultantIds.has(caseItem.assignedUser.id)
-      ? { consultantId: caseItem.assignedUser.id, source: "case_owner" }
-      : { consultantId: null, source: "outside_team" };
-  }
+
+  // Check for a real consultant primary assignment BEFORE trusting an
+  // admin-of-record as the final answer — an admin can be the nominal case
+  // owner while a consultant does the actual work via CaseAssignment. Without
+  // this ordering, activeRole() would recognize the admin as valid ownership
+  // and return outside_team before ever looking at primaryAssignment.
   const primaryAssignment = caseItem?.assignments?.find(
     (assignment) =>
       assignment.assignmentType === "primary" &&
@@ -478,7 +524,18 @@ export function resolveWorkOwner({
       consultantId: primaryAssignment.consultant.id,
       source: "case_assignment",
     };
+
+  const caseOwnerRole = activeRole(caseItem?.assignedUser, agencyId);
+  if (caseOwnerRole === "frontdesk")
+    return { consultantId: null, source: "front_desk", frontDeskUserId: caseItem.assignedUser.id };
+  if (caseOwnerRole) {
+    return activeConsultantIds.has(caseItem.assignedUser.id)
+      ? { consultantId: caseItem.assignedUser.id, source: "case_owner" }
+      : { consultantId: null, source: "outside_team" };
+  }
   const clientOwnerRole = activeRole(clientUser, agencyId);
+  if (clientOwnerRole === "frontdesk")
+    return { consultantId: null, source: "front_desk", frontDeskUserId: clientUser.id };
   if (clientOwnerRole) {
     return activeConsultantIds.has(clientUser.id)
       ? { consultantId: clientUser.id, source: "client_owner" }
@@ -504,21 +561,52 @@ function addWork(bucket, type, item, owner, now) {
       bucket.overdueTasks += 1;
       bucket.overdueTaskItems.push(decorated);
     } else {
+      bucket.pendingTasksExcludingOverdue += 1;
       bucket.pendingTaskItems.push(decorated);
     }
   } else if (type === "document") {
     bucket.documentsWaitingReview += 1;
-    bucket.documentReviewItems.push(decorated);
+    if (CLIENT_WAITING_STATUSES.includes(item.status)) {
+      bucket.documentsWaitingOnClient += 1;
+      bucket.documentWaitingItems.push(decorated);
+    } else if (STAFF_REVIEW_STATUSES.includes(item.status)) {
+      bucket.documentsReadyForReview += 1;
+      bucket.documentReviewItems.push(decorated);
+      const ageDays = (now - new Date(item.updatedAt)) / 86_400_000;
+      if (ageDays > REVIEW_OVERDUE_DAYS) {
+        bucket.documentsReviewOverdue += 1;
+        decorated.reviewOverdue = true;
+      }
+    }
   } else if (type === "followUp") {
     bucket.pendingFollowUps += 1;
-    bucket.followUpItems.push(decorated);
+    const due = item.dueDate ? new Date(item.dueDate) : null;
+    if (due && due < now) {
+      bucket.overdueFollowUps += 1;
+      bucket.overdueFollowUpItems.push(decorated);
+      if (item.priority === "High") bucket.highPriorityOverdueFollowUps += 1;
+    } else if (due && isSameCalendarDay(due, now)) {
+      bucket.followUpsDueToday += 1;
+      bucket.followUpItems.push(decorated);
+    } else {
+      bucket.followUpItems.push(decorated);
+    }
   } else if (type === "appointment") {
     bucket.upcomingAppointments += 1;
+    decorated.window = appointmentWindow(item.startsAt, now);
+    if (decorated.window === "today") bucket.appointmentsToday += 1;
+    if (decorated.window === "today" || decorated.window === "week") bucket.appointmentsThisWeek += 1;
     bucket.appointmentItems.push(decorated);
   }
 }
 
-function finalizeBucket(bucket, capacity = null) {
+// sliceLimit caps how many items each category shows inline on the main
+// workload page (10, matching the original behavior). The drill-down
+// endpoint below (consultantWorkloadCategory) calls this with
+// sliceLimit = Infinity to get the full, unsliced list before paginating
+// it itself — the true totals (bucket.overdueTasks etc.) are unaffected
+// either way since those are counted in addWork(), not here.
+function finalizeBucket(bucket, capacity = null, sliceLimit = 10) {
   const byDueDate = (left, right) =>
     new Date(
       left.dueAt ||
@@ -536,32 +624,67 @@ function finalizeBucket(bucket, capacity = null) {
     );
   const byUpdatedAt = (left, right) =>
     new Date(left.updatedAt) - new Date(right.updatedAt);
+  // Renamed from "workloadPercentage" — this has only ever measured
+  // active-case capacity usage, not overall workload (leads, tasks,
+  // follow-ups, documents, and appointments never factored in).
+  // Uncapped (a consultant genuinely at 300% of capacity should show 300%,
+  // not a value indistinguishable from someone at exactly 100%) — cap only
+  // the *visual* bar width in the frontend.
+  const caseCapacityPercentage =
+    capacity === null
+      ? null
+      : Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100);
   return {
     ...bucket,
     ...(capacity === null
       ? {}
       : {
           capacity,
-          workloadPercentage: Math.min(
-            100,
-            Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100),
-          ),
+          caseCapacityPercentage,
+          // Deprecated alias, capped at 100 for any caller not yet updated
+          // to the renamed/uncapped field. Remove once nothing reads it.
+          workloadPercentage: Math.min(100, caseCapacityPercentage),
         }),
-    activeLeadItems: bucket.activeLeadItems.sort(byDueDate).slice(0, 10),
-    activeCaseItems: bucket.activeCaseItems.sort(byUpdatedAt).slice(0, 10),
-    pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, 10),
-    overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, 10),
+    activeLeadItems: bucket.activeLeadItems.sort(byDueDate).slice(0, sliceLimit),
+    activeCaseItems: bucket.activeCaseItems.sort(byUpdatedAt).slice(0, sliceLimit),
+    collaboratingCaseItems: bucket.collaboratingCaseItems
+      .sort(byUpdatedAt)
+      .slice(0, sliceLimit),
+    pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, sliceLimit),
+    overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, sliceLimit),
     documentReviewItems: bucket.documentReviewItems
       .sort(byUpdatedAt)
-      .slice(0, 10),
-    followUpItems: bucket.followUpItems.sort(byDueDate).slice(0, 10),
-    appointmentItems: bucket.appointmentItems.sort(byDueDate).slice(0, 10),
+      .slice(0, sliceLimit),
+    documentWaitingItems: bucket.documentWaitingItems
+      .sort(byUpdatedAt)
+      .slice(0, sliceLimit),
+    followUpItems: bucket.followUpItems.sort(byDueDate).slice(0, sliceLimit),
+    overdueFollowUpItems: bucket.overdueFollowUpItems
+      .sort(byDueDate)
+      .slice(0, sliceLimit),
+    appointmentItems: bucket.appointmentItems.sort(byDueDate).slice(0, sliceLimit),
   };
 }
 
-async function loadAgencyWorkloads(agencyId) {
+function appointmentWindow(startsAt, now) {
+  const days = (new Date(startsAt) - now) / 86_400_000;
+  return days < 1 ? "today" : days <= 7 ? "week" : "month";
+}
+
+function isSameCalendarDay(left, right) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
   const now = new Date();
-  const [profiles, leads, cases, tasks, documents, followUps, appointments] =
+  // 30-day look-ahead — an appointment scheduled six months out shouldn't
+  // count identically to one happening in the next hour.
+  const horizon = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
+  const [profiles, leads, cases, tasks, documents, followUps, leadFollowUps, appointments] =
     await prisma.$transaction([
       prisma.consultantProfile.findMany({
         where: {
@@ -581,7 +704,11 @@ async function loadAgencyWorkloads(agencyId) {
         where: {
           agencyId,
           deletedAt: null,
-          status: "OPEN",
+          // NURTURE leads still have a real, dated reactivation action that
+          // can sit on someone's calendar — only OPEN previously counted,
+          // which made a nurtured lead's workload vanish the moment it was
+          // paused.
+          status: { in: ["OPEN", "NURTURE"] },
           ...leadSegmentWhere(),
         },
         select: {
@@ -595,6 +722,7 @@ async function loadAgencyWorkloads(agencyId) {
           nextActionAt: true,
           updatedAt: true,
           owner: { select: ownershipUserSelect },
+          nextActionOwner: { select: ownershipUserSelect },
         },
       }),
       prisma.case.findMany({
@@ -654,7 +782,7 @@ async function loadAgencyWorkloads(agencyId) {
       prisma.followUp.findMany({
         where: {
           agencyId,
-          status: { in: ["Pending", "Overdue"] },
+          status: "Pending",
           OR: [
             { caseId: null },
             { case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } } },
@@ -665,6 +793,7 @@ async function loadAgencyWorkloads(agencyId) {
           title: true,
           description: true,
           status: true,
+          priority: true,
           dueDate: true,
           assignedUser: { select: ownershipUserSelect },
           case: { select: workloadCaseSelect },
@@ -677,12 +806,48 @@ async function loadAgencyWorkloads(agencyId) {
           },
         },
       }),
+      prisma.leadFollowUp.findMany({
+        where: {
+          agencyId,
+          status: "PENDING",
+          lead: {
+            deletedAt: null,
+            status: { in: ["OPEN", "NURTURE"] },
+            ...leadSegmentWhere(),
+          },
+        },
+        select: {
+          id: true,
+          description: true,
+          type: true,
+          dueAt: true,
+          assignedUser: { select: ownershipUserSelect },
+          lead: {
+            select: {
+              id: true,
+              leadNumber: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      }),
       prisma.appointment.findMany({
         where: {
           agencyId,
           status: "Scheduled",
-          startsAt: { gte: now },
-          case: { deletedAt: null, status: { in: OPEN_CASE_STATUSES } },
+          startsAt: { gte: now, lte: horizon },
+          // Previously required a case relation, which silently dropped
+          // guest bookings, lead consultations (leadId, not caseId), and
+          // client-only appointments. Accept any legitimately-staffed
+          // appointment instead.
+          OR: [
+            { caseId: null },
+            // No status filter here — a scheduled appointment on a since-
+            // closed case is still a real commitment on the calendar.
+            { case: { deletedAt: null } },
+            { leadId: { not: null } },
+          ],
         },
         select: {
           id: true,
@@ -692,6 +857,15 @@ async function loadAgencyWorkloads(agencyId) {
           location: true,
           assignedTo: { select: ownershipUserSelect },
           case: { select: workloadCaseSelect },
+          lead: {
+            select: {
+              id: true,
+              leadNumber: true,
+              firstName: true,
+              lastName: true,
+              ownerUserId: true,
+            },
+          },
           client: {
             select: {
               id: true,
@@ -699,6 +873,8 @@ async function loadAgencyWorkloads(agencyId) {
               assignedUser: { select: ownershipUserSelect },
             },
           },
+          guestName: true,
+          guestEmail: true,
         },
       }),
     ]);
@@ -711,13 +887,19 @@ async function loadAgencyWorkloads(agencyId) {
   );
   const unassignedBucket = emptyWorkloadBucket();
   const outsideTeamBucket = emptyWorkloadBucket();
+  // Front-desk staff are explicit owners of real work, but they don't carry
+  // case capacity and aren't in activeConsultantIds — keep their work
+  // visibly distinct from both the consultant roster and Unassigned.
+  const frontDeskBucket = emptyWorkloadBucket();
   const route = (type, item, owner) =>
     addWork(
       owner.consultantId
         ? buckets.get(owner.consultantId)
-        : owner.source === "outside_team"
-          ? outsideTeamBucket
-          : unassignedBucket,
+        : owner.source === "front_desk"
+          ? frontDeskBucket
+          : owner.source === "outside_team"
+            ? outsideTeamBucket
+            : unassignedBucket,
       type,
       item,
       owner,
@@ -731,17 +913,38 @@ async function loadAgencyWorkloads(agencyId) {
       resolveWorkOwner({
         agencyId,
         activeConsultantIds,
-        explicitUser: item.owner,
+        // Prefer the next-action owner over the lead owner — mirrors how
+        // the lead detail screen already computes nextActionOwner. A lead
+        // whose next action was reassigned should count against the new
+        // owner, not the original one.
+        explicitUser: item.nextActionOwner || item.owner,
       }),
     ),
   );
-  cases.forEach((item) =>
+  cases.forEach((item) => {
     route(
       "case",
       item,
       resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item }),
-    ),
-  );
+    );
+    // Second, parallel pass: supporting/reviewer consultants get their own
+    // visible credit for real, scheduled case involvement, distinct from
+    // the single accountable owner resolved above.
+    (item.assignments || [])
+      .filter(
+        (assignment) =>
+          assignment.assignmentType !== "primary" &&
+          activeConsultantIds.has(assignment.consultant.id),
+      )
+      .forEach((assignment) => {
+        const bucket = buckets.get(assignment.consultant.id);
+        bucket.collaboratingCases += 1;
+        bucket.collaboratingCaseItems.push({
+          ...item,
+          assignmentSource: assignment.assignmentType,
+        });
+      });
+  });
   tasks.forEach((item) =>
     route(
       "task",
@@ -762,7 +965,7 @@ async function loadAgencyWorkloads(agencyId) {
         agencyId,
         activeConsultantIds,
         caseItem: item.case,
-        clientUser: item.client.assignedUser,
+        clientUser: item.client?.assignedUser,
       }),
     ),
   );
@@ -775,23 +978,52 @@ async function loadAgencyWorkloads(agencyId) {
         activeConsultantIds,
         explicitUser: item.assignedUser,
         caseItem: item.case,
-        clientUser: item.client.assignedUser,
+        clientUser: item.client?.assignedUser,
       }),
     ),
   );
-  appointments.forEach((item) =>
+  leadFollowUps.forEach((item) =>
     route(
-      "appointment",
-      item,
+      "followUp",
+      {
+        ...item,
+        source: "lead",
+        leadId: item.lead.id,
+        title: item.description,
+        dueDate: item.dueAt,
+        priority: "Medium",
+        client: {
+          id: item.lead.id,
+          fullName: [item.lead.firstName, item.lead.lastName].filter(Boolean).join(" ") || item.lead.leadNumber,
+        },
+      },
       resolveWorkOwner({
         agencyId,
         activeConsultantIds,
-        explicitUser: item.assignedTo,
-        caseItem: item.case,
-        clientUser: item.client.assignedUser,
+        explicitUser: item.assignedUser,
       }),
     ),
   );
+  appointments.forEach((item) => {
+    let owner = resolveWorkOwner({
+      agencyId,
+      activeConsultantIds,
+      explicitUser: item.assignedTo,
+      caseItem: item.case,
+      clientUser: item.client?.assignedUser,
+    });
+    // A lead-only appointment (no case, no client) still has a real owner —
+    // the lead's owner — even though resolveWorkOwner has nothing case- or
+    // client-shaped to check.
+    if (
+      owner.source === "unassigned" &&
+      item.lead?.ownerUserId &&
+      activeConsultantIds.has(item.lead.ownerUserId)
+    ) {
+      owner = { consultantId: item.lead.ownerUserId, source: "lead_owner" };
+    }
+    route("appointment", item, owner);
+  });
 
   const consultants = profiles.map((profile) => ({
     consultant: profile.user,
@@ -800,8 +1032,9 @@ async function loadAgencyWorkloads(agencyId) {
       specializations: profile.specializations,
       masteryLevel: profile.masteryLevel,
     },
-    ...finalizeBucket(buckets.get(profile.userId), profile.maximumActiveCases),
+    ...finalizeBucket(buckets.get(profile.userId), profile.maximumActiveCases, sliceLimit),
   }));
+  const unassigned = finalizeBucket(unassignedBucket, null, sliceLimit);
   const summary = {
     activeConsultants: consultants.length,
     activeLeads: leads.length,
@@ -814,17 +1047,27 @@ async function loadAgencyWorkloads(agencyId) {
       (item) => item.dueAt && new Date(item.dueAt) < now,
     ).length,
     documentsWaitingReview: documents.length,
-    pendingFollowUps: followUps.length,
+    documentsWaitingOnClient: documents.filter((item) =>
+      CLIENT_WAITING_STATUSES.includes(item.status),
+    ).length,
+    documentsReadyForReview: documents.filter((item) =>
+      STAFF_REVIEW_STATUSES.includes(item.status),
+    ).length,
+    pendingFollowUps: followUps.length + leadFollowUps.length,
     upcomingAppointments: appointments.length,
     overloadedConsultants: consultants.filter(
-      (item) => item.workloadPercentage >= 100,
+      (item) => item.caseCapacityPercentage >= 100,
     ).length,
+    // Urgent unassigned follow-ups matter especially — they're both overdue
+    // and high priority, and nobody is on the hook for them.
+    unassignedUrgentFollowUps: unassigned.highPriorityOverdueFollowUps,
   };
   return {
     summary,
     consultants,
-    unassigned: finalizeBucket(unassignedBucket),
-    outsideTeam: finalizeBucket(outsideTeamBucket),
+    unassigned,
+    outsideTeam: finalizeBucket(outsideTeamBucket, null, sliceLimit),
+    frontDesk: finalizeBucket(frontDeskBucket, null, sliceLimit),
   };
 }
 
@@ -847,4 +1090,119 @@ export async function agencyWorkloads(req, res) {
     success: true,
     data: await loadAgencyWorkloads(req.auth.agencyId),
   });
+}
+
+// Maps a drill-down :category to the (already-loaded, ownership-resolved)
+// bucket field it reads from — reusing loadAgencyWorkloads()'s existing
+// ownership-resolution logic instead of duplicating it, at the cost of
+// still doing the full in-memory agency load to serve one page of one
+// category. That tradeoff is deliberate for now: it's fully correct with
+// zero duplicated logic, and it's the natural first step toward Phase 10's
+// larger "replace full in-memory load with DB-level pagination" work —
+// this endpoint's shape won't need to change when that lands, only its
+// internals.
+const CATEGORY_ITEM_FIELDS = {
+  lead: "activeLeadItems",
+  case: "activeCaseItems",
+  collaboratingCase: "collaboratingCaseItems",
+  pendingTask: "pendingTaskItems",
+  overdueTask: "overdueTaskItems",
+  document: "documentReviewItems",
+  documentWaiting: "documentWaitingItems",
+  followUp: "followUpItems",
+  overdueFollowUp: "overdueFollowUpItems",
+  appointment: "appointmentItems",
+};
+
+const BUCKET_KEY_FIELDS = {
+  unassigned: "unassigned",
+  "outside-team": "outsideTeam",
+  "front-desk": "frontDesk",
+};
+
+export async function consultantWorkloadCategory(req, res) {
+  const { consultantKey, category } = req.params;
+  const itemField = CATEGORY_ITEM_FIELDS[category];
+  if (!itemField)
+    throw createHttpError(400, "Unknown workload category.", "BAD_REQUEST");
+
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(
+    100,
+    Math.max(1, Number.parseInt(req.query.limit, 10) || 20),
+  );
+
+  const workload = await loadAgencyWorkloads(req.auth.agencyId, {
+    sliceLimit: Infinity,
+  });
+  const bucketKey = BUCKET_KEY_FIELDS[consultantKey];
+  const bucket = bucketKey
+    ? workload[bucketKey]
+    : workload.consultants.find(
+        (item) => item.consultant.id === consultantKey,
+      );
+  if (!bucket)
+    throw createHttpError(404, "Consultant not found.", "NOT_FOUND");
+
+  const items = bucket[itemField] || [];
+  const start = (page - 1) * limit;
+  res.json({
+    success: true,
+    data: {
+      items: items.slice(start, start + limit),
+      total: items.length,
+      page,
+      limit,
+    },
+  });
+}
+
+// Phase 9 (scoped): a thin dispatcher over each item type's own existing
+// assignment logic — assignLead() / updateFollowUp() — rather than
+// reimplementing reassignment here, so the normal recordActivity()/
+// notifyUsers() calls those already make happen for free. Deliberately
+// scoped to "lead" and "followUp"/"overdueFollowUp" only for now: those are
+// the two categories most likely to end up Unassigned (the audit's own
+// highest-value case), and both authorize off req.auth exactly like this
+// controller does. Tasks (CaseWorkflowStep) and appointments have their own
+// reassignment endpoints too, but those read identity off req.user plus
+// case-scoped access helpers (caseAccessWhere/findScopedCase) that would
+// need to be re-verified against a live server before wiring them in here —
+// left for a follow-up pass rather than guessed at blind.
+const REASSIGNABLE_CATEGORIES = new Set(["lead", "followUp", "overdueFollowUp"]);
+
+export async function reassignWorkloadItem(req, res) {
+  const { category, itemId, newOwnerUserId, reason } = req.body || {};
+  if (!REASSIGNABLE_CATEGORIES.has(category))
+    throw createHttpError(
+      400,
+      "This category can't be reassigned from Team Workload yet — open the item on its own page instead.",
+      "BAD_REQUEST",
+    );
+  if (!itemId || !newOwnerUserId)
+    throw createHttpError(
+      400,
+      "itemId and newOwnerUserId are required.",
+      "VALIDATION_ERROR",
+    );
+
+  if (category === "lead") {
+    req.params.id = itemId;
+    req.body = {
+      ownerUserId: newOwnerUserId,
+      reason: reason || "Reassigned from Team Workload",
+    };
+    const result = await assignLead(req, prisma);
+    return res.json({ success: true, data: result });
+  }
+
+  // followUp and overdueFollowUp both resolve to the same FollowUp model.
+  // Note: this only covers case/client-side follow-ups. Lead-side
+  // LeadFollowUp rows — merged into the same "followUp" category on this
+  // page since Phase 2 — use a different model and aren't reassignable
+  // here yet; passing one of their ids fails safely with a 404 from
+  // updateFollowUp() rather than writing to the wrong table.
+  req.params.id = itemId;
+  req.body = { assignedUserId: newOwnerUserId };
+  return updateFollowUp(req, res);
 }

@@ -4,7 +4,7 @@ import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNam
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
-import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
+import { clientRecipientIds, notifyUsers, resolveNotifications } from "../services/notificationService.js";
 import { evaluateStageTriggers } from "../services/paymentScheduleService.js";
 import { logger } from "../services/logger.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "../services/bookingNotificationService.js";
@@ -462,7 +462,7 @@ export async function updateCasePermissions(req, res) {
     if (removedUserIds.length) {
       const [tasks, followUps, appointments] = await Promise.all([
         tx.caseWorkflowStep.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedToId: { in: removedUserIds }, isActive: true, status: "Pending" } }),
-        tx.followUp.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedUserId: { in: removedUserIds }, status: { in: ["Pending", "Overdue"] } } }),
+        tx.followUp.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedUserId: { in: removedUserIds }, status: "Pending" } }),
         tx.appointment.count({ where: { agencyId: req.auth.agencyId, caseId: caseItem.id, assignedToId: { in: removedUserIds }, status: "Scheduled" } }),
       ]);
       const activeWorkCount = tasks + followUps + appointments;
@@ -865,7 +865,7 @@ export async function closeCase(req, res) {
   if (!existing) throw createHttpError(404, "Case not found.", "NOT_FOUND");
   if (TERMINAL_CASE_STATUSES.has(existing.status)) throw createHttpError(409, "Case is already closed or inactive.", "CASE_ALREADY_CLOSED");
   const now = new Date();
-  const scheduledAppointments = await prisma.appointment.findMany({
+  const [scheduledAppointments, openFollowUps] = await Promise.all([prisma.appointment.findMany({
     where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Scheduled" },
     include: {
       client: { select: { id: true, fullName: true, email: true, phone: true } },
@@ -873,11 +873,14 @@ export async function closeCase(req, res) {
       sessionType: true,
       agency: { select: { name: true, legalName: true } },
     },
-  });
+  }), prisma.followUp.findMany({
+    where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Pending" },
+    select: { id: true },
+  })]);
   const result = await prisma.$transaction(async (tx) => {
     const data = await tx.case.update({ where: { id: existing.id }, data: { status: "Closed", stage: "Closed", nextAction: null }, include });
     const tasks = await tx.caseWorkflowStep.updateMany({ where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Pending" }, data: { status: "Cancelled", isActive: false, completedAt: null } });
-    const followUps = await tx.followUp.updateMany({ where: { agencyId: req.auth.agencyId, caseId: existing.id, status: { in: ["Pending", "Overdue"] } }, data: { status: "Cancelled", completedAt: now } });
+    const followUps = await tx.followUp.updateMany({ where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Pending" }, data: { status: "Cancelled", completedAt: now, cancelledById: req.auth.userId, cancellationReason: "Case closed" } });
     const cancelledAppointments = [];
     for (const appointment of scheduledAppointments) {
       const claimed = await tx.appointment.updateMany({
@@ -918,6 +921,11 @@ export async function closeCase(req, res) {
     }
     return { data, tasks: tasks.count, followUps: followUps.count, cancelledAppointments };
   });
+  await Promise.all(openFollowUps.map((item) => resolveNotifications({
+    agencyId: req.auth.agencyId,
+    entityType: "follow_up",
+    entityId: item.id,
+  })));
   if (result.cancelledAppointments.length) void processBookingMessageDeliveries();
   await Promise.all(result.cancelledAppointments.map((appointment) => offerWaitlistOpening(appointment).catch(() => {})));
   await recordActivity({

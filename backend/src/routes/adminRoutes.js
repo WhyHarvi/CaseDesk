@@ -1,10 +1,12 @@
 import { Router } from "express";
 import {
   agencyWorkloads,
+  consultantWorkloadCategory,
   createConsultant,
   disableConsultant,
   getConsultant,
   listConsultants,
+  reassignWorkloadItem,
   resetConsultantPassword,
   updateConsultant,
 } from "../controllers/adminConsultantController.js";
@@ -44,6 +46,11 @@ router.post(
   asyncHandler(resetTeamMemberPassword),
 );
 router.get("/consultants/workload", asyncHandler(agencyWorkloads));
+router.post("/consultants/workload/reassign", asyncHandler(reassignWorkloadItem));
+router.get(
+  "/consultants/workload/:consultantKey/:category",
+  asyncHandler(consultantWorkloadCategory),
+);
 router.post(
   "/consultants",
   rateLimit({ windowMs: 15 * 60_000, max: 20 }),

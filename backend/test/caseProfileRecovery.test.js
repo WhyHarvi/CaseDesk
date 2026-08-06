@@ -17,8 +17,8 @@ test("case deep links recover automatically without losing their tab or highligh
   assert.match(page, /generation !== loadGenerationRef\.current/);
   assert.match(page, /recoverablePanelFailure/);
   assert.doesNotMatch(page, /navigate\([^)]*tab=reminders/);
-  assert.match(reminders, /highlightedReminder/);
-  assert.match(reminders, /setView\(reminderView\(highlightedReminder\)\)/);
-  assert.match(reminders, /ready: highlightReady/);
+  assert.match(reminders, /const highlighted =/);
+  assert.match(reminders, /setView\(reminderView\(highlighted\)\)/);
+  assert.match(reminders, /ready: filtered\.some/);
   assert.match(reminders, /deps: \[view, filtered\.length\]/);
 });

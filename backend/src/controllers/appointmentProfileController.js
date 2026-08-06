@@ -88,6 +88,7 @@ export async function createAppointmentFollowUp(req, res) {
         clientId: appointment.clientId,
         caseId: appointment.caseId,
         assignedUserId,
+        createdById: req.auth.userId,
         title,
         description: clean(req.body?.description, 2000) || null,
         dueDate,

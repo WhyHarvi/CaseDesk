@@ -764,17 +764,18 @@ export default function CaseProfile() {
     try {
       setReminderSaving(true);
       setReminderError("");
-      const metadata = [
-        `Expires: ${form.expires || "Not set"}`,
-        `Send reminder: ${form.sendReminder || "Not set"}`,
-        `Notifications: ${form.notifications}`,
-      ].join("\n");
       const response = await api.post("/follow-ups", {
         clientId: caseItem.clientId,
         caseId: id,
         title: form.subject,
-        description: `${form.message}\n\n${metadata}`,
-        dueDate: form.reminderDate,
+        description: form.message,
+        followUpType: "General follow-up",
+        dueDate: new Date(form.dueDate).toISOString(),
+        reminderAt: form.reminderAt ? new Date(form.reminderAt).toISOString() : null,
+        expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null,
+        notificationChannels: form.notificationChannels,
+        notifyClient: form.notifyClient,
+        ...(caseItem.archivedAt ? { overrideReason: form.overrideReason } : {}),
         status: "Pending",
       });
       setFollowUps((current) => [response.data.data, ...current]);

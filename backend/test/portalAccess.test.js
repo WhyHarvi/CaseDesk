@@ -108,6 +108,8 @@ test("all-client scope exposes client-linked follow-ups without an empty relatio
   const access = followUpAccessWhere(req);
   const appointmentAccess = appointmentProfileAccessWhere(req);
   assert.ok(access.OR.some((branch) => branch.clientId?.not === null));
+  assert.ok(access.OR.some((branch) => branch.assignedUserId === "consultant-1"));
+  assert.ok(access.OR.some((branch) => branch.createdById === "consultant-1"));
   assert.ok(appointmentAccess.OR.some((branch) => branch.clientId?.not === null));
   assert.doesNotMatch(JSON.stringify(access), /"client":\{\}/);
 });

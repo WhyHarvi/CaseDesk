@@ -3451,6 +3451,7 @@ function CaseWorkspacePanel({
         saving={savingReminder}
         error={reminderError}
         highlightId={highlightId}
+        archived={Boolean(caseItem.archivedAt)}
         onCreate={onCreateReminder}
       />
     );

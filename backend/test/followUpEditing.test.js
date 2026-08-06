@@ -27,8 +27,12 @@ test("follow-up edits normalize terminal status and support clearing optional va
   assert.equal(reopened.completedAt, null);
 });
 
-test("follow-up completion always gets a completion timestamp", () => {
-  const completed = normalizeFollowUpPayload({ title: "Review file", status: "Completed" });
+test("follow-up completion requires a fixed outcome and gets a completion timestamp", () => {
+  assert.throws(
+    () => normalizeFollowUpPayload({ title: "Review file", status: "Completed" }),
+    (error) => error.code === "COMPLETION_OUTCOME_REQUIRED",
+  );
+  const completed = normalizeFollowUpPayload({ title: "Review file", status: "Completed", completionOutcome: "Client contacted" });
   assert.equal(completed.status, "Completed");
   assert.ok(completed.completedAt instanceof Date);
 });
@@ -46,15 +50,20 @@ test("follow-up title validation is explicit", () => {
     () => normalizeFollowUpPayload({ title: "Call client", status: null }),
     (error) => error.statusCode === 400 && error.message === "Follow-up status is invalid.",
   );
+  assert.throws(
+    () => normalizeFollowUpPayload({ title: "Call client", status: "Overdue" }),
+    (error) => error.statusCode === 400 && /calculated/.test(error.message),
+  );
 });
 
 test("follow-up editor persists every visible field and loads complete scoped options", async () => {
-  const [schema, migration, controller, routes, page] = await Promise.all([
+  const [schema, migration, controller, routes, page, prefetch] = await Promise.all([
     source("../prisma/schema.prisma"),
     source("../prisma/migrations/20260805180000_follow_up_editable_fields/migration.sql"),
     source("../src/controllers/followUpController.js"),
     source("../src/routes/followUpRoutes.js"),
     source("../../frontend/src/pages/FollowUps.jsx"),
+    source("../../frontend/src/services/routePrefetch.js"),
   ]);
 
   assert.match(schema, /followUpType\s+String\s+@default\("General follow-up"\)/);
@@ -65,9 +74,14 @@ test("follow-up editor persists every visible field and loads complete scoped op
   assert.match(controller, /priority: fieldParsers\.enumField/);
   assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
   assert.match(routes, /router\.get\("\/options"/);
-  assert.match(page, /followUpType: formState\.followUpType/);
-  assert.match(page, /priority: formState\.priority/);
-  assert.match(page, /description: formState\.description\.trim\(\) \|\| null/);
+  assert.match(page, /followUpType: form\.followUpType/);
+  assert.match(page, /priority: form\.priority/);
+  assert.match(page, /description: form\.description\.trim\(\) \|\| null/);
   assert.match(page, /get\("\/follow-ups\/options"\)/);
+  assert.match(page, /Retrying automatically/);
+  assert.match(page, /Retry now/);
+  assert.match(page, /recoveryDelaysMs/);
+  assert.match(prefetch, /"\/follow-ups\/combined"/);
+  assert.match(prefetch, /"\/follow-ups\/options"/);
   assert.doesNotMatch(page, /delete payload\.(?:description|dueDate|assignedUserId|caseId)/);
 });

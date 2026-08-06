@@ -4,7 +4,7 @@ import { nextClientNumber } from "../../services/clientNumberService.js";
 import { assertLeadWorkflowEditable, canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
+import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadReactivation, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 import { notifyUsers } from "../../services/notificationService.js";
@@ -326,6 +326,18 @@ async function syncLeadNextAction(tx, leadId) {
   return next;
 }
 
+export async function supersedePendingFollowUps(tx, agencyId, leadId, actorId, outcome) {
+  await tx.leadFollowUp.updateMany({
+    where: { agencyId, leadId, status: "PENDING" },
+    data: {
+      status: "CANCELLED",
+      completedAt: new Date(),
+      completedById: actorId || null,
+      completionOutcome: outcome,
+    },
+  });
+}
+
 // Editing core contact/demographic fields — separate from recordLeadActivity
 // (which is for logging contact events) and reassignLead/nurture/etc (which
 // are pipeline-stage actions). This is just "the details were wrong or
@@ -336,6 +348,9 @@ export async function updateLeadDetails(req, db = prisma) {
   const actorId = req.auth.userId;
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
+    if (lead.status === "CONVERTED") {
+      throw createHttpError(409, "This lead has been converted — edit its contact details on the linked client instead.", "LEAD_CONVERTED");
+    }
     if (values.phoneNormalized !== undefined || values.emailNormalized !== undefined) {
       await lockAgencyContactIntake(tx, agencyId);
       await assertNoContactDuplicate(tx, {
@@ -358,10 +373,18 @@ export async function recordLeadActivity(req, db = prisma) {
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (["CONVERTED", "ARCHIVED"].includes(lead.status)) throw createHttpError(409, "This lead no longer accepts contact activity.", "LEAD_CLOSED");
-    const activity = await tx.leadActivity.create({ data: { ...values, agencyId, leadId: lead.id, performedById: actorId } });
+    const { connected, ...activityValues } = values;
+    const activity = await tx.leadActivity.create({ data: { ...activityValues, agencyId, leadId: lead.id, performedById: actorId } });
     const contactActivity = values.activityType !== "INTERNAL_NOTE";
-    const nextStage = contactActivity && ["NEW", "ASSIGNED"].includes(lead.stage) ? "CONTACTING" : lead.stage;
-    await tx.lead.update({ where: { id: lead.id }, data: { ...(contactActivity ? { firstContactAt: lead.firstContactAt || values.occurredAt, lastContactAt: values.occurredAt } : {}), ...(nextStage !== lead.stage ? { stage: nextStage } : {}), version: { increment: 1 } } });
+    const connectionTypes = ["INCOMING_CALL", "OUTGOING_CALL", "WHATSAPP_RECEIVED", "WHATSAPP_SENT", "SMS_RECEIVED", "SMS_SENT", "EMAIL_RECEIVED", "EMAIL_SENT"];
+    const isConnection = connected && connectionTypes.includes(values.activityType);
+    const stageOrder = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
+    const nextStage = isConnection && stageOrder.indexOf(lead.stage) < stageOrder.indexOf("CONNECTED")
+      ? "CONNECTED"
+      : contactActivity && ["NEW", "ASSIGNED"].includes(lead.stage)
+        ? "CONTACTING"
+        : lead.stage;
+    await tx.lead.update({ where: { id: lead.id }, data: { ...(contactActivity ? { firstContactAt: lead.firstContactAt || values.occurredAt, lastContactAt: values.occurredAt } : {}), ...(isConnection ? { firstConnectedAt: lead.firstConnectedAt || values.occurredAt } : {}), ...(nextStage !== lead.stage ? { stage: nextStage } : {}), version: { increment: 1 } } });
     if (nextStage !== lead.stage) await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: nextStage, changedById: actorId, reason: "Contact activity recorded" } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.contact_recorded", details: `${lead.leadNumber}: ${values.title}`, entityType: "lead", entityId: lead.id, metadata: { activityId: activity.id, activityType: values.activityType } } });
     return activity;
@@ -396,8 +419,46 @@ export async function updateLeadFollowUp(req, db = prisma) {
     const lead = await requireLead(tx, req, req.params.id);
     const existing = await tx.leadFollowUp.findFirst({ where: { id: req.params.followUpId, leadId: lead.id, agencyId } });
     if (!existing) throw createHttpError(404, "Lead follow-up not found.", "FOLLOW_UP_NOT_FOUND");
+    if (req.auth.role !== "admin" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId) {
+      throw createHttpError(403, "You can only close a follow-up assigned to you.", "FORBIDDEN");
+    }
     if (existing.status !== "PENDING") throw createHttpError(409, "This lead follow-up is already closed.", "FOLLOW_UP_CLOSED");
     const followUp = await tx.leadFollowUp.update({ where: { id: existing.id }, data: { status: values.status, completionOutcome: values.completionOutcome, completedAt: new Date(), completedById: actorId } });
+    let next = await tx.leadFollowUp.findFirst({
+      where: { agencyId, leadId: lead.id, status: "PENDING" },
+      orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }],
+    });
+    const reactivatesLead = existing.type === "REACTIVATE" && lead.status === "NURTURE" && values.status === "COMPLETED";
+    if (!next && (lead.status === "OPEN" || reactivatesLead)) {
+      if (!values.nextFollowUp) {
+        throw createHttpError(
+          409,
+          "This is the lead's last open follow-up. Add the next action before closing it.",
+          "NEXT_FOLLOW_UP_REQUIRED",
+        );
+      }
+      await requireLeadStaff(tx, agencyId, values.nextFollowUp.assignedUserId);
+      next = await tx.leadFollowUp.create({
+        data: { ...values.nextFollowUp, agencyId, leadId: lead.id },
+      });
+      await tx.leadActivity.create({
+        data: {
+          agencyId,
+          leadId: lead.id,
+          activityType: "FOLLOW_UP_CREATED",
+          direction: "INTERNAL",
+          channel: "SYSTEM",
+          title: values.nextFollowUp.description,
+          description: `Due ${values.nextFollowUp.dueAt.toISOString()}`,
+          performedById: actorId,
+          metadata: { followUpId: next.id, assignedUserId: values.nextFollowUp.assignedUserId, createdWhileClosingFollowUpId: existing.id },
+        },
+      });
+    }
+    if (reactivatesLead) {
+      await tx.lead.update({ where: { id: lead.id }, data: { status: "OPEN", nurtureUntil: null, version: { increment: 1 } } });
+      await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_REACTIVATED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reactivated from nurture", description: values.completionOutcome, performedById: actorId } });
+    }
     await syncLeadNextAction(tx, lead.id);
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "FOLLOW_UP_COMPLETED", direction: "INTERNAL", channel: "SYSTEM", outcome: values.status, title: values.status === "COMPLETED" ? "Follow-up completed" : "Follow-up cancelled", description: values.completionOutcome, performedById: actorId, metadata: { followUpId: followUp.id } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: values.status === "COMPLETED" ? "lead.follow_up_completed" : "lead.follow_up_cancelled", details: `${lead.leadNumber}: ${values.completionOutcome}`, entityType: "lead", entityId: lead.id, metadata: { followUpId: followUp.id } } });
@@ -414,6 +475,7 @@ export async function assignLead(req, db = prisma) {
     await requireLeadStaff(tx, agencyId, values.ownerUserId);
     if (lead.ownerUserId === values.ownerUserId) throw createHttpError(409, "This team member already owns the lead.", "NO_ASSIGNMENT_CHANGE");
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { ownerUserId: values.ownerUserId, ...(lead.nextActionOwnerId === lead.ownerUserId ? { nextActionOwnerId: values.ownerUserId } : {}), stage: lead.stage === "NEW" ? "ASSIGNED" : lead.stage, version: { increment: 1 } }, include: leadInclude });
+    await tx.leadFollowUp.updateMany({ where: { agencyId, leadId: lead.id, status: "PENDING" }, data: { assignedUserId: values.ownerUserId } });
     await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, previousOwnerId: lead.ownerUserId, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: "REASSIGNMENT", reason: values.reason } });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "ASSIGNMENT_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reassigned", description: values.reason, performedById: actorId, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.assigned", details: `${lead.leadNumber}: ${values.reason}`, entityType: "lead", entityId: lead.id, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
@@ -432,6 +494,7 @@ export async function moveLeadToNurture(req, db = prisma) {
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can move to nurture.", "LEAD_NOT_OPEN");
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, "Lead moved to nurture");
     const followUp = await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: lead.ownerUserId, type: "REACTIVATE", description: values.reason, dueAt: values.nurtureUntil } });
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { status: "NURTURE", nurtureUntil: values.nurtureUntil, nextActionType: followUp.type, nextActionDescription: followUp.description, nextActionAt: followUp.dueAt, nextActionOwnerId: followUp.assignedUserId, version: { increment: 1 } }, include: leadInclude });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_MOVED_TO_NURTURE", direction: "INTERNAL", channel: "SYSTEM", title: "Lead moved to nurture", description: values.reason, performedById: actorId, metadata: { nurtureUntil: values.nurtureUntil } } });
@@ -453,6 +516,25 @@ export async function markLeadLost(req, db = prisma) {
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { status: "LOST", lostAt, nurtureUntil: null, nextActionType: null, nextActionDescription: null, nextActionAt: null, nextActionOwnerId: null, version: { increment: 1 } }, include: leadInclude });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_LOST", direction: "INTERNAL", channel: "SYSTEM", outcome: values.reasonCode, title: "Lead marked lost", description: values.notes, performedById: actorId, metadata: { reasonCode: values.reasonCode } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.marked_lost", details: `${lead.leadNumber}: ${values.reasonCode}`, entityType: "lead", entityId: lead.id, metadata: { reasonCode: values.reasonCode } } });
+    return updated;
+  }, leadTransactionOptions);
+}
+
+export async function reactivateLead(req, db = prisma) {
+  const values = parseLeadReactivation(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    if (lead.status !== "LOST") throw createHttpError(409, "Only lost leads can be reactivated.", "LEAD_NOT_LOST");
+    const detail = await tx.leadLostDetail.findUnique({ where: { leadId: lead.id } });
+    if (!detail?.reactivationAllowed) throw createHttpError(409, "This lead was not marked as eligible for reactivation.", "REACTIVATION_NOT_ALLOWED");
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, "Lead reactivated");
+    const dueAt = new Date(Date.now() + 24 * 60 * 60_000);
+    const followUp = await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: lead.ownerUserId, type: "FOLLOW_UP", description: values.reason, dueAt } });
+    const updated = await tx.lead.update({ where: { id: lead.id }, data: { status: "OPEN", lostAt: null, nextActionType: followUp.type, nextActionDescription: followUp.description, nextActionAt: followUp.dueAt, nextActionOwnerId: followUp.assignedUserId, version: { increment: 1 } }, include: leadInclude });
+    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_REACTIVATED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reactivated", description: values.reason, performedById: actorId } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.reactivated", details: `${lead.leadNumber}: ${values.reason}`, entityType: "lead", entityId: lead.id } });
     return updated;
   }, leadTransactionOptions);
 }
@@ -552,27 +634,48 @@ export async function qualifyLead(req, db = prisma) {
       include: { completedBy: { select: { id: true, fullName: true } } },
     });
 
+    const workflow = qualificationWorkflow(values.outcome);
     const stageOrder = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
-    const advancesToQualified = values.outcome === "QUALIFIED" && stageOrder.indexOf(lead.stage) < stageOrder.indexOf("QUALIFIED");
+    const nextStage = workflow.stage && stageOrder.indexOf(lead.stage) < stageOrder.indexOf(workflow.stage) ? workflow.stage : lead.stage;
     await tx.lead.update({
       where: { id: lead.id },
       data: {
         immigrationInterest: values.immigrationService,
         currentImmigrationStatus: values.currentImmigrationStatus,
         ...(values.urgency ? { priority: values.urgency } : {}),
-        ...(advancesToQualified ? { stage: "QUALIFIED" } : {}),
+        ...(values.estimatedBudget != null && lead.estimatedValue == null ? { estimatedValue: values.estimatedBudget } : {}),
+        ...(nextStage !== lead.stage ? { stage: nextStage } : {}),
+        nextActionType: workflow.type,
+        nextActionDescription: workflow.description,
+        nextActionAt: workflow.at,
+        nextActionOwnerId: lead.ownerUserId,
         version: { increment: 1 },
       },
     });
 
-    if (advancesToQualified) {
-      await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "QUALIFIED", changedById: actorId, reason: "Qualification completed" } });
-      await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "STAGE_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: "Stage changed to Qualified", performedById: actorId, metadata: { previousStage: lead.stage, newStage: "QUALIFIED" } } });
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, "Qualification updated the next action");
+    await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: lead.ownerUserId, type: workflow.type, description: workflow.description, dueAt: workflow.at } });
+    if (nextStage !== lead.stage) {
+      await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: nextStage, changedById: actorId, reason: "Qualification completed" } });
+      await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "STAGE_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: `Stage changed to ${humanizeForAudit(nextStage)}`, performedById: actorId, metadata: { previousStage: lead.stage, newStage: nextStage } } });
     }
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", outcome: values.outcome, title: previousQualification ? "Qualification updated" : "Qualification completed", description: values.notes, performedById: actorId, metadata: { outcome: values.outcome, eligibilityConfidence: values.eligibilityConfidence } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: previousQualification ? "lead.qualification_updated" : "lead.qualified", details: `${lead.leadNumber}: ${values.outcome}`, entityType: "lead", entityId: lead.id, metadata: { beforeOutcome: previousQualification?.outcome || null, outcome: values.outcome } } });
     return qualification;
   }, leadTransactionOptions);
+}
+
+export function qualificationWorkflow(outcome) {
+  const at = new Date(Date.now() + 24 * 60 * 60_000);
+  const workflows = {
+    QUALIFIED: { stage: "QUALIFIED", type: "BOOK_CONSULTATION", description: "Book a consultation" },
+    CONSULTATION_REQUIRED: { stage: null, type: "BOOK_CONSULTATION", description: "Book a consultation to finish assessing eligibility" },
+    MORE_INFORMATION_REQUIRED: { stage: null, type: "FOLLOW_UP", description: "Follow up to gather the missing information" },
+    NOT_ELIGIBLE: { stage: null, type: "MARK_LOST", description: "Not eligible — confirm and mark the lead lost" },
+    FUTURE_OPPORTUNITY: { stage: null, type: "NURTURE", description: "Not ready yet — move to nurture" },
+    SERVICE_NOT_OFFERED: { stage: null, type: "MARK_LOST", description: "Service not offered — confirm and mark the lead lost" },
+  };
+  return { ...workflows[outcome], at };
 }
 
 const consultationInclude = {
@@ -637,6 +740,7 @@ export async function createConsultation(req, db = prisma) {
       toKey: dayKey,
       minNoticeOverrideMinutes: 0,
       locationId: preflightLocation?.id || null,
+      meetingMode,
     });
     if (!(offered.days[dayKey] || []).some((slot) => slot.startsAt === values.startAt.toISOString())) {
       throw createHttpError(409, "That time is outside the consultant’s bookable hours or is no longer available.", "SLOT_TAKEN");
@@ -646,6 +750,9 @@ export async function createConsultation(req, db = prisma) {
   const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can book consultations.", "LEAD_NOT_OPEN");
+    if (values.paymentStatus === "PAID" && req.auth.role !== "admin") {
+      throw createHttpError(403, "Only an admin can mark a consultation payment received without linked payment evidence.", "FORBIDDEN");
+    }
     const consultant = await tx.user.findFirst({
       where: { id: values.consultantUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant"] } } } },
       select: { id: true, schedulingPreference: { select: { acceptsAppointments: true, bufferMinutes: true } } },
@@ -722,6 +829,7 @@ export async function createConsultation(req, db = prisma) {
     const next = nextConsultationAction("SCHEDULED", null, values.startAt);
     await tx.lead.update({ where: { id: lead.id }, data: { ...(advanceStage ? { stage: "CONSULTATION_BOOKED" } : {}), nextActionType: next.type, nextActionDescription: next.description, nextActionAt: next.at, nextActionOwnerId: values.consultantUserId, version: { increment: 1 } } });
     if (advanceStage) await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: "CONSULTATION_BOOKED", changedById: actorId, reason: "Consultation scheduled" } });
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, "Consultation booked");
     await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: values.consultantUserId, type: next.type, description: next.description, dueAt: next.at } });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "CONSULTATION_BOOKED", direction: "INTERNAL", channel: "SYSTEM", title: "Consultation scheduled", description: values.notes, performedById: actorId, metadata: { consultationId: consultation.id, startAt: values.startAt, consultantUserId: values.consultantUserId } } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.consultation_booked", details: `${lead.leadNumber}: ${values.startAt.toISOString()}`, entityType: "lead", entityId: lead.id, metadata: { consultationId: consultation.id } } });
@@ -787,6 +895,7 @@ export async function updateConsultation(req, db = prisma) {
     const next = nextConsultationAction(values.status, values.outcome, existing.startAt);
     await tx.lead.update({ where: { id: lead.id }, data: { stage: nextStage, nextActionType: next.type, nextActionDescription: next.description, nextActionAt: next.at, nextActionOwnerId: existing.consultantUserId, version: { increment: 1 } } });
     if (nextStage !== lead.stage) await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: nextStage, changedById: actorId, reason: `Consultation ${values.status.toLowerCase()}` } });
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, `Consultation ${values.status.toLowerCase()}`);
     await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: existing.consultantUserId, type: next.type, description: next.description, dueAt: next.at } });
     const activityType = values.status === "COMPLETED" ? "CONSULTATION_COMPLETED" : values.status === "CANCELLED" ? "CONSULTATION_CANCELLED" : values.status === "NO_SHOW" ? "CONSULTATION_NO_SHOW" : values.status === "RESCHEDULED" ? "CONSULTATION_RESCHEDULED" : "INTERNAL_NOTE";
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType, direction: "INTERNAL", channel: "SYSTEM", outcome: values.outcome, title: `Consultation ${humanizeForAudit(values.status)}`, description: values.notes, performedById: actorId, metadata: { consultationId: existing.id, status: values.status, outcome: values.outcome } } });
@@ -831,6 +940,11 @@ export async function updateCommercialStatus(req, db = prisma) {
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can update retainer or payment status.", "LEAD_NOT_OPEN");
     const retainerStatus = values.retainerStatus ?? lead.retainerStatus;
     const initialPaymentStatus = values.initialPaymentStatus ?? lead.initialPaymentStatus;
+    const settingSigned = retainerStatus === "SIGNED" && lead.retainerStatus !== "SIGNED";
+    const settingPaid = ["PAID", "WAIVED"].includes(initialPaymentStatus) && !["PAID", "WAIVED"].includes(lead.initialPaymentStatus);
+    if ((settingSigned || settingPaid) && req.auth.role !== "admin") {
+      throw createHttpError(403, "Only an admin can confirm a signed retainer or received payment without linked evidence.", "FORBIDDEN");
+    }
     if (retainerStatus === lead.retainerStatus && initialPaymentStatus === lead.initialPaymentStatus) throw createHttpError(409, "No status change was provided.", "NO_STATUS_CHANGE");
     const workflow = commercialWorkflow(retainerStatus, initialPaymentStatus);
     const updated = await tx.lead.update({
@@ -839,6 +953,7 @@ export async function updateCommercialStatus(req, db = prisma) {
       include: leadInclude,
     });
     if (workflow.stage !== lead.stage) await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: workflow.stage, changedById: actorId, reason: "Retainer or initial-payment status updated" } });
+    await supersedePendingFollowUps(tx, agencyId, lead.id, actorId, "Commercial status updated");
     await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: lead.ownerUserId, type: workflow.type, description: workflow.description, dueAt: workflow.at } });
     if (retainerStatus !== lead.retainerStatus) {
       const activityType = retainerStatus === "PREPARED" ? "AGREEMENT_PREPARED" : retainerStatus === "SENT" ? "AGREEMENT_SENT" : retainerStatus === "SIGNED" ? "AGREEMENT_SIGNED" : "INTERNAL_NOTE";
@@ -907,12 +1022,13 @@ export async function convertLead(req, db = prisma) {
       await tx.note.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
       await tx.followUp.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
     }
+    await tx.caseManualLedgerEntry.updateMany({ where: { agencyId, leadId: lead.id }, data: { leadId: null, caseId: caseItem.id, clientId: client.id } });
 
     const summary = qualificationSummary(qualification);
     if (summary || values.notes) {
       await tx.note.create({ data: { agencyId, clientId: client.id, caseId: caseItem.id, userId: actorId, content: [summary, values.notes].filter(Boolean).join("\n\n") } });
     }
-    await tx.followUp.create({ data: { agencyId, clientId: client.id, caseId: caseItem.id, assignedUserId: lead.ownerUserId, title: values.caseNextAction, description: "First action created during lead conversion", status: "Pending" } });
+    await tx.followUp.create({ data: { agencyId, clientId: client.id, caseId: caseItem.id, assignedUserId: lead.ownerUserId, createdById: actorId, title: values.caseNextAction, description: "First action created during lead conversion", status: "Pending" } });
     await tx.leadFollowUp.updateMany({ where: { agencyId, leadId: lead.id, status: "PENDING" }, data: { status: "CANCELLED", completedAt: new Date(), completedById: actorId, completionOutcome: "Lead converted" } });
 
     const convertedAt = new Date();

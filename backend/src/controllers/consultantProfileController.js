@@ -100,7 +100,7 @@ async function profileStats(req) {
     prisma.followUp.count({
       where: {
         agencyId,
-        status: { not: "Completed" },
+        status: "Pending",
         OR: [{ assignedUserId: req.auth.userId }, { case: caseAccessWhere(req) }],
       },
     }),

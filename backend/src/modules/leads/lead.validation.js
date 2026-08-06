@@ -102,8 +102,11 @@ export function parseUpdateLeadDetails(body = {}) {
   if (body.country !== undefined) result.country = text(body.country, "country", { max: 100 });
   if (body.province !== undefined) result.province = text(body.province, "province", { max: 100 });
   if (body.preferredLanguage !== undefined) result.preferredLanguage = text(body.preferredLanguage, "preferredLanguage", { max: 100 });
+  if (body.preferredContactTime !== undefined) result.preferredContactTime = text(body.preferredContactTime, "preferredContactTime", { max: 150 });
   if (body.currentImmigrationStatus !== undefined) result.currentImmigrationStatus = text(body.currentImmigrationStatus, "currentImmigrationStatus", { max: 150 });
   if (body.immigrationInterest !== undefined) result.immigrationInterest = text(body.immigrationInterest, "immigrationInterest", { max: 150 });
+  if (body.estimatedValue !== undefined) result.estimatedValue = optionalNumber(body.estimatedValue, "estimatedValue", { min: 0, max: 100000000 });
+  if (body.temperature !== undefined) result.temperature = enumValue(body.temperature, "temperature", LEAD_TEMPERATURES);
   if (body.inquiryDate !== undefined) result.inquiryDate = dateValue(body.inquiryDate, "inquiryDate", { required: true });
   if (!Object.keys(result).length) throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
   return result;
@@ -229,7 +232,12 @@ export function parseCommercialStatus(body = {}) {
   if (retainerStatus === undefined && initialPaymentStatus === undefined) {
     throw createHttpError(400, "A retainer or initial-payment status is required.", "VALIDATION_ERROR");
   }
-  return { retainerStatus, initialPaymentStatus, notes: text(body.notes, "notes", { max: 5000 }) };
+  const sensitive = retainerStatus === "SIGNED" || ["PAID", "WAIVED"].includes(initialPaymentStatus);
+  return { retainerStatus, initialPaymentStatus, notes: text(body.notes, "notes", { required: sensitive, max: 5000 }) };
+}
+
+export function parseLeadReactivation(body = {}) {
+  return { reason: text(body.reason, "reason", { required: true, max: 1000 }) };
 }
 
 export function parseLeadConversion(body = {}) {
@@ -259,6 +267,7 @@ export function parseLeadActivity(body = {}) {
     description: text(body.description, "description", { max: 5000 }),
     durationSeconds: durationSeconds === null ? null : Math.round(durationSeconds),
     occurredAt: dateValue(body.occurredAt, "occurredAt") || new Date(),
+    connected: optionalBoolean(body.connected, "connected") || false,
   };
 }
 
@@ -275,6 +284,7 @@ export function parseLeadFollowUpOutcome(body = {}) {
   return {
     status: enumValue(body.status, "status", ["COMPLETED", "CANCELLED"]),
     completionOutcome: text(body.completionOutcome, "completionOutcome", { required: true, max: 500 }),
+    nextFollowUp: body.nextFollowUp ? parseLeadFollowUp(body.nextFollowUp) : null,
   };
 }
 

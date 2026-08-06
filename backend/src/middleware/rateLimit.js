@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import prisma from "../services/prisma/client.js";
 import { logger } from "../services/logger.js";
 
-export function rateLimit({ windowMs = 60_000, max = 10 } = {}) {
+export function rateLimit({ windowMs = 60_000, max = 10, identity: customIdentity } = {}) {
   return async (req, res, next) => {
     const now = Date.now();
-    const identity = `${req.ip}:${req.auth?.userId || "anonymous"}:${req.baseUrl}:${req.route?.path || req.path}`;
+    const actor = typeof customIdentity === "function"
+      ? String(customIdentity(req) || "anonymous")
+      : `${req.ip}:${req.auth?.userId || "anonymous"}`;
+    const identity = `${actor}:${req.baseUrl}:${req.route?.path || req.path}`;
     const key = createHash("sha256").update(identity).digest("hex");
     try {
       const resetAt = new Date(now + windowMs);

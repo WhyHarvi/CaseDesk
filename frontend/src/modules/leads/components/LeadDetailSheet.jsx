@@ -28,9 +28,10 @@ import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAG
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
+import CompleteConsultationSheet from "./CompleteConsultationSheet";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
@@ -96,6 +97,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [conversionOpen, setConversionOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
   const [closingFollowUp, setClosingFollowUp] = useState(null);
+  const [completingConsultation, setCompletingConsultation] = useState(null);
+  const [qualificationPrompt, setQualificationPrompt] = useState(null);
+  const [suggestedLostReason, setSuggestedLostReason] = useState("");
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
   const [selectedAppointmentTab, setSelectedAppointmentTab] = useState("details");
   const [promoting, setPromoting] = useState(false);
@@ -123,10 +127,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   }, [initialLead]);
 
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !closingFollowUp && !selectedAppointmentId && onClose();
+    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, closingFollowUp, selectedAppointmentId, onClose]);
+  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, onClose]);
 
   useEffect(() => {
     if (tab !== "messages") return;
@@ -190,6 +194,16 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     refreshLead();
   }
 
+  function qualificationCompleted(qualification) {
+    setActiveAction(null);
+    refreshLead();
+    if (["NOT_ELIGIBLE", "SERVICE_NOT_OFFERED"].includes(qualification?.outcome)) {
+      setQualificationPrompt({ action: "lost", reasonCode: qualification.outcome });
+    } else if (qualification?.outcome === "FUTURE_OPPORTUNITY") {
+      setQualificationPrompt({ action: "nurture" });
+    }
+  }
+
   const due = formatDueDate(lead.nextActionAt);
   const activities = lead.activities || [];
   const followUps = lead.followUps || [];
@@ -213,7 +227,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
         { id: "nurture", label: "Nurture", icon: HeartHandshake, show: lead.status === "OPEN" },
         { id: "lost", label: "Mark lost", icon: XCircle, show: true, destructive: true },
       ].filter((action) => action.show)
-    : [];
+    : lead.status === "LOST" && lead.lostDetail?.reactivationAllowed
+      ? [{ id: "reactivate", label: "Reactivate", icon: HeartHandshake, show: true }]
+      : [];
 
   return (
     <div className="fixed inset-0 z-[120] flex justify-end bg-slate-950/20 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
@@ -288,6 +304,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         value={humanize(lead.priority)}
                         select={canEditWorkflow ? { value: lead.priority, disabled: prioritySaving, onChange: updatePriority, options: LEAD_PRIORITIES.map((value) => ({ value, label: humanize(value) })) } : null}
                       />
+                      <SummaryValue label="Temperature" value={humanize(lead.temperature)} onEdit={lead.status !== "CONVERTED" ? () => setActiveAction("edit-details") : null} />
+                      <SummaryValue label="Estimated value" value={lead.estimatedValue != null ? `$${Number(lead.estimatedValue).toLocaleString("en-CA")}` : "Not set"} onEdit={lead.status !== "CONVERTED" ? () => setActiveAction("edit-details") : null} />
                     </div>
                   </section>
 
@@ -310,15 +328,15 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   <section className="rounded-2xl border border-slate-200/70 bg-white">
                     <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                       <h3 className="text-sm font-semibold text-slate-900">Contact</h3>
-                      <button type="button" onClick={() => setActiveAction("edit-details")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700">
-                        <Pencil className="h-3.5 w-3.5" />Edit
-                      </button>
+                      {lead.status !== "CONVERTED" ? <button type="button" onClick={() => setActiveAction("edit-details")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"><Pencil className="h-3.5 w-3.5" />Edit</button> : lead.convertedClientId ? <Link to={`/app/clients/${lead.convertedClientId}`} className="text-xs font-semibold text-brand-700">Edit on client →</Link> : null}
                     </div>
                     <div className="grid gap-px bg-slate-100 sm:grid-cols-2">
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Phone className="h-3.5 w-3.5" />Phone</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.phone}</p></div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><Mail className="h-3.5 w-3.5" />Email</p><p className="mt-1.5 break-words text-sm font-medium text-slate-800">{lead.email || "Not provided"}</p></div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><MapPin className="h-3.5 w-3.5" />Location</p><p className="mt-1.5 text-sm font-medium text-slate-800">{[lead.province, lead.country].filter(Boolean).join(", ") || "Not provided"}</p></div>
                       <div className="bg-white px-5 py-4"><p className="flex items-center gap-2 text-xs text-slate-400"><UserRound className="h-3.5 w-3.5" />Interest</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.immigrationInterest || "Not specified"}</p></div>
+                      <div className="bg-white px-5 py-4"><p className="text-xs text-slate-400">Preferred contact time</p><p className="mt-1.5 text-sm font-medium text-slate-800">{lead.preferredContactTime || "Not provided"}</p></div>
+                      <div className="bg-white px-5 py-4"><p className="text-xs text-slate-400">Consent</p><p className={`mt-1.5 text-sm font-medium ${lead.consentGiven ? "text-emerald-700" : "text-slate-500"}`}>{lead.consentGiven ? `Consent on file${lead.consentGivenAt ? ` · ${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(lead.consentGivenAt))}` : ""}` : "No consent on record"}</p></div>
                     </div>
                   </section>
 
@@ -369,7 +387,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       "px-5 py-4 transition",
                       item.appointment?.id ? "cursor-pointer hover:bg-sky-50/50" : "",
                       index ? "border-t border-slate-100" : "",
-                    ].join(" ")}><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{humanize(item.appointmentType)} · {item.consultant?.fullName || "Consultant"}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.startAt))}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{humanize(item.status)}</span></div>{item.outcome ? <p className="mt-2 text-xs font-semibold text-brand-700">{humanize(item.outcome)}</p> : null}</div>) : <EmptyState>No consultations booked.</EmptyState>}</div>
+                    ].join(" ")}><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{humanize(item.appointmentType)} · {item.consultant?.fullName || "Consultant"}</p><p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.startAt))}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600">{humanize(item.status)}</span>{["SCHEDULED", "CONFIRMED"].includes(item.status) && role !== "frontdesk" ? <button type="button" onClick={(event) => { event.stopPropagation(); setCompletingConsultation(item); }} className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">Complete</button> : null}</div></div>{item.outcome ? <p className="mt-2 text-xs font-semibold text-brand-700">{humanize(item.outcome)}</p> : null}</div>) : <EmptyState>No consultations booked.</EmptyState>}</div>
                   </section>
 
                   <section>
@@ -439,17 +457,20 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       </aside>
 
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={qualificationCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}
       {activeAction === "nurture" ? <NurtureLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "lost" ? <MarkLostSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "lost" ? <MarkLostSheet lead={lead} initialReasonCode={suggestedLostReason || "NO_RESPONSE"} onClose={() => { setActiveAction(null); setSuggestedLostReason(""); }} onSaved={() => { setSuggestedLostReason(""); actionCompleted(); }} /> : null}
+      {activeAction === "reactivate" ? <ReactivateLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} staff={staff} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
       {bookingOpen ? <BookConsultationSheet lead={lead} staff={staff} onClose={() => setBookingOpen(false)} onCreated={(consultation) => { setConsultations((current) => [consultation, ...current]); setBookingOpen(false); api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {}); }} /> : null}
       {commercialStatusOpen ? <LeadCommercialStatusSheet lead={lead} onClose={() => setCommercialStatusOpen(false)} onUpdated={(updated) => { setLead((current) => ({ ...current, ...updated })); setCommercialStatusOpen(false); }} /> : null}
       {conversionOpen ? <ConvertLeadSheet lead={lead} onClose={() => setConversionOpen(false)} onConverted={(conversion) => { setLead((current) => ({ ...current, status: "CONVERTED", convertedClientId: conversion.client.id, convertedCaseId: conversion.case.id, convertedAt: conversion.convertedAt, nextActionType: null, nextActionDescription: null, nextActionAt: null, conversion })); setConversionOpen(false); onChanged(); }} /> : null}
       {selectedAppointmentId ? <AppointmentProfileOverlay appointmentId={selectedAppointmentId} initialTab={selectedAppointmentTab} onClose={() => setSelectedAppointmentId(null)} onChanged={() => { api.get(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}
+      {completingConsultation ? <CompleteConsultationSheet lead={lead} consultation={completingConsultation} onClose={() => setCompletingConsultation(null)} onSaved={() => { setCompletingConsultation(null); api.getFresh(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}
+      {qualificationPrompt ? <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-label="Qualification next step"><button type="button" className="absolute inset-0" onClick={() => setQualificationPrompt(null)} aria-label="Close next-step suggestion" /><div className="relative w-full max-w-md rounded-3xl border border-white/80 bg-white p-6 shadow-[0_30px_100px_rgba(15,23,42,0.3)]"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-50 text-brand-700"><ArrowLeftRight className="h-5 w-5" /></div><h2 className="mt-4 text-xl font-semibold tracking-tight text-slate-950">Finish the next step?</h2><p className="mt-2 text-sm leading-6 text-slate-500">{qualificationPrompt.action === "lost" ? "This outcome is not an active opportunity. Mark the lead lost now with the matching reason already selected." : "This is a future opportunity. Move the lead to nurture now and choose when the team should reconnect."}</p><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setQualificationPrompt(null)} className="h-10 rounded-full px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100">Not now</button><button type="button" onClick={() => { const next = qualificationPrompt; setQualificationPrompt(null); if (next.reasonCode) setSuggestedLostReason(next.reasonCode); setActiveAction(next.action); }} className="h-10 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-sm hover:bg-brand-700">{qualificationPrompt.action === "lost" ? "Mark lost" : "Move to nurture"}</button></div></div></div> : null}
     </div>
   );
 }

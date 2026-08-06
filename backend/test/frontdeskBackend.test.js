@@ -24,7 +24,16 @@ test("front desk receives agency-wide lead access without changing consultant sc
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }),
-    { ownerUserId: "consultant-1" },
+    {
+      AND: [
+        {
+          OR: [
+            { ownerUserId: "consultant-1" },
+            { followUps: { some: { assignedUserId: "consultant-1", status: "PENDING" } } },
+          ],
+        },
+      ],
+    },
   );
   assert.deepEqual(
     leadAccessWhere({ auth: { role: "frontdesk", userId: "frontdesk-1" } }),

@@ -5,7 +5,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import StarField from "../components/auth/StarField";
 import { useAuth } from "../auth/AuthContext";
 import { homePathForRole } from "../auth/AuthRoutes";
-import { requireSupabase } from "../services/supabase";
+import api from "../services/api";
 
 const CONTACT_EMAIL = "gsdhillon@chkimmigration.ca";
 const BOOKING_SLUG = "chk-immigration-services-inc-421a";
@@ -92,13 +92,11 @@ export default function Login() {
     setResetStatus("submitting");
     setResetError("");
     try {
-      const redirectTo = `${window.location.origin}/auth/reset-password`;
-      const { error: authError } = await requireSupabase().auth.resetPasswordForEmail(resetEmail.trim(), { redirectTo });
-      if (authError) throw authError;
+      await api.post("/auth/forgot-password", { email: resetEmail.trim() });
       setResetStatus("sent");
-    } catch {
+    } catch (reason) {
       setResetStatus("idle");
-      setResetError("Password recovery is temporarily unavailable. Please try again.");
+      setResetError(reason.response?.data?.message || "Password recovery is temporarily unavailable. Please try again.");
     }
   }
 

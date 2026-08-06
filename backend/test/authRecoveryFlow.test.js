@@ -6,6 +6,8 @@ import {
   linkErrorMessage,
   readLinkParameters,
 } from "../../frontend/src/services/authLinkSession.js";
+import { normalizeSupabaseAuthCallback } from "../../frontend/src/services/supabase.js";
+import { accountAccessEmailContent } from "../src/services/accountAccessMailService.js";
 
 function browserLocation(suffix) {
   const url = new URL(suffix, "https://app.example.com");
@@ -72,16 +74,64 @@ test("opening the reset route without an emailed link never reuses another signe
   assert.equal(authCalled, false);
 });
 
+test("Supabase Site URL fallbacks are handed to the portal onboarding route", () => {
+  const location = browserLocation("/#access_token=access-1&refresh_token=refresh-1&type=recovery");
+  const history = browserHistory();
+
+  assert.equal(normalizeSupabaseAuthCallback({ location, history }), true);
+  assert.equal(
+    history.replacement,
+    "/auth/accept-invite#access_token=access-1&refresh_token=refresh-1&type=recovery",
+  );
+  assert.equal(
+    normalizeSupabaseAuthCallback({ location: browserLocation("/"), history: browserHistory() }),
+    false,
+  );
+});
+
+test("account recovery mail carries the workspace brand and system contact details", () => {
+  const content = accountAccessEmailContent({
+    agency: { name: "CHK Immigration", phone: "+1 647 555 0110" },
+    fullName: "Client Name",
+    actionLink: "https://app.example.com/recovery-link",
+    kind: "reset",
+    audience: "client",
+    supportEmail: "hello@chkimmigration.ca",
+    brandImageUrl: "cid:workspace-avatar@casedesk",
+  });
+
+  assert.match(content.subject, /CHK Immigration/);
+  assert.match(content.html, /cid:workspace-avatar@casedesk/);
+  assert.match(content.html, /tel:\+16475550110/);
+  assert.match(content.html, /hello@chkimmigration\.ca/);
+  assert.match(content.text, /\+1 647 555 0110 · hello@chkimmigration\.ca/);
+});
+
 test("both portal onboarding/reset and public forgot-password pages use the shared recovery handoff", async () => {
-  const [acceptInvite, resetPassword, portalController] = await Promise.all([
+  const [acceptInvite, resetPassword, portalController, supabaseService, portalAccessCard, login, authController, authRoutes] = await Promise.all([
     readFile(new URL("../../frontend/src/pages/AcceptInvite.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/ResetPassword.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/portalController.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/services/supabase.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/components/clients/PortalAccessCard.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Login.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/authController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/authRoutes.js", import.meta.url), "utf8"),
   ]);
   assert.match(acceptInvite, /await establishAuthLinkSession\(\)/);
   assert.match(resetPassword, /establishAuthLinkSession\(\)/);
   assert.match(resetPassword, /Request a new reset link/);
   assert.match(portalController, /type: kind/);
   assert.match(portalController, /auth\/accept-invite/);
+  assert.match(portalController, /const isOnboarding =/);
+  assert.match(supabaseService, /detectSessionInUrl: false/);
+  assert.match(portalAccessCard, /Copy sign-in page/);
+  assert.doesNotMatch(portalAccessCard, /Copy portal link/);
+  assert.match(login, /api\.post\("\/auth\/forgot-password"/);
+  assert.doesNotMatch(login, /resetPasswordForEmail/);
+  assert.match(authController, /type: "recovery"/);
+  assert.match(authController, /sendAccountAccessEmail/);
+  assert.match(authController, /PASSWORD_RECOVERY_RESPONSE/);
+  assert.match(authRoutes, /"\/forgot-password"/);
+  assert.match(authRoutes, /identity: \(req\) => `email:/);
 });
-

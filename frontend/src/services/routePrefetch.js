@@ -38,7 +38,10 @@ function requestsFor(path, role) {
   if (pathname === "/app/dashboard") return [["/dashboard"]];
   if (pathname === "/app/clients") return [["/clients?limit=100"], ["/leads/staff"]];
   if (pathname === "/app/cases") return [["/cases", { params: { view: "active" } }], ["/clients"], ["/leads/staff"], ["/client-documents"], ["/payments"]];
-  if (pathname === "/app/follow-ups") return [["/follow-ups"], ["/clients"], ["/cases"], ["/leads/staff"]];
+  if (pathname === "/app/follow-ups") return [
+    ["/follow-ups/combined"],
+    ["/follow-ups/options"],
+  ];
   if (pathname === "/app/documents") return [["/client-documents"], ["/clients"], ["/cases"]];
   if (pathname === "/app/calendar") return [[calendarRange()], ["/booking/settings"], ...(role === "consultant" ? [] : [["/leads/staff"]])];
   if (pathname === "/app/workload") return [[role === "admin" ? "/admin/consultants/workload" : "/consultants/me/workload"]];

@@ -31,7 +31,11 @@ async function findDuplicates(tx, event, normalized) {
   if (normalized.phoneNormalized) or.push({ phoneNormalized: normalized.phoneNormalized });
   if (normalized.emailNormalized) or.push({ emailNormalized: normalized.emailNormalized });
   if (!or.length) return [];
-  const leads = await tx.lead.findMany({ where: { agencyId: event.agencyId, deletedAt: null, OR: or }, select: { id: true, phoneNormalized: true, emailNormalized: true } });
+  const dismissed = await tx.leadDuplicateCandidate.findMany({
+    where: { incomingEventId: event.id, status: "DISMISSED" },
+    select: { candidateLeadId: true },
+  });
+  const leads = await tx.lead.findMany({ where: { agencyId: event.agencyId, deletedAt: null, OR: or, ...(dismissed.length ? { id: { notIn: dismissed.map((item) => item.candidateLeadId) } } : {}) }, select: { id: true, phoneNormalized: true, emailNormalized: true } });
   return leads.map((lead) => {
     const reasons = [];
     let score = 0;
@@ -41,7 +45,7 @@ async function findDuplicates(tx, event, normalized) {
   });
 }
 
-async function processClaimed(eventId) {
+export async function processClaimed(eventId) {
   const result = await prisma.$transaction(async (tx) => {
     const event = await tx.leadIncomingEvent.findUnique({ where: { id: eventId }, include: { intakeForm: true, importBatch: true, sourceConnection: true } });
     if (!event || event.status !== "PROCESSING") return;
@@ -80,6 +84,9 @@ async function processClaimed(eventId) {
       phone: normalized.data.phone, phoneNormalized: normalized.data.phoneNormalized,
       email: normalized.data.email, emailNormalized: normalized.data.emailNormalized,
       country: normalized.data.country, province: normalized.data.province, preferredLanguage: normalized.data.preferredLanguage,
+      preferredContactTime: normalized.data.preferredContactTime,
+      consentGiven: rawPayload.consent === true ? true : null,
+      consentGivenAt: rawPayload.consent === true ? new Date() : null,
       currentImmigrationStatus: normalized.data.currentImmigrationStatus, immigrationInterest: normalized.data.immigrationInterest,
       ownerUserId, originalSourceId: event.sourceId, campaignId: event.campaignId, initialMessage: normalized.data.initialMessage,
       // Every adapter output flows through normalizeIncomingLead, which has

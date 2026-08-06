@@ -152,7 +152,7 @@ test("client case and follow-up removal paths preserve history", async () => {
   assert.doesNotMatch(casesPage, /CaseTrashOverlay/);
   assert.match(caseProfile, /cases\/\$\{caseItem\.id\}\/archive/);
   assert.match(caseProfile, /Restore from archive/);
-  assert.match(followUpsPage, /follow-ups\/\$\{item\.id\}\/cancel/);
+  assert.match(followUpsPage, /follow-ups\/\$\{action\.item\.id\}\/cancel/);
 });
 
 test("client payloads scope nested cases and never fabricate operational values", async () => {

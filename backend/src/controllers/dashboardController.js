@@ -6,6 +6,7 @@ import {
   relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
+import { leadFollowUpAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
 import {
   dashboardCacheKey,
   getCachedDashboard,
@@ -236,7 +237,7 @@ export async function getDashboardSummary(req, res) {
   const timezone = agency?.timezone || "America/Toronto";
   const { todayStart, tomorrowStart } = reportingBounds(now, timezone);
   const pendingTaskWhere = { ...taskWhere, status: "Pending", isActive: true };
-  const openFollowUpWhere = { ...followUpWhere, status: { not: "Completed" } };
+  const openFollowUpWhere = { ...followUpWhere, status: "Pending" };
   const waitingCaseWhere = {
     agencyId: req.auth.agencyId,
     deletedAt: null,
@@ -465,6 +466,54 @@ export async function getDashboardSummary(req, res) {
     }),
   ]);
 
+  const leadFollowUpWhere = {
+    agencyId: req.auth.agencyId,
+    status: "PENDING",
+    ...leadFollowUpAccessWhere(req),
+    // IMPORT_REVIEW leads remain actionable in their dedicated tab only.
+    lead: leadSegmentWhere(),
+  };
+  const leadSelect = {
+    id: true,
+    leadId: true,
+    description: true,
+    dueAt: true,
+    status: true,
+    assignedUser: { select: { id: true, fullName: true } },
+    lead: {
+      select: { id: true, leadNumber: true, firstName: true, lastName: true },
+    },
+  };
+  const [leadFollowUpsDueToday, overdueLeadFollowUps, upcomingLeadFollowUps, leadFollowUpsDueTodayList] = await Promise.all([
+    prisma.leadFollowUp.count({ where: { ...leadFollowUpWhere, dueAt: { gte: todayStart, lt: tomorrowStart } } }),
+    prisma.leadFollowUp.count({ where: { ...leadFollowUpWhere, dueAt: { lt: todayStart } } }),
+    prisma.leadFollowUp.findMany({ where: leadFollowUpWhere, orderBy: { dueAt: "asc" }, take: 6, select: leadSelect }),
+    prisma.leadFollowUp.findMany({ where: { ...leadFollowUpWhere, dueAt: { gte: todayStart, lt: tomorrowStart } }, orderBy: { dueAt: "asc" }, take: 300, select: leadSelect }),
+  ]);
+  const normalizeLeadFollowUp = (item) => ({
+    id: item.id,
+    source: "lead",
+    leadId: item.leadId,
+    title: item.description,
+    dueDate: item.dueAt,
+    status: "Pending",
+    client: {
+      id: item.lead.id,
+      fullName: [item.lead.firstName, item.lead.lastName].filter(Boolean).join(" ") || item.lead.leadNumber,
+    },
+    case: null,
+    assignedUser: item.assignedUser,
+    openUrl: `/leads?lead=${encodeURIComponent(item.leadId)}`,
+  });
+  const mergedUpcomingFollowUps = [
+    ...upcomingFollowUps.map((item) => ({ ...item, source: "case" })),
+    ...upcomingLeadFollowUps.map(normalizeLeadFollowUp),
+  ].sort((left, right) => new Date(left.dueDate || 8640000000000000) - new Date(right.dueDate || 8640000000000000)).slice(0, 6);
+  const mergedDueTodayFollowUps = [
+    ...followUpsDueTodayList.map((item) => ({ ...item, source: "case" })),
+    ...leadFollowUpsDueTodayList.map(normalizeLeadFollowUp),
+  ].sort((left, right) => new Date(left.dueDate) - new Date(right.dueDate));
+
   const priorityWork = groupWorkByClient({
     overdueTasksByClient,
     todayTasksByClient,
@@ -481,8 +530,8 @@ export async function getDashboardSummary(req, res) {
         tasksDueToday,
         overdueTasks: overdueTaskCount,
         pendingDocuments,
-        followUpsDueToday,
-        overdueFollowUps: overdueFollowUpCount,
+        followUpsDueToday: followUpsDueToday + leadFollowUpsDueToday,
+        overdueFollowUps: overdueFollowUpCount + overdueLeadFollowUps,
         appointmentsToday,
         ...(canViewFinancialData
           ? {
@@ -515,8 +564,8 @@ export async function getDashboardSummary(req, res) {
       overdueTasks: overdueTasksByClient,
       documentActions: documentActionsByClient,
       priorityWork,
-      upcomingFollowUps,
-      followUpsDueTodayList,
+      upcomingFollowUps: mergedUpcomingFollowUps,
+      followUpsDueTodayList: mergedDueTodayFollowUps,
       casesWaitingUpdate,
       recentActivity,
   };

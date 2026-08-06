@@ -55,7 +55,7 @@ function EmptyState({ loading, children }) {
 }
 
 function followUpLink(item) {
-  return item.case ? `/app/cases/${item.case.id}?tab=reminders&highlight=${item.id}` : `/app/follow-ups?highlight=${item.id}`;
+  return item.openUrl || (item.case ? `/app/cases/${item.case.id}?tab=reminders&highlight=${item.id}` : `/app/follow-ups?highlight=${item.id}`);
 }
 
 function FollowUpRow({ item, timezone, overdue }) {

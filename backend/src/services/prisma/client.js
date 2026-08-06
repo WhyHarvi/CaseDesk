@@ -5,19 +5,22 @@ const globalForPrisma = globalThis;
 
 const cachedPrisma = globalForPrisma.prisma;
 
-function runtimeDatabaseUrl() {
-  const raw = process.env.DATABASE_URL;
+export function runtimeDatabaseUrl({
+  raw = process.env.DATABASE_URL,
+  override = process.env.PRISMA_CONNECTION_LIMIT,
+  nodeEnv = process.env.NODE_ENV,
+} = {}) {
   if (!raw) return undefined;
   try {
     const url = new URL(raw);
     const configuredLimit = Number(url.searchParams.get("connection_limit"));
-    const overrideLimit = Number(process.env.PRISMA_CONNECTION_LIMIT);
+    const overrideLimit = Number(override);
     const connectionLimit =
       Number.isFinite(overrideLimit) && overrideLimit > 0
         ? overrideLimit
-        : Number.isFinite(configuredLimit) && configuredLimit > 1
+        : Number.isFinite(configuredLimit) && configuredLimit > 0
           ? configuredLimit
-          : 5;
+          : nodeEnv === "production" ? 5 : 1;
     url.searchParams.set("connection_limit", String(connectionLimit));
     if (!url.searchParams.has("pool_timeout")) {
       url.searchParams.set("pool_timeout", "20");
@@ -70,7 +73,10 @@ const shouldReusePrisma =
   hasRuntimeField(cachedPrisma, "CommunicationMessage", "deliveryEvents") &&
   hasRuntimeField(cachedPrisma, "Agency", "mailSettings") &&
   hasRuntimeField(cachedPrisma, "Agency", "oomaSettings") &&
-  hasRuntimeField(cachedPrisma, "User", "receivedNotifications");
+  hasRuntimeField(cachedPrisma, "User", "receivedNotifications") &&
+  hasRuntimeField(cachedPrisma, "FollowUp", "createdBy") &&
+  hasRuntimeField(cachedPrisma, "FollowUp", "document") &&
+  hasRuntimeField(cachedPrisma, "FollowUp", "caseInvoice");
 
 if (cachedPrisma && !shouldReusePrisma) {
   void cachedPrisma.$disconnect().catch(() => {});

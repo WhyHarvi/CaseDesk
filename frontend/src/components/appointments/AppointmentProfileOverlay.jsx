@@ -36,6 +36,7 @@ import {
 } from "../../api/bookingApi";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
 import { hasCapability } from "../../auth/portalAccess";
+import CompleteConsultationSheet from "../../modules/leads/components/CompleteConsultationSheet";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -95,6 +96,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [deleteNoteError, setDeleteNoteError] = useState("");
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [followUp, setFollowUp] = useState({ title: "", description: "", dueDate: dateInput() });
+  const [completingConsultation, setCompletingConsultation] = useState(false);
 
   const load = useCallback(async () => {
     if (!appointmentId) {
@@ -300,7 +302,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2"><Link to={calendarUrl} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700"><CalendarDays className="h-3.5 w-3.5" />Open in calendar</Link>{appointment.meetingUrl ? <a href={appointment.meetingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white"><Video className="h-3.5 w-3.5" />Join meeting</a> : null}{appointment.location ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs text-slate-600"><MapPin className="h-3.5 w-3.5" />{appointment.location}</span> : null}</div>
               </section>
-              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
+              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => appointment.lead?.id && appointment.leadConsultation?.id ? setCompletingConsultation(true) : setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
               {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
             </div> : null}
 
@@ -346,6 +348,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         </motion.aside>
         <NoteDeleteOverlay note={deleteNoteTarget} busy={saving} error={deleteNoteError} onClose={() => !saving && setDeleteNoteTarget(null)} onConfirm={archiveNote} />
       </div>
+      {completingConsultation && appointment?.lead && appointment?.leadConsultation ? <CompleteConsultationSheet lead={appointment.lead} consultation={appointment.leadConsultation} onClose={() => setCompletingConsultation(false)} onSaved={async () => { setCompletingConsultation(false); await load(); onChanged?.(); }} /> : null}
     </AnimatePresence>,
     document.body,
   );

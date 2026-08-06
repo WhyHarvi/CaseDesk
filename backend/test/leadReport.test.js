@@ -13,14 +13,14 @@ test("funnel definitions calculate share and adjacent drop-off consistently", ()
   assert.equal(parseReportDays("all"), null);
 });
 
-test("consultant funnel is agency, owner, and period scoped", async () => {
+test("consultant funnel is agency, assigned-work, and period scoped", async () => {
   const queries = [];
   let value = 9;
   const db = { lead: { count: async ({ where }) => { queries.push(where); return value--; } } };
   const req = { auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" }, query: { days: "30" } };
   const report = await getFunnelReport(req, db, new Date("2026-07-14T12:00:00Z"));
   assert.equal(report.funnel[0].count, 9);
-  assert.ok(queries.every((where) => where.agencyId === "agency-1" && where.ownerUserId === "consultant-1" && where.createdAt.gte));
+  assert.ok(queries.every((where) => where.agencyId === "agency-1" && where.AND?.[0]?.OR?.[0]?.ownerUserId === "consultant-1" && where.AND?.[0]?.OR?.[1]?.followUps?.some?.assignedUserId === "consultant-1" && where.createdAt.gte));
 });
 
 test("source report normalizes database values and calculates conversion", async () => {
@@ -71,7 +71,7 @@ test("lost report groups reasons, owners, and sources within consultant scope", 
   assert.equal(report.reasons[0].share, 50);
   assert.equal(report.employees[0].name, "Avery Consultant");
   assert.equal(report.sources[0].name, "Referral");
-  assert.ok(leadQueries.every((where) => where.agencyId === "agency-1" && where.ownerUserId === "user-1"));
+  assert.ok(leadQueries.every((where) => where.agencyId === "agency-1" && where.AND?.[0]?.OR?.[0]?.ownerUserId === "user-1" && where.AND?.[0]?.OR?.[1]?.followUps?.some?.assignedUserId === "user-1"));
 });
 
 test("response-time report normalizes SLA and duration metrics", async () => {

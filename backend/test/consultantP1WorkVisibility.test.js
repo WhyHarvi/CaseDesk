@@ -103,7 +103,7 @@ test("my workload exposes actionable records and recovers from API errors", asyn
   assert.match(controller, /assignmentSource: owner\.source/);
   assert.match(page, /Unable to load your workload/);
   assert.match(page, /Try again/);
-  assert.match(page, /to=\{`\/app\/cases\/\$\{item\.case\.id\}`\}/);
+  assert.match(page, /`\/app\/cases\/\$\{item\.case\.id\}\?tab=tasks&highlight=/);
 });
 
 test("admin workload shows agency consultants, assignments, and unassigned work", async () => {
@@ -117,12 +117,12 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   ]);
 
   assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
-  assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned: finalizeBucket\(unassignedBucket\),[\s\S]*outsideTeam: finalizeBucket\(outsideTeamBucket\),?[\s\S]*\}/);
+  assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned,[\s\S]*outsideTeam: finalizeBucket\(outsideTeamBucket, null, sliceLimit\),[\s\S]*frontDesk: finalizeBucket\(frontDeskBucket, null, sliceLimit\),?[\s\S]*\}/);
   assert.match(controller, /memberships: \{[\s\S]*some: \{[\s\S]*agencyId,[\s\S]*role: "consultant",[\s\S]*isActive: true,[\s\S]*\}[\s\S]*\}/);
   assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
   assert.match(controller, /pendingFollowUps: followUps\.length/);
   assert.match(controller, /activeLeads: leads\.length/);
-  assert.match(controller, /status: "OPEN"/);
+  assert.match(controller, /status: \{ in: \["OPEN", "NURTURE"\] \}/);
   assert.match(controller, /upcomingAppointments: appointments\.length/);
   assert.match(controller, /activeCases: cases\.length/);
   assert.match(page, /isAdmin \? "\/admin\/consultants\/workload" : "\/consultants\/me\/workload"/);

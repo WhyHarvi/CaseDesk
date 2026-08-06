@@ -5,9 +5,18 @@ import { canCreateLead, leadAccessWhere, leadSegmentWhere } from "../src/modules
 
 const req = (role, userId = "user-a") => ({ auth: { role, userId, agencyId: "agency-a" } });
 
-test("admin sees agency leads while consultants see their assigned leads", () => {
+test("admin sees agency leads while consultants see owned leads and leads with assigned work", () => {
   assert.deepEqual(leadAccessWhere(req("admin")), {});
-  assert.deepEqual(leadAccessWhere(req("consultant")), { ownerUserId: "user-a" });
+  assert.deepEqual(leadAccessWhere(req("consultant")), {
+    AND: [
+      {
+        OR: [
+          { ownerUserId: "user-a" },
+          { followUps: { some: { assignedUserId: "user-a", status: "PENDING" } } },
+        ],
+      },
+    ],
+  });
 });
 
 test("segment filtering is a separate, explicit opt-in — not baked into role access", () => {

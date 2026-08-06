@@ -46,6 +46,7 @@ export const appointmentProfileInclude = {
   createdBy: { select: { id: true, fullName: true } },
   cancelledBy: { select: { id: true, fullName: true } },
   sessionType: true,
+  leadConsultation: true,
   events: {
     orderBy: { createdAt: "desc" },
     take: 100,
@@ -157,7 +158,7 @@ export async function ensureAppointmentCompletionFollowUp(db, appointment) {
   const existing = await db.followUp.findFirst({
     where: {
       appointmentId: appointment.id,
-      status: { in: ["Pending", "Overdue"] },
+      status: "Pending",
     },
   });
   if (existing) return existing;

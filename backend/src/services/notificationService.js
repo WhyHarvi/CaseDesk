@@ -469,8 +469,7 @@ export async function resolveNotifications({
   resolvedAt = new Date(),
 }) {
   if (!agencyId) return 0;
-  const result = await prisma.notification.updateMany({
-    where: {
+  const where = {
       agencyId,
       resolvedAt: null,
       ...(entityType ? { entityType } : {}),
@@ -479,9 +478,29 @@ export async function resolveNotifications({
       ...(Array.isArray(dedupeKeys) && dedupeKeys.length
         ? { dedupeKey: { in: dedupeKeys } }
         : {}),
-    },
-    data: { resolvedAt, readAt: resolvedAt },
+  };
+  const notifications = await prisma.notification.findMany({
+    where,
+    select: { id: true },
   });
+  if (!notifications.length) return 0;
+  const notificationIds = notifications.map((item) => item.id);
+  const [result] = await prisma.$transaction([
+    prisma.notification.updateMany({
+      where: { id: { in: notificationIds }, resolvedAt: null },
+      data: { resolvedAt, readAt: resolvedAt },
+    }),
+    prisma.notificationDelivery.updateMany({
+      where: {
+        notificationId: { in: notificationIds },
+        status: { in: ["pending", "retry"] },
+      },
+      data: {
+        status: "cancelled",
+        lastError: "Cancelled because the notification was resolved",
+      },
+    }),
+  ]);
   return result.count;
 }
 

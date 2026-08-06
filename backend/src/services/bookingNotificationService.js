@@ -15,9 +15,35 @@ import { AVATAR_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
 import { MEETING_MODES, meetingModeLabel, normalizeMeetingMode } from "./bookingMeetingModeService.js";
 
 const REMINDER_POLL_MS = 5 * 60_000;
+const DELIVERY_RETRY_BASE_MS = Math.max(Number(process.env.BOOKING_DELIVERY_RETRY_BASE_MS) || 5_000, 1_000);
+const DELIVERY_RETRY_MAX_MS = Math.max(Number(process.env.BOOKING_DELIVERY_RETRY_MAX_MS) || 5 * 60_000, DELIVERY_RETRY_BASE_MS);
 let reminderTimer = null;
 let deliveryRunning = false;
 let deliveryRerunRequested = false;
+let deliveryRetryTimer = null;
+let deliveryRetryAt = 0;
+let deliveryRetryAttempt = 0;
+
+export function isTransientBookingDeliveryError(error) {
+  const code = String(error?.code || error?.cause?.code || "").toUpperCase();
+  if (["P1001", "P1002", "P1008", "P1017", "P2024"].includes(code)) return true;
+  const detail = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
+  return [
+    "can't reach database server",
+    "connection terminated",
+    "connection reset",
+    "server closed the connection",
+    "max clients reached",
+    "too many connections",
+    "econnreset",
+    "etimedout",
+  ].some((fragment) => detail.includes(fragment));
+}
+
+export function bookingDeliveryRetryDelay(attempt, baseMs = DELIVERY_RETRY_BASE_MS, maxMs = DELIVERY_RETRY_MAX_MS) {
+  const safeAttempt = Math.max(1, Number(attempt) || 1);
+  return Math.min(maxMs, baseMs * 2 ** (safeAttempt - 1));
+}
 
 function icsDate(value) {
   return new Date(value).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -524,7 +550,7 @@ export async function sendBookingMessages({ agencyId, appointment, kind, actorUs
       skipDuplicates: true,
     });
   }
-  if (db === prisma) void processBookingDeliveryPass();
+  if (db === prisma) void requestBookingDeliveryPass("message_queued");
 }
 
 function paymentHoldAppointment(hold) {
@@ -579,7 +605,7 @@ export async function queuePaymentHoldMessages({ agencyId, hold, actorUserId = n
     })),
     skipDuplicates: true,
   });
-  if (db === prisma) void processBookingDeliveryPass();
+  if (db === prisma) void requestBookingDeliveryPass("payment_request_queued");
   return paymentHoldDeliverySummary(hold.id, db);
 }
 
@@ -612,7 +638,7 @@ export async function sendBookingStaffNotification({ agencyId, appointment, kind
     }],
     skipDuplicates: true,
   });
-  if (db === prisma) void processBookingDeliveryPass();
+  if (db === prisma) void requestBookingDeliveryPass("staff_message_queued");
   return { skipped: false };
 }
 
@@ -722,9 +748,10 @@ export function bookingDeliveryIsCurrent(job, appointment) {
 async function processBookingDeliveryPass() {
   if (deliveryRunning) {
     deliveryRerunRequested = true;
-    return;
+    return false;
   }
   deliveryRunning = true;
+  let completed = false;
   try {
     const now = new Date();
     const jobs = await prisma.bookingMessageDelivery.findMany({
@@ -850,17 +877,68 @@ async function processBookingDeliveryPass() {
     // reminder timer even though their booking request asked for an
     // immediate delivery pass.
     if (jobs.length === 50) deliveryRerunRequested = true;
+    completed = true;
+    return true;
   } finally {
     deliveryRunning = false;
     if (deliveryRerunRequested) {
       deliveryRerunRequested = false;
-      void processBookingDeliveryPass();
+      // A failed pass is retried by requestBookingDeliveryPass with bounded
+      // backoff. Only a successful pass drains an explicitly requested next
+      // batch immediately, preventing a database outage from becoming a
+      // tight retry loop.
+      if (completed) void requestBookingDeliveryPass("queue_drain");
     }
   }
 }
 
+function scheduleBookingDeliveryRetry() {
+  if (deliveryRetryTimer) return Math.max(0, deliveryRetryAt - Date.now());
+  const delayMs = bookingDeliveryRetryDelay(deliveryRetryAttempt);
+  deliveryRetryAt = Date.now() + delayMs;
+  deliveryRetryTimer = setTimeout(() => {
+    deliveryRetryTimer = null;
+    deliveryRetryAt = 0;
+    void requestBookingDeliveryPass("transient_retry");
+  }, delayMs);
+  if (deliveryRetryTimer.unref) deliveryRetryTimer.unref();
+  return delayMs;
+}
+
+async function requestBookingDeliveryPass(source) {
+  try {
+    const completed = await processBookingDeliveryPass();
+    if (completed) {
+      deliveryRetryAttempt = 0;
+      if (deliveryRetryTimer) clearTimeout(deliveryRetryTimer);
+      deliveryRetryTimer = null;
+      deliveryRetryAt = 0;
+    }
+    return completed;
+  } catch (error) {
+    const transient = isTransientBookingDeliveryError(error);
+    let retryInMs = null;
+    if (transient) {
+      deliveryRetryAttempt += 1;
+      retryInMs = scheduleBookingDeliveryRetry();
+    }
+    logger.warn("booking.delivery_pass_failed", {
+      source,
+      code: error?.code || error?.cause?.code || null,
+      transient,
+      retryAttempt: transient ? deliveryRetryAttempt : null,
+      retryInMs,
+      reason: String(error?.message || error),
+    });
+    // This function is deliberately safe for fire-and-forget callers. A
+    // temporary Prisma failure must not become an unhandled rejection and
+    // terminate the API process; the durable queue remains intact for retry.
+    return false;
+  }
+}
+
 export function processBookingMessageDeliveries() {
-  return processBookingDeliveryPass();
+  return requestBookingDeliveryPass("explicit_request");
 }
 
 export function reminderWasAlreadyDueWhenScheduled(appointment, dueAt) {
@@ -945,13 +1023,17 @@ async function runReminderPass() {
 export function startBookingReminderWorker() {
   if (reminderTimer) return;
   reminderTimer = setInterval(() => {
-    Promise.all([runReminderPass(), processBookingDeliveryPass(), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
+    Promise.all([runReminderPass(), requestBookingDeliveryPass("reminder_poll"), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
   }, REMINDER_POLL_MS);
-  Promise.all([runReminderPass(), processBookingDeliveryPass(), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
+  Promise.all([runReminderPass(), requestBookingDeliveryPass("worker_start"), releaseExpiredWaitlistHolds()]).catch((error) => logger.warn("booking.reminder_pass_failed", { reason: error.message }));
   if (reminderTimer.unref) reminderTimer.unref();
 }
 
 export function stopBookingReminderWorker() {
   if (reminderTimer) clearInterval(reminderTimer);
+  if (deliveryRetryTimer) clearTimeout(deliveryRetryTimer);
   reminderTimer = null;
+  deliveryRetryTimer = null;
+  deliveryRetryAt = 0;
+  deliveryRetryAttempt = 0;
 }

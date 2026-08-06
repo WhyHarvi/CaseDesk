@@ -212,7 +212,9 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
         {account?.hasAccess
           ? account.status === "disabled"
             ? <p>Portal access is currently revoked. Restore it to let this client sign in again.</p>
-            : <p>This client can sign in to see their case status, documents, and payments.</p>
+            : account.status === "invited"
+              ? <p>Onboarding is pending. Resend the secure onboarding link so this client can set a password and activate access.</p>
+              : <p>This client can sign in to see their case status, documents, and payments.</p>
           : <p>Invite this client so they can follow their file and upload documents.</p>}
         {openCaseCount !== null ? <p>{openCaseCount} open {openCaseCount === 1 ? "file" : "files"} linked</p> : null}
       </div>
@@ -232,10 +234,12 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
               {account.status === "disabled" ? "Restore access" : "Manage access"}
               <ArrowUpRight className="h-4 w-4" />
             </button>
-            <button type="button" onClick={copyPortalLink} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
-              {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-              {copied ? "Link copied" : "Copy portal link"}
-            </button>
+            {isActive ? (
+              <button type="button" onClick={copyPortalLink} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+                {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                {copied ? "Link copied" : "Copy sign-in page"}
+              </button>
+            ) : null}
           </>
         ) : (
           <button type="button" disabled={loading} onClick={() => { setNotice(""); setInviteOpen(true); }} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">

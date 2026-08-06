@@ -10,6 +10,8 @@ export function notFoundHandler(req, res) {
 
 export function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || (err.name === "MulterError" ? 400 : 500);
+  const isProduction = process.env.NODE_ENV === "production";
+  const hideInternalMessage = statusCode >= 500 && err.expose !== true && isProduction;
 
   if (process.env.NODE_ENV !== "test") {
     // Keep logging simple for the MVP scaffold.
@@ -18,8 +20,9 @@ export function errorHandler(err, req, res, next) {
 
   res.status(statusCode).json({
     success: false,
-    message: statusCode >= 500 && err.expose !== true ? "An unexpected error occurred." : err.message || "Request failed.",
+    message: hideInternalMessage ? "An unexpected error occurred." : err.message || "Request failed.",
     code: err.code || (statusCode === 401 ? "UNAUTHENTICATED" : statusCode === 403 ? "FORBIDDEN" : statusCode === 404 ? "NOT_FOUND" : statusCode === 400 ? "VALIDATION_ERROR" : "INTERNAL_ERROR"),
+    ...(!isProduction && statusCode >= 500 ? { requestId: req.requestId } : {}),
   });
 }
 

@@ -249,7 +249,7 @@ export async function sendPortalAccessLink(req, res) {
 
   const existingLink = await prisma.clientUser.findFirst({
     where: { agencyId: req.auth.agencyId, clientId: client.id },
-    select: { userId: true, user: { select: { id: true, email: true, fullName: true, authUserId: true } } },
+    select: { userId: true, user: { select: { id: true, email: true, fullName: true, authUserId: true, status: true } } },
     orderBy: { isPrimary: "desc" },
   });
 
@@ -264,6 +264,7 @@ export async function sendPortalAccessLink(req, res) {
   const frontendUrl = publicAppUrl();
   const hasAuthUser = existingLink ? Boolean(existingLink.user.authUserId) : Boolean(await findAuthUserByEmail(email).catch(() => null));
   const kind = hasAuthUser ? "recovery" : "invite";
+  const isOnboarding = !existingLink || existingLink.user.status === "invited" || !hasAuthUser;
   const generated = await generateAuthLink({ type: kind, email, fullName, redirectTo: `${frontendUrl}/auth/accept-invite` }).catch(() => null);
   if (!generated?.actionLink || !generated?.user?.id) {
     throw createHttpError(502, "The portal link could not be generated.", "AUTH_LINK_FAILED");
@@ -285,15 +286,15 @@ export async function sendPortalAccessLink(req, res) {
     });
   }
 
-  await sendAccountAccessEmail({ agencyId: req.auth.agencyId, email, fullName, actionLink: generated.actionLink, kind: hasAuthUser ? "reset" : "onboarding", audience: "client" });
+  await sendAccountAccessEmail({ agencyId: req.auth.agencyId, email, fullName, actionLink: generated.actionLink, kind: isOnboarding ? "onboarding" : "reset", audience: "client" });
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
     clientId: client.id,
-    action: hasAuthUser ? "CLIENT_PORTAL_LINK_RESENT" : "CLIENT_PORTAL_INVITED",
-    details: `${hasAuthUser ? "Password reset" : "Onboarding"} link emailed to ${client.fullName}`,
+    action: isOnboarding ? "CLIENT_PORTAL_INVITED" : "CLIENT_PORTAL_LINK_RESENT",
+    details: `${isOnboarding ? "Onboarding" : "Password reset"} link emailed to ${client.fullName}`,
   });
-  res.json({ success: true, message: hasAuthUser ? "Reset link emailed." : "Onboarding link emailed." });
+  res.json({ success: true, message: isOnboarding ? "Onboarding link emailed." : "Reset link emailed." });
 }
 
 export async function getPortalAccountStatus(req, res) {

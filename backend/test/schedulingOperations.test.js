@@ -3,9 +3,17 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { intersectWorkingHours, localDateTimeToUtc, mergeStaffAvailability, slotsForDay, validateAvailabilityRange } from "../src/services/bookingAvailabilityService.js";
 import { chooseAppointmentAssignee } from "../src/services/schedulingAssignmentService.js";
-import { bookingDeliveryIsCurrent, bookingMessageRevision, icsForAppointment, reminderWasAlreadyDueWhenScheduled } from "../src/services/bookingNotificationService.js";
+import {
+  bookingDeliveryIsCurrent,
+  bookingDeliveryRetryDelay,
+  bookingMessageRevision,
+  icsForAppointment,
+  isTransientBookingDeliveryError,
+  reminderWasAlreadyDueWhenScheduled,
+} from "../src/services/bookingNotificationService.js";
 import { delayedZoomNotificationKind } from "../src/services/appointmentMeetingService.js";
 import { MEETING_MODES, meetingModesInSameCapacityGroup } from "../src/services/bookingMeetingModeService.js";
+import { runtimeDatabaseUrl } from "../src/services/prisma/client.js";
 
 test("phone, in-person, Jitsi, and Zoom bookings share consultant capacity", () => {
   const allModes = [MEETING_MODES.IN_PERSON, MEETING_MODES.PHONE, MEETING_MODES.JITSI, MEETING_MODES.ZOOM];
@@ -193,6 +201,35 @@ test("cancelled appointments suppress queued and retrying reminders", async () =
   assert.match(service, /bookingDeliveryAllowed\(deliveryId, appointment\.id\)/);
   assert.match(service, /where: \{ id: job\.id, status: "processing" \},[\s\S]*if \(!failed\.count\) continue/);
   assert.match(service, /let reminderCursor = null[\s\S]*orderBy: \[\{ startsAt: "asc" \}, \{ id: "asc" \}\][\s\S]*reminderCursor = \{ startsAt: lastAppointment\.startsAt, id: lastAppointment\.id \}/);
+});
+
+test("booking delivery treats temporary database outages as retryable with bounded backoff", async () => {
+  assert.equal(isTransientBookingDeliveryError({ code: "P1001" }), true);
+  assert.equal(isTransientBookingDeliveryError({ code: "P2024" }), true);
+  assert.equal(isTransientBookingDeliveryError(new Error("server closed the connection unexpectedly")), true);
+  assert.equal(isTransientBookingDeliveryError(new Error("Invalid booking recipient")), false);
+  assert.equal(bookingDeliveryRetryDelay(1, 5_000, 300_000), 5_000);
+  assert.equal(bookingDeliveryRetryDelay(4, 5_000, 300_000), 40_000);
+  assert.equal(bookingDeliveryRetryDelay(20, 5_000, 300_000), 300_000);
+
+  const service = await readFile(new URL("../src/services/bookingNotificationService.js", import.meta.url), "utf8");
+  assert.doesNotMatch(service, /void processBookingDeliveryPass\(\)/);
+  assert.match(service, /return requestBookingDeliveryPass\("explicit_request"\)/);
+  assert.match(service, /booking\.delivery_pass_failed/);
+});
+
+test("development Prisma connections preserve an explicit one-connection pool and otherwise stay minimal", () => {
+  const raw = "postgresql://user:password@db.example.test:5432/casedesk";
+  const development = new URL(runtimeDatabaseUrl({ raw, override: "", nodeEnv: "development" }));
+  const production = new URL(runtimeDatabaseUrl({ raw, override: "", nodeEnv: "production" }));
+  const configured = new URL(runtimeDatabaseUrl({ raw: `${raw}?connection_limit=1`, override: "", nodeEnv: "production" }));
+  const overridden = new URL(runtimeDatabaseUrl({ raw, override: "3", nodeEnv: "development" }));
+
+  assert.equal(development.searchParams.get("connection_limit"), "1");
+  assert.equal(production.searchParams.get("connection_limit"), "5");
+  assert.equal(configured.searchParams.get("connection_limit"), "1");
+  assert.equal(overridden.searchParams.get("connection_limit"), "3");
+  assert.equal(development.searchParams.get("pool_timeout"), "20");
 });
 
 test("reminders already overdue when an appointment is booked or rescheduled are skipped", () => {

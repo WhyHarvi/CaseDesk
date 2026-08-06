@@ -79,6 +79,10 @@ import {
   startLeadIntakeWorker,
   stopLeadIntakeWorker,
 } from "./modules/leads/lead.intake.worker.js";
+import {
+  startLeadReactivationWorker,
+  stopLeadReactivationWorker,
+} from "./modules/leads/lead.reactivation.worker.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
@@ -408,6 +412,7 @@ function onListening() {
   startInboundMailSync();
   startCommunicationMaintenance();
   startLeadIntakeWorker();
+  startLeadReactivationWorker();
   startBookingReminderWorker();
   startPaymentScheduleWorker();
   startPaymentHoldExpiryWorker();
@@ -452,6 +457,7 @@ async function shutdown(signal) {
   stopInboundMailSync();
   stopCommunicationMaintenance();
   stopLeadIntakeWorker();
+  stopLeadReactivationWorker();
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();
   stopPaymentHoldExpiryWorker();

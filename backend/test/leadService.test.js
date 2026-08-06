@@ -82,7 +82,7 @@ test("qualified outcome advances an earlier lead and records history atomically"
     $executeRaw: async () => 1,
     $queryRaw: async () => [{ lock_status: "" }],
     lead: {
-      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "CONNECTED" }),
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "CONNECTED", ownerUserId: "user-1", estimatedValue: null }),
       update: async ({ data }) => calls.push(["lead", data]),
     },
     leadQualification: {
@@ -90,6 +90,10 @@ test("qualified outcome advances an earlier lead and records history atomically"
       upsert: async ({ create }) => ({ id: "qualification-1", ...create }),
     },
     leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
+      create: async ({ data }) => calls.push(["followUp", data]),
+    },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
   };
@@ -265,7 +269,10 @@ test("booking a consultation updates the lead work queue in the same transaction
     },
     leadConsultation: { create: async ({ data }) => ({ id: "consultation-1", ...data }) },
     leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
-    leadFollowUp: { create: async ({ data }) => calls.push(["followUp", data]) },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
+      create: async ({ data }) => calls.push(["followUp", data]),
+    },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
   };
@@ -347,12 +354,15 @@ test("signed retainer and paid initial payment make a lead ready to convert", as
       update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
     },
     leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
-    leadFollowUp: { create: async ({ data }) => calls.push(["followUp", data]) },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
+      create: async ({ data }) => calls.push(["followUp", data]),
+    },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
   };
   const db = { $transaction: async (operation) => operation(tx) };
-  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID" } };
+  const req = { auth: { role: "admin", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Signed agreement and payment receipt verified." } };
 
   await updateCommercialStatus(req, db);
 
@@ -392,6 +402,7 @@ test("conversion creates and links the client and case atomically", async () => 
       updateMany: async ({ data }) => calls.push(["linkedAppointmentFollowUps", data]),
     },
     leadFollowUp: { updateMany: async ({ data }) => calls.push(["closedLeadFollowUps", data]) },
+    caseManualLedgerEntry: { updateMany: async ({ data }) => calls.push(["linkedLedger", data]) },
     leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
   };

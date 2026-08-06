@@ -3,1526 +3,477 @@ import {
   Ban,
   CalendarClock,
   CheckCircle2,
-  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
-  Clock3,
-  Copy,
   Download,
+  ExternalLink,
   FileWarning,
   FilterX,
-  Funnel,
-  Mail,
   Pencil,
-  Phone,
   Plus,
   RefreshCw,
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import api from "../services/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
+import api from "../services/api";
 
-const defaultFormState = {
-  clientId: "",
-  caseId: "",
-  assignedUserId: "",
-  followUpType: "General follow-up",
-  title: "",
-  description: "",
-  dueDate: "",
-  dueTime: "",
-  priority: "Medium",
-  status: "Pending",
-  completedAt: "",
-};
-
-const chipOptions = ["All", "Today", "Overdue", "Pending", "Completed", "Cancelled", "Missing Docs", "Payment", "Documents"];
-const filterPriorityOptions = ["All Priorities", "High", "Medium", "Low"];
-const priorityLevels = ["High", "Medium", "Low"];
-const dateRangeOptions = ["Any time", "Today", "This week", "This month"];
+const recoveryDelaysMs = [1_000, 2_500, 5_000, 10_000, 30_000];
+const completionOutcomes = [
+  "Client contacted",
+  "No answer",
+  "Documents received",
+  "Payment promised",
+  "New follow-up required",
+  "Other",
+];
 const followUpTypes = ["General follow-up", "Client call", "Document request", "Payment reminder", "Case review"];
-const statusOptions = ["Pending", "Completed", "Overdue", "Cancelled"];
-const sortOptions = ["Due date", "Priority", "Client"];
+const leadFollowUpTypes = ["PHONE_CALL", "EMAIL", "SMS", "WHATSAPP", "MEETING", "DOCUMENT_REQUEST", "OTHER"];
+const priorities = ["High", "Medium", "Low"];
+const views = [
+  ["my_open", "My Open"],
+  ["team_open", "Team Open"],
+  ["unassigned", "Unassigned"],
+  ["all", "All"],
+];
+const fieldClass = "h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50 disabled:text-slate-400";
+const areaClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
 
-const cardClassName =
-  "rounded-[22px] border border-white/80 bg-white/90 shadow-[0_18px_45px_rgba(15,23,42,0.07)] backdrop-blur-xl";
-const fieldClassName =
-  "h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
-const textareaClassName =
-  "w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
-
-function parseDate(value) {
-  if (!value) {
-    return null;
-  }
-
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [year, month, day] = value.split("-").map(Number);
-    return new Date(year, month - 1, day);
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+function emptyForm(userId = "") {
+  return {
+    clientId: "",
+    caseId: "",
+    originalCaseId: "",
+    documentId: "",
+    caseInvoiceId: "",
+    assignedUserId: userId,
+    followUpType: "General follow-up",
+    title: "",
+    description: "",
+    dueAt: "",
+    reminderAt: "",
+    expiresAt: "",
+    priority: "Medium",
+    notificationChannels: ["in_app"],
+    notifyClient: false,
+    overrideReason: "",
+  };
 }
 
-function formatDate(value) {
-  const parsed = parseDate(value);
+function localInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
 
-  if (!parsed) {
-    return "No due date";
-  }
+function iso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 
+function nextLeadFollowUpForm(item, userId = "") {
+  return {
+    assignedUserId: item?.assignedUserId || userId,
+    type: "PHONE_CALL",
+    description: "",
+    dueAt: localInput(new Date(Date.now() + 24 * 60 * 60_000)),
+  };
+}
+
+function dateTime(value, timezone) {
+  if (!value) return "No due date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No due date";
   return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone || "America/Toronto",
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(parsed);
-}
-
-function formatTime(value) {
-  const parsed = parseDate(value);
-
-  if (!parsed) {
-    return "No time";
-  }
-
-  return new Intl.DateTimeFormat("en-CA", {
     hour: "numeric",
     minute: "2-digit",
-  }).format(parsed);
+  }).format(date);
 }
 
-function formatDateForInput(value) {
-  const parsed = parseDate(value);
-
-  if (!parsed) {
-    return "";
-  }
-
-  const localDate = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
-  return localDate.toISOString().slice(0, 10);
+function initials(value) {
+  return String(value || "Client").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
 }
 
-function formatTimeForInput(value) {
-  const parsed = parseDate(value);
-
-  if (!parsed) {
-    return "";
-  }
-
-  const hours = String(parsed.getHours()).padStart(2, "0");
-  const minutes = String(parsed.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
+function sourceName(item) {
+  return item.source === "lead" ? `Lead ${item.lead?.leadNumber || ""}`.trim() : item.case?.caseType || "Client follow-up";
 }
 
-function getInitials(name) {
-  return (name || "Client")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || "")
-    .join("");
+function statusTone(status) {
+  if (status === "Overdue") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (status === "Completed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "Cancelled") return "border-slate-200 bg-slate-100 text-slate-600";
+  return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
-function getRelativeDueLabel(value) {
-  const dueDate = parseDate(value);
-
-  if (!dueDate) {
-    return "No due date";
-  }
-
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dueStart = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-  const diffDays = Math.round((dueStart.getTime() - todayStart.getTime()) / 86400000);
-
-  if (diffDays < 0) {
-    return `${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? "" : "s"} overdue`;
-  }
-
-  if (diffDays === 0) {
-    return "Follow up today";
-  }
-
-  if (diffDays === 1) {
-    return "Due tomorrow";
-  }
-
-  return `Due in ${diffDays} days`;
+function priorityTone(priority) {
+  if (priority === "High") return "bg-rose-50 text-rose-700";
+  if (priority === "Low") return "bg-slate-100 text-slate-600";
+  return "bg-amber-50 text-amber-700";
 }
 
-function getStatusTone(status, dueDate) {
-  if (status === "Cancelled") {
-    return "cancelled";
-  }
-  if (status === "Completed") {
-    return "completed";
-  }
-
-  const due = parseDate(dueDate);
-
-  if (!due) {
-    return status === "Overdue" ? "overdue" : "pending";
-  }
-
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const dueStart = new Date(due.getFullYear(), due.getMonth(), due.getDate());
-  const diffDays = Math.round((dueStart.getTime() - todayStart.getTime()) / 86400000);
-
-  if (diffDays < 0 || status === "Overdue") {
-    return "overdue";
-  }
-
-  if (diffDays === 0) {
-    return "today";
-  }
-
-  return "pending";
+function csvValue(value) {
+  let text = String(value ?? "");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function getStatusLabel(item) {
-  if (item.tone === "today") {
-    return "Due Today";
-  }
-
-  if (item.tone === "overdue") {
-    return "Overdue";
-  }
-
-  return item.status || "Pending";
+function Toast({ toast, onClose }) {
+  if (!toast) return null;
+  const tone = toast.type === "error" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return <div className={`fixed right-5 top-5 z-[90] flex max-w-sm items-start gap-3 rounded-2xl border px-4 py-3 text-sm font-medium shadow-xl ${tone}`}><span>{toast.message}</span><button type="button" onClick={onClose} aria-label="Dismiss"><X className="h-4 w-4" /></button></div>;
 }
 
-function getStatusStyles(tone) {
-  const styles = {
-    pending: {
-      badge: "border-amber-200 bg-amber-50 text-amber-700",
-      dot: "bg-amber-400",
-      railText: "text-amber-300",
-    },
-    overdue: {
-      badge: "border-rose-200 bg-rose-50 text-rose-700",
-      dot: "bg-rose-500",
-      railText: "text-rose-300",
-    },
-    completed: {
-      badge: "border-emerald-200 bg-emerald-50 text-emerald-700",
-      dot: "bg-emerald-500",
-      railText: "text-emerald-300",
-    },
-    cancelled: {
-      badge: "border-slate-200 bg-slate-100 text-slate-600",
-      dot: "bg-slate-400",
-      railText: "text-slate-300",
-    },
-    today: {
-      badge: "border-sky-200 bg-sky-50 text-sky-700",
-      dot: "bg-sky-500",
-      railText: "text-sky-300",
-    },
-  };
-
-  return styles[tone] || styles.pending;
-}
-
-function getAccentBarClass(tone) {
-  const styles = {
-    pending: "bg-amber-400",
-    overdue: "bg-rose-500",
-    completed: "bg-emerald-500",
-    cancelled: "bg-slate-400",
-    today: "bg-sky-500",
-  };
-
-  return styles[tone] || styles.pending;
-}
-
-function inferPriority(item, tone) {
-  const text = `${item.title || ""} ${item.description || ""}`;
-
-  if (tone === "overdue" || /urgent|missing|passport|certificate/i.test(text)) {
-    return "High";
-  }
-
-  if (tone === "today" || /payment|document|review|submit/i.test(text)) {
-    return "Medium";
-  }
-
-  return "Low";
-}
-
-function getPriorityStyles(priority) {
-  const styles = {
-    High: "bg-rose-50 text-rose-700",
-    Medium: "bg-amber-50 text-amber-700",
-    Low: "bg-slate-100 text-slate-600",
-  };
-
-  return styles[priority] || styles.Medium;
-}
-
-function getAvatarClass(name) {
-  const palettes = [
-    "bg-rose-50 text-rose-600",
-    "bg-sky-50 text-sky-700",
-    "bg-amber-50 text-amber-700",
-    "bg-emerald-50 text-emerald-700",
-    "bg-violet-50 text-violet-700",
-  ];
-  const seed = Array.from(name || "Client").reduce((total, character) => total + character.charCodeAt(0), 0);
-  return palettes[seed % palettes.length];
-}
-
-function getCategory(text) {
-  if (/payment|balance|fee/i.test(text)) {
-    return "Payment";
-  }
-
-  if (/document|passport|certificate|missing|upload/i.test(text)) {
-    return "Documents";
-  }
-
-  if (/call|phone|consult/i.test(text)) {
-    return "Call";
-  }
-
-  return "General";
-}
-
-function getCategoryForType(followUpType, text) {
-  if (followUpType === "Payment reminder") return "Payment";
-  if (followUpType === "Document request") return "Documents";
-  if (followUpType === "Client call") return "Call";
-  if (followUpType === "Case review") return "Review";
-  return getCategory(text);
-}
-
-function buildFollowUpViewModel(item, cases) {
-  const tone = getStatusTone(item.status, item.dueDate);
-  const linkedCase = item.case || cases.find((entry) => entry.id === item.caseId || entry.id === item.case?.id) || null;
-  const text = `${item.title || ""} ${item.description || ""}`;
-  const inferredCategory = getCategory(text);
-  const followUpType = item.followUpType || (
-    inferredCategory === "Payment"
-      ? "Payment reminder"
-      : inferredCategory === "Documents"
-        ? "Document request"
-        : inferredCategory === "Call"
-          ? "Client call"
-          : "General follow-up"
-  );
-  const category = getCategoryForType(followUpType, text);
-  const priority = item.priority || inferPriority(item, tone);
-  const missingDocs = /missing|passport|certificate|document/i.test(text) ? 1 : 0;
-
-  return {
-    ...item,
-    caseType: linkedCase?.caseType || item.case?.caseType || "General Matter",
-    caseStage: linkedCase?.stage || item.case?.stage || "Workflow",
-    clientName: item.client?.fullName || linkedCase?.client?.fullName || "Unknown client",
-    assignedName: item.assignedUser?.fullName || "Unassigned",
-    clientPhone: item.client?.phone || "No phone on file",
-    clientEmail: item.client?.email || "No email on file",
-    initials: getInitials(item.client?.fullName || linkedCase?.client?.fullName),
-    tone,
-    priority,
-    category,
-    missingDocs,
-    followUpType,
-    dueLabel: getRelativeDueLabel(item.dueDate),
-  };
-}
-
-async function loadAllFollowUps(fresh = false) {
-  const get = fresh ? api.getFresh : api.get;
-  const firstResponse = await get("/follow-ups", { params: { page: 1, limit: 100 } });
-  const firstPage = firstResponse.data.data || [];
-  const total = Number(firstResponse.data.meta?.total) || firstPage.length;
-  const pageCount = Math.ceil(total / 100);
-  if (pageCount <= 1) return firstPage;
-  const remainingResponses = await Promise.all(
-    Array.from({ length: pageCount - 1 }, (_, index) =>
-      get("/follow-ups", { params: { page: index + 2, limit: 100 } })
-    )
-  );
-  return [
-    ...firstPage,
-    ...remainingResponses.flatMap((response) => response.data.data || []),
-  ];
-}
-
-function RequiredMark() {
-  return <span className="text-rose-500">*</span>;
-}
-
-function FieldLabel({ children, required = false }) {
+function Modal({ title, children, onClose, onSubmit, submitLabel, saving, danger = false }) {
   return (
-    <span className="mb-2 block text-sm font-medium text-slate-700">
-      {children} {required ? <RequiredMark /> : null}
-    </span>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, helper, accent }) {
-  const accents = {
-    blue: {
-      icon: "bg-sky-50 text-sky-700 ring-sky-100",
-      value: "text-sky-700",
-    },
-    rose: {
-      icon: "bg-rose-50 text-rose-600 ring-rose-100",
-      value: "text-rose-600",
-    },
-    amber: {
-      icon: "bg-amber-50 text-amber-600 ring-amber-100",
-      value: "text-amber-600",
-    },
-    emerald: {
-      icon: "bg-emerald-50 text-emerald-600 ring-emerald-100",
-      value: "text-emerald-600",
-    },
-    violet: {
-      icon: "bg-violet-50 text-violet-600 ring-violet-100",
-      value: "text-violet-600",
-    },
-  };
-  const tone = accents[accent] || accents.blue;
-
-  return (
-    <article className="flex min-h-[112px] items-center gap-4 rounded-[20px] border border-white/80 bg-white/90 p-4 shadow-[0_18px_38px_rgba(15,23,42,0.07)] backdrop-blur-xl">
-      <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ring-1 ${tone.icon}`}>
-        <Icon className="h-6 w-6" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[11px] font-bold uppercase text-slate-500">{label}</p>
-        <p className={`mt-1 text-3xl font-semibold leading-none ${tone.value}`}>{value}</p>
-        <p className="mt-2 truncate text-xs text-slate-500">{helper}</p>
-      </div>
-    </article>
-  );
-}
-
-function Toast({ toast, onDismiss }) {
-  if (!toast) {
-    return null;
-  }
-
-  const styles =
-    toast.type === "error"
-      ? "border-rose-200 bg-rose-50 text-rose-700"
-      : "border-emerald-200 bg-emerald-50 text-emerald-700";
-
-  return (
-    <div className="pointer-events-none fixed right-5 top-5 z-[80]">
-      <div className={`pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl ${styles}`}>
-        <div className="pt-0.5">{toast.type === "error" ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}</div>
-        <div className="min-w-[220px] text-sm font-medium">{toast.message}</div>
-        <button type="button" onClick={onDismiss} className="text-current/70 transition hover:text-current" aria-label="Dismiss message">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-sm">
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close" />
+      <form onSubmit={onSubmit} className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-center justify-between"><h2 className="text-xl font-semibold text-slate-950">{title}</h2><button type="button" onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <div className="mt-5">{children}</div>
+        <div className="mt-6 grid grid-cols-2 gap-3"><button type="button" onClick={onClose} className="h-11 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700">Keep open</button><button type="submit" disabled={saving} className={`h-11 rounded-xl text-sm font-semibold text-white disabled:opacity-60 ${danger ? "bg-rose-600" : "bg-slate-950"}`}>{saving ? "Saving…" : submitLabel}</button></div>
+      </form>
     </div>
   );
 }
 
-function DrawerShell({ title, onClose, children, footer, closing }) {
+function Drawer({ form, setForm, options, editing, onClose, onSubmit, saving, error }) {
+  const cases = form.clientId ? options.cases.filter((item) => item.client?.id === form.clientId) : [];
+  const documents = options.documents.filter((item) => (!form.clientId || item.clientId === form.clientId) && (!form.caseId || !item.caseId || item.caseId === form.caseId));
+  const invoices = options.invoices.filter((item) => (!form.clientId || item.clientId === form.clientId) && (!form.caseId || item.caseId === form.caseId));
+  const selectedCase = options.cases.find((item) => item.id === form.caseId);
+  const change = (event) => {
+    const { name, value, checked, type } = event.target;
+    setForm((current) => {
+      if (name === "clientId") return { ...current, clientId: value, caseId: "", documentId: "", caseInvoiceId: "", overrideReason: "" };
+      if (name === "caseId") {
+        const item = options.cases.find((entry) => entry.id === value);
+        return { ...current, caseId: value, clientId: item?.client?.id || current.clientId, documentId: "", caseInvoiceId: "", overrideReason: "" };
+      }
+      return { ...current, [name]: type === "checkbox" ? checked : value };
+    });
+  };
+  const toggleChannel = (channel) => setForm((current) => ({
+    ...current,
+    notificationChannels: current.notificationChannels.includes(channel)
+      ? current.notificationChannels.filter((item) => item !== channel)
+      : [...current.notificationChannels, channel],
+  }));
   return (
-    <div className={`fixed inset-0 z-50 flex justify-end bg-slate-950/10 backdrop-blur-[1px] transition-opacity duration-300 ${closing ? "opacity-0" : "opacity-100"}`}>
-      <button type="button" onClick={onClose} className="absolute inset-0 cursor-default" aria-label="Close drawer" />
-      <aside
-        className={`relative flex h-full w-full max-w-[430px] flex-col overflow-hidden border-l border-slate-200 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.2)] transition-transform duration-300 ease-out ${closing ? "translate-x-full" : "translate-x-0"}`}
-      >
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-6">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-950">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
-            aria-label="Close drawer"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6">{children}</div>
-        {footer ? <div className="border-t border-slate-100 bg-white px-6 py-5">{footer}</div> : null}
+    <div className="fixed inset-0 z-[70] flex justify-end bg-slate-950/20 backdrop-blur-sm">
+      <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close" />
+      <aside className="relative flex h-full w-full max-w-lg flex-col bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5"><div><p className="text-xs font-bold uppercase tracking-wide text-sky-700">Case workflow</p><h2 className="mt-1 text-xl font-semibold text-slate-950">{editing ? "Edit follow-up" : "New follow-up"}</h2></div><button type="button" onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
+        <form id="follow-up-form" onSubmit={onSubmit} className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Client {editing?.appointmentId ? null : <b className="text-rose-500">*</b>}</span><select required={!editing?.appointmentId} name="clientId" value={form.clientId} onChange={change} className={fieldClass}><option value="">{editing?.appointmentId ? "Appointment visitor (not yet a client)" : "Select client"}</option>{options.clients.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select></label>
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Case</span><select name="caseId" value={form.caseId} onChange={change} disabled={!form.clientId} className={fieldClass}><option value="">No linked case</option>{cases.map((item) => <option key={item.id} value={item.id}>{item.caseType}{item.archivedAt ? " · Archived" : ""}</option>)}</select></label>
+          {selectedCase?.archivedAt && (!editing || form.originalCaseId !== form.caseId) ? <label className="block rounded-2xl border border-amber-200 bg-amber-50 p-4"><span className="mb-2 block text-sm font-semibold text-amber-900">Archived-case override reason <b className="text-rose-500">*</b></span><textarea required name="overrideReason" value={form.overrideReason} onChange={change} rows={2} className={areaClass} placeholder="Explain why new work is required on this archived case." /></label> : null}
+          <div className="grid gap-4 sm:grid-cols-2"><label><span className="mb-2 block text-sm font-medium text-slate-700">Document</span><select name="documentId" value={form.documentId} onChange={change} className={fieldClass}><option value="">No linked document</option>{documents.map((item) => <option key={item.id} value={item.id}>{item.documentName} · {item.status}</option>)}</select></label><label><span className="mb-2 block text-sm font-medium text-slate-700">Invoice</span><select name="caseInvoiceId" value={form.caseInvoiceId} onChange={change} className={fieldClass}><option value="">No linked invoice</option>{invoices.map((item) => <option key={item.id} value={item.id}>{item.description} · {item.status}</option>)}</select></label></div>
+          <div className="grid gap-4 sm:grid-cols-2"><label><span className="mb-2 block text-sm font-medium text-slate-700">Type</span><select name="followUpType" value={form.followUpType} onChange={change} className={fieldClass}>{followUpTypes.map((item) => <option key={item}>{item}</option>)}</select></label><label><span className="mb-2 block text-sm font-medium text-slate-700">Priority</span><select name="priority" value={form.priority} onChange={change} className={fieldClass}>{priorities.map((item) => <option key={item}>{item}</option>)}</select></label></div>
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Title <b className="text-rose-500">*</b></span><input required name="title" value={form.title} onChange={change} className={fieldClass} placeholder="What needs to happen next?" /></label>
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Notes</span><textarea name="description" value={form.description} onChange={change} rows={4} className={areaClass} placeholder="Add useful context for the assignee." /></label>
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Assigned staff</span><select name="assignedUserId" value={form.assignedUserId} onChange={change} className={fieldClass}><option value="">Unassigned</option>{options.users.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select></label>
+          <div className="grid gap-4 sm:grid-cols-2"><label><span className="mb-2 block text-sm font-medium text-slate-700">Due</span><input type="datetime-local" name="dueAt" value={form.dueAt} onChange={change} className={fieldClass} /></label><label><span className="mb-2 block text-sm font-medium text-slate-700">Staff reminder</span><input type="datetime-local" name="reminderAt" value={form.reminderAt} onChange={change} className={fieldClass} /></label></div>
+          <label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Expires</span><input type="datetime-local" name="expiresAt" value={form.expiresAt} onChange={change} className={fieldClass} /></label>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><label className="flex items-center gap-3 text-sm font-semibold text-slate-800"><input type="checkbox" name="notifyClient" checked={form.notifyClient} onChange={change} className="h-4 w-4 rounded border-slate-300" />Notify the client</label><div className="mt-3 flex flex-wrap gap-4">{[["in_app", "Portal"], ["email", "Email"], ["sms", "SMS"]].map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.notificationChannels.includes(value)} onChange={() => toggleChannel(value)} disabled={!form.notifyClient && value !== "in_app"} className="h-4 w-4 rounded border-slate-300" />{label}</label>)}</div><p className="mt-3 text-xs leading-5 text-slate-500">Direct email is sent only when recorded email consent exists. SMS uses the existing consent controls.</p></div>
+          {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+        </form>
+        <div className="grid grid-cols-2 gap-3 border-t border-slate-100 px-6 py-5"><button type="button" onClick={onClose} className="h-11 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700">Cancel</button><button type="submit" form="follow-up-form" disabled={saving} className="h-11 rounded-xl bg-slate-950 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving…" : editing ? "Save changes" : "Create follow-up"}</button></div>
       </aside>
     </div>
   );
 }
 
-function FollowUpDrawer({
-  formState,
-  onChange,
-  onSubmit,
-  onCancel,
-  saving,
-  formError,
-  clients,
-  cases,
-  users,
-  isEditing,
-  closing,
-}) {
-  const availableCases = formState.clientId
-    ? cases.filter((item) => item.client?.id === formState.clientId)
-    : [];
-
+function FollowUpCard({ item, timezone, highlighted, onEdit, onComplete, onCancel, onAppointment }) {
+  const name = item.client?.fullName || item.case?.client?.fullName || "Unknown client";
+  const actor = item.status === "Completed" ? item.completedBy : item.status === "Cancelled" ? item.cancelledBy : null;
+  const reason = item.status === "Completed" ? item.completionOutcome : item.status === "Cancelled" ? item.cancellationReason : null;
   return (
-    <DrawerShell
-      title={isEditing ? "Edit Follow-up" : "Add Follow-up"}
-      onClose={onCancel}
-      closing={closing}
-      footer={
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            form="follow-up-form"
-            disabled={saving}
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(15,23,42,0.24)] transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving ? "Saving..." : isEditing ? "Save Changes" : "Save Follow-up"}
-          </button>
-        </div>
-      }
-    >
-      <form id="follow-up-form" className="space-y-5" onSubmit={onSubmit}>
-        <label className="block">
-          <FieldLabel required>Client</FieldLabel>
-          <select required name="clientId" value={formState.clientId} onChange={onChange} className={fieldClassName}>
-            <option value="">Select client</option>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.fullName}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <FieldLabel>Case</FieldLabel>
-          <select name="caseId" value={formState.caseId} onChange={onChange} disabled={!formState.clientId} className={`${fieldClassName} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`}>
-            <option value="">{formState.clientId ? "No case / select case" : "Select a client first"}</option>
-            {availableCases.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.caseType + (item.archivedAt ? " • Archived" : "") + (["Completed", "Closed", "Cancelled", "Inactive"].includes(item.status) ? ` • ${item.status}` : "")}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <FieldLabel required>Follow-up type</FieldLabel>
-          <select name="followUpType" value={formState.followUpType} onChange={onChange} className={fieldClassName}>
-            {followUpTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <FieldLabel required>Title</FieldLabel>
-          <input
-            required
-            name="title"
-            value={formState.title}
-            onChange={onChange}
-            placeholder="Enter follow-up title"
-            className={fieldClassName}
-          />
-        </label>
-
-        <label className="block">
-          <FieldLabel>Notes</FieldLabel>
-          <textarea
-            name="description"
-            rows="5"
-            value={formState.description}
-            onChange={onChange}
-            placeholder="Add notes or next action..."
-            className={textareaClassName}
-          />
-        </label>
-
-        <label className="block">
-          <FieldLabel>Assigned staff</FieldLabel>
-          <select name="assignedUserId" value={formState.assignedUserId} onChange={onChange} className={fieldClassName}>
-            <option value="">Select staff</option>
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.fullName}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <FieldLabel>Due date</FieldLabel>
-            <input type="date" name="dueDate" value={formState.dueDate} onChange={onChange} className={fieldClassName} />
-          </label>
-
-          <label className="block">
-            <FieldLabel>Due time</FieldLabel>
-            <input type="time" name="dueTime" value={formState.dueTime} onChange={onChange} disabled={!formState.dueDate} className={`${fieldClassName} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`} />
-          </label>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <FieldLabel required>Priority</FieldLabel>
-            <select name="priority" value={formState.priority} onChange={onChange} className={fieldClassName}>
-              {priorityLevels.map((priority) => (
-                <option key={priority} value={priority}>
-                  {priority}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <FieldLabel required>Status</FieldLabel>
-            <select name="status" value={formState.status} onChange={onChange} className={fieldClassName}>
-              {statusOptions.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {formState.status === "Completed" ? (
-          <label className="block">
-            <FieldLabel>Completed date</FieldLabel>
-            <input type="date" name="completedAt" value={formState.completedAt} onChange={onChange} className={fieldClassName} />
-          </label>
-        ) : null}
-
-        {formError ? <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{formError}</div> : null}
-      </form>
-    </DrawerShell>
-  );
-}
-
-function FollowUpCard({ item, highlighted, onEdit, onDelete, onCopyMessage, onMarkDone, onOpenAppointment, deletingId }) {
-  const statusStyles = getStatusStyles(item.tone);
-
-  return (
-    <article
-      id={`followup-row-${item.id}`}
-      className={`group relative overflow-hidden rounded-[18px] border border-slate-200/70 bg-white/95 shadow-[0_10px_28px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_42px_rgba(15,23,42,0.09)] ${fadingHighlightClass(highlighted)}`}
-    >
-      <div className={`absolute inset-y-0 left-0 w-1 ${getAccentBarClass(item.tone)}`} />
-
-      <div className="grid gap-4 px-4 py-3.5 xl:grid-cols-[270px_minmax(260px,1fr)_150px_182px] xl:items-center">
-        <div className="flex min-w-0 gap-3 pl-2 xl:border-r xl:border-slate-100 xl:pr-4">
-          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold ${getAvatarClass(item.clientName)}`}>
-            {item.initials}
-          </div>
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-sm font-semibold text-slate-950">{item.clientName}</p>
-              <span className="shrink-0 rounded-md bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700">{item.caseType}</span>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
-              <span className="inline-flex items-center gap-1">
-                <Phone className="h-3 w-3" />
-                {item.clientPhone}
-              </span>
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <Mail className="h-3 w-3" />
-                <span className="max-w-[140px] truncate">{item.clientEmail}</span>
-              </span>
-            </div>
-            <p className="mt-2 truncate text-[11px] text-slate-500">Assigned to: <span className="font-semibold text-slate-700">{item.assignedName}</span></p>
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-slate-950">{item.title}</h3>
-          <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-500">
-            {item.description || "Follow up with the client and record the next action."}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">{item.caseStage}</span>
-            <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600">{item.followUpType}</span>
-            {item.missingDocs ? (
-              <span className="rounded-md bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600">1 missing</span>
-            ) : null}
-            {item.appointment ? (
-              <button
-                type="button"
-                onClick={() => onOpenAppointment(item.appointment.id)}
-                className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
-              >
-                <CalendarClock className="h-3 w-3" />
-                From appointment · {formatDate(item.appointment.startsAt)}
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-bold uppercase ${statusStyles.badge}`}>
-            {getStatusLabel(item)}
-          </span>
-          <div className="space-y-1 text-xs text-slate-600">
-            <span className="flex items-center gap-1.5">
-              <CalendarClock className="h-3.5 w-3.5 text-slate-400" />
-              {formatDate(item.dueDate)}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Clock3 className="h-3.5 w-3.5 text-slate-400" />
-              {formatTime(item.dueDate)}
-            </span>
-            <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold ${getPriorityStyles(item.priority)}`}>
-              <span className={`h-2 w-2 rounded-full ${statusStyles.dot}`} />
-              {item.priority}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 xl:justify-end">
-          <button
-            type="button"
-            onClick={() => onMarkDone(item)}
-            disabled={["Completed", "Cancelled"].includes(item.status)}
-            className="inline-flex h-9 min-w-[118px] items-center justify-center rounded-lg border border-slate-800 bg-white px-3 text-xs font-semibold text-slate-950 transition hover:bg-slate-950 hover:text-white disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400 disabled:hover:bg-white"
-          >
-            Mark Done
-          </button>
-          <button
-            type="button"
-            onClick={() => onCopyMessage(item)}
-            className="inline-flex h-9 min-w-[118px] items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            <Copy className="h-3.5 w-3.5" />
-            Copy Message
-          </button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onEdit(item)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-sky-200 hover:text-sky-700"
-              aria-label={`Edit ${item.title}`}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(item)}
-              disabled={deletingId === item.id}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-rose-200 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label={`Cancel ${item.title}`}
-            >
-              <Ban className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+    <article id={`followup-row-${item.id}`} className={`rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm transition hover:border-sky-200 hover:shadow-md ${fadingHighlightClass(highlighted)}`}>
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-center">
+        <div className="flex min-w-0 flex-1 gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sm font-bold text-sky-700">{initials(name)}</div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-950">{item.title}</h3><span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${statusTone(item.status)}`}>{item.status}</span><span className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700">{item.source === "lead" ? "Lead" : "Case"}</span></div><p className="mt-1 text-sm text-slate-600">{name} · {sourceName(item)}</p>{item.description ? <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-500">{item.description}</p> : null}<div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500"><span className={`rounded-md px-2 py-1 font-semibold ${priorityTone(item.priority)}`}>{item.priority}</span><span className="rounded-md bg-slate-100 px-2 py-1">{item.followUpType}</span>{item.document ? <span className="rounded-md bg-violet-50 px-2 py-1 text-violet-700">Document: {item.document.documentName}</span> : null}{item.caseInvoice ? <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">Invoice: {item.caseInvoice.description}</span> : null}</div>{reason ? <p className="mt-3 text-xs text-slate-500"><b>{item.status === "Completed" ? "Outcome" : "Cancellation"}:</b> {reason}{actor?.fullName ? ` · ${actor.fullName}` : ""}</p> : null}</div></div>
+        <div className="grid shrink-0 gap-3 sm:grid-cols-2 xl:w-[430px]"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Due</p><p className={`mt-1 text-sm font-semibold ${item.status === "Overdue" ? "text-rose-700" : "text-slate-800"}`}>{dateTime(item.dueDate, timezone)}</p><p className="mt-1 text-xs text-slate-500">{item.assignedUser?.fullName || "Unassigned"}</p></div><div className="flex flex-wrap content-center justify-end gap-2"><Link to={item.openUrl} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 text-xs font-semibold text-sky-700"><ExternalLink className="h-3.5 w-3.5" />Open</Link>{item.appointment ? <button type="button" onClick={() => onAppointment(item.appointment.id)} className="h-9 rounded-xl border border-violet-200 px-3 text-xs font-semibold text-violet-700">Appointment</button> : null}{item.canEdit && !["Completed", "Cancelled"].includes(item.status) ? <><button type="button" onClick={() => onComplete(item)} className="h-9 rounded-xl bg-slate-950 px-3 text-xs font-semibold text-white">Complete</button>{item.source === "case" ? <button type="button" onClick={() => onEdit(item)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-600" aria-label="Edit"><Pencil className="h-4 w-4" /></button> : null}<button type="button" onClick={() => onCancel(item)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-rose-200 text-rose-600" aria-label="Cancel"><Ban className="h-4 w-4" /></button></> : null}</div></div>
       </div>
     </article>
   );
 }
 
-function TodayWorkRail({ items, overdueCount, missingDocItem, onCreate, onShowOverdue, onCopyMissing, onSelect }) {
-  return (
-    <aside className="xl:sticky xl:top-5">
-      <section className="overflow-hidden rounded-[22px] bg-slate-950 p-5 text-white shadow-[0_28px_70px_rgba(15,23,42,0.28)]">
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/20 text-sky-300 ring-1 ring-sky-400/20">
-            <CalendarClock className="h-6 w-6" />
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <h2 className="text-xl font-semibold tracking-tight">Today&apos;s Work</h2>
-          <p className="mt-2 text-sm leading-5 text-slate-400">Highest priority actions for your team.</p>
-        </div>
-
-        <div className="mt-5 divide-y divide-white/10 border-y border-white/10">
-          {items.length ? (
-            items.map((item) => {
-              const statusStyles = getStatusStyles(item.tone);
-
-              return (
-                <button key={item.id} type="button" onClick={() => onSelect(item.id)} className="w-full py-4 text-left transition hover:bg-white/[0.04]">
-                  <div className="flex items-start gap-3">
-                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${getAvatarClass(item.clientName)}`}>
-                      {item.initials}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="truncate text-sm font-semibold text-white">{item.clientName}</p>
-                        <span className="shrink-0 text-[11px] text-slate-500">{formatTime(item.dueDate)}</span>
-                      </div>
-                      <p className="mt-1 truncate text-xs text-slate-400">{item.title}</p>
-                      <p className={`mt-1 flex items-center gap-1.5 text-[11px] font-semibold ${statusStyles.railText}`}>
-                        <span className={`h-2 w-2 rounded-full ${statusStyles.dot}`} />
-                        {item.dueLabel}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })
-          ) : (
-            <div className="py-6 text-sm text-slate-400">No priority follow-ups for the current filter.</div>
-          )}
-        </div>
-
-        <div className="mt-5">
-          <h3 className="text-sm font-semibold text-white">Quick actions</h3>
-          <div className="mt-3 space-y-3">
-            <button
-              type="button"
-              onClick={onCreate}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-semibold text-white transition hover:bg-white/20"
-            >
-              <Plus className="h-4 w-4" />
-              Add follow-up
-            </button>
-            <button
-              type="button"
-              onClick={onShowOverdue}
-              className="flex h-11 w-full items-center justify-between rounded-xl bg-white/10 px-4 text-sm font-semibold text-white transition hover:bg-white/20"
-            >
-              <span className="inline-flex items-center gap-2">
-                <Clock3 className="h-4 w-4" />
-                View overdue
-              </span>
-              <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs text-white">{overdueCount}</span>
-            </button>
-            <button
-              type="button"
-              onClick={onCopyMissing}
-              disabled={!missingDocItem}
-              className="flex min-h-11 w-full items-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FileWarning className="h-4 w-4 shrink-0" />
-              Copy missing-doc template
-            </button>
-          </div>
-        </div>
-      </section>
-    </aside>
-  );
-}
-
 export default function FollowUps() {
-  const [searchParams] = useSearchParams();
-  const highlightId = searchParams.get("highlight") || "";
-  const [followUps, setFollowUps] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [cases, setCases] = useState([]);
-  const [users, setUsers] = useState([]);
+  const { appUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [items, setItems] = useState([]);
+  const [meta, setMeta] = useState({ page: 1, limit: 25, total: 0, uniqueClients: 0, summary: {} });
+  const [options, setOptions] = useState({ clients: [], cases: [], users: [], documents: [], invoices: [], timezone: "America/Toronto" });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [showForm, setShowForm] = useState(false);
-  const [drawerClosing, setDrawerClosing] = useState(false);
-  const [editingFollowUp, setEditingFollowUp] = useState(null);
-  const [formState, setFormState] = useState(defaultFormState);
-  const [formError, setFormError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState("");
-  const [toast, setToast] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeChip, setActiveChip] = useState("All");
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [caseTypeFilter, setCaseTypeFilter] = useState("All Case Types");
-  const [staffFilter, setStaffFilter] = useState("All Staff");
-  const [priorityFilter, setPriorityFilter] = useState("All Priorities");
-  const [dateRangeFilter, setDateRangeFilter] = useState("Any time");
-  const [sortBy, setSortBy] = useState("Due date");
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedAppointmentId, setSelectedAppointmentId] = useState(null);
+  const [error, setError] = useState("");
+  const [searchInput, setSearchInput] = useState(searchParams.get("search") || "");
+  const [drawer, setDrawer] = useState(null);
+  const [form, setForm] = useState(() => emptyForm(appUser?.id));
+  const [formError, setFormError] = useState("");
+  const [action, setAction] = useState(null);
+  const [actionValue, setActionValue] = useState("");
+  const [nextLeadFollowUp, setNextLeadFollowUp] = useState(() => nextLeadFollowUpForm(null, appUser?.id));
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [appointmentId, setAppointmentId] = useState(null);
+  const recoveryTimerRef = useRef(null);
+  const recoveryAttemptRef = useRef(0);
+  const mountedRef = useRef(false);
+  const generationRef = useRef(0);
+  const highlightId = searchParams.get("highlight") || "";
+  const view = searchParams.get("view") || "my_open";
+  const page = Math.max(Number(searchParams.get("page")) || 1, 1);
 
-  const isEditing = Boolean(editingFollowUp);
+  const setQuery = useCallback((patch, resetPage = true) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      Object.entries(patch).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
+      if (resetPage) next.delete("page");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   useEffect(() => {
-    loadWorkspaceData();
-  }, []);
+    const timeout = window.setTimeout(() => {
+      if (searchInput !== (searchParams.get("search") || "")) setQuery({ search: searchInput.trim() });
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [searchInput, searchParams, setQuery]);
 
-  const activeHighlightId = useFadingHighlight(highlightId, {
-    domIdPrefix: "followup-row-",
-    ready: !loading,
-    deps: [followUps],
-  });
-
-  useEffect(() => {
-    if (!toast) {
-      return undefined;
+  const load = useCallback(async ({ quiet = false, recovery = false } = {}) => {
+    const generation = ++generationRef.current;
+    if (recoveryTimerRef.current) window.clearTimeout(recoveryTimerRef.current);
+    try {
+      quiet || recovery ? setRefreshing(true) : setLoading(true);
+      const get = quiet || recovery ? api.getFresh : api.get;
+      const params = Object.fromEntries(searchParams.entries());
+      params.view = params.view || "my_open";
+      params.page = params.page || 1;
+      params.limit = 25;
+      const [listResponse, optionsResponse] = await Promise.all([
+        get("/follow-ups/combined", { params }),
+        get("/follow-ups/options"),
+      ]);
+      if (!mountedRef.current || generation !== generationRef.current) return;
+      setItems(listResponse.data.data || []);
+      setMeta(listResponse.data.meta || {});
+      setOptions(optionsResponse.data.data || {});
+      setError("");
+      recoveryAttemptRef.current = 0;
+    } catch (requestError) {
+      if (!mountedRef.current || generation !== generationRef.current) return;
+      const delay = recoveryDelaysMs[Math.min(recoveryAttemptRef.current, recoveryDelaysMs.length - 1)];
+      recoveryAttemptRef.current += 1;
+      setError(`${requestError.response?.data?.message || "Unable to load follow-ups."} Retrying automatically…`);
+      recoveryTimerRef.current = window.setTimeout(() => void load({ quiet: true, recovery: true }), delay);
+    } finally {
+      if (mountedRef.current && generation === generationRef.current) { setLoading(false); setRefreshing(false); }
     }
+  }, [searchParams]);
 
-    const timeout = window.setTimeout(() => setToast(null), 3200);
+  useEffect(() => {
+    mountedRef.current = true;
+    void load();
+    return () => { mountedRef.current = false; if (recoveryTimerRef.current) window.clearTimeout(recoveryTimerRef.current); };
+  }, [load]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timeout = window.setTimeout(() => setToast(null), 3500);
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  useEffect(() => {
-    if (!showForm) {
-      return undefined;
-    }
+  const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "followup-row-", ready: !loading, deps: [items] });
+  const summary = meta.summary || {};
+  const selectedCase = options.cases?.find((item) => item.id === form.caseId);
 
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        closeDrawer();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showForm]);
-
-  async function loadWorkspaceData({ quiet = false } = {}) {
-    try {
-      if (quiet) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      const get = quiet ? api.getFresh : api.get;
-      const [allFollowUps, optionsResponse] = await Promise.all([
-        loadAllFollowUps(quiet),
-        get("/follow-ups/options"),
-      ]);
-      const options = optionsResponse.data.data || {};
-
-      setFollowUps(allFollowUps);
-      setClients(options.clients || []);
-      setCases(options.cases || []);
-      setUsers(options.users || []);
-      setError("");
-    } catch (requestError) {
-      setError(requestError.response?.data?.message || "Unable to load follow-ups.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  const enrichedFollowUps = useMemo(
-    () => followUps.map((item) => buildFollowUpViewModel(item, cases)),
-    [followUps, cases]
-  );
-
-  const caseTypeOptions = useMemo(
-    () => ["All Case Types", ...Array.from(new Set(enrichedFollowUps.map((item) => item.caseType)))],
-    [enrichedFollowUps]
-  );
-
-  const staffOptions = useMemo(
-    () => ["All Staff", ...Array.from(new Set(enrichedFollowUps.map((item) => item.assignedName)))],
-    [enrichedFollowUps]
-  );
-
-  const filteredFollowUps = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const priorityRank = { High: 0, Medium: 1, Low: 2 };
-
-    return [...enrichedFollowUps]
-      .filter((item) => {
-        const matchesQuery =
-          !normalizedQuery ||
-          [
-            item.clientName,
-            item.caseType,
-            item.caseStage,
-            item.clientPhone,
-            item.clientEmail,
-            item.assignedName,
-            item.followUpType,
-            item.category,
-            item.title,
-            item.description,
-          ]
-            .filter(Boolean)
-            .some((value) => String(value).toLowerCase().includes(normalizedQuery));
-
-        const matchesChip = (() => {
-          switch (activeChip) {
-            case "Today":
-              return item.tone === "today";
-            case "Overdue":
-              return item.tone === "overdue";
-            case "Pending":
-              return item.status === "Pending";
-            case "Completed":
-              return item.status === "Completed";
-            case "Cancelled":
-              return item.status === "Cancelled";
-            case "Missing Docs":
-              return item.missingDocs > 0;
-            case "Payment":
-              return item.category === "Payment";
-            case "Documents":
-              return item.category === "Documents";
-            default:
-              return true;
-          }
-        })();
-
-        const matchesCaseType = caseTypeFilter === "All Case Types" || item.caseType === caseTypeFilter;
-        const matchesStaff = staffFilter === "All Staff" || item.assignedName === staffFilter;
-        const matchesPriority = priorityFilter === "All Priorities" || item.priority === priorityFilter;
-        const matchesDateRange = (() => {
-          if (dateRangeFilter === "Any time" || !item.dueDate) {
-            return true;
-          }
-
-          const due = parseDate(item.dueDate);
-
-          if (!due) {
-            return true;
-          }
-
-          const dueStart = new Date(due.getFullYear(), due.getMonth(), due.getDate());
-          const diff = Math.round((dueStart.getTime() - startOfToday.getTime()) / 86400000);
-
-          if (dateRangeFilter === "Today") {
-            return diff === 0;
-          }
-
-          if (dateRangeFilter === "This week") {
-            return diff >= 0 && diff <= 7;
-          }
-
-          if (dateRangeFilter === "This month") {
-            return due.getMonth() === now.getMonth() && due.getFullYear() === now.getFullYear();
-          }
-
-          return true;
-        })();
-
-        return matchesQuery && matchesChip && matchesCaseType && matchesStaff && matchesPriority && matchesDateRange;
-      })
-      .sort((a, b) => {
-        if (sortBy === "Client") {
-          return a.clientName.localeCompare(b.clientName);
-        }
-
-        if (sortBy === "Priority") {
-          return (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2);
-        }
-
-        const first = a.dueDate ? parseDate(a.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-        const second = b.dueDate ? parseDate(b.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-        return first - second;
-      });
-  }, [activeChip, caseTypeFilter, dateRangeFilter, enrichedFollowUps, priorityFilter, searchQuery, sortBy, staffFilter]);
-
-  const summary = useMemo(() => {
-    const now = new Date();
-    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 7);
-
-    const dueToday = enrichedFollowUps.filter((item) => item.tone === "today").length;
-    const overdue = enrichedFollowUps.filter((item) => item.tone === "overdue").length;
-    const pending = enrichedFollowUps.filter((item) => item.status === "Pending").length;
-    const completedThisWeek = enrichedFollowUps.filter((item) => {
-      if (item.status !== "Completed") {
-        return false;
-      }
-
-      const completedAt = parseDate(item.completedAt || item.updatedAt);
-      return completedAt && completedAt >= startOfWeek && completedAt < endOfWeek;
-    }).length;
-    const missingDocs = enrichedFollowUps.filter((item) => item.missingDocs > 0).length;
-
-    return { dueToday, overdue, pending, completedThisWeek, missingDocs };
-  }, [enrichedFollowUps]);
-
-  const todayPanel = useMemo(() => {
-    const priorityRank = { High: 0, Medium: 1, Low: 2 };
-    const priorities = [...filteredFollowUps]
-      .filter((item) => !["Completed", "Cancelled"].includes(item.status))
-      .sort((a, b) => {
-        const priorityDiff = (priorityRank[a.priority] ?? 2) - (priorityRank[b.priority] ?? 2);
-
-        if (priorityDiff !== 0) {
-          return priorityDiff;
-        }
-
-        const first = a.dueDate ? parseDate(a.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-        const second = b.dueDate ? parseDate(b.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-        return first - second;
-      })
-      .slice(0, 5);
-    const missingDocItem = filteredFollowUps.find((item) => item.missingDocs > 0) || null;
-
-    return { priorities, missingDocItem };
-  }, [filteredFollowUps]);
-
-  function resetForm() {
-    setFormState(defaultFormState);
-    setEditingFollowUp(null);
+  function openCreate() {
+    setForm(emptyForm(appUser?.id));
     setFormError("");
-    setShowForm(false);
+    setDrawer("create");
   }
 
-  function openCreateForm() {
-    setEditingFollowUp(null);
-    setFormState(defaultFormState);
-    setFormError("");
-    setDrawerClosing(false);
-    setShowForm(true);
-  }
-
-  function openEditForm(item) {
-    setEditingFollowUp(item);
-    setFormState({
-      clientId: item.client?.id || item.case?.client?.id || "",
-      caseId: item.case?.id || "",
-      assignedUserId: item.assignedUser?.id || "",
+  function openEdit(item) {
+    setForm({
+      clientId: item.clientId || item.client?.id || item.case?.client?.id || "",
+      caseId: item.caseId || item.case?.id || "",
+      originalCaseId: item.caseId || item.case?.id || "",
+      documentId: item.documentId || "",
+      caseInvoiceId: item.caseInvoiceId || "",
+      assignedUserId: item.assignedUserId || "",
       followUpType: item.followUpType || "General follow-up",
       title: item.title || "",
       description: item.description || "",
-      dueDate: formatDateForInput(item.dueDate),
-      dueTime: formatTimeForInput(item.dueDate),
+      dueAt: localInput(item.dueDate),
+      reminderAt: localInput(item.reminderAt),
+      expiresAt: localInput(item.expiresAt),
       priority: item.priority || "Medium",
-      status: item.status || "Pending",
-      completedAt: formatDateForInput(item.completedAt),
+      notificationChannels: item.notificationChannels?.length ? item.notificationChannels : ["in_app"],
+      notifyClient: Boolean(item.notifyClient),
+      overrideReason: "",
     });
     setFormError("");
-    setDrawerClosing(false);
-    setShowForm(true);
+    setDrawer(item);
   }
 
-  function closeDrawer() {
-    setDrawerClosing(true);
-    window.setTimeout(() => {
-      resetForm();
-      setDrawerClosing(false);
-    }, 240);
-  }
-
-  function handleInputChange(event) {
-    const { name, value } = event.target;
-    setFormState((current) => {
-      if (name === "clientId") {
-        const selectedCase = cases.find((item) => item.id === current.caseId);
-        return {
-          ...current,
-          clientId: value,
-          caseId: selectedCase?.client?.id === value ? current.caseId : "",
-        };
-      }
-      if (name === "caseId") {
-        const selectedCase = cases.find((item) => item.id === value);
-        return {
-          ...current,
-          caseId: value,
-          clientId: selectedCase?.client?.id || current.clientId,
-        };
-      }
-      if (name === "dueDate" && !value) {
-        return { ...current, dueDate: "", dueTime: "" };
-      }
-      if (name === "status") {
-        const terminal = ["Completed", "Cancelled"].includes(value);
-        return {
-          ...current,
-          status: value,
-          completedAt: terminal
-            ? current.completedAt || formatDateForInput(new Date())
-            : "",
-        };
-      }
-      return { ...current, [name]: value };
-    });
-  }
-
-  function clearFilters() {
-    setActiveChip("All");
-    setSearchQuery("");
-    setCaseTypeFilter("All Case Types");
-    setStaffFilter("All Staff");
-    setPriorityFilter("All Priorities");
-    setDateRangeFilter("Any time");
-  }
-
-  function buildDueDatePayload() {
-    if (!formState.dueDate) {
-      return null;
-    }
-    const parsed = new Date(`${formState.dueDate}T${formState.dueTime || "12:00"}:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-  }
-
-  function buildCompletedAtPayload() {
-    if (!formState.completedAt) return null;
-    const parsed = new Date(`${formState.completedAt}T12:00:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-  }
-
-  async function handleSubmit(event) {
+  async function saveFollowUp(event) {
     event.preventDefault();
-
+    setSaving(true);
+    setFormError("");
     try {
-      setSaving(true);
-      setFormError("");
-
       const payload = {
-        clientId: formState.clientId,
-        caseId: formState.caseId || null,
-        assignedUserId: formState.assignedUserId || null,
-        followUpType: formState.followUpType,
-        title: formState.title.trim(),
-        description: formState.description.trim() || null,
-        dueDate: buildDueDatePayload(),
-        priority: formState.priority,
-        status: formState.status,
-        completedAt: buildCompletedAtPayload(),
+        clientId: form.clientId,
+        caseId: form.caseId || null,
+        documentId: form.documentId || null,
+        caseInvoiceId: form.caseInvoiceId || null,
+        assignedUserId: form.assignedUserId || null,
+        followUpType: form.followUpType,
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        dueDate: iso(form.dueAt),
+        reminderAt: iso(form.reminderAt),
+        expiresAt: iso(form.expiresAt),
+        priority: form.priority,
+        notificationChannels: form.notificationChannels,
+        notifyClient: form.notifyClient,
+        ...(selectedCase?.archivedAt && (drawer === "create" || form.originalCaseId !== form.caseId) ? { overrideReason: form.overrideReason.trim() } : {}),
       };
-
-      if (isEditing) {
-        await api.patch(`/follow-ups/${editingFollowUp.id}`, payload);
-      } else {
-        await api.post("/follow-ups", payload);
-      }
-
-      await loadWorkspaceData({ quiet: true });
-      closeDrawer();
-      setToast({ type: "success", message: `Follow-up ${isEditing ? "updated" : "created"} successfully` });
+      if (drawer === "create") await api.post("/follow-ups", payload);
+      else await api.patch(`/follow-ups/${drawer.id}`, payload);
+      setDrawer(null);
+      await load({ quiet: true });
+      setToast({ type: "success", message: `Follow-up ${drawer === "create" ? "created" : "updated"}.` });
     } catch (requestError) {
       setFormError(requestError.response?.data?.message || "Unable to save follow-up.");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
-  async function handleDelete(item) {
-    const confirmed = window.confirm(`Cancel the follow-up "${item.title}"? It will remain in case history.`);
-
-    if (!confirmed) {
-      return;
-    }
-
+  async function submitAction(event) {
+    event.preventDefault();
+    if (!actionValue.trim()) return;
+    setSaving(true);
     try {
-      setDeletingId(item.id);
-      const response = await api.patch(`/follow-ups/${item.id}/cancel`);
-      const cancelled = response.data.data;
-      setFollowUps((current) => current.map((entry) => entry.id === item.id ? cancelled : entry));
-      setToast({ type: "success", message: "Follow-up cancelled" });
-
-      if (editingFollowUp?.id === item.id) {
-        closeDrawer();
+      if (action.kind === "complete") {
+        if (action.item.source === "lead") {
+          await api.patch(`/leads/${action.item.leadId}/follow-ups/${action.item.id}`, {
+            status: "COMPLETED",
+            completionOutcome: actionValue,
+            ...(action.item.requiresNextFollowUp
+              ? {
+                  nextFollowUp: {
+                    ...nextLeadFollowUp,
+                    dueAt: iso(nextLeadFollowUp.dueAt),
+                  },
+                }
+              : {}),
+          });
+        } else {
+          await api.patch(`/follow-ups/${action.item.id}`, { status: "Completed", completionOutcome: actionValue });
+        }
+      } else if (action.item.source === "lead") {
+        await api.patch(`/leads/${action.item.leadId}/follow-ups/${action.item.id}`, {
+          status: "CANCELLED",
+          completionOutcome: actionValue.trim(),
+          ...(action.item.requiresNextFollowUp
+            ? { nextFollowUp: { ...nextLeadFollowUp, dueAt: iso(nextLeadFollowUp.dueAt) } }
+            : {}),
+        });
+      } else {
+        await api.patch(`/follow-ups/${action.item.id}/cancel`, { cancellationReason: actionValue.trim() });
       }
+      setAction(null);
+      setActionValue("");
+      await load({ quiet: true });
+      setToast({ type: "success", message: action.kind === "complete" ? "Follow-up completed." : "Follow-up cancelled." });
     } catch (requestError) {
-      setError(requestError.response?.data?.message || "Unable to cancel follow-up.");
-    } finally {
-      setDeletingId("");
-    }
-  }
-
-  async function handleMarkDone(item) {
-    try {
-      const response = await api.patch(`/follow-ups/${item.id}`, {
-        status: "Completed",
-        completedAt: new Date().toISOString(),
-      });
-      const completed = response.data.data;
-      setFollowUps((current) => current.map((entry) => entry.id === item.id ? completed : entry));
-      setToast({ type: "success", message: "Follow-up marked complete" });
-    } catch (requestError) {
+      // A case follow-up update is committed before its auxiliary notification
+      // cleanup runs. Older/backlogged deployments can therefore return a 500
+      // after the requested state was saved. Re-read the record before telling
+      // staff the action failed, so they never retry an already-completed item.
+      if (action.item.source === "case" && requestError.response?.status >= 500) {
+        try {
+          const response = await api.getFresh(`/follow-ups/${action.item.id}`);
+          const expectedStatus = action.kind === "complete" ? "Completed" : "Cancelled";
+          if (response.data?.data?.status === expectedStatus) {
+            setAction(null);
+            setActionValue("");
+            await load({ quiet: true });
+            setToast({
+              type: "success",
+              message: action.kind === "complete" ? "Follow-up completed." : "Follow-up cancelled.",
+            });
+            return;
+          }
+        } catch {
+          // Keep the original server error if reconciliation cannot confirm
+          // that the requested workflow state was saved.
+        }
+      }
       setToast({ type: "error", message: requestError.response?.data?.message || "Unable to update follow-up." });
-    }
+    } finally { setSaving(false); }
   }
 
-  async function handleCopyMessage(item) {
-    const message = `Hello ${item.clientName}, this is a reminder from CaseDesk regarding "${item.title}". ${item.description || "Please contact us with your latest update."}`;
-
-    try {
-      await navigator.clipboard.writeText(message);
-      setToast({ type: "success", message: "Follow-up message copied" });
-    } catch (copyError) {
-      setToast({ type: "error", message: "Unable to copy message." });
-    }
-  }
-
-  function handleExportCsv() {
-    const headers = ["Client", "Case type", "Title", "Status", "Priority", "Due date", "Assigned staff"];
-    const rows = filteredFollowUps.map((item) => [
-      item.clientName,
-      item.caseType,
+  function exportCsv() {
+    const rows = [["Source", "Client or lead", "Case / lead", "Title", "Status", "Priority", "Due", "Assigned", "Outcome / reason", "Created by", "Completed / cancelled by"]];
+    items.forEach((item) => rows.push([
+      item.source,
+      item.client?.fullName,
+      sourceName(item),
       item.title,
-      getStatusLabel(item),
+      item.status,
       item.priority,
-      `${formatDate(item.dueDate)} ${formatTime(item.dueDate)}`,
-      item.assignedName,
-    ]);
-    const csv = [headers, ...rows]
-      .map((row) =>
-        row
-          .map((value) => {
-            const stringValue = String(value ?? "");
-            return /[",\n]/.test(stringValue) ? `"${stringValue.replace(/"/g, '""')}"` : stringValue;
-          })
-          .join(",")
-      )
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      dateTime(item.dueDate, meta.timezone),
+      item.assignedUser?.fullName,
+      item.completionOutcome || item.cancellationReason,
+      item.createdBy?.fullName,
+      item.completedBy?.fullName || item.cancelledBy?.fullName,
+    ]));
+    const blob = new Blob([rows.map((row) => row.map(csvValue).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "follow-ups.csv";
-    link.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `follow-ups-page-${page}.csv`;
+    anchor.click();
     URL.revokeObjectURL(url);
-    setToast({ type: "success", message: "Follow-ups exported" });
   }
 
+  const filtersActive = ["status", "source", "assignedUserId", "priority", "type", "from", "to", "search"].some((key) => searchParams.get(key));
   return (
     <>
-      <Toast toast={toast} onDismiss={() => setToast(null)} />
+      <Toast toast={toast} onClose={() => setToast(null)} />
+      <section className="min-h-[calc(100vh-32px)] bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,.12),transparent_28%),linear-gradient(180deg,#f8fbff,#eef4fb)] px-4 py-6 sm:px-6">
+        <div className="mx-auto max-w-[1660px] space-y-5">
+          <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-wide text-sky-700">Shared work queue</p><h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-950">Follow-ups</h1><p className="mt-2 text-sm text-slate-600">Lead and case follow-ups in one accountable queue.</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={openCreate} className="inline-flex h-11 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New follow-up</button><button type="button" onClick={exportCsv} disabled={!items.length} className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50"><Download className="h-4 w-4" />Export page</button><button type="button" onClick={() => load({ quiet: true })} className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700" aria-label="Refresh"><RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} /></button></div></header>
 
-      <section className="relative min-h-[calc(100vh-32px)] max-w-full overflow-hidden px-4 py-5 sm:px-6">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.13),transparent_28%),radial-gradient(circle_at_90%_8%,rgba(15,23,42,0.08),transparent_24%),linear-gradient(180deg,rgba(248,251,255,0.96),rgba(238,244,251,0.92))]" />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[[CalendarClock, "Due today", summary.dueToday || 0, "bg-sky-50 text-sky-700"], [AlertCircle, "Overdue", summary.overdue || 0, "bg-rose-50 text-rose-700"], [ClipboardCheck, "Pending", summary.pending || 0, "bg-amber-50 text-amber-700"], [CheckCircle2, "Completed this week", summary.completedThisWeek || 0, "bg-emerald-50 text-emerald-700"], [FileWarning, "Clients missing docs", summary.missingDocumentClients || 0, "bg-violet-50 text-violet-700"]].map(([Icon, label, value, tone]) => <div key={label} className="rounded-2xl border border-white bg-white/90 p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`rounded-xl p-2 ${tone}`}><Icon className="h-5 w-5" /></span><div><p className="text-xs font-semibold text-slate-500">{label}</p><p className="text-2xl font-semibold text-slate-950">{value}</p></div></div></div>)}</div>
 
-        <div className="relative mx-auto max-w-[1720px] space-y-4">
-          <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-xs font-bold uppercase text-sky-700">Workflow</p>
-              <h1 className="mt-2 text-4xl font-semibold tracking-tight text-slate-950">Follow-ups</h1>
-              <p className="mt-2 text-sm text-slate-600">Track today&apos;s client follow-ups, overdue tasks, and next actions.</p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={openCreateForm}
-                className="inline-flex h-12 items-center gap-2 rounded-xl bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(15,23,42,0.24)] transition hover:-translate-y-0.5 hover:bg-slate-800"
-              >
-                <Plus className="h-4 w-4" />
-                New Follow-up
-              </button>
-              <button
-                type="button"
-                onClick={handleExportCsv}
-                className="inline-flex h-12 items-center gap-2 rounded-xl border border-slate-200 bg-white/90 px-5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-white"
-              >
-                <Download className="h-4 w-4" />
-                Export CSV
-              </button>
-              <button
-                type="button"
-                onClick={() => loadWorkspaceData({ quiet: true })}
-                className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-sm transition hover:bg-white"
-                aria-label="Refresh follow-ups"
-              >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-              </button>
-            </div>
-          </header>
-
-          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <StatCard icon={CalendarClock} label="Due Today" value={summary.dueToday} helper={`${summary.dueToday} tasks due today`} accent="blue" />
-            <StatCard icon={AlertCircle} label="Overdue" value={summary.overdue} helper={`${summary.overdue} tasks overdue`} accent="rose" />
-            <StatCard icon={ClipboardCheck} label="Pending" value={summary.pending} helper={`${summary.pending} tasks pending`} accent="amber" />
-            <StatCard icon={CheckCircle2} label="Completed This Week" value={summary.completedThisWeek} helper={`${summary.completedThisWeek} tasks completed`} accent="emerald" />
-            <StatCard icon={FileWarning} label="Missing Docs" value={summary.missingDocs} helper={`${summary.missingDocs} clients missing docs`} accent="violet" />
+          <section className="rounded-3xl border border-white bg-white/90 p-4 shadow-sm">
+            <div className="flex flex-wrap gap-2">{views.map(([value, label]) => <button key={value} type="button" onClick={() => setQuery({ view: value })} className={`rounded-full px-4 py-2 text-sm font-semibold ${view === value ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-700"}`}>{label}</button>)}</div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6"><label className="relative xl:col-span-2"><Search className="absolute left-3 top-3.5 h-4 w-4 text-slate-400" /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search client, lead, case, title…" className={`${fieldClass} pl-10`} /></label><select value={searchParams.get("status") || ""} onChange={(event) => setQuery({ status: event.target.value })} className={fieldClass}><option value="">Any status</option>{["Pending", "Overdue", "Completed", "Cancelled"].map((item) => <option key={item}>{item}</option>)}</select><select value={searchParams.get("source") || ""} onChange={(event) => setQuery({ source: event.target.value })} className={fieldClass}><option value="">Leads + cases</option><option value="lead">Leads only</option><option value="case">Cases only</option></select><select value={searchParams.get("assignedUserId") || ""} onChange={(event) => setQuery({ assignedUserId: event.target.value })} className={fieldClass}><option value="">Any assignee</option>{options.users?.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select><select value={searchParams.get("priority") || ""} onChange={(event) => setQuery({ priority: event.target.value })} className={fieldClass}><option value="">Any priority</option>{priorities.map((item) => <option key={item}>{item}</option>)}</select></div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5"><select value={searchParams.get("type") || ""} onChange={(event) => setQuery({ type: event.target.value })} className={fieldClass}><option value="">Any type</option>{followUpTypes.map((item) => <option key={item}>{item}</option>)}</select><input type="date" value={searchParams.get("from")?.slice(0, 10) || ""} onChange={(event) => setQuery({ from: event.target.value ? new Date(`${event.target.value}T00:00:00`).toISOString() : "" })} className={fieldClass} aria-label="Due from" /><input type="date" value={searchParams.get("to")?.slice(0, 10) || ""} onChange={(event) => setQuery({ to: event.target.value ? new Date(`${event.target.value}T23:59:59.999`).toISOString() : "" })} className={fieldClass} aria-label="Due to" /><select value={searchParams.get("sort") || "dueDate"} onChange={(event) => setQuery({ sort: event.target.value })} className={fieldClass}><option value="dueDate">Sort: due date</option><option value="priority">Sort: priority</option><option value="client">Sort: client</option><option value="createdAt">Sort: created</option></select>{filtersActive ? <button type="button" onClick={() => { setSearchInput(""); setSearchParams({ view }); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600"><FilterX className="h-4 w-4" />Clear filters</button> : <div />}</div>
           </section>
 
-          <section className={`${cardClassName} p-3.5`}>
-            <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center">
-              <div className="relative min-w-0 flex-1 2xl:max-w-[430px]">
-                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search client, case type, phone, assigned staff..."
-                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white/95 pl-11 pr-4 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                />
-              </div>
+          {error ? <div className="flex items-center justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{error}</span><button type="button" onClick={() => { recoveryAttemptRef.current = 0; void load({ quiet: true, recovery: true }); }} className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold">Retry now</button></div> : null}
 
-              <div className="flex flex-wrap items-center gap-2">
-                {chipOptions.map((chip) => {
-                  const active = activeChip === chip;
-
-                  return (
-                    <button
-                      key={chip}
-                      type="button"
-                      onClick={() => setActiveChip(chip)}
-                      className={[
-                        "h-9 rounded-full px-4 text-sm font-semibold transition",
-                        active
-                          ? "bg-slate-950 text-white shadow-[0_10px_20px_rgba(15,23,42,0.16)]"
-                          : "border border-slate-200 bg-white/80 text-slate-700 hover:bg-white",
-                      ].join(" ")}
-                    >
-                      {chip}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowAdvancedFilters((current) => !current)}
-                className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                <Funnel className="h-4 w-4" />
-                Advanced filters
-                <ChevronDown className={`h-4 w-4 transition-transform duration-300 ${showAdvancedFilters ? "rotate-180" : ""}`} />
-              </button>
-              {(searchQuery || activeChip !== "All" || caseTypeFilter !== "All Case Types" || staffFilter !== "All Staff" || priorityFilter !== "All Priorities" || dateRangeFilter !== "Any time") ? (
-                <button
-                  type="button"
-                  onClick={clearFilters}
-                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
-                >
-                  <FilterX className="h-4 w-4" />
-                  Clear filters
-                </button>
-              ) : null}
-            </div>
-
-            <div className={`grid overflow-hidden transition-all duration-300 ease-out ${showAdvancedFilters ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
-              <div className="min-h-0">
-                <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3 md:grid-cols-2 xl:grid-cols-4">
-                  <select value={caseTypeFilter} onChange={(event) => setCaseTypeFilter(event.target.value)} className={fieldClassName}>
-                    {caseTypeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select value={staffFilter} onChange={(event) => setStaffFilter(event.target.value)} className={fieldClassName}>
-                    {staffOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)} className={fieldClassName}>
-                    {filterPriorityOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select value={dateRangeFilter} onChange={(event) => setDateRangeFilter(event.target.value)} className={fieldClassName}>
-                    {dateRangeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-medium text-rose-700">{error}</div> : null}
-
-          <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
-            <main className="min-w-0">
-              <div className="mb-3 flex flex-col gap-3 px-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-lg font-semibold tracking-tight text-slate-950">Follow-up Queue</h2>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{filteredFollowUps.length} tasks</span>
-                </div>
-                <select
-                  value={sortBy}
-                  onChange={(event) => setSortBy(event.target.value)}
-                  className="h-10 rounded-xl border border-slate-200 bg-white/90 px-4 text-sm font-semibold text-slate-700 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                >
-                  {sortOptions.map((option) => (
-                    <option key={option} value={option}>
-                      Sort by {option.toLowerCase()}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2.5">
-                {loading ? (
-                  Array.from({ length: 7 }).map((_, index) => (
-                    <div key={index} className="h-[116px] animate-pulse rounded-[18px] border border-white/80 bg-white/75 shadow-sm" />
-                  ))
-                ) : filteredFollowUps.length ? (
-                  filteredFollowUps.map((item) => (
-                    <FollowUpCard
-                      key={item.id}
-                      item={item}
-                      highlighted={item.id === activeHighlightId}
-                      onEdit={openEditForm}
-                      onDelete={handleDelete}
-                      onCopyMessage={handleCopyMessage}
-                      onMarkDone={handleMarkDone}
-                      onOpenAppointment={setSelectedAppointmentId}
-                      deletingId={deletingId}
-                    />
-                  ))
-                ) : (
-                  <div className={`${cardClassName} p-8 text-center text-sm text-slate-500`}>
-                    No follow-ups match your current search or filters.
-                  </div>
-                )}
-              </div>
-
-              {!loading && filteredFollowUps.length ? (
-                <div className="mt-3 text-sm text-slate-500">
-                  <span>Showing all {filteredFollowUps.length} matching task{filteredFollowUps.length === 1 ? "" : "s"}</span>
-                </div>
-              ) : null}
-            </main>
-
-            <TodayWorkRail
-              items={todayPanel.priorities}
-              overdueCount={summary.overdue}
-              missingDocItem={todayPanel.missingDocItem}
-              onCreate={openCreateForm}
-              onShowOverdue={() => setActiveChip("Overdue")}
-              onCopyMissing={() => todayPanel.missingDocItem && handleCopyMessage(todayPanel.missingDocItem)}
-              onSelect={(id) => document.getElementById(`followup-row-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })}
-            />
-          </section>
+          <main><div className="mb-3 flex items-center justify-between px-1"><div><h2 className="text-lg font-semibold text-slate-950">Queue</h2><p className="text-sm text-slate-500">{meta.total || 0} follow-ups · {meta.uniqueClients || 0} unique clients/leads</p></div></div><div className="space-y-3">{loading ? Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-40 animate-pulse rounded-3xl bg-white/80" />) : items.length ? items.map((item) => <FollowUpCard key={`${item.source}-${item.id}`} item={item} timezone={meta.timezone || options.timezone} highlighted={item.id === activeHighlightId} onEdit={openEdit} onComplete={(entry) => { setAction({ kind: "complete", item: entry }); setActionValue(""); setNextLeadFollowUp(nextLeadFollowUpForm(entry, appUser?.id)); }} onCancel={(entry) => { setAction({ kind: "cancel", item: entry }); setActionValue(""); setNextLeadFollowUp(nextLeadFollowUpForm(entry, appUser?.id)); }} onAppointment={setAppointmentId} />) : <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-12 text-center text-sm text-slate-500">No follow-ups match this view.</div>}</div>{meta.total > meta.limit ? <div className="mt-5 flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm"><p className="text-sm text-slate-500">Page {page} of {Math.max(1, Math.ceil(meta.total / meta.limit))}</p><div className="flex gap-2"><button type="button" disabled={page <= 1} onClick={() => setQuery({ page: String(page - 1) }, false)} className="flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-sm font-semibold disabled:opacity-40"><ChevronLeft className="h-4 w-4" />Previous</button><button type="button" disabled={!meta.hasMore} onClick={() => setQuery({ page: String(page + 1) }, false)} className="flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-sm font-semibold disabled:opacity-40">Next<ChevronRight className="h-4 w-4" /></button></div></div> : null}</main>
         </div>
       </section>
 
-      {showForm ? (
-        <FollowUpDrawer
-          formState={formState}
-          onChange={handleInputChange}
-          onSubmit={handleSubmit}
-          onCancel={closeDrawer}
-          saving={saving}
-          formError={formError}
-          clients={clients}
-          cases={cases}
-          users={users}
-          isEditing={isEditing}
-          closing={drawerClosing}
-        />
-      ) : null}
-      {selectedAppointmentId ? (
-        <AppointmentProfileOverlay
-          appointmentId={selectedAppointmentId}
-          onClose={() => setSelectedAppointmentId(null)}
-          onChanged={() => loadWorkspaceData({ quiet: true })}
-        />
-      ) : null}
+      {drawer ? <Drawer form={form} setForm={setForm} options={options} editing={drawer === "create" ? null : drawer} onClose={() => setDrawer(null)} onSubmit={saveFollowUp} saving={saving} error={formError} /> : null}
+      {action?.kind === "complete" ? <Modal title={`Complete “${action.item.title}”`} onClose={() => setAction(null)} onSubmit={submitAction} submitLabel="Complete follow-up" saving={saving}><div className="space-y-4"><label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Outcome <b className="text-rose-500">*</b></span><select required value={actionValue} onChange={(event) => setActionValue(event.target.value)} className={fieldClass}><option value="">Select outcome</option>{completionOutcomes.map((item) => <option key={item}>{item}</option>)}</select></label>{action.item.requiresNextFollowUp ? <div className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-4"><div><p className="text-sm font-semibold text-amber-950">Add the lead’s next action</p><p className="mt-1 text-xs leading-5 text-amber-800">Open leads must always have an assigned next follow-up.</p></div><label className="block text-sm font-medium text-slate-700">Assigned to<select required value={nextLeadFollowUp.assignedUserId} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, assignedUserId: event.target.value }))} className={fieldClass}><option value="">Select staff</option>{options.users.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Type<select required value={nextLeadFollowUp.type} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, type: event.target.value }))} className={fieldClass}>{leadFollowUpTypes.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ").toLowerCase()}</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Due<input required type="datetime-local" value={nextLeadFollowUp.dueAt} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, dueAt: event.target.value }))} className={fieldClass} /></label><label className="block text-sm font-medium text-slate-700">Instruction<textarea required maxLength={1000} value={nextLeadFollowUp.description} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, description: event.target.value }))} rows={3} className={areaClass} placeholder="What needs to happen next?" /></label></div> : null}</div></Modal> : null}
+      {action?.kind === "cancel" ? <Modal title={`Cancel “${action.item.title}”`} onClose={() => setAction(null)} onSubmit={submitAction} submitLabel="Cancel follow-up" saving={saving} danger><div className="space-y-4"><label className="block"><span className="mb-2 block text-sm font-medium text-slate-700">Reason <b className="text-rose-500">*</b></span><textarea required maxLength={500} value={actionValue} onChange={(event) => setActionValue(event.target.value)} rows={4} className={areaClass} placeholder="Record why this follow-up is being cancelled." /></label>{action.item.source === "lead" && action.item.requiresNextFollowUp ? <div className="space-y-4 rounded-2xl border border-amber-200 bg-amber-50 p-4"><div><p className="text-sm font-semibold text-amber-950">Add the lead’s next action</p><p className="mt-1 text-xs leading-5 text-amber-800">Cancelling the last action cannot leave an open lead without follow-up.</p></div><label className="block text-sm font-medium text-slate-700">Assigned to<select required value={nextLeadFollowUp.assignedUserId} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, assignedUserId: event.target.value }))} className={fieldClass}><option value="">Select staff</option>{options.users.map((item) => <option key={item.id} value={item.id}>{item.fullName}</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Type<select required value={nextLeadFollowUp.type} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, type: event.target.value }))} className={fieldClass}>{leadFollowUpTypes.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ").toLowerCase()}</option>)}</select></label><label className="block text-sm font-medium text-slate-700">Due<input required type="datetime-local" value={nextLeadFollowUp.dueAt} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, dueAt: event.target.value }))} className={fieldClass} /></label><label className="block text-sm font-medium text-slate-700">Instruction<textarea required maxLength={1000} value={nextLeadFollowUp.description} onChange={(event) => setNextLeadFollowUp((current) => ({ ...current, description: event.target.value }))} rows={3} className={areaClass} placeholder="What needs to happen next?" /></label></div> : null}</div></Modal> : null}
+      {appointmentId ? <AppointmentProfileOverlay appointmentId={appointmentId} onClose={() => setAppointmentId(null)} onChanged={() => load({ quiet: true })} /> : null}
     </>
   );
 }
