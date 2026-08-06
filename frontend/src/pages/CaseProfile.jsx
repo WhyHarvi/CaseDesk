@@ -1,5 +1,5 @@
-import { Archive, ArchiveRestore, ArrowUpRight, FolderCheck, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Archive, ArchiveRestore, ArrowUpRight, FolderCheck, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import AssessmentOverlay from "../components/case-profile/AssessmentOverlay";
 import CaseWorkspaceTabs from "../components/case-profile/CaseWorkspaceTabs";
@@ -22,8 +22,6 @@ import CaseActionDialog from "../components/case-profile/CaseActionDialog";
 import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
 import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOverlay";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
-
-const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 import { useAuth } from "../auth/AuthContext";
 import { canAccessCaseTab, hasCapability } from "../auth/portalAccess";
 import {
@@ -34,14 +32,23 @@ import {
 import PageContainer from "../components/layout/PageContainer";
 import api from "../services/api";
 
-async function fetchAllCaseDocuments(caseId) {
+const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
+const CASE_RECOVERY_DELAYS_MS = [1_000, 2_500, 5_000, 10_000, 30_000];
+
+function isRecoverableCaseLoadError(error) {
+  const status = Number(error?.response?.status);
+  return !status || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function fetchAllCaseDocuments(caseId, fresh = false) {
+  const get = fresh ? api.getFresh : api.get;
   const limit = 100;
   const documents = [];
   let page = 1;
   let total = Infinity;
 
   while (documents.length < total) {
-    const response = await api.get(
+    const response = await get(
       `/client-documents?caseId=${encodeURIComponent(caseId)}&page=${page}&limit=${limit}`,
     );
     const pageDocuments = Array.isArray(response.data.data)
@@ -76,7 +83,12 @@ export default function CaseProfile() {
   const [workflowTemplates, setWorkflowTemplates] = useState([]);
   const [workflowLoadError, setWorkflowLoadError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState("");
+  const mountedRef = useRef(false);
+  const recoveryTimerRef = useRef(null);
+  const recoveryAttemptRef = useRef(0);
+  const loadGenerationRef = useRef(0);
   const [activeToolbarTray, setActiveToolbarTray] = useState("");
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
@@ -172,97 +184,128 @@ export default function CaseProfile() {
     if (canAccessInternalNotes && params.get("overlay") === "notes") setNotesOverlayOpen(true);
   }, [canAccessInternalNotes, caseItem?.id, id, location.search]);
 
-  useEffect(() => {
-    async function loadCaseProfile() {
-      try {
+  const loadCaseProfile = useCallback(async ({ recovery = false } = {}) => {
+    const generation = ++loadGenerationRef.current;
+    if (recoveryTimerRef.current) {
+      window.clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
+    try {
+      if (recovery) setRecovering(true);
+      else {
         setLoading(true);
+        setCaseItem(null);
+      }
 
-        const results = await Promise.allSettled([
-          api.get(`/cases/${id}`),
-          fetchAllCaseDocuments(id),
-          canAccessFinancialData ? api.get(`/cases/${id}/payment-summary`) : Promise.resolve({ data: { data: null } }),
-          api.get(`/follow-ups?caseId=${id}`),
-          canAccessInternalNotes ? api.get(`/notes?caseId=${id}`) : Promise.resolve({ data: { data: [] } }),
-          api.get(`/activity-logs?caseId=${id}`),
-          api.get(`/cases/${id}/assessment`),
-          api.get(`/cases/${id}/workflow`),
-          api.get("/workflow-templates"),
-        ]);
+      const get = recovery ? api.getFresh : api.get;
+      // The case itself determines whether this route can render, so give it
+      // priority instead of making it compete with every supporting panel.
+      // Once it succeeds, panel failures can degrade independently.
+      const caseResponse = await get(`/cases/${id}`);
+      const results = await Promise.allSettled([
+        fetchAllCaseDocuments(id, recovery),
+        canAccessFinancialData ? get(`/cases/${id}/payment-summary`) : Promise.resolve({ data: { data: null } }),
+        get(`/follow-ups?caseId=${id}`),
+        canAccessInternalNotes ? get(`/notes?caseId=${id}`) : Promise.resolve({ data: { data: [] } }),
+        get(`/activity-logs?caseId=${id}`),
+        get(`/cases/${id}/assessment`),
+        get(`/cases/${id}/workflow`),
+        get("/workflow-templates"),
+      ]);
 
-        const [
-          caseResult,
-          documentsResult,
-          paymentSummaryResult,
-          followUpsResult,
-          notesResult,
-          activityResult,
-          assessmentResult,
-          workflowResult,
-          workflowTemplateResult,
-        ] = results;
+      if (!mountedRef.current || generation !== loadGenerationRef.current) return;
+      const [
+        documentsResult,
+        paymentSummaryResult,
+        followUpsResult,
+        notesResult,
+        activityResult,
+        assessmentResult,
+        workflowResult,
+        workflowTemplateResult,
+      ] = results;
 
-        if (caseResult.status !== "fulfilled") {
-          throw caseResult.reason;
-        }
+      setCaseItem(caseResponse.data.data || null);
+      setDocuments(
+        documentsResult.status === "fulfilled" ? documentsResult.value : [],
+      );
+      setPaymentSummary(
+        paymentSummaryResult.status === "fulfilled"
+          ? paymentSummaryResult.value.data.data || { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" }
+          : { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" },
+      );
+      setFollowUps(
+        followUpsResult.status === "fulfilled"
+          ? followUpsResult.value.data.data || []
+          : [],
+      );
+      setNotes(
+        notesResult.status === "fulfilled"
+          ? notesResult.value.data.data || []
+          : [],
+      );
+      setActivityLogs(
+        activityResult.status === "fulfilled"
+          ? activityResult.value.data.data || []
+          : [],
+      );
+      setAssessment(
+        assessmentResult.status === "fulfilled"
+          ? assessmentResult.value.data.data || null
+          : null,
+      );
+      setWorkflowTemplates(
+        workflowTemplateResult.status === "fulfilled"
+          ? workflowTemplateResult.value.data.data || []
+          : [],
+      );
 
-        setCaseItem(caseResult.value.data.data || null);
-        setDocuments(
-          documentsResult.status === "fulfilled" ? documentsResult.value : [],
+      if (workflowResult.status === "fulfilled") {
+        setWorkflowSteps(workflowResult.value.data.data?.steps || []);
+        setWorkflowLoadError("");
+      } else {
+        setWorkflowSteps([]);
+        setWorkflowLoadError(
+          workflowResult.reason?.response?.data?.message ||
+            "Workflow could not load. Refresh after the backend is restarted.",
         );
-        setPaymentSummary(
-          paymentSummaryResult.status === "fulfilled"
-            ? paymentSummaryResult.value.data.data || { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" }
-            : { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" },
-        );
-        setFollowUps(
-          followUpsResult.status === "fulfilled"
-            ? followUpsResult.value.data.data || []
-            : [],
-        );
-        setNotes(
-          notesResult.status === "fulfilled"
-            ? notesResult.value.data.data || []
-            : [],
-        );
-        setActivityLogs(
-          activityResult.status === "fulfilled"
-            ? activityResult.value.data.data || []
-            : [],
-        );
-        setAssessment(
-          assessmentResult.status === "fulfilled"
-            ? assessmentResult.value.data.data || null
-            : null,
-        );
-        setWorkflowTemplates(
-          workflowTemplateResult.status === "fulfilled"
-            ? workflowTemplateResult.value.data.data || []
-            : [],
-        );
+      }
 
-        if (workflowResult.status === "fulfilled") {
-          setWorkflowSteps(workflowResult.value.data.data?.steps || []);
-          setWorkflowLoadError("");
-        } else {
-          setWorkflowSteps([]);
-          setWorkflowLoadError(
-            workflowResult.reason?.response?.data?.message ||
-              "Workflow could not load. Refresh after the backend is restarted.",
-          );
-        }
-
-        setError("");
-      } catch (requestError) {
-        setError(
-          requestError.response?.data?.message || "Unable to load this case.",
-        );
-      } finally {
+      setError("");
+      recoveryAttemptRef.current = 0;
+    } catch (requestError) {
+      if (!mountedRef.current || generation !== loadGenerationRef.current) return;
+      const message = requestError.response?.data?.message || "Unable to load this case.";
+      if (isRecoverableCaseLoadError(requestError)) {
+        const attempt = recoveryAttemptRef.current;
+        const delayMs = CASE_RECOVERY_DELAYS_MS[Math.min(attempt, CASE_RECOVERY_DELAYS_MS.length - 1)];
+        recoveryAttemptRef.current += 1;
+        setError(`${message} Retrying automatically…`);
+        recoveryTimerRef.current = window.setTimeout(() => {
+          recoveryTimerRef.current = null;
+          void loadCaseProfile({ recovery: true });
+        }, delayMs);
+      } else {
+        setError(message);
+      }
+    } finally {
+      if (mountedRef.current && generation === loadGenerationRef.current) {
         setLoading(false);
+        setRecovering(false);
       }
     }
-
-    loadCaseProfile();
   }, [canAccessFinancialData, canAccessInternalNotes, id]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    recoveryAttemptRef.current = 0;
+    void loadCaseProfile();
+    return () => {
+      mountedRef.current = false;
+      if (recoveryTimerRef.current) window.clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    };
+  }, [loadCaseProfile]);
 
   const outstandingDocuments = useMemo(
     () =>
@@ -1494,8 +1537,20 @@ export default function CaseProfile() {
         title="Case file"
         description="Unable to load this case route."
       >
-        <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
-          {error || "Try opening a case from the cases list."}
+        <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+          <span>{error || "Try opening a case from the cases list."}</span>
+          <button
+            type="button"
+            onClick={() => {
+              recoveryAttemptRef.current = 0;
+              void loadCaseProfile({ recovery: true });
+            }}
+            disabled={recovering}
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 disabled:cursor-wait disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${recovering ? "animate-spin" : ""}`} />
+            Retry now
+          </button>
         </div>
       </PageContainer>
     );
