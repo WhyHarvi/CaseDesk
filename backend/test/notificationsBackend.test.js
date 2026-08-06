@@ -213,6 +213,16 @@ test("case notification links land on the right tab and highlight the specific r
   );
 });
 
+test("staff and portal document uploads pass the real document id into case notification links", async () => {
+  const [staffUpload, portalUpload] = await Promise.all([
+    source("../src/controllers/clientDocumentController.js"),
+    source("../src/controllers/portalController.js"),
+  ]);
+
+  assert.match(staffUpload, /entityType: "client_document",\s*entityId: data\.id,\s*action: existing \? "client_document\.file_replaced" : "client_document\.file_uploaded"/);
+  assert.match(portalUpload, /entityType: "client_document",\s*entityId: existing\.id,\s*action: "client_document\.portal_uploaded"/);
+});
+
 test("sidebar nav trusts a scoped focus link outright instead of re-checking it against the clicked item's own route", async () => {
   const sidebar = await source("../../frontend/src/components/layout/Sidebar.jsx");
   assert.doesNotMatch(sidebar, /focusPath === item\.to \|\| focusPath\.startsWith/);

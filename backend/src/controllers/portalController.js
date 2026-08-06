@@ -559,6 +559,8 @@ export async function uploadPortalDocument(req, res) {
       userId: req.auth.userId,
       clientId: link.clientId,
       caseId: existing.caseId,
+      entityType: "client_document",
+      entityId: existing.id,
       action: "client_document.portal_uploaded",
       details: `${req.file.originalname} uploaded by client portal`,
     });

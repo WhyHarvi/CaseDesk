@@ -189,6 +189,8 @@ export async function uploadClientDocumentFile(req, res) {
       userId: req.user.id,
       clientId: destinationClientId,
       caseId: destinationCaseId,
+      entityType: "client_document",
+      entityId: data.id,
       action: existing ? "client_document.file_replaced" : "client_document.file_uploaded",
       details: `${req.file.originalname} uploaded`,
     });
