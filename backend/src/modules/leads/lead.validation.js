@@ -291,6 +291,13 @@ export function parseLeadNurture(body = {}) {
   return { nurtureUntil, reason: text(body.reason, "reason", { required: true, max: 1000 }) };
 }
 
+export function parseLeadStageChange(body = {}) {
+  return {
+    stage: enumValue(body.stage, "stage", LEAD_STAGES),
+    reason: text(body.reason, "reason", { max: 1000 }),
+  };
+}
+
 export function parseLeadLost(body = {}) {
   return {
     reasonCode: enumValue(body.reasonCode, "reasonCode", LOST_REASONS),

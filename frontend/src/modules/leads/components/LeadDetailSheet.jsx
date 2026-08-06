@@ -9,6 +9,7 @@ import {
   HeartHandshake,
   Inbox,
   Landmark,
+  Layers3,
   Mail,
   MapPin,
   MessageSquareText,
@@ -28,7 +29,7 @@ import { formatDueDate, humanize, initials, leadName, statusTone } from "../lead
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { ChangeStageSheet, CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 
@@ -217,11 +218,14 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     </section>
                   ) : null}
 
-                  <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-2xl border border-slate-200/70 bg-white p-5 sm:grid-cols-4">
-                    <SummaryValue label="Stage" value={humanize(lead.stage)} />
-                    <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} />
-                    <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
-                    <SummaryValue label="Priority" value={humanize(lead.priority)} />
+                  <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
+                    {isWorkable ? <div className="mb-4 flex items-center justify-end"><button type="button" onClick={() => setActiveAction("change-stage")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"><Layers3 className="h-3.5 w-3.5" />Change stage</button></div> : null}
+                    <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4">
+                      <SummaryValue label="Stage" value={humanize(lead.stage)} />
+                      <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} />
+                      <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
+                      <SummaryValue label="Priority" value={humanize(lead.priority)} />
+                    </div>
                   </section>
 
                   {!isFrontdesk && (lead.status === "OPEN" || lead.qualification) ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
@@ -373,6 +377,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "change-stage" ? <ChangeStageSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}

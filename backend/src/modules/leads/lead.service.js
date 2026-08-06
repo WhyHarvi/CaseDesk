@@ -4,7 +4,7 @@ import { nextClientNumber } from "../../services/clientNumberService.js";
 import { canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
+import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 import { notifyUsers } from "../../services/notificationService.js";
@@ -466,6 +466,23 @@ export async function promoteLeadToPipeline(req, db = prisma) {
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { pipelineSegment: "STANDARD", version: { increment: 1 } }, include: leadInclude });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_PROMOTED_TO_PIPELINE", direction: "INTERNAL", channel: "SYSTEM", title: "Promoted to active pipeline", performedById: actorId } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.promoted_to_pipeline", details: `${lead.leadNumber} moved from Import Review to the active pipeline`, entityType: "lead", entityId: lead.id } });
+    return updated;
+  }, leadTransactionOptions);
+}
+
+export async function changeLeadStage(req, db = prisma) {
+  const values = parseLeadStageChange(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    if (!["OPEN", "NURTURE"].includes(lead.status)) throw createHttpError(409, "Only open or nurtured leads can have their stage changed.", "LEAD_NOT_OPEN");
+    if (values.stage === lead.stage) throw createHttpError(409, "This lead is already at that stage.", "LEAD_STAGE_UNCHANGED");
+    const updated = await tx.lead.update({ where: { id: lead.id }, data: { stage: values.stage, version: { increment: 1 } }, include: leadInclude });
+    await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: values.stage, changedById: actorId, reason: values.reason || "Manually changed" } });
+    const stageLabel = values.stage.toLowerCase().split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "STAGE_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: `Stage changed to ${stageLabel}`, description: values.reason, performedById: actorId, metadata: { previousStage: lead.stage, newStage: values.stage, manual: true } } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.stage_changed", details: `${lead.leadNumber}: ${lead.stage} → ${values.stage}`, entityType: "lead", entityId: lead.id, metadata: { previousStage: lead.stage, newStage: values.stage } } });
     return updated;
   }, leadTransactionOptions);
 }

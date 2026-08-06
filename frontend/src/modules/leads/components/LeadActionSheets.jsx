@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, Layers3, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -12,6 +12,7 @@ const FOLLOW_UP_TYPES = ["PHONE_CALL", "EMAIL", "SMS", "WHATSAPP", "MEETING", "D
 const LOST_REASONS = ["NO_RESPONSE", "NOT_INTERESTED", "NOT_ELIGIBLE", "PRICE_CONCERN", "SELECTED_ANOTHER_CONSULTANT", "CONSULTATION_NO_SHOW", "AGREEMENT_NOT_SIGNED", "PAYMENT_NOT_COMPLETED", "SERVICE_NOT_OFFERED", "WRONG_CONTACT_INFORMATION", "DUPLICATE", "DO_NOT_CONTACT", "OTHER"];
 const QUALIFICATION_OUTCOMES = ["QUALIFIED", "MORE_INFORMATION_REQUIRED", "CONSULTATION_REQUIRED", "NOT_ELIGIBLE", "FUTURE_OPPORTUNITY", "SERVICE_NOT_OFFERED"];
 const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"];
+const LEAD_STAGES = ["NEW", "ASSIGNED", "CONTACTING", "CONNECTED", "QUALIFIED", "CONSULTATION_BOOKED", "CONSULTATION_COMPLETED", "RETAINER_PENDING", "PAYMENT_PENDING", "READY_TO_CONVERT"];
 
 function localInput(offsetMs = 0) {
   const date = new Date(Date.now() + offsetMs);
@@ -194,6 +195,22 @@ export function QualifyLeadSheet({ lead, onClose, onSaved }) {
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Education<textarea maxLength={1000} name="education" value={form.education} onChange={update} rows={2} className={`${fieldClass} h-auto py-3`} /></label>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Work experience<textarea maxLength={2000} name="workExperience" value={form.workExperience} onChange={update} rows={2} className={`${fieldClass} h-auto py-3`} /></label>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Notes{notesRequired ? " (required for this outcome)" : ""}<textarea required={notesRequired} maxLength={5000} name="notes" value={form.notes} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Eligibility assessment summary" /></label>
+    </ActionModal>
+  );
+}
+
+export function ChangeStageSheet({ lead, onClose, onSaved }) {
+  const [form, setForm] = useState({ stage: lead.stage, reason: "" });
+  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  const { saving, error, submit } = useSubmit(
+    () => api.patch(`/leads/${lead.id}/stage`, form),
+    onSaved,
+  );
+
+  return (
+    <ActionModal title="Change stage" subtitle="Move this lead to any stage directly — useful when the real-world status is ahead of what's logged here." icon={Layers3} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Save stage">
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Stage<select required name="stage" value={form.stage} onChange={update} className={fieldClass}>{LEAD_STAGES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label>
+      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason (optional)<textarea maxLength={1000} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Client confirmed by phone before this lead was entered" /></label>
     </ActionModal>
   );
 }

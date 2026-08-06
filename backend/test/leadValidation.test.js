@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeEmail, normalizePhone, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadConversion, parseLeadListQuery, parseLeadQualification, parseUpdateConsultation } from "../src/modules/leads/lead.validation.js";
+import { normalizeEmail, normalizePhone, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadConversion, parseLeadListQuery, parseLeadQualification, parseLeadStageChange, parseUpdateConsultation } from "../src/modules/leads/lead.validation.js";
 import { leadSearchWhere } from "../src/modules/leads/lead.service.js";
 
 test("lead input normalizes email and common phone formatting", () => {
@@ -57,6 +57,13 @@ test("qualification validates outcome, confidence, and required explanation", ()
   assert.equal(result.previousRefusals, false);
   assert.throws(() => parseLeadQualification({ immigrationService: "Study Permit", outcome: "NOT_ELIGIBLE" }), /notes are required/);
   assert.throws(() => parseLeadQualification({ immigrationService: "Study Permit", outcome: "QUALIFIED", eligibilityConfidence: 101 }), /eligibilityConfidence is invalid/);
+});
+
+test("stage change accepts any real stage and rejects anything else", () => {
+  assert.equal(parseLeadStageChange({ stage: "READY_TO_CONVERT" }).stage, "READY_TO_CONVERT");
+  assert.equal(parseLeadStageChange({ stage: "CONTACTING", reason: "Already spoke to them" }).reason, "Already spoke to them");
+  assert.throws(() => parseLeadStageChange({ stage: "MADE_UP_STAGE" }), /stage is invalid/);
+  assert.throws(() => parseLeadStageChange({}), /stage is invalid/);
 });
 
 test("consultation validation enforces time ranges and completed outcomes", () => {

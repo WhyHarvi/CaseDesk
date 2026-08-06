@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -107,6 +107,52 @@ test("qualified outcome advances an earlier lead and records history atomically"
   assert.equal(calls.filter(([kind]) => kind === "activity").length, 2);
   assert.ok(calls.some(([kind]) => kind === "stage"));
   assert.ok(calls.some(([kind]) => kind === "audit"));
+});
+
+test("manual stage change is allowed for any open lead and records history atomically", async () => {
+  const calls = [];
+  const tx = {
+    lead: {
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "NEW" }),
+      update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
+    },
+    leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = {
+    auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" },
+    params: { id: "lead-1" },
+    body: { stage: "CONTACTING", reason: "Called the client before this lead existed in the CRM." },
+  };
+
+  const result = await changeLeadStage(req, db);
+
+  assert.equal(result.stage, "CONTACTING");
+  const stageHistory = calls.find(([kind]) => kind === "stage")[1];
+  assert.equal(stageHistory.previousStage, "NEW");
+  assert.equal(stageHistory.newStage, "CONTACTING");
+  assert.ok(calls.some(([kind]) => kind === "activity"));
+  assert.ok(calls.some(([kind]) => kind === "audit"));
+});
+
+test("manual stage change rejects a no-op and leads that are not open or nurturing", async () => {
+  const sameStageTx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "CONTACTING" }) },
+  };
+  await assert.rejects(
+    () => changeLeadStage({ auth: { role: "admin", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { stage: "CONTACTING" } }, { $transaction: (op) => op(sameStageTx) }),
+    /already at that stage/,
+  );
+
+  const convertedTx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "CONVERTED", stage: "READY_TO_CONVERT" }) },
+  };
+  await assert.rejects(
+    () => changeLeadStage({ auth: { role: "admin", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { stage: "NEW" } }, { $transaction: (op) => op(convertedTx) }),
+    /Only open or nurtured leads/,
+  );
 });
 
 test("listing sources provisions the standard agency catalog when it is missing", async () => {

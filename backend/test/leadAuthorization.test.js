@@ -28,6 +28,16 @@ test("lead dashboard and report endpoints are admin-only", async () => {
   }
 });
 
+test("manual stage change is a real endpoint, gated to staff, with a UI entry point on the lead sheet", async () => {
+  const [routes, leadDetail] = await Promise.all([
+    readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadStage\)\)/);
+  assert.match(leadDetail, /setActiveAction\("change-stage"\)/);
+  assert.match(leadDetail, /Change stage/);
+});
+
 test("Import Review has its own promote action, ledger view, sidebar entry, and route — separate from the standard Leads page", async () => {
   const [routes, sidebar, appRoutes, leadsPage, leadDetail] = await Promise.all([
     readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
