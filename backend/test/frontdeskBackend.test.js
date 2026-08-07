@@ -211,6 +211,15 @@ test("front desk RLS is limited to lead-domain policies", async () => {
   );
 });
 
+test("the default lead list excludes converted leads unless a status is explicitly picked", async () => {
+  const service = await source("../src/modules/leads/lead.service.js");
+  const listSection = service.slice(
+    service.indexOf("export async function listLeads"),
+    service.indexOf("export async function getLead"),
+  );
+  assert.match(listSection, /\(status \? \{ status \} : \{ status: \{ not: "CONVERTED" \} \}\)/);
+});
+
 test("lead list search cannot replace assignment scope", async () => {
   const service = await source("../src/modules/leads/lead.service.js");
   const listSection = service.slice(

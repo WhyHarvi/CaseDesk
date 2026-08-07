@@ -175,7 +175,11 @@ export async function listLeads(req) {
       ...(search ? [leadSearchWhere(search)] : []),
     ],
     ...leadSegmentWhere(segment),
-    ...(status ? { status } : {}),
+    // With no status filter picked, "All statuses" means the working
+    // pipeline, not literally every record — a converted lead is done and
+    // shouldn't keep cluttering the default list. Still fully visible by
+    // explicitly filtering to Converted.
+    ...(status ? { status } : { status: { not: "CONVERTED" } }),
     ...(stage ? { stage } : {}),
     ...(sourceId ? { originalSourceId: sourceId } : {}),
     ...(month ? { inquiryDate: { gte: new Date(Date.UTC(month.year, month.month - 1, 1)), lt: new Date(Date.UTC(month.month === 12 ? month.year + 1 : month.year, month.month === 12 ? 0 : month.month, 1)) } } : {}),

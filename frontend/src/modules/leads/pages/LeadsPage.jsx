@@ -217,7 +217,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
             </form>
             <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-nowrap">
               <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400"><SlidersHorizontal className="h-3.5 w-3.5" />Filters</span>
-              <LeadFilterMenu label="Status" value={params.get("status") || ""} options={LEAD_STATUSES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(status) => updateParams({ status })} icon={CircleDot} allLabel="All statuses" />
+              <LeadFilterMenu label="Status" value={params.get("status") || ""} options={LEAD_STATUSES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(status) => updateParams({ status })} icon={CircleDot} allLabel="All except converted" />
               <LeadFilterMenu label="Stage" value={params.get("stage") || ""} options={LEAD_STAGES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(stage) => updateParams({ stage })} icon={Layers3} allLabel="All stages" />
               <LeadFilterMenu label="Source" value={params.get("sourceId") || ""} options={sources.map((source) => ({ value: source.id, label: source.name }))} onChange={(sourceId) => updateParams({ sourceId })} icon={Megaphone} allLabel="All sources" />
               <LeadFilterMenu label="Month" value={params.get("month") || ""} options={monthOptions} onChange={(month) => updateParams({ month })} icon={CalendarRange} allLabel="All time" />
