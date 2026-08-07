@@ -1303,7 +1303,7 @@ export default function CalendarPage() {
     let cancelled = false;
     api.get(`/clients/${bookForClientId}`).then((response) => {
       if (cancelled) return;
-      setPrefillClient(response.data.data);
+      setPrefillClient(response.data.data.client);
       setSheetOpen(true);
     }).catch(() => {});
     setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("bookForClient"); return next; }, { replace: true });
