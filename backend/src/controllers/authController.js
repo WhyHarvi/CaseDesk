@@ -184,10 +184,18 @@ export async function acceptMemberInvitation(req, res) {
   if (isFirstActivation) {
     await prisma.user.update({ where: { id: user.id }, data: { status: "active", mustChangePassword: false } });
   }
+  // MEMBER_INVITATION_ACCEPTED notifies admins via the Settings badge —
+  // appropriate for a staff member joining the team, not for a client
+  // setting up their portal account. A client's own activation gets its own
+  // action name so it never lands in that admin notification bucket (see
+  // ADMIN_ACTIONS in notificationService.js).
+  const isStaffMembership = membership.role !== "client";
   await recordActivity({
     agencyId: membership.agencyId,
     userId: user.id,
-    action: isFirstActivation ? "MEMBER_INVITATION_ACCEPTED" : "MEMBER_PASSWORD_RESET",
+    action: isFirstActivation
+      ? (isStaffMembership ? "MEMBER_INVITATION_ACCEPTED" : "CLIENT_PORTAL_ACCOUNT_ACTIVATED")
+      : "MEMBER_PASSWORD_RESET",
     details: isFirstActivation ? `${membership.role} account activated` : `${membership.role} account password reset`,
   });
   res.json({ success: true, message: isFirstActivation ? "Your CaseDesk account is ready." : "Your password has been updated." });

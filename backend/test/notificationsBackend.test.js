@@ -264,3 +264,13 @@ test("staff, case, and client sidebars consume one aggregated destination count 
   assert.match(caseTabs, /caseTabCounts/);
   assert.match(caseTabs, /acknowledgeDestination/);
 });
+
+test("a client activating their portal account does not fire the admin-facing Settings notification", async () => {
+  const [authController, notificationService] = await Promise.all([
+    source("../src/controllers/authController.js"),
+    source("../src/services/notificationService.js"),
+  ]);
+  assert.match(authController, /const isStaffMembership = membership\.role !== "client"/);
+  assert.match(authController, /isStaffMembership \? "MEMBER_INVITATION_ACCEPTED" : "CLIENT_PORTAL_ACCOUNT_ACTIVATED"/);
+  assert.doesNotMatch(notificationService, /"CLIENT_PORTAL_ACCOUNT_ACTIVATED"/);
+});
