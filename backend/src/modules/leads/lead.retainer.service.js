@@ -309,6 +309,11 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
   return { client, caseItem, writtenDocument };
 }
 
+// Temporary kill switch — flip back to true to resume automatic retainer
+// sending. Paused at the user's request; nothing else about the flow
+// changes underneath this, the trigger just no-ops until it's back on.
+const RETAINER_AUTOSEND_ENABLED = false;
+
 // Shared by every place a lead's first consultation can be booked or
 // confirmed (staff booking it directly, a visitor self-booking free or
 // paid, or the guest later confirming attendance) — fire-and-forget, since
@@ -324,6 +329,10 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
 // would either collide with assertNoContactDuplicate or, worse, create a
 // second client for the same person if any contact field differs.
 export function triggerRetainerFlow(appointment) {
+  if (!RETAINER_AUTOSEND_ENABLED) {
+    logger.info("lead_retainer.autosend_paused", { agencyId: appointment?.agencyId, appointmentId: appointment?.id });
+    return;
+  }
   if (appointment?.clientId) {
     ensureRetainerCaseForClient(appointment).catch((error) => {
       logger.warn("lead_retainer.client_trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, clientId: appointment.clientId, reason: error.message });
