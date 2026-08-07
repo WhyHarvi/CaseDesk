@@ -944,9 +944,11 @@ export async function updateCommercialStatus(req, db = prisma) {
     const initialPaymentStatus = values.initialPaymentStatus ?? lead.initialPaymentStatus;
     const settingSigned = retainerStatus === "SIGNED" && lead.retainerStatus !== "SIGNED";
     const settingPaid = ["PAID", "WAIVED"].includes(initialPaymentStatus) && !["PAID", "WAIVED"].includes(lead.initialPaymentStatus);
-    if ((settingSigned || settingPaid) && req.auth.role !== "admin") {
-      throw createHttpError(403, "Only an admin can confirm a signed retainer or received payment without linked evidence.", "FORBIDDEN");
-    }
+    // Same admin-or-owning-consultant rule as changeLeadStage/changeLeadPriority
+    // (see assertLeadWorkflowEditable) — a consultant confirming their own
+    // lead's retainer/payment isn't a stranger overriding someone else's
+    // pipeline, it's the person who was actually there for it.
+    if (settingSigned || settingPaid) assertLeadWorkflowEditable(req, lead);
     if (retainerStatus === lead.retainerStatus && initialPaymentStatus === lead.initialPaymentStatus) throw createHttpError(409, "No status change was provided.", "NO_STATUS_CHANGE");
     const workflow = commercialWorkflow(retainerStatus, initialPaymentStatus);
     const updated = await tx.lead.update({

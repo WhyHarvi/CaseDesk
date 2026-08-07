@@ -372,6 +372,43 @@ test("signed retainer and paid initial payment make a lead ready to convert", as
   assert.equal(calls.filter(([kind]) => kind === "activity").length, 2);
 });
 
+test("commercial status update lets the lead's owning consultant confirm a signed retainer and paid initial payment, no admin required", async () => {
+  const calls = [];
+  const tx = {
+    lead: {
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "PAYMENT_PENDING", ownerUserId: "user-1", retainerStatus: "SENT", initialPaymentStatus: "REQUESTED" }),
+      update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
+    },
+    leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
+      create: async ({ data }) => calls.push(["followUp", data]),
+    },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Signed agreement and payment receipt verified." } };
+
+  await updateCommercialStatus(req, db);
+
+  const update = calls.find(([kind]) => kind === "lead")[1];
+  assert.equal(update.stage, "READY_TO_CONVERT");
+});
+
+test("commercial status update rejects a consultant who does not own the lead when confirming signed or paid", async () => {
+  const tx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "PAYMENT_PENDING", ownerUserId: "someone-else", retainerStatus: "SENT", initialPaymentStatus: "REQUESTED" }) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", notes: "Signed copy on file." } };
+
+  await assert.rejects(
+    () => updateCommercialStatus(req, db),
+    /Only an admin or this lead's assigned consultant/,
+  );
+});
+
 test("conversion creates and links the client and case atomically", async () => {
   const calls = [];
   const convertibleLead = { id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "READY_TO_CONVERT", ownerUserId: "user-1", phone: "+14165550100", phoneNormalized: "+14165550100", email: "avery@example.ca", emailNormalized: "avery@example.ca", retainerStatus: "SIGNED", initialPaymentStatus: "PAID", estimatedValue: 4000, originalSourceId: "source-1", campaignId: null };

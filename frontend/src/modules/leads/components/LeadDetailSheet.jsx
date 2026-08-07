@@ -374,7 +374,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-slate-800">Retainer signed</p>
                             <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${retainerStatusTone[lead.retainerStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.retainerStatus)}</span>
-                            {!retainerReady && role !== "admin" ? <p className="mt-1 text-[11px] leading-4 text-amber-700">An admin needs to confirm this as Signed.</p> : null}
+                            {!retainerReady && role !== "admin" && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin or this lead's assigned consultant can confirm this as Signed.</p> : null}
                           </div>
                         </div>
                         {lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-8 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">Update</button> : null}
@@ -386,7 +386,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-slate-800">Initial payment received</p>
                             <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${paymentStatusTone[lead.initialPaymentStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.initialPaymentStatus)}</span>
-                            {!paymentReady && role !== "admin" ? <p className="mt-1 text-[11px] leading-4 text-amber-700">An admin needs to confirm this as Paid.</p> : null}
+                            {!paymentReady && role !== "admin" && !ownsLead ? <p className="mt-1 text-[11px] leading-4 text-amber-700">Only an admin or this lead's assigned consultant can confirm this as Paid.</p> : null}
                             {paidConsultationFee ? <p className="mt-1 text-[11px] leading-4 text-slate-400">Separate from the ${Number(paidConsultationFee.fee).toLocaleString("en-CA")} consultation fee, already paid.</p> : null}
                           </div>
                         </div>
