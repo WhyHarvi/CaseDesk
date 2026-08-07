@@ -127,9 +127,12 @@ test("consultation RLS follows agency, lead owner, and assigned consultant", asy
 });
 
 test("confirming a lead's appointment starts the retainer flow, and signing reuses the existing e-signature logic through a no-login link", async () => {
-  const [publicBookingController, publicBookingRoutes, retainerService, retainerTemplate, clientPortalController, publicRetainerController, schema, appRoutes, bookingApi, signPage] = await Promise.all([
+  const [publicBookingController, publicBookingRoutes, leadService, quickbooksWebhookService, mailService, retainerService, retainerTemplate, clientPortalController, publicRetainerController, schema, appRoutes, bookingApi, signPage] = await Promise.all([
     readFile(new URL("../src/controllers/publicBookingController.js", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/publicBookingRoutes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/leads/lead.service.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/quickbooksWebhookService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/accountAccessMailService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/modules/leads/lead.retainer.service.js", import.meta.url), "utf8"),
     readFile(new URL("../src/modules/leads/retainerDocumentTemplate.js", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/clientPortalController.js", import.meta.url), "utf8"),
@@ -140,11 +143,23 @@ test("confirming a lead's appointment starts the retainer flow, and signing reus
     readFile(new URL("../../frontend/src/pages/PublicRetainerSignPage.jsx", import.meta.url), "utf8"),
   ]);
 
-  // Trigger: confirming an appointment (no-login guest link) starts the
-  // retainer flow for its lead, as a best-effort side effect that can't turn
-  // a successful confirmation into an error response.
+  // Trigger: the retainer flow fires the moment a lead's first consultation
+  // is booked — staff booking it directly, a visitor self-booking free or
+  // paid — not only when a guest later confirms attendance. Confirming is
+  // kept as an idempotent, redundant safety net, not the only door in.
+  assert.match(retainerService, /export function triggerRetainerFlow/);
+  assert.match(leadService, /triggerRetainerFlow\(result\.appointment\)/);
+  assert.match(publicBookingController, /leadId: linkResult\.leadId/);
+  assert.match(publicBookingController, /triggerRetainerFlow\(\{ \.\.\.appointment, leadId \}\)/);
   assert.match(publicBookingController, /confirmationStatus: "Confirmed"/);
-  assert.match(publicBookingController, /ensureRetainerClientForLead\(updated\)\.catch/);
+  assert.match(publicBookingController, /triggerRetainerFlow\(updated\)/);
+  assert.match(quickbooksWebhookService, /leadId: linkedLeadId/);
+  assert.match(quickbooksWebhookService, /triggerRetainerFlow\(\{ \.\.\.appointment, leadId \}\)/);
+
+  // Copy says "booked", not "confirmed" — accurate now that this usually
+  // fires well before any attendance confirmation happens.
+  assert.match(retainerService, /your consultation is booked/);
+  assert.match(mailService, /Your consultation is booked\. Please review and sign/);
 
   // Early client/case creation is a separate, additive concept from a real
   // lead conversion — never reuses convertedClientId/convertedCaseId.

@@ -26,6 +26,7 @@ import { syncLeadConsultationFromAppointment } from "../../services/leadConsulta
 import { offerWaitlistOpening } from "../../services/bookingWaitlistService.js";
 import { assertZoomOperational } from "../../services/zoomService.js";
 import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
+import { triggerRetainerFlow } from "./lead.retainer.service.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -838,6 +839,7 @@ export async function createConsultation(req, db = prisma) {
   if (db === prisma) {
     await notifyUsers({ agencyId, recipientIds: [values.consultantUserId], actorUserId: actorId, type: "lead.consultation_booked", category: "leads", title: "Lead consultation booked", body: values.startAt.toISOString(), severity: "info", entityType: "lead", entityId: req.params.id, actionUrl: "/leads", dedupeKey: `lead-consultation:${result.id}:booked:${result.startAt.toISOString()}` });
     if (result.appointment && result.appointment.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
+    triggerRetainerFlow(result.appointment);
   }
   return result;
 }

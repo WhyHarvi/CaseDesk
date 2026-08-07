@@ -14,6 +14,7 @@ import { processBookingMessageDeliveries, sendBookingMessages } from "./bookingN
 import { appointmentReference, recordAppointmentEvent } from "./appointmentOperationsService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
+import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
@@ -674,7 +675,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
     const locationMapsUrl = hold.locationMapsUrl || location?.mapsUrl || null;
     const reminderMinutes = Math.max(...(Array.isArray(settings?.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings?.reminderMinutes || 1440]));
 
-    const appointment = await prisma.$transaction(async (tx) => {
+    const { appointment, leadId } = await prisma.$transaction(async (tx) => {
       // The normal free/internal booking paths use the same agency
       // scheduling lock. Confirmation must participate too: the hold is
       // already paid, so it gets first-class protection from a concurrent
@@ -773,7 +774,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
         await tx.bookingSlotHold.updateMany({ where: { id: offerHold.id, claimedAt: null }, data: { claimedAt: new Date() } });
         await tx.bookingWaitlistEntry.update({ where: { id: offerHold.waitlistEntryId }, data: { status: "Booked" } });
       }
-      return created;
+      return { appointment: created, leadId: linkedLeadId };
     });
 
     await recordActivity({
@@ -786,6 +787,7 @@ export async function confirmPaymentHold(agencyId, holdId) {
     }).catch(() => {});
     if (appointment.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
     invalidateDashboardCache(agencyId);
+    triggerRetainerFlow({ ...appointment, leadId });
     return appointment;
   } catch (error) {
     // A genuine slot conflict at confirmation time (the hold expired and

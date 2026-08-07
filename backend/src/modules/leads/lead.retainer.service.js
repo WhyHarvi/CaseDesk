@@ -182,6 +182,20 @@ export async function ensureRetainerClientForLead(appointment, { db = prisma, wr
   return { client, caseItem, writtenDocument };
 }
 
+// Shared by every place a lead's first consultation can be booked or
+// confirmed (staff booking it directly, a visitor self-booking free or
+// paid, or the guest later confirming attendance) — fire-and-forget, since
+// none of those actions should fail just because the retainer side-effect
+// did. ensureRetainerClientForLead is idempotent (Lead.earlyClientId
+// guard), so calling this from multiple trigger points for the same lead
+// is safe — only the first one to actually run does anything.
+export function triggerRetainerFlow(appointment) {
+  if (!appointment?.leadId) return;
+  ensureRetainerClientForLead(appointment).catch((error) => {
+    logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
+  });
+}
+
 // Best-effort — a delivery failure shouldn't undo the client/case/document
 // creation above (same reasoning bookingNotificationService uses: log and
 // move on, don't throw, since the guest-facing confirm action already
@@ -207,7 +221,7 @@ async function deliverRetainerRequest({ db, sendEmail, sendSms, agency, agencyId
       const agencyName = agency?.legalName || agency?.name || "Your consultant";
       await sendSms({
         agencyId, to: client.phone,
-        body: `${agencyName}: your consultation is confirmed. Please review and sign your retainer agreement: ${actionLink}`,
+        body: `${agencyName}: your consultation is booked. Please review and sign your retainer agreement to secure it: ${actionLink}`,
         idempotencyKey: `retainer:${lead.id}:sms:${appointment.id}`,
       });
       await db.leadMessageDelivery.create({

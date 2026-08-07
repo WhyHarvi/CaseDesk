@@ -22,7 +22,7 @@ import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/noti
 import { createPaymentHoldForPublicBooking, getPaymentHoldStatus, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
-import { ensureRetainerClientForLead } from "../modules/leads/lead.retainer.service.js";
+import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 import {
@@ -302,7 +302,7 @@ export async function createPublicBooking(req, res) {
     throw createHttpError(409, message, freeEligibility.reason);
   }
 
-  const appointment = await prisma.$transaction(async (tx) => {
+  const { appointment, leadId } = await prisma.$transaction(async (tx) => {
     await lockSchedulingTransaction(tx, settings.agencyId, startsAt);
     const assignee = await chooseAppointmentAssignee({
       agencyId: settings.agencyId,
@@ -375,8 +375,11 @@ export async function createPublicBooking(req, res) {
     // already-converted Client, link it and advance the lead's funnel
     // stage automatically — mirrors what already happens for paid public
     // bookings once payment confirms (quickbooksWebhookService.js).
-    await createOrLinkLeadForConsultation(tx, { agencyId: settings.agencyId, appointment: created, guestName: name, guestEmail: email, guestPhone: phone, paymentStatus: "UNPAID" });
-    return created;
+    // createOrLinkLeadForConsultation only updates the appointment row in
+    // the DB, it doesn't mutate `created` — capture the lead id from its
+    // return value instead of reading it off the appointment afterward.
+    const linkResult = await createOrLinkLeadForConsultation(tx, { agencyId: settings.agencyId, appointment: created, guestName: name, guestEmail: email, guestPhone: phone, paymentStatus: "UNPAID" });
+    return { appointment: created, leadId: linkResult.leadId };
   });
 
   await recordActivity({
@@ -389,6 +392,7 @@ export async function createPublicBooking(req, res) {
   }).catch(() => {});
   if (appointment.meetingMode !== MEETING_MODES.ZOOM) void processBookingMessageDeliveries();
   invalidateDashboardCache(settings.agencyId);
+  triggerRetainerFlow({ ...appointment, leadId });
 
   res.status(201).json({ data: bookingConfirmationView(appointment, settings, sessionType) });
 }
@@ -981,16 +985,11 @@ export async function confirmManagedBooking(req, res) {
     return result;
   });
   void processBookingMessageDeliveries();
-  // Best-effort, and deliberately outside the transaction above — this is a
-  // separate concern (does the lead's first-consultation retainer flow
-  // start) from confirming attendance, which has already succeeded by this
-  // point. A failure here shouldn't turn a successful guest confirmation
-  // into an error response.
-  if (updated.leadId) {
-    ensureRetainerClientForLead(updated).catch((error) => {
-      logger.warn("lead_retainer.confirm_hook_failed", { agencyId: updated.agencyId, appointmentId: updated.id, leadId: updated.leadId, reason: error.message });
-    });
-  }
+  // Redundant safety net, not the primary trigger anymore — the retainer
+  // flow now fires at booking time (see createConsultation/createPublicBooking/
+  // quickbooksWebhookService.js), so this is idempotent and usually a no-op
+  // by the time a guest gets here to confirm.
+  triggerRetainerFlow(updated);
   res.json({ data: publicView(updated, settings) });
 }
 

@@ -24,7 +24,7 @@ const COPY = {
     },
     retainer: {
       subject: (agencyName) => `Sign your retainer agreement — ${agencyName}`,
-      intro: "Your consultation is confirmed. Please review and sign your retainer agreement so we can continue.",
+      intro: "Your consultation is booked. Please review and sign your retainer agreement to secure your appointment.",
     },
   },
   staff: {
