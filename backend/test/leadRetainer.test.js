@@ -110,6 +110,7 @@ function makeClientDb({ client, existingCase = null } = {}) {
       findFirst: async () => existingCase,
       create: async ({ data }) => { calls.push(["case", data]); return { id: "case-1", ...data }; },
     },
+    client: { update: async ({ data }) => calls.push(["clientUpdate", data]) },
     clientDocument: { create: async ({ data }) => { calls.push(["clientDocument", data]); return { id: "client-document-1", ...data }; } },
     writtenDocument: { create: async ({ data }) => { calls.push(["writtenDocument", data]); return { id: "written-document-1", ...data }; } },
     activityLog: { create: async ({ data }) => calls.push(["activityLog", data]) },
@@ -155,6 +156,38 @@ test("ensureRetainerCaseForClient is a no-op for a client that already has a cas
   assert.equal(result, null);
   assert.equal(calls.length, 0);
 });
+
+test("ensureRetainerCaseForClient activates an unowned Lead-status client the moment they book", async () => {
+  const { db, calls } = makeClientDb({ client: baseClient({ status: "Lead", assignedUserId: null }) });
+  const result = await ensureRetainerCaseForClient(baseAppointment({ leadId: null, clientId: "client-1", assignedToId: "user-1" }), {
+    db, fetchLogo: async () => null, writeFile: async () => {}, sendEmail: async () => {}, sendSms: async () => {},
+  });
+
+  assert.ok(result);
+  const update = calls.find(([kind]) => kind === "clientUpdate")[1];
+  assert.equal(update.status, "Active");
+  assert.equal(update.assignedUserId, "user-1");
+  assert.ok(calls.some(([kind, data]) => kind === "activityLog" && data.action === "client.activated"));
+});
+
+test("ensureRetainerCaseForClient does not touch a client's existing owner, only fills a missing one", async () => {
+  const { db, calls } = makeClientDb({ client: baseClient({ status: "Lead", assignedUserId: "someone-else" }) });
+  await ensureRetainerCaseForClient(baseAppointment({ leadId: null, clientId: "client-1", assignedToId: "user-1" }), {
+    db, fetchLogo: async () => null, writeFile: async () => {}, sendEmail: async () => {}, sendSms: async () => {},
+  });
+  const update = calls.find(([kind]) => kind === "clientUpdate")[1];
+  assert.equal(update.status, "Active");
+  assert.equal(update.assignedUserId, undefined); // left alone — someone already owns this client
+});
+
+for (const status of ["Inactive", "Closed"]) {
+  test(`ensureRetainerCaseForClient leaves a ${status} client alone — that's a human decision to reactivate, not an automatic one`, async () => {
+    const { db, calls } = makeClientDb({ client: baseClient({ status }) });
+    const result = await ensureRetainerCaseForClient(baseAppointment({ leadId: null, clientId: "client-1" }), { db, writeFile: async () => {}, sendEmail: async () => {}, sendSms: async () => {} });
+    assert.equal(result, null);
+    assert.equal(calls.length, 0);
+  });
+}
 
 test("ensureRetainerCaseForClient does nothing for an appointment with no client", async () => {
   const { db, calls } = makeClientDb({ client: baseClient() });

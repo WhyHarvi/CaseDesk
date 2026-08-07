@@ -194,7 +194,14 @@ export async function ensureRetainerClientForLead(appointment, { db = prisma, wr
 export async function ensureRetainerCaseForClient(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendAgencyOomaSms, fetchLogo = agencyLogoDataUri } = {}) {
   if (!appointment?.clientId) return null;
   const client = await db.client.findUnique({ where: { id: appointment.clientId } });
-  if (!client || client.status !== "Active") return null;
+  // Inactive/Closed reflects a real past decision to stop working with this
+  // client — a new booking under the same contact info shouldn't silently
+  // reactivate that; a human should look at it. "Lead" status just means
+  // nobody has activated the record yet (typically a manually-entered
+  // client that was never followed up on) — a genuine booking is exactly
+  // the signal that should do that, so it's allowed through and upgraded
+  // below rather than treated as a reason to skip.
+  if (!client || !["Active", "Lead"].includes(client.status)) return null;
   const existingCase = await db.case.findFirst({ where: { agencyId: client.agencyId, clientId: client.id, deletedAt: null, archivedAt: null } });
   if (existingCase) return null;
 
@@ -207,12 +214,26 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
     db.user.findUnique({ where: { id: actorId } }),
   ]);
 
-  // Phase 1: create the case shell. DB-only, no network I/O — the guard is
-  // re-checked inside the transaction to close the race window between the
-  // pre-check above and this write.
+  // Phase 1: activate the client if needed and create the case shell.
+  // DB-only, no network I/O — the case guard is re-checked inside the
+  // transaction to close the race window between the pre-check above and
+  // this write.
   const caseItem = await db.$transaction(async (tx) => {
     const stillNoCase = await tx.case.findFirst({ where: { agencyId, clientId: client.id, deletedAt: null, archivedAt: null } });
     if (stillNoCase) return null;
+    if (client.status !== "Active" || !client.assignedUserId) {
+      await tx.client.update({
+        where: { id: client.id },
+        data: { status: "Active", ...(client.assignedUserId ? {} : { assignedUserId: actorId }) },
+      });
+      await tx.activityLog.create({
+        data: {
+          agencyId, userId: actorId, clientId: client.id,
+          action: "client.activated",
+          details: `${client.fullName}: activated${client.assignedUserId ? "" : " and assigned"} after booking a consultation (was ${client.status.toLowerCase()}${client.assignedUserId ? "" : ", unassigned"})`,
+        },
+      });
+    }
     return tx.case.create({
       data: {
         agencyId, clientId: client.id, assignedUserId: actorId,
