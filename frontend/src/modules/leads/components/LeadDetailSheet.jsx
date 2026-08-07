@@ -228,6 +228,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const retainerReady = RETAINER_READY_VALUES.includes(lead.retainerStatus);
   const paymentReady = PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus);
   const readyToConvert = stageReady && retainerReady && paymentReady;
+  // The consultation fee (paid at booking time) is a separate amount from
+  // the initial case payment tracked above — flagged here so a paid
+  // consultation doesn't read as "payment received" toward conversion.
+  const paidConsultationFee = consultations.find((item) => item.paymentStatus === "PAID" && item.fee != null);
   const workActions = isWorkable
     ? [
         { id: "activity", label: "Log activity", icon: PhoneIncoming, show: true },
@@ -358,7 +362,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     <div className="mt-4 space-y-2">
                       <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-4 py-3">
                         {stageReady ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
-                        <div className="min-w-0"><p className="text-sm font-medium text-slate-800">Consultation stage</p><p className="text-xs text-slate-500">{stageReady ? "Ready to Convert" : humanize(lead.stage)}</p></div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800">Stage: Ready to Convert</p>
+                          <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${stageReady ? "bg-emerald-50 text-emerald-700 ring-emerald-100" : "bg-slate-100 text-slate-600 ring-slate-200"}`}>Currently: {humanize(lead.stage)}</span>
+                        </div>
                       </div>
 
                       <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
@@ -377,9 +384,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         <div className="flex min-w-0 items-center gap-2.5">
                           {paymentReady ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-800">Payment received</p>
+                            <p className="text-sm font-medium text-slate-800">Initial payment received</p>
                             <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${paymentStatusTone[lead.initialPaymentStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.initialPaymentStatus)}</span>
                             {!paymentReady && role !== "admin" ? <p className="mt-1 text-[11px] leading-4 text-amber-700">An admin needs to confirm this as Paid.</p> : null}
+                            {paidConsultationFee ? <p className="mt-1 text-[11px] leading-4 text-slate-400">Separate from the ${Number(paidConsultationFee.fee).toLocaleString("en-CA")} consultation fee, already paid.</p> : null}
                           </div>
                         </div>
                         {lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-8 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">Update</button> : null}
