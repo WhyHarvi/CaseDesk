@@ -156,6 +156,12 @@ test("confirming a lead's appointment starts the retainer flow, and signing reus
   assert.match(quickbooksWebhookService, /leadId: linkedLeadId/);
   assert.match(quickbooksWebhookService, /triggerRetainerFlow\(\{ \.\.\.appointment, leadId \}\)/);
 
+  // Same trigger also covers an appointment linked straight to an existing
+  // Client with no Lead at all (a returning client re-booking) — creates
+  // just the missing Case, since the client already exists.
+  assert.match(retainerService, /export async function ensureRetainerCaseForClient/);
+  assert.match(retainerService, /appointment\?\.clientId\) \{\s*\n\s*ensureRetainerCaseForClient/);
+
   // Copy says "booked", not "confirmed" — accurate now that this usually
   // fires well before any attendance confirmation happens.
   assert.match(retainerService, /your consultation is booked/);

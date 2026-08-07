@@ -182,38 +182,152 @@ export async function ensureRetainerClientForLead(appointment, { db = prisma, wr
   return { client, caseItem, writtenDocument };
 }
 
+// Parallel to ensureRetainerClientForLead, for the other real gap this
+// covers: an appointment can be linked straight to an existing Client with
+// no Lead involved at all — a returning client re-booking, or a public
+// booking auto-matched to them by email/phone (see
+// createOrLinkLeadForConsultation's existingClient branch in
+// lead.booking.js). That client may still have no Case and no retainer on
+// file. This creates just the Case (the client already exists) and sends
+// the same document through the same signing flow. Idempotent: a client
+// that already has an open case is left alone.
+export async function ensureRetainerCaseForClient(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendAgencyOomaSms, fetchLogo = agencyLogoDataUri } = {}) {
+  if (!appointment?.clientId) return null;
+  const client = await db.client.findUnique({ where: { id: appointment.clientId } });
+  if (!client || client.status !== "Active") return null;
+  const existingCase = await db.case.findFirst({ where: { agencyId: client.agencyId, clientId: client.id, deletedAt: null, archivedAt: null } });
+  if (existingCase) return null;
+
+  const agencyId = client.agencyId;
+  const actorId = appointment.assignedToId || client.assignedUserId;
+  if (!actorId) return null; // no one to attribute the case/document to
+
+  const [agency, consultant] = await Promise.all([
+    db.agency.findUnique({ where: { id: agencyId } }),
+    db.user.findUnique({ where: { id: actorId } }),
+  ]);
+
+  // Phase 1: create the case shell. DB-only, no network I/O — the guard is
+  // re-checked inside the transaction to close the race window between the
+  // pre-check above and this write.
+  const caseItem = await db.$transaction(async (tx) => {
+    const stillNoCase = await tx.case.findFirst({ where: { agencyId, clientId: client.id, deletedAt: null, archivedAt: null } });
+    if (stillNoCase) return null;
+    return tx.case.create({
+      data: {
+        agencyId, clientId: client.id, assignedUserId: actorId,
+        caseType: appointment.subject || "Immigration consultation",
+        stage: "Retainer Pending", status: "Active",
+        nextAction: "Send retainer for signature",
+      },
+    });
+  }, retainerTransactionOptions);
+  if (!caseItem) return null; // lost a race — another booking already created one
+
+  // Phase 2: render + store the retainer document, same as the lead path.
+  const logoDataUri = await fetchLogo(agency);
+  const matter = appointment.subject ? `${appointment.subject} — Initial Consultation` : "Initial Consultation";
+  const title = `Retainer Agreement — ${client.fullName}`;
+  const contentHtml = renderRetainerDocumentHtml({
+    agency, agencyLogoDataUri: logoDataUri, consultant: consultant || null, client,
+    fileNumber: client.clientNumber, matter, consultationFee: 0,
+  });
+  const fileHtml = wrapRetainerDocument({ title, contentHtml });
+  const storageKey = path.posix.join(agencyId, caseItem.id, `${randomUUID()}.html`);
+  const buffer = Buffer.from(fileHtml, "utf8");
+  await writeFile(storageKey, buffer, "text/html");
+
+  let writtenDocument;
+  try {
+    writtenDocument = await db.$transaction(async (tx) => {
+      const clientDocument = await tx.clientDocument.create({
+        data: {
+          agencyId, clientId: client.id, caseId: caseItem.id,
+          documentName: title, normalizedName: normalizeDocumentName(title),
+          visibility: "Client", status: "Uploaded",
+          notes: "Retainer agreement issued automatically after the consultation was booked.",
+          storageKey, originalFilename: `${title}.html`, mimeType: "text/html", fileSize: buffer.length,
+          receivedAt: new Date(), uploadedById: actorId,
+        },
+      });
+      const document = await tx.writtenDocument.create({
+        data: {
+          agencyId, clientId: client.id, caseId: caseItem.id,
+          title, contentHtml,
+          headerText: agency?.name || null,
+          footerText: [agency?.email, agency?.phone].filter(Boolean).join(" · ") || null,
+          status: "Draft", correspondenceStatus: "Issued", correspondenceKind: "Agreement",
+          issuedAt: new Date(), issuedById: actorId,
+          issuedClientDocumentId: clientDocument.id,
+          createdById: actorId, updatedById: actorId,
+        },
+      });
+      await tx.activityLog.create({
+        data: {
+          agencyId, userId: actorId, clientId: client.id, caseId: caseItem.id,
+          action: "client.retainer_requested",
+          details: `${client.fullName}: retainer sent for e-signature after booking a consultation`,
+          entityType: "case", entityId: caseItem.id,
+          metadata: { writtenDocumentId: document.id },
+        },
+      });
+      return document;
+    });
+  } catch (error) {
+    await removeDocumentFile(storageKey).catch(() => {});
+    throw error;
+  }
+
+  await deliverRetainerRequest({ db, sendEmail, sendSms, agency, agencyId, client, appointment });
+
+  return { client, caseItem, writtenDocument };
+}
+
 // Shared by every place a lead's first consultation can be booked or
 // confirmed (staff booking it directly, a visitor self-booking free or
 // paid, or the guest later confirming attendance) — fire-and-forget, since
 // none of those actions should fail just because the retainer side-effect
-// did. ensureRetainerClientForLead is idempotent (Lead.earlyClientId
-// guard), so calling this from multiple trigger points for the same lead
-// is safe — only the first one to actually run does anything.
+// did. Both underlying functions are idempotent, so calling this from
+// multiple trigger points for the same lead/client is safe — only the
+// first one to actually run does anything. Routes to whichever already
+// applies: a lead-linked appointment uses the lead path (creates the
+// client too); a client-linked appointment with no lead uses the client
+// path (the client already exists, only the case is missing).
 export function triggerRetainerFlow(appointment) {
-  if (!appointment?.leadId) return;
-  ensureRetainerClientForLead(appointment).catch((error) => {
-    logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
-  });
+  if (appointment?.leadId) {
+    ensureRetainerClientForLead(appointment).catch((error) => {
+      logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
+    });
+  } else if (appointment?.clientId) {
+    ensureRetainerCaseForClient(appointment).catch((error) => {
+      logger.warn("lead_retainer.client_trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, clientId: appointment.clientId, reason: error.message });
+    });
+  }
 }
 
 // Best-effort — a delivery failure shouldn't undo the client/case/document
 // creation above (same reasoning bookingNotificationService uses: log and
 // move on, don't throw, since the guest-facing confirm action already
-// succeeded by this point).
-async function deliverRetainerRequest({ db, sendEmail, sendSms, agency, agencyId, lead, client, appointment }) {
+// succeeded by this point). lead is optional — the client-only path above
+// has no lead to write a LeadMessageDelivery audit row against, so it's
+// skipped there; email/SMS still go out either way.
+async function deliverRetainerRequest({ db, sendEmail, sendSms, agency, agencyId, lead = null, client, appointment }) {
   const actionLink = publicRetainerSignUrl(appointment.manageToken);
+  const dedupeSubject = lead?.id || client.id;
   if (client.email) {
     try {
       await sendEmail({ agencyId, email: client.email, fullName: client.fullName, actionLink, kind: "retainer", audience: "client" });
-      await db.leadMessageDelivery.create({
-        data: {
-          agencyId, leadId: lead.id, kind: "retainer_requested", channel: "email", recipient: client.email,
-          status: "sent", sentAt: new Date(), subject: "Sign your retainer agreement",
-          dedupeKey: `retainer:${lead.id}:email:${appointment.id}`,
-        },
-      }).catch(() => {});
+      if (lead) {
+        await db.leadMessageDelivery.create({
+          data: {
+            agencyId, leadId: lead.id, kind: "retainer_requested", channel: "email", recipient: client.email,
+            status: "sent", sentAt: new Date(), subject: "Sign your retainer agreement",
+            dedupeKey: `retainer:${lead.id}:email:${appointment.id}`,
+          },
+        }).catch(() => {});
+      }
     } catch (error) {
-      logger.warn("lead_retainer.email_skipped", { agencyId, leadId: lead.id, reason: error.message });
+      logger.warn("lead_retainer.email_skipped", { agencyId, leadId: lead?.id, clientId: client.id, reason: error.message });
     }
   }
   if (client.phone) {
@@ -222,17 +336,19 @@ async function deliverRetainerRequest({ db, sendEmail, sendSms, agency, agencyId
       await sendSms({
         agencyId, to: client.phone,
         body: `${agencyName}: your consultation is booked. Please review and sign your retainer agreement to secure it: ${actionLink}`,
-        idempotencyKey: `retainer:${lead.id}:sms:${appointment.id}`,
+        idempotencyKey: `retainer:${dedupeSubject}:sms:${appointment.id}`,
       });
-      await db.leadMessageDelivery.create({
-        data: {
-          agencyId, leadId: lead.id, kind: "retainer_requested", channel: "sms", recipient: client.phone,
-          status: "sent", sentAt: new Date(), body: `Sign your retainer: ${actionLink}`,
-          dedupeKey: `retainer:${lead.id}:sms:${appointment.id}`,
-        },
-      }).catch(() => {});
+      if (lead) {
+        await db.leadMessageDelivery.create({
+          data: {
+            agencyId, leadId: lead.id, kind: "retainer_requested", channel: "sms", recipient: client.phone,
+            status: "sent", sentAt: new Date(), body: `Sign your retainer: ${actionLink}`,
+            dedupeKey: `retainer:${lead.id}:sms:${appointment.id}`,
+          },
+        }).catch(() => {});
+      }
     } catch (error) {
-      logger.warn("lead_retainer.sms_skipped", { agencyId, leadId: lead.id, reason: error.message });
+      logger.warn("lead_retainer.sms_skipped", { agencyId, leadId: lead?.id, clientId: client.id, reason: error.message });
     }
   }
 }
