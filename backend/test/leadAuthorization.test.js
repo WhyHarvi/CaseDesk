@@ -125,3 +125,68 @@ test("consultation RLS follows agency, lead owner, and assigned consultant", asy
   assert.match(sql, /"consultant_user_id" = current_app_user_id\(\)/);
   assert.match(sql, /lead_consultations_completion_check/);
 });
+
+test("confirming a lead's appointment starts the retainer flow, and signing reuses the existing e-signature logic through a no-login link", async () => {
+  const [publicBookingController, publicBookingRoutes, retainerService, retainerTemplate, clientPortalController, publicRetainerController, schema, appRoutes, bookingApi, signPage] = await Promise.all([
+    readFile(new URL("../src/controllers/publicBookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/publicBookingRoutes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/leads/lead.retainer.service.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/leads/retainerDocumentTemplate.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/clientPortalController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/publicRetainerController.js", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/routes/AppRoutes.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/api/bookingApi.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/PublicRetainerSignPage.jsx", import.meta.url), "utf8"),
+  ]);
+
+  // Trigger: confirming an appointment (no-login guest link) starts the
+  // retainer flow for its lead, as a best-effort side effect that can't turn
+  // a successful confirmation into an error response.
+  assert.match(publicBookingController, /confirmationStatus: "Confirmed"/);
+  assert.match(publicBookingController, /ensureRetainerClientForLead\(updated\)\.catch/);
+
+  // Early client/case creation is a separate, additive concept from a real
+  // lead conversion — never reuses convertedClientId/convertedCaseId.
+  assert.match(schema, /earlyClientId\s+String\?\s+@unique @map\("early_client_id"\)/);
+  assert.match(schema, /earlyCaseId\s+String\?\s+@unique @map\("early_case_id"\)/);
+  assert.match(retainerService, /correspondenceStatus: "Issued"/);
+  assert.match(retainerService, /retainerStatus: "SENT"/);
+
+  // The retainer has its own letterhead document — agency branding, an
+  // attending-consultant/client block, and the real consultation fee —
+  // rather than the generic {{placeholder}} correspondence template.
+  assert.match(retainerService, /renderRetainerDocumentHtml\(\{/);
+  assert.match(retainerService, /agencyLogoDataUri: logoDataUri/);
+  assert.doesNotMatch(retainerService, /correspondenceTemplate\.findFirst/);
+  assert.match(retainerTemplate, /export function renderRetainerDocumentHtml/);
+  assert.match(retainerTemplate, /Attending Consultant/);
+  assert.match(retainerTemplate, /class="parties"/);
+  assert.match(retainerTemplate, /export function wrapRetainerDocument/);
+
+  // Signing is the same logic either way — no-login public route and the
+  // logged-in client portal both call the one shared signing function —
+  // but a retainer specifically forces a drawn signature, never typed.
+  assert.match(clientPortalController, /export async function applyAgreementSignature/);
+  assert.match(clientPortalController, /renderDocument = agreementDocumentHtml/);
+  assert.match(clientPortalController, /applyAgreementSignature\(\{[\s\S]*?userId: req\.auth\.userId,/);
+  assert.match(publicRetainerController, /import \{ applyAgreementSignature, publicAgreement \} from "\.\/clientPortalController\.js"/);
+  assert.match(publicRetainerController, /import \{ wrapRetainerDocument \} from "\.\.\/modules\/leads\/retainerDocumentTemplate\.js"/);
+  assert.match(publicRetainerController, /signatureMethod: "drawn",/);
+  assert.match(publicRetainerController, /renderDocument: wrapRetainerDocument,/);
+  assert.match(publicRetainerController, /applyAgreementSignature\(\{[\s\S]*?userId: null,/);
+
+  // Public, no-login routes keyed by the same manageToken already used for
+  // guest appointment self-service.
+  assert.match(publicBookingRoutes, /router\.get\("\/manage\/:manageToken\/retainer", readLimit, asyncHandler\(getManagedRetainer\)\)/);
+  assert.match(publicBookingRoutes, /router\.post\("\/manage\/:manageToken\/retainer\/sign", writeLimit, asyncHandler\(signManagedRetainer\)\)/);
+
+  // Frontend: a real page reachable without login, wired to those routes,
+  // with no typed-signature option — drawn only.
+  assert.match(appRoutes, /path="\/retainer\/:manageToken"/);
+  assert.match(appRoutes, /<PublicRetainerSignPage \/>/);
+  assert.match(bookingApi, /getManagedRetainer|signManagedRetainer/);
+  assert.match(signPage, /SignaturePad/);
+  assert.doesNotMatch(signPage, /Type signature/);
+  assert.doesNotMatch(signPage, /useState\("typed"\)/);
+});

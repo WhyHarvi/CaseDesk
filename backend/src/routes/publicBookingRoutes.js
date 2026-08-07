@@ -17,6 +17,7 @@ import {
   requestBookingVerification,
   verifyBookingEmail,
 } from "../controllers/publicBookingController.js";
+import { getManagedRetainer, signManagedRetainer } from "../controllers/publicRetainerController.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -29,6 +30,8 @@ router.post("/manage/:manageToken/cancel", writeLimit, asyncHandler(cancelManage
 router.post("/manage/:manageToken/reschedule", writeLimit, asyncHandler(rescheduleManagedBooking));
 router.post("/manage/:manageToken/confirm", writeLimit, asyncHandler(confirmManagedBooking));
 router.post("/manage/:manageToken/preparation-complete", writeLimit, asyncHandler(completeManagedPreparation));
+router.get("/manage/:manageToken/retainer", readLimit, asyncHandler(getManagedRetainer));
+router.post("/manage/:manageToken/retainer/sign", writeLimit, asyncHandler(signManagedRetainer));
 router.get("/:token", readLimit, asyncHandler(getPublicBookingInfo));
 router.get("/:token/avatar", readLimit, asyncHandler(getPublicBookingAvatar));
 router.get("/:token/availability", readLimit, asyncHandler(getPublicAvailability));

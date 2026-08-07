@@ -22,6 +22,7 @@ import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/noti
 import { createPaymentHoldForPublicBooking, getPaymentHoldStatus, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
+import { ensureRetainerClientForLead } from "../modules/leads/lead.retainer.service.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 import {
@@ -606,7 +607,7 @@ export async function verifyBookingEmail(req, res) {
   res.json({ data: { verificationToken, recognized: Boolean(client), consultant: client?.assignedUser ? { id: client.assignedUser.id, name: client.assignedUser.fullName } : null } });
 }
 
-async function resolveManaged(token) {
+export async function resolveManaged(token) {
   const appointment = await prisma.appointment.findUnique({
     where: { manageToken: String(token || "") },
     include: {
@@ -980,6 +981,16 @@ export async function confirmManagedBooking(req, res) {
     return result;
   });
   void processBookingMessageDeliveries();
+  // Best-effort, and deliberately outside the transaction above — this is a
+  // separate concern (does the lead's first-consultation retainer flow
+  // start) from confirming attendance, which has already succeeded by this
+  // point. A failure here shouldn't turn a successful guest confirmation
+  // into an error response.
+  if (updated.leadId) {
+    ensureRetainerClientForLead(updated).catch((error) => {
+      logger.warn("lead_retainer.confirm_hook_failed", { agencyId: updated.agencyId, appointmentId: updated.id, leadId: updated.leadId, reason: error.message });
+    });
+  }
   res.json({ data: publicView(updated, settings) });
 }
 

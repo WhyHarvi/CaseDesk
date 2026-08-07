@@ -306,3 +306,13 @@ export async function completeManagedPreparation(manageToken) {
   const response = await api.post(`/public/booking/manage/${manageToken}/preparation-complete`);
   return response.data.data;
 }
+
+export async function getManagedRetainer(manageToken) {
+  const response = await api.get(`/public/booking/manage/${manageToken}/retainer`);
+  return response.data.data;
+}
+
+export async function signManagedRetainer(manageToken, { fullName, consent, signatureMethod, signatureImage }) {
+  const response = await api.post(`/public/booking/manage/${manageToken}/retainer/sign`, { fullName, consent, signatureMethod, signatureImage });
+  return response.data;
+}

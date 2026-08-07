@@ -100,6 +100,10 @@ const ManageBookingPage = lazyWithRetry(
   () => import("../pages/ManageBookingPage"),
   "manage-booking",
 );
+const PublicRetainerSignPage = lazyWithRetry(
+  () => import("../pages/PublicRetainerSignPage"),
+  "public-retainer-sign",
+);
 const LeadsPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadsPage"),
   "leads",
@@ -246,6 +250,14 @@ export default function AppRoutes() {
         element={
           <Deferred>
             <ManageBookingPage />
+          </Deferred>
+        }
+      />
+      <Route
+        path="/retainer/:manageToken"
+        element={
+          <Deferred>
+            <PublicRetainerSignPage />
           </Deferred>
         }
       />

@@ -425,6 +425,47 @@ test("conversion creates and links the client and case atomically", async () => 
   assert.ok(calls.some(([kind]) => kind === "audit"));
 });
 
+test("conversion reuses an already-created retainer client/case instead of creating a second one", async () => {
+  const calls = [];
+  const convertibleLead = { id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "READY_TO_CONVERT", ownerUserId: "user-1", phone: "+14165550100", phoneNormalized: "+14165550100", email: "avery@example.ca", emailNormalized: "avery@example.ca", retainerStatus: "SIGNED", initialPaymentStatus: "PAID", estimatedValue: 4000, originalSourceId: "source-1", campaignId: null, earlyClientId: "client-early", earlyCaseId: "case-early" };
+  const tx = {
+    lead: {
+      findFirst: async ({ where }) => where.id?.not ? null : convertibleLead,
+      update: async ({ data }) => calls.push(["lead", data]),
+    },
+    leadConversion: {
+      findUnique: async () => null,
+      create: async ({ data }) => { calls.push(["conversion", data]); return { id: "conversion-1", ...data }; },
+    },
+    leadQualification: { findUnique: async () => null },
+    // No client.create/case.create mocked — the reuse branch must not call
+    // them, so an accidental call here fails the test with a clear error
+    // instead of silently creating a second client.
+    client: { update: async ({ data }) => { calls.push(["client", data]); return { id: "client-early", ...data }; } },
+    case: { update: async ({ data }) => { calls.push(["case", data]); return { id: "case-early", ...data }; } },
+    appointment: { findMany: async () => [], updateMany: async () => {} },
+    note: { updateMany: async () => {} },
+    followUp: {
+      create: async ({ data }) => calls.push(["clientFollowUp", data]),
+      updateMany: async () => {},
+    },
+    leadFollowUp: { updateMany: async () => {} },
+    caseManualLedgerEntry: { updateMany: async () => {} },
+    leadActivity: { create: async () => {} },
+    activityLog: { create: async () => {} },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { fullName: "Avery Singh", caseType: "Work Permit", caseStage: "Documents Pending", caseNextAction: "Collect identity documents", actualValue: 3500 } };
+
+  const result = await convertLead(req, db);
+
+  assert.equal(result.client.id, "client-early");
+  assert.equal(result.case.id, "case-early");
+  assert.equal(calls.find(([kind]) => kind === "client")[1].fullName, "Avery Singh");
+  assert.equal(calls.find(([kind]) => kind === "case")[1].stage, "Documents Pending");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].convertedClientId, "client-early");
+});
+
 test("conversion rejects leads that have not completed commercial requirements", async () => {
   const tx = { lead: { findFirst: async () => ({ id: "lead-1", status: "OPEN", stage: "PAYMENT_PENDING", retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED" }) } };
   const db = { $transaction: async (operation) => operation(tx) };

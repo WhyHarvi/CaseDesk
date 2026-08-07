@@ -22,6 +22,10 @@ const COPY = {
       subject: (agencyName) => `Reset your ${agencyName} client portal password`,
       intro: "Use the link below to set a new password for your client portal account.",
     },
+    retainer: {
+      subject: (agencyName) => `Sign your retainer agreement — ${agencyName}`,
+      intro: "Your consultation is confirmed. Please review and sign your retainer agreement so we can continue.",
+    },
   },
   staff: {
     onboarding: {
@@ -73,7 +77,7 @@ export function accountAccessEmailContent({
   const contactName = fullName || "there";
   const copy = COPY[audience]?.[kind] || COPY.client[kind];
   const subject = copy.subject(agencyName);
-  const buttonLabel = kind === "onboarding" ? "Set up my account" : "Reset my password";
+  const buttonLabel = kind === "onboarding" ? "Set up my account" : kind === "retainer" ? "Review and sign" : "Reset my password";
   const phone = String(agency?.phone || "").trim();
   const email = String(supportEmail || agency?.email || "").trim();
   const phoneHref = phone.replace(/[^\d+]/g, "");

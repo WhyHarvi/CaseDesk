@@ -50,6 +50,14 @@ export function publicBookingManageUrl(settings, manageToken, { environment = pr
   return new URL(`/book/manage/${encodeURIComponent(manageToken)}`, bookingPublicOrigin(environment)).toString();
 }
 
+// The retainer signing page isn't a "booking" page (no slug/settings lookup
+// needed) — just a document tied directly to the same manageToken already
+// emailed/texted to the guest for managing their appointment.
+export function publicRetainerSignUrl(manageToken, { environment = process.env } = {}) {
+  if (!manageToken) return null;
+  return new URL(`/retainer/${encodeURIComponent(manageToken)}`, bookingPublicOrigin(environment)).toString();
+}
+
 export function bookingSlugBase(value) {
   return String(value || "")
     .toLowerCase()

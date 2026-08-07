@@ -998,22 +998,37 @@ export async function convertLead(req, db = prisma) {
     const existingConversion = await tx.leadConversion.findUnique({ where: { leadId: lead.id }, select: { id: true } });
     if (existingConversion) throw createHttpError(409, "This lead has already been converted.", "LEAD_ALREADY_CONVERTED");
 
-    await lockAgencyContactIntake(tx, agencyId);
-    await assertNoContactDuplicate(tx, {
-      agencyId,
-      phoneNormalized: lead.phoneNormalized,
-      emailNormalized: lead.emailNormalized,
-      excludeLeadId: lead.id,
-    });
-
     const qualification = await tx.leadQualification.findUnique({ where: { leadId: lead.id } });
-    const clientNumber = await nextClientNumber(tx, agencyId);
-    const client = await tx.client.create({
-      data: { agencyId, clientNumber, fullName: values.fullName, phone: lead.phone, phoneNormalized: lead.phoneNormalized, email: lead.email, emailNormalized: lead.emailNormalized, preferredLanguage: lead.preferredLanguage, status: "Active", assignedUserId: lead.ownerUserId },
-    });
-    const caseItem = await tx.case.create({
-      data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction },
-    });
+
+    // A retainer may already have been requested and signed before this
+    // lead was formally converted (see lead.retainer.service.js) — reuse
+    // that client/case instead of creating a second one. Its phone/email
+    // duplicate-checked clean against this exact lead when it was created,
+    // so there's nothing new to re-check here.
+    let client;
+    let caseItem;
+    if (lead.earlyClientId && lead.earlyCaseId) {
+      client = await tx.client.update({ where: { id: lead.earlyClientId }, data: { fullName: values.fullName } });
+      caseItem = await tx.case.update({
+        where: { id: lead.earlyCaseId },
+        data: { caseType: values.caseType, stage: values.caseStage, nextAction: values.caseNextAction },
+      });
+    } else {
+      await lockAgencyContactIntake(tx, agencyId);
+      await assertNoContactDuplicate(tx, {
+        agencyId,
+        phoneNormalized: lead.phoneNormalized,
+        emailNormalized: lead.emailNormalized,
+        excludeLeadId: lead.id,
+      });
+      const clientNumber = await nextClientNumber(tx, agencyId);
+      client = await tx.client.create({
+        data: { agencyId, clientNumber, fullName: values.fullName, phone: lead.phone, phoneNormalized: lead.phoneNormalized, email: lead.email, emailNormalized: lead.emailNormalized, preferredLanguage: lead.preferredLanguage, status: "Active", assignedUserId: lead.ownerUserId },
+      });
+      caseItem = await tx.case.create({
+        data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction },
+      });
+    }
 
     const leadAppointments = await tx.appointment.findMany({ where: { agencyId, leadId: lead.id }, select: { id: true } });
     const leadAppointmentIds = leadAppointments.map((item) => item.id);

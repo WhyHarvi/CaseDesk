@@ -181,7 +181,7 @@ async function caseAssessmentFor(req, caseId) {
 
 const AGREEMENT_CLIENT_STATUS = { Issued: "Awaiting your signature", Signed: "Signed", Finalized: "Finalized" };
 
-function publicAgreement(document) {
+export function publicAgreement(document) {
   return {
     id: document.id,
     title: document.title,
@@ -236,7 +236,7 @@ function drawnSignatureImage(value) {
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }
 
-function agreementDocumentHtml({ title, headerText, contentHtml, footerText }) {
+export function agreementDocumentHtml({ title, headerText, contentHtml, footerText }) {
   return [
     "<!doctype html><html><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
     `<title>${escapeHtml(title)}</title>`,
@@ -906,39 +906,33 @@ export async function servePortalAgreementFile(req, res) {
   res.send(buffer);
 }
 
-export async function signPortalAgreement(req, res) {
-  const link = await linkedClient(req);
-  const signerName = String(req.body?.fullName || "").trim().replace(/\s+/g, " ").slice(0, 160);
+// The actual e-signature operation — stamp the signature into the document,
+// write the signed file to storage, flip the WrittenDocument to Signed, and
+// (when one is already linked) update the issued ClientDocument in place.
+// Shared by the logged-in client-portal route below and the no-login,
+// manageToken-based public retainer route (publicRetainerController.js) —
+// signing itself is identical either way; only how the caller is authorized
+// to reach a given agreement differs.
+export async function applyAgreementSignature({ agreement, agencyId, clientId, signerName: rawSignerName, consent, signatureMethod: rawSignatureMethod, signatureImage: rawSignatureImage, userId = null, activityAction = "correspondence.portal_signed", renderDocument = agreementDocumentHtml }) {
+  const signerName = String(rawSignerName || "").trim().replace(/\s+/g, " ").slice(0, 160);
   if (!signerName) throw createHttpError(400, "Type your full legal name to sign.", "VALIDATION_ERROR");
-  if (req.body?.consent !== true) throw createHttpError(400, "You must agree to sign electronically.", "CONSENT_REQUIRED");
-  const signatureMethod = req.body?.signatureMethod === "drawn" ? "drawn" : "typed";
-  const signatureImage = signatureMethod === "drawn" ? drawnSignatureImage(req.body?.signatureImage) : null;
-
-  const agreement = await prisma.writtenDocument.findFirst({
-    where: {
-      id: req.params.id,
-      agencyId: req.auth.agencyId,
-      clientId: link.clientId,
-      correspondenceKind: "Agreement",
-      case: { deletedAt: null, archivedAt: null },
-    },
-    select: { id: true, title: true, correspondenceStatus: true, caseId: true, contentHtml: true, headerText: true, footerText: true, issuedClientDocumentId: true },
-  });
-  if (!agreement) throw createHttpError(404, "Agreement not found.", "NOT_FOUND");
+  if (consent !== true) throw createHttpError(400, "You must agree to sign electronically.", "CONSENT_REQUIRED");
+  const signatureMethod = rawSignatureMethod === "drawn" ? "drawn" : "typed";
+  const signatureImage = signatureMethod === "drawn" ? drawnSignatureImage(rawSignatureImage) : null;
   if (agreement.correspondenceStatus !== "Issued") throw createHttpError(409, "This document is not awaiting your signature.", "NOT_SIGNABLE");
 
   const signedAt = new Date();
   // Stamp the signature into the document content itself so the signed
   // record is visible in the staff Writer and on the issued client file.
   const signedContentHtml = `${agreement.contentHtml || ""}${signatureBlockHtml({ signerName, signedAt, signatureMethod, signatureImage })}`;
-  const signedFileHtml = agreementDocumentHtml({ ...agreement, contentHtml: signedContentHtml });
-  const signedStorageKey = path.posix.join(req.auth.agencyId, agreement.caseId || `client-${link.clientId}`, `${randomUUID()}.html`);
+  const signedFileHtml = renderDocument({ ...agreement, contentHtml: signedContentHtml });
+  const signedStorageKey = path.posix.join(agencyId, agreement.caseId || `client-${clientId}`, `${randomUUID()}.html`);
   const signedFilename = `${String(agreement.title || "agreement").replace(/[^\w\s.-]/g, "").trim().slice(0, 120) || "agreement"} (signed).html`;
   const signedBuffer = Buffer.from(signedFileHtml, "utf8");
 
   const issuedDocument = agreement.issuedClientDocumentId
     ? await prisma.clientDocument.findFirst({
-        where: { id: agreement.issuedClientDocumentId, agencyId: req.auth.agencyId, clientId: link.clientId },
+        where: { id: agreement.issuedClientDocumentId, agencyId, clientId },
         select: { id: true, storageKey: true },
       })
     : null;
@@ -950,8 +944,8 @@ export async function signPortalAgreement(req, res) {
       const updated = await tx.writtenDocument.updateMany({
         where: {
           id: agreement.id,
-          agencyId: req.auth.agencyId,
-          clientId: link.clientId,
+          agencyId,
+          clientId,
           correspondenceKind: "Agreement",
           correspondenceStatus: "Issued",
           case: { deletedAt: null, archivedAt: null },
@@ -981,13 +975,41 @@ export async function signPortalAgreement(req, res) {
   }
 
   await recordActivity({
-    agencyId: req.auth.agencyId,
-    userId: req.auth.userId,
-    clientId: link.clientId,
+    agencyId,
+    userId,
+    clientId,
     caseId: agreement.caseId,
-    action: "correspondence.portal_signed",
+    action: activityAction,
     details: `${agreement.title} signed electronically by ${signerName}`,
     metadata: { writtenDocumentId: agreement.id, signerName, signedAt: signedAt.toISOString(), consent: true, signatureMethod },
+  });
+
+  return { signerName, signedAt, signatureMethod };
+}
+
+export async function signPortalAgreement(req, res) {
+  const link = await linkedClient(req);
+  const agreement = await prisma.writtenDocument.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      clientId: link.clientId,
+      correspondenceKind: "Agreement",
+      case: { deletedAt: null, archivedAt: null },
+    },
+    select: { id: true, title: true, correspondenceStatus: true, caseId: true, contentHtml: true, headerText: true, footerText: true, issuedClientDocumentId: true },
+  });
+  if (!agreement) throw createHttpError(404, "Agreement not found.", "NOT_FOUND");
+
+  await applyAgreementSignature({
+    agreement,
+    agencyId: req.auth.agencyId,
+    clientId: link.clientId,
+    signerName: req.body?.fullName,
+    consent: req.body?.consent,
+    signatureMethod: req.body?.signatureMethod,
+    signatureImage: req.body?.signatureImage,
+    userId: req.auth.userId,
   });
   res.json({ success: true, message: "Signed. Thank you — your consultant has been notified." });
 }

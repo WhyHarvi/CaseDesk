@@ -1350,6 +1350,7 @@ model Client {
   portalUsers                ClientUser[]
   accountStatements          AccountStatementGeneration[]
   convertedFromLead          Lead?                        @relation("LeadConvertedClient")
+  earlyForLead               Lead?                        @relation("LeadEarlyClient")
   leadConversions            LeadConversion[]
   questionnaireAssignments   QuestionnaireAssignment[]
   clientInformationProfiles  ClientInformationProfile[]
@@ -1407,6 +1408,7 @@ model Case {
   accountStatements            AccountStatementGeneration[]
   assignments                  CaseAssignment[]
   convertedFromLead            Lead?                          @relation("LeadConvertedCase")
+  earlyForLead                 Lead?                          @relation("LeadEarlyCase")
   leadConversions              LeadConversion[]
   questionnaireAssignments     QuestionnaireAssignment[]
   caseInformationProfiles      CaseInformationProfile[]
@@ -3137,6 +3139,13 @@ model Lead {
   convertedClientId        String?                  @unique @map("converted_client_id")
   convertedCaseId          String?                  @unique @map("converted_case_id")
   convertedAt              DateTime?                @map("converted_at")
+  // Created early — the moment the lead's first consultation is confirmed —
+  // purely to give a retainer agreement somewhere real to attach to. Deliberately
+  // separate from convertedClientId/convertedCaseId: those mean "this lead IS this
+  // client now" (checked throughout the app); these mean "a client/case exists to
+  // hold this lead's retainer," while the lead keeps working its own pipeline.
+  earlyClientId            String?                  @unique @map("early_client_id")
+  earlyCaseId              String?                  @unique @map("early_case_id")
   lostAt                   DateTime?                @map("lost_at")
   nurtureUntil             DateTime?                @map("nurture_until")
   version                  Int                      @default(1)
@@ -3150,6 +3159,8 @@ model Lead {
   campaign                 LeadCampaign?            @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   convertedClient          Client?                  @relation("LeadConvertedClient", fields: [convertedClientId], references: [id], onDelete: SetNull)
   convertedCase            Case?                    @relation("LeadConvertedCase", fields: [convertedCaseId], references: [id], onDelete: SetNull)
+  earlyClient              Client?                  @relation("LeadEarlyClient", fields: [earlyClientId], references: [id], onDelete: SetNull)
+  earlyCase                Case?                    @relation("LeadEarlyCase", fields: [earlyCaseId], references: [id], onDelete: SetNull)
   activities               LeadActivity[]
   messageDeliveries        LeadMessageDelivery[]
   stageHistory             LeadStageHistory[]
