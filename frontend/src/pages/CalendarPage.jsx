@@ -774,7 +774,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, settings }) {
+function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
   const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "" });
   const [selectedClient, setSelectedClient] = useState(null);
@@ -797,8 +797,17 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   useEffect(() => {
     if (!open) return;
-    setForm((current) => ({ ...current, startsAt: "", date: initialDate || current.date, assignedToId: role === "consultant" ? userId : current.assignedToId, paymentMethod: "", paymentReference: "", clientId: "" }));
-    setSelectedClient(null);
+    setForm((current) => ({
+      ...current,
+      startsAt: "",
+      date: initialDate || current.date,
+      assignedToId: role === "consultant" ? userId : current.assignedToId,
+      paymentMethod: "",
+      paymentReference: "",
+      mode: initialClient ? "client" : current.mode,
+      clientId: initialClient?.id || "",
+    }));
+    setSelectedClient(initialClient || null);
     setError("");
     setPendingHold(null);
     setBookedWarning(null);
@@ -806,7 +815,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setPaymentActionError("");
     setPaymentRecipient("");
     setConfirmPaymentCancel(false);
-  }, [open, role, userId, initialDate]);
+  }, [open, role, userId, initialDate, initialClient]);
 
   useEffect(() => {
     if (!open) return;
@@ -1243,6 +1252,7 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [prefillClient, setPrefillClient] = useState(null);
   const [selected, setSelected] = useState(null);
   const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
   const [notesAppointmentId, setNotesAppointmentId] = useState(null);
@@ -1283,6 +1293,23 @@ export default function CalendarPage() {
     const timer = window.setTimeout(() => setFocusedAppointmentId(""), 4800);
     return () => window.clearTimeout(timer);
   }, [appointments, linkedAppointmentId]);
+
+  // Arriving from a client profile's "Book" link — open straight into the
+  // new-appointment form with that client already picked, instead of making
+  // staff search for someone whose profile they're already looking at.
+  useEffect(() => {
+    const bookForClientId = searchParams.get("bookForClient");
+    if (!bookForClientId) return;
+    let cancelled = false;
+    api.get(`/clients/${bookForClientId}`).then((response) => {
+      if (cancelled) return;
+      setPrefillClient(response.data.data);
+      setSheetOpen(true);
+    }).catch(() => {});
+    setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("bookForClient"); return next; }, { replace: true });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const refreshWhenVisible = () => { if (document.visibilityState === "visible") load({ fresh: true, background: true }); };
@@ -1634,7 +1661,7 @@ export default function CalendarPage() {
 
       <NewAppointmentSheet
         open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
+        onClose={() => { setSheetOpen(false); setPrefillClient(null); }}
         onCreated={(created) => { setAppointments((current) => [...current, created]); setSelected(created); }}
         onRefresh={() => load({ fresh: true, background: true })}
         staff={staff}
@@ -1642,6 +1669,7 @@ export default function CalendarPage() {
         role={role}
         userId={appUser?.id}
         initialDate={dateKey(selectedDate)}
+        initialClient={prefillClient}
         settings={bookingSettings}
       />
       {notesAppointmentId ? (
