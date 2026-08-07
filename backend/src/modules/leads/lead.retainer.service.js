@@ -209,9 +209,10 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
   const actorId = appointment.assignedToId || client.assignedUserId;
   if (!actorId) return null; // no one to attribute the case/document to
 
-  const [agency, consultant] = await Promise.all([
+  const [agency, consultant, paymentHold] = await Promise.all([
     db.agency.findUnique({ where: { id: agencyId } }),
     db.user.findUnique({ where: { id: actorId } }),
+    db.bookingPaymentHold.findUnique({ where: { appointmentId: appointment.id } }),
   ]);
 
   // Phase 1: activate the client if needed and create the case shell.
@@ -246,12 +247,16 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
   if (!caseItem) return null; // lost a race — another booking already created one
 
   // Phase 2: render + store the retainer document, same as the lead path.
+  // The fee lives on BookingPaymentHold, not the appointment itself — set
+  // when a paid public/staff booking is confirmed (see
+  // bookingPaymentHoldService.js), still null for free/unpaid bookings.
+  const consultationFee = paymentHold?.status === "Paid" ? paymentHold.amount : 0;
   const logoDataUri = await fetchLogo(agency);
   const matter = appointment.subject ? `${appointment.subject} — Initial Consultation` : "Initial Consultation";
   const title = `Retainer Agreement — ${client.fullName}`;
   const contentHtml = renderRetainerDocumentHtml({
     agency, agencyLogoDataUri: logoDataUri, consultant: consultant || null, client,
-    fileNumber: client.clientNumber, matter, consultationFee: 0,
+    fileNumber: client.clientNumber, matter, consultationFee,
   });
   const fileHtml = wrapRetainerDocument({ title, contentHtml });
   const storageKey = path.posix.join(agencyId, caseItem.id, `${randomUUID()}.html`);

@@ -103,7 +103,7 @@ function baseClient(overrides = {}) {
   return { id: "client-1", agencyId: "agency-1", fullName: "Narinder Singh", email: "narinder@example.ca", phone: "+14165550199", status: "Active", clientNumber: "CL-2026-000042", assignedUserId: "user-1", ...overrides };
 }
 
-function makeClientDb({ client, existingCase = null } = {}) {
+function makeClientDb({ client, existingCase = null, paymentHold = null } = {}) {
   const calls = [];
   const tx = {
     case: {
@@ -120,6 +120,7 @@ function makeClientDb({ client, existingCase = null } = {}) {
     case: { findFirst: async () => existingCase },
     agency: { findUnique: async () => ({ id: "agency-1", name: "CHK Immigration", legalName: "CHK Immigration Services Inc.", email: "hello@chk.ca", phone: "416-555-0000", avatarStorageKey: null }) },
     user: { findUnique: async () => ({ id: "user-1", fullName: "Jordan Consultant", email: "jordan@chk.ca", licenseNumber: null }) },
+    bookingPaymentHold: { findUnique: async () => paymentHold },
     $transaction: async (operation) => operation(tx),
   };
   return { db, calls };
@@ -144,10 +145,38 @@ test("ensureRetainerCaseForClient creates a case and issued retainer document fo
   assert.equal(calls.find(([kind]) => kind === "case")[1].stage, "Retainer Pending");
   assert.equal(calls.find(([kind]) => kind === "writtenDocument")[1].correspondenceStatus, "Issued");
   assert.match(calls.find(([kind]) => kind === "writtenDocument")[1].contentHtml, /Narinder Singh/);
+  assert.match(calls.find(([kind]) => kind === "writtenDocument")[1].contentHtml, /\$0\.00 CAD/);
   assert.ok(calls.some(([kind]) => kind === "activityLog"));
   assert.equal(writtenFiles.length, 1);
   assert.equal(sentEmails.length, 1);
   assert.equal(sentSms.length, 1);
+});
+
+test("ensureRetainerCaseForClient bills the real fee from a paid BookingPaymentHold, not $0", async () => {
+  const { db, calls } = makeClientDb({
+    client: baseClient(),
+    paymentHold: { status: "Paid", amount: 100 },
+  });
+
+  const result = await ensureRetainerCaseForClient(baseAppointment({ leadId: null, clientId: "client-1", assignedToId: "user-1", subject: "Initial Consultation" }), {
+    db, fetchLogo: async () => null, writeFile: async () => {}, sendEmail: async () => {}, sendSms: async () => {},
+  });
+
+  assert.ok(result);
+  assert.match(calls.find(([kind]) => kind === "writtenDocument")[1].contentHtml, /\$100\.00 CAD/);
+});
+
+test("ensureRetainerCaseForClient does not bill an unpaid BookingPaymentHold's amount", async () => {
+  const { db, calls } = makeClientDb({
+    client: baseClient(),
+    paymentHold: { status: "AwaitingPayment", amount: 100 },
+  });
+
+  await ensureRetainerCaseForClient(baseAppointment({ leadId: null, clientId: "client-1", assignedToId: "user-1" }), {
+    db, fetchLogo: async () => null, writeFile: async () => {}, sendEmail: async () => {}, sendSms: async () => {},
+  });
+
+  assert.match(calls.find(([kind]) => kind === "writtenDocument")[1].contentHtml, /\$0\.00 CAD/);
 });
 
 test("ensureRetainerCaseForClient is a no-op for a client that already has a case", async () => {
