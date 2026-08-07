@@ -539,6 +539,9 @@ export async function getAvailability(req, res) {
     minNoticeOverrideMinutes: 0,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || null : null,
     meetingMode,
+    // Frontdesk sees the whole day's grid, including slots already passed —
+    // useful for logging a walk-in or an earlier booking after the fact.
+    ignorePastCutoff: req.auth.role === "frontdesk",
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -714,6 +717,7 @@ export async function createBookingAppointment(req, res) {
       minNoticeOverrideMinutes: 0,
       locationId: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null,
       meetingMode: requestedMeetingMode,
+      ignorePastCutoff: req.auth.role === "frontdesk",
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");

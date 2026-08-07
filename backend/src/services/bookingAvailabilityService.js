@@ -170,7 +170,7 @@ function effectiveStaffSettings(settings, preference, sessionBufferMinutes, cons
  * busy: [{ startsAt, endsAt }] existing appointments for the target staff member.
  * Returns [{ startsAt, endsAt }] in UTC, stepped every 30 minutes by default.
  */
-export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = new Date(), stepMinutes = 30 }) {
+export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = new Date(), stepMinutes = 30, ignorePastCutoff = false }) {
   const timezone = settings.timezone || "America/Toronto";
   const workingHours = Array.isArray(settings.workingHours) && settings.workingHours.length ? settings.workingHours : DEFAULT_WORKING_HOURS;
   const daysOff = Array.isArray(settings.daysOff) ? settings.daysOff : [];
@@ -182,7 +182,10 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 
   const windowStart = localDateTimeToUtc(dateKey, minutesOf(dayRule.start), timezone).getTime();
   const windowEnd = localDateTimeToUtc(dateKey, minutesOf(dayRule.end), timezone).getTime();
-  const earliest = now.getTime() + (settings.minNoticeMinutes || 0) * 60_000;
+  // Frontdesk wants to see (and log) the whole day's grid, including slots
+  // earlier today that have already passed — e.g. entering a walk-in after
+  // the fact. Everyone else still gets the normal "nothing before now" cutoff.
+  const earliest = ignorePastCutoff ? windowStart : now.getTime() + (settings.minNoticeMinutes || 0) * 60_000;
   const latest = now.getTime() + (settings.horizonDays || 30) * 24 * 60 * 60_000;
   const buffer = (settings.bufferMinutes || 0) * 60_000;
   const duration = durationMinutes * 60_000;
@@ -205,7 +208,7 @@ export function slotsForDay({ settings, dateKey, durationMinutes, busy, now = ne
 /**
  * Availability for a staff member over a local date range (inclusive keys).
  */
-export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null, locationId = null, meetingMode = null }) {
+export async function availabilityForRange({ agencyId, assignedToId, assignedToIds = null, durationMinutes, fromKey, toKey, now = new Date(), excludeAppointmentId = null, excludeAppointmentIds = null, sessionBufferMinutes = null, excludeHoldToken = null, excludePaymentHoldId = null, minNoticeOverrideMinutes = null, locationId = null, meetingMode = null, ignorePastCutoff = false }) {
   validateAvailabilityRange(fromKey, toKey);
   const pooled = Array.isArray(assignedToIds);
   const settings = await getOrCreateBookingSettings(agencyId);
@@ -286,7 +289,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       const effective = assignedToId
         ? effectiveStaffSettings(baseSettings, preferenceByStaff.get(assignedToId), sessionBufferMinutes, Boolean(location?.useCustomHours))
         : { ...baseSettings, bufferMinutes: sessionBufferMinutes ?? baseSettings.bufferMinutes };
-      days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy: relevantBusy, now });
+      days[dateKey] = slotsForDay({ settings: effective, dateKey, durationMinutes, busy: relevantBusy, now, ignorePastCutoff });
       continue;
     }
     const staffSlots = assignedToIds.map((staffId) => {
@@ -307,6 +310,7 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
       durationMinutes,
       busy: relevantBusy.filter((item) => item.assignedToId === staffId),
       now,
+      ignorePastCutoff,
       });
     });
     days[dateKey] = mergeStaffAvailability(assignedToIds, staffSlots);

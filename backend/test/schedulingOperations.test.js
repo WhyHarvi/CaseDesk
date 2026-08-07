@@ -115,6 +115,19 @@ test("staff booking bypasses the public minimum-notice window to allow same-day 
   assert.ok(new Date(staffSlots[0].startsAt).getTime() >= now.getTime(), "no slot should start in the past");
 });
 
+test("frontdesk's ignorePastCutoff reveals today's already-passed slots too", () => {
+  const workingHours = [{ day: 1, enabled: true, start: "09:00", end: "17:00" }];
+  const now = new Date("2026-08-03T18:30:00.000Z"); // 14:30 America/Toronto (UTC-4)
+  const settings = { timezone: "America/Toronto", workingHours, daysOff: [], minNoticeMinutes: 0, horizonDays: 365, bufferMinutes: 0 };
+
+  const normalSlots = slotsForDay({ settings, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15 });
+  assert.ok(normalSlots.every((slot) => new Date(slot.startsAt).getTime() >= now.getTime()), "without the flag, nothing before now is offered");
+
+  const frontdeskSlots = slotsForDay({ settings, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15, ignorePastCutoff: true });
+  assert.ok(frontdeskSlots.some((slot) => new Date(slot.startsAt).getTime() < now.getTime()), "frontdesk should see this morning's slots too");
+  assert.equal(frontdeskSlots[0].startsAt, "2026-08-03T13:00:00.000Z", "the day's grid should start at the office's opening time, not now");
+});
+
 test("assignment prefers the existing client's consultant when free", async () => {
   const users = ["alpha", "beta"].map((id) => ({ id, fullName: id, role: "consultant", schedulingPreference: null }));
   const db = {
