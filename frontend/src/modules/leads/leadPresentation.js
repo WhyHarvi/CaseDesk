@@ -34,3 +34,36 @@ export const statusTone = {
   DO_NOT_CONTACT: "bg-slate-100 text-slate-600 ring-slate-200",
   ARCHIVED: "bg-slate-100 text-slate-500 ring-slate-200",
 };
+
+// Mirrors the exact readiness check convertLead() uses server-side
+// (backend/src/modules/leads/lead.service.js) so the UI never shows a
+// "Convert to client" button the backend would reject.
+export const RETAINER_READY_VALUES = ["SIGNED", "NOT_REQUIRED"];
+export const PAYMENT_READY_VALUES = ["PAID", "WAIVED"];
+
+export function isLeadReadyToConvert(lead) {
+  return lead.stage === "READY_TO_CONVERT"
+    && RETAINER_READY_VALUES.includes(lead.retainerStatus)
+    && PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus);
+}
+
+export const retainerStatusTone = {
+  NOT_REQUIRED: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+  NOT_PREPARED: "bg-amber-50 text-amber-700 ring-amber-100",
+  PREPARED: "bg-amber-50 text-amber-700 ring-amber-100",
+  SENT: "bg-sky-50 text-sky-700 ring-sky-100",
+  VIEWED: "bg-sky-50 text-sky-700 ring-sky-100",
+  SIGNED: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+  DECLINED: "bg-rose-50 text-rose-700 ring-rose-100",
+  EXPIRED: "bg-rose-50 text-rose-700 ring-rose-100",
+};
+
+export const paymentStatusTone = {
+  NOT_REQUESTED: "bg-amber-50 text-amber-700 ring-amber-100",
+  REQUESTED: "bg-sky-50 text-sky-700 ring-sky-100",
+  PARTIAL: "bg-sky-50 text-sky-700 ring-sky-100",
+  PAID: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+  FAILED: "bg-rose-50 text-rose-700 ring-rose-100",
+  REFUNDED: "bg-rose-50 text-rose-700 ring-rose-100",
+  WAIVED: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+};

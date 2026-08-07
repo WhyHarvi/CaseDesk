@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CalendarPlus,
   CheckCircle2,
+  Circle,
   ClipboardCheck,
   ClipboardList,
   HeartHandshake,
@@ -24,7 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../auth/AuthContext";
 import api from "../../../services/api";
-import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, statusTone } from "../leadPresentation";
+import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, PAYMENT_READY_VALUES, paymentStatusTone, RETAINER_READY_VALUES, retainerStatusTone, statusTone } from "../leadPresentation";
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
@@ -45,11 +46,12 @@ const tabs = [
 // pick the new value directly in the grid, no popup panel. Used for Stage
 // and Priority, which are short fixed lists; Owner stays a pencil-icon
 // button into a proper sheet since reassigning needs a reason on record.
-function SummaryValue({ label, value, onEdit, select }) {
+function SummaryValue({ label, value, onEdit, select, badge }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-1.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+        {badge}
         {onEdit ? <button type="button" onClick={onEdit} aria-label={`Change ${label.toLowerCase()}`} className="text-slate-300 transition hover:text-brand-600"><Pencil className="h-3 w-3" /></button> : null}
       </div>
       {select ? (
@@ -219,6 +221,13 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const canReassign = isWorkable && role === "admin";
   const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
   const canCloseFollowUp = (item) => item.status === "PENDING" && (!isFrontdesk || item.assignedUserId === appUser?.id);
+  // The three separate things convertLead() checks server-side, mirrored
+  // here so the UI never shows a Convert button the backend would reject —
+  // and so the path-to-conversion checklist below can show each on its own.
+  const stageReady = lead.stage === "READY_TO_CONVERT";
+  const retainerReady = RETAINER_READY_VALUES.includes(lead.retainerStatus);
+  const paymentReady = PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus);
+  const readyToConvert = stageReady && retainerReady && paymentReady;
   const workActions = isWorkable
     ? [
         { id: "activity", label: "Log activity", icon: PhoneIncoming, show: true },
@@ -296,6 +305,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         label="Stage"
                         value={humanize(lead.stage)}
                         select={canEditWorkflow ? { value: lead.stage, disabled: stageSaving, onChange: updateStage, options: LEAD_STAGES.map((value) => ({ value, label: humanize(value) })) } : null}
+                        badge={stageReady && !readyToConvert ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" title="Ready to Convert, but retainer or payment still isn't — see Path to conversion below" /> : null}
                       />
                       <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} onEdit={canReassign ? () => setActiveAction("reassign") : null} />
                       <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
@@ -341,10 +351,44 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   </section>
 
                   {!isFrontdesk ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
-                    <div className="flex items-center justify-between gap-4"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Landmark className="h-4 w-4 text-slate-400" />Retainer and payment</h3><p className="mt-1 text-xs text-slate-500">Commercial readiness before conversion</p></div>{lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-9 rounded-full border border-slate-200 px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Update</button> : null}</div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs text-slate-400">Retainer</p><p className="mt-1 text-sm font-semibold text-slate-800">{humanize(lead.retainerStatus)}</p></div><div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs text-slate-400">Initial payment</p><p className="mt-1 text-sm font-semibold text-slate-800">{humanize(lead.initialPaymentStatus)}</p></div></div>
-                    {lead.status === "OPEN" && lead.earlyClientId ? <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. <Link to={`/app/clients/${lead.earlyClientId}`} className="font-semibold underline">View the retainer case →</Link></p> : null}
-                    {lead.status === "OPEN" && lead.stage === "READY_TO_CONVERT" ? <button type="button" onClick={() => setConversionOpen(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-700"><CheckCircle2 className="h-4 w-4" />Convert to client</button> : null}
+                    <div className="flex items-center justify-between gap-4">
+                      <div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Landmark className="h-4 w-4 text-slate-400" />Path to conversion</h3><p className="mt-1 text-xs text-slate-500">{[stageReady, retainerReady, paymentReady].filter(Boolean).length} of 3 requirements met</p></div>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-4 py-3">
+                        {stageReady ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
+                        <div className="min-w-0"><p className="text-sm font-medium text-slate-800">Consultation stage</p><p className="text-xs text-slate-500">{stageReady ? "Ready to Convert" : humanize(lead.stage)}</p></div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          {retainerReady ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-800">Retainer signed</p>
+                            <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${retainerStatusTone[lead.retainerStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.retainerStatus)}</span>
+                            {!retainerReady && role !== "admin" ? <p className="mt-1 text-[11px] leading-4 text-amber-700">An admin needs to confirm this as Signed.</p> : null}
+                          </div>
+                        </div>
+                        {lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-8 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">Update</button> : null}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          {paymentReady ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-800">Payment received</p>
+                            <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${paymentStatusTone[lead.initialPaymentStatus] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(lead.initialPaymentStatus)}</span>
+                            {!paymentReady && role !== "admin" ? <p className="mt-1 text-[11px] leading-4 text-amber-700">An admin needs to confirm this as Paid.</p> : null}
+                          </div>
+                        </div>
+                        {lead.status === "OPEN" ? <button type="button" onClick={() => setCommercialStatusOpen(true)} className="h-8 shrink-0 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">Update</button> : null}
+                      </div>
+                    </div>
+
+                    {lead.status === "OPEN" && stageReady && !readyToConvert ? <p className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Stage reached Ready to Convert, but retainer and/or payment still need confirming before this lead can convert.</p> : null}
+                    {lead.status === "OPEN" && lead.earlyClientId ? <p className="mt-3 rounded-xl bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. <Link to={`/app/clients/${lead.earlyClientId}`} className="font-semibold underline">View the retainer case →</Link></p> : null}
+                    {lead.status === "OPEN" && readyToConvert ? <button type="button" onClick={() => setConversionOpen(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-700"><CheckCircle2 className="h-4 w-4" />Convert to client</button> : null}
                     {lead.status === "CONVERTED" && lead.convertedClientId ? <Link to={`/app/clients/${lead.convertedClientId}`} className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-xl bg-emerald-50 text-sm font-semibold text-emerald-700 hover:bg-emerald-100">Open linked client</Link> : null}
                   </section> : null}
 
