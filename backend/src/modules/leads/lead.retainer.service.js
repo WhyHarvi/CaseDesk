@@ -289,18 +289,22 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
 // none of those actions should fail just because the retainer side-effect
 // did. Both underlying functions are idempotent, so calling this from
 // multiple trigger points for the same lead/client is safe — only the
-// first one to actually run does anything. Routes to whichever already
-// applies: a lead-linked appointment uses the lead path (creates the
-// client too); a client-linked appointment with no lead uses the client
-// path (the client already exists, only the case is missing).
+// first one to actually run does anything.
+//
+// clientId wins when both are set. createOrLinkLeadForConsultation
+// (lead.booking.js) can link an appointment to *both* — an existing Client
+// matched by contact info, and a separate open Lead that was never merged
+// into it — in which case there's already a real client, and the lead path
+// would either collide with assertNoContactDuplicate or, worse, create a
+// second client for the same person if any contact field differs.
 export function triggerRetainerFlow(appointment) {
-  if (appointment?.leadId) {
-    ensureRetainerClientForLead(appointment).catch((error) => {
-      logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
-    });
-  } else if (appointment?.clientId) {
+  if (appointment?.clientId) {
     ensureRetainerCaseForClient(appointment).catch((error) => {
       logger.warn("lead_retainer.client_trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, clientId: appointment.clientId, reason: error.message });
+    });
+  } else if (appointment?.leadId) {
+    ensureRetainerClientForLead(appointment).catch((error) => {
+      logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
     });
   }
 }
