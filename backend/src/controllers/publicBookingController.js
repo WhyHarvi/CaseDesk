@@ -128,6 +128,11 @@ export async function getPublicBookingInfo(req, res) {
       consultFeeEnabled: settings.consultFeeEnabled,
       consultFeeAmount: settings.consultFeeAmount,
       consultFeeTerms: settings.consultFeeTerms,
+      // Lets the widget hide the 15-minute free-follow-up session type from
+      // cold/anonymous visitors (see PublicBookingPage.jsx) — real
+      // eligibility is still enforced server-side in createPublicBooking
+      // regardless of what the widget shows, this only affects the list.
+      freeConsultationsEnabled: settings.freeConsultationsEnabled,
       publicHeadline: settings.publicHeadline,
       publicWelcomeMessage: settings.publicWelcomeMessage,
       publicSignOffName: settings.publicSignOffName,

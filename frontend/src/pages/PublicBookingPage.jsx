@@ -988,7 +988,16 @@ export default function PublicBookingPage() {
   useEffect(() => {
     getPublicBookingInfo(token, offerToken)
       .then((data) => {
-        setInfo(data);
+        // The free 15-minute follow-up is only for clients who already
+        // qualify — a cold/anonymous visitor has no way to prove that here,
+        // so it's hidden from the picker unless they arrived through a
+        // verified portal booking session. Real eligibility is re-checked
+        // server-side regardless; this only affects what the widget shows.
+        const verified = Boolean(portalSessionAtLoad?.verificationToken);
+        const sessionTypes = data.freeConsultationsEnabled && !verified
+          ? data.sessionTypes.filter((type) => type.durationMinutes !== 15)
+          : data.sessionTypes;
+        setInfo({ ...data, sessionTypes });
         if (data.offerExpired)
           setError(
             "That reserved waitlist time has expired, but you can choose another available appointment.",
@@ -1009,8 +1018,8 @@ export default function PublicBookingPage() {
           setStep("details");
           return;
         }
-        if (data.sessionTypes.length === 1)
-          setSessionTypeId(data.sessionTypes[0].id);
+        if (sessionTypes.length === 1)
+          setSessionTypeId(sessionTypes[0].id);
         if (data.consultants?.length === 1)
           setConsultantId(data.consultants[0].id);
       })

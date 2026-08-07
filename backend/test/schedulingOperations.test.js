@@ -576,6 +576,18 @@ test("free follow-up consultations require a prior settled booking and a 15-minu
   assert.match(calendar, /only with a 15-minute appointment type/);
 });
 
+test("the public widget hides the free 15-minute follow-up from visitors who haven't verified through the portal", async () => {
+  const [publicController, publicPage] = await Promise.all([
+    readFile(new URL("../src/controllers/publicBookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/PublicBookingPage.jsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(publicController, /freeConsultationsEnabled: settings\.freeConsultationsEnabled/);
+  assert.match(publicPage, /const verified = Boolean\(portalSessionAtLoad\?\.verificationToken\)/);
+  assert.match(publicPage, /data\.freeConsultationsEnabled && !verified/);
+  assert.match(publicPage, /type\.durationMinutes !== 15/);
+});
+
 test("public paid and Zoom formats cannot be enabled with incomplete provider setup", async () => {
   const controller = await readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8");
   assert.match(controller, /activatingPaidPublicBooking/);
