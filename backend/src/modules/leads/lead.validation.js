@@ -2,6 +2,7 @@ import { createHttpError } from "../../utils/http.js";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { localDateTimeToUtc } from "../../services/bookingAvailabilityService.js";
 import { LEAD_CONSULTATION_OUTCOMES, LEAD_CONSULTATION_STATUSES, LEAD_INITIAL_PAYMENT_STATUSES, LEAD_PRIORITIES, LEAD_QUALIFICATION_OUTCOMES, LEAD_RETAINER_STATUSES, LEAD_STAGES, LEAD_STATUSES, LEAD_TEMPERATURES } from "./lead.constants.js";
+import { CASE_STAGES } from "../../constants/caseStages.js";
 
 const text = (value, field, { required = false, max = 500 } = {}) => {
   if (value === undefined || value === null || value === "") {
@@ -244,7 +245,7 @@ export function parseLeadConversion(body = {}) {
   return {
     fullName: text(body.fullName, "fullName", { required: true, max: 200 }),
     caseType: text(body.caseType, "caseType", { required: true, max: 200 }),
-    caseStage: text(body.caseStage, "caseStage", { max: 100 }) || "Intake",
+    caseStage: enumValue(body.caseStage, "caseStage", CASE_STAGES, "Documents Pending"),
     caseNextAction: text(body.caseNextAction, "caseNextAction", { required: true, max: 500 }),
     actualValue: optionalNumber(body.actualValue, "actualValue", { min: 0, max: 100000000 }),
     notes: text(body.notes, "notes", { max: 5000 }),

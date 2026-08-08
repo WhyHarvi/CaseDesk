@@ -1,6 +1,7 @@
 import { ArrowRight, CheckCircle2, X } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
+import { CASE_STAGES } from "../../../constants/caseStages";
 import { leadName } from "../leadPresentation";
 
 const fieldClass = "mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100";
@@ -9,7 +10,10 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
   const [form, setForm] = useState({
     fullName: leadName(lead) === "Unnamed lead" ? "" : leadName(lead),
     caseType: lead.immigrationInterest || "",
-    caseStage: "Intake",
+    // A converted lead has already been through Lead/Consultation/Retainer —
+    // the real next step is gathering intake documents, so that's the
+    // sensible default rather than restarting the pipeline from the top.
+    caseStage: "Documents Pending",
     caseNextAction: "Complete client intake and collect initial documents",
     actualValue: lead.estimatedValue || "",
     notes: "",
@@ -48,7 +52,7 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="sm:col-span-2 text-sm font-medium text-slate-700">Client name<input required name="fullName" value={form.fullName} onChange={update} className={fieldClass} /></label>
             <label className="text-sm font-medium text-slate-700">Case type<input required name="caseType" value={form.caseType} onChange={update} className={fieldClass} placeholder="e.g. Work Permit" /></label>
-            <label className="text-sm font-medium text-slate-700">Starting stage<input required name="caseStage" value={form.caseStage} onChange={update} className={fieldClass} /></label>
+            <label className="text-sm font-medium text-slate-700">Starting stage<select required name="caseStage" value={form.caseStage} onChange={update} className={fieldClass}>{CASE_STAGES.filter((stage) => stage !== "Closed").map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
             <label className="sm:col-span-2 text-sm font-medium text-slate-700">First case action<input required name="caseNextAction" value={form.caseNextAction} onChange={update} className={fieldClass} /></label>
             <label className="text-sm font-medium text-slate-700">Actual value (CAD)<input name="actualValue" type="number" min="0" step="0.01" value={form.actualValue} onChange={update} className={fieldClass} /></label>
             <label className="sm:col-span-2 text-sm font-medium text-slate-700">Conversion note<textarea name="notes" value={form.notes} onChange={update} rows="3" className="mt-1.5 w-full resize-none rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100" /></label>

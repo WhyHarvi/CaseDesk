@@ -102,8 +102,17 @@ test("commercial tracking accepts supported retainer and payment states", () => 
 
 test("conversion requires a client identity, case type, and first action", () => {
   const conversion = parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect identity documents", actualValue: 3200 });
-  assert.equal(conversion.caseStage, "Intake");
+  assert.equal(conversion.caseStage, "Documents Pending");
   assert.equal(conversion.actualValue, 3200);
   assert.throws(() => parseLeadConversion({ caseType: "Work Permit", caseNextAction: "Collect documents" }), /fullName is required/);
   assert.throws(() => parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit" }), /caseNextAction is required/);
+});
+
+test("conversion rejects a case stage outside the real pipeline vocabulary", () => {
+  assert.throws(
+    () => parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents", caseStage: "Intake Jan" }),
+    /caseStage is invalid/,
+  );
+  const conversion = parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents", caseStage: "Retainer Pending" });
+  assert.equal(conversion.caseStage, "Retainer Pending");
 });
