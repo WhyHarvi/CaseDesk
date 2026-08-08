@@ -39,6 +39,37 @@ const cardClassName =
   "rounded-3xl border border-white/70 bg-white/75 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl";
 const pillClassName = "inline-flex items-center rounded-full px-3.5 py-1.5 text-xs font-semibold leading-none";
 
+// Keeps the Add/Edit Client drawer open (and whatever was typed) across a
+// browser reload — sessionStorage rather than localStorage, so a stale draft
+// from a previous work session never resurfaces in a new tab days later.
+const CLIENT_DRAFT_STORAGE_KEY = "casedesk:client-drawer-draft";
+
+function readClientDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(CLIENT_DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeClientDraft(draft) {
+  try {
+    window.sessionStorage.setItem(CLIENT_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Storage unavailable (private browsing, quota) — the drawer still works,
+    // it just won't survive a reload.
+  }
+}
+
+function clearClientDraft() {
+  try {
+    window.sessionStorage.removeItem(CLIENT_DRAFT_STORAGE_KEY);
+  } catch {
+    // Nothing to clean up if storage was never reachable.
+  }
+}
+
 function formatDateForInput(value) {
   if (!value) {
     return "";
@@ -633,9 +664,9 @@ export default function Clients() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [showForm, setShowForm] = useState(false);
-  const [editingClient, setEditingClient] = useState(null);
-  const [formState, setFormState] = useState(defaultFormState);
+  const [showForm, setShowForm] = useState(() => Boolean(readClientDraft()));
+  const [editingClient, setEditingClient] = useState(() => readClientDraft()?.editingClient || null);
+  const [formState, setFormState] = useState(() => readClientDraft()?.formState || defaultFormState);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [assigningClientIds, setAssigningClientIds] = useState([]);
@@ -683,6 +714,14 @@ export default function Clients() {
     loadClients();
     loadUsers();
   }, []);
+
+  useEffect(() => {
+    if (!showForm) {
+      clearClientDraft();
+      return;
+    }
+    writeClientDraft({ editingClient, formState });
+  }, [showForm, editingClient, formState]);
 
   useEffect(() => {
     function updateLayoutMode() {
