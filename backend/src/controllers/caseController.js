@@ -193,14 +193,24 @@ async function syncCaseDocumentsFromTemplates(tx, { agencyId, clientId, caseId, 
 
 export async function createCase(req, res) {
   const payload = validateCasePayload(parsePayload(req.body, fields));
+  const idempotencyKey = String(req.body?.idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
 
   if (!payload.clientId) {
     throw createHttpError(400, "clientId is required");
   }
+  if (idempotencyKey) {
+    const existing = await prisma.case.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId: req.auth.agencyId, creationIdempotencyKey: idempotencyKey } },
+      include,
+    });
+    if (existing) return res.json({ data: existing, reused: true });
+  }
   if (req.auth.role === "consultant") payload.assignedUserId = req.auth.userId;
   await validateCaseAssignee(req, payload.assignedUserId);
 
-  const result = await prisma.$transaction(async (tx) => {
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
     const client = await tx.client.findFirst({
       where: {
         id: payload.clientId,
@@ -220,6 +230,7 @@ export async function createCase(req, res) {
       data: {
         ...payload,
         agencyId: req.user.agencyId,
+        creationIdempotencyKey: idempotencyKey,
       },
       include,
     });
@@ -237,8 +248,19 @@ export async function createCase(req, res) {
       caseType: data.caseType,
     });
 
-    return { data, templateSync, workflowSync };
-  });
+      return { data, templateSync, workflowSync, reused: false };
+    });
+  } catch (error) {
+    if (error?.code !== "P2002" || !idempotencyKey) throw error;
+    const existing = await prisma.case.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId: req.auth.agencyId, creationIdempotencyKey: idempotencyKey } },
+      include,
+    });
+    if (!existing) throw error;
+    result = { data: existing, templateSync: { createdCount: 0 }, workflowSync: { createdCount: 0 }, reused: true };
+  }
+
+  if (result.reused) return res.json({ data: result.data, reused: true });
 
   const activityDetails = [
     "Case created",
@@ -262,7 +284,7 @@ export async function createCase(req, res) {
   });
 
   invalidateDashboardCache(req.user.agencyId);
-  res.status(201).json({ data: result.data });
+  res.status(201).json({ data: result.data, reused: false });
 }
 
 export async function updateCase(req, res) {

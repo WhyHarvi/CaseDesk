@@ -773,6 +773,14 @@ function clientPayload(body, existing = null) {
 
 export async function createClient(req, res) {
   req.body = { ...(req.body || {}) };
+  const idempotencyKey = String(req.body.idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
+  if (idempotencyKey) {
+    const existing = await prisma.client.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId: req.auth.agencyId, creationIdempotencyKey: idempotencyKey } },
+      include: scopedInclude(req),
+    });
+    if (existing) return res.json({ data: existing, reused: true });
+  }
   // A standalone client profile has no work owner yet. Consultants may not
   // assign it to another staff member, while administrators can still make
   // an explicit Client Access assignment when one is actually required.
@@ -782,26 +790,35 @@ export async function createClient(req, res) {
   const payload = clientPayload(req.body);
   payload.assignedUserId = req.body.assignedUserId || null;
   try {
-    const data = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await lockAgencyContactIntake(tx, req.auth.agencyId);
+      if (idempotencyKey) {
+        const existing = await tx.client.findUnique({
+          where: { agencyId_creationIdempotencyKey: { agencyId: req.auth.agencyId, creationIdempotencyKey: idempotencyKey } },
+          include: scopedInclude(req),
+        });
+        if (existing) return { data: existing, reused: true };
+      }
       await assertNoContactDuplicate(tx, {
         agencyId: req.auth.agencyId,
         ...payload,
       });
       const clientNumber = await nextClientNumber(tx, req.auth.agencyId);
-      return tx.client.create({
-        data: { ...payload, clientNumber, agencyId: req.auth.agencyId },
+      const data = await tx.client.create({
+        data: { ...payload, clientNumber, agencyId: req.auth.agencyId, creationIdempotencyKey: idempotencyKey },
         include: scopedInclude(req),
       });
+      return { data, reused: false };
     });
-    await recordActivity({
+    const { data, reused } = result;
+    if (!reused) await recordActivity({
       agencyId: req.auth.agencyId,
       userId: req.auth.userId,
       clientId: data.id,
       action: "client.created",
       details: `${data.fullName} created`,
     });
-    if (data.assignedUserId)
+    if (!reused && data.assignedUserId)
       await notifyUsers({
         agencyId: req.auth.agencyId,
         recipientIds: [data.assignedUserId],
@@ -814,7 +831,7 @@ export async function createClient(req, res) {
         actionUrl: `/app/clients/${data.id}`,
         dedupeKey: `client:${data.id}:assigned:${data.assignedUserId}`,
       });
-    const qbResult = await syncClientToQuickBooks(
+    const qbResult = reused ? null : await syncClientToQuickBooks(
       req.auth.agencyId,
       data.id,
     ).catch(() => null);
@@ -825,7 +842,7 @@ export async function createClient(req, res) {
         qbSyncError: qbResult.qbSyncError,
         qbSyncedAt: qbResult.qbSyncedAt,
       });
-    res.status(201).json({ data });
+    res.status(reused ? 200 : 201).json({ data, reused });
   } catch (error) {
     if (error?.code === "P2002")
       throw createHttpError(

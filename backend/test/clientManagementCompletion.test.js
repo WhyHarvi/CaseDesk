@@ -18,8 +18,10 @@ test("client management stores searchable identity fields and archives without d
   assert.match(schema, /preferredLanguage\s+String\?/);
   assert.match(schema, /identificationNumber\s+String\?/);
   assert.match(schema, /archivedAt\s+DateTime\?/);
+  assert.match(schema, /creationIdempotencyKey\s+String\?/);
   assert.match(migration, /CREATE UNIQUE INDEX "clients_agency_id_client_number_key"/);
   assert.match(controller, /assertNoContactDuplicate/);
+  assert.match(controller, /agencyId_creationIdempotencyKey/);
   assert.match(controller, /archivedAt: new Date\(\), status: "Inactive"/);
   assert.doesNotMatch(routes, /router\.delete/);
   assert.match(page, /archive-impact/);
@@ -27,18 +29,20 @@ test("client management stores searchable identity fields and archives without d
   assert.match(page, /directoryOrder === "recentlyAdded"/);
   assert.match(page, /new Date\(right\.createdAt \|\| 0\)/);
   assert.match(page, /Recently added/);
+  assert.match(page, /clientCreateIdempotencyKey/);
   assert.match(profile, /Preferred language/);
   assert.match(profile, /Identification/);
 });
 
 test("front desk client intake separates consultation payments from professional fees", async () => {
-  const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet] = await Promise.all([
+  const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet, caseController] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),
     source("../../frontend/src/pages/CalendarPage.jsx"),
     source("../../frontend/src/pages/Cases.jsx"),
     source("../../frontend/src/pages/ClientProfile.jsx"),
     source("../../frontend/src/components/clients/ClientBillingCard.jsx"),
     source("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx"),
+    source("../src/controllers/caseController.js"),
   ]);
 
   assert.match(clientsPage, /showFrontDeskActions=\{role === "frontdesk" && !isEditing\}/);
@@ -64,6 +68,13 @@ test("front desk client intake separates consultation payments from professional
   assert.match(casesPage, /paymentType: "fees"/);
   assert.match(casesPage, /afterSave: bookAppointmentAfterPaymentRef\.current \? "appointment" : ""/);
   assert.match(casesPage, /function cancelDrawers\(\)[\s\S]*afterCreateActionRef\.current = ""/);
+  assert.match(casesPage, /idempotencyKey: caseCreateIdempotencyKey/);
+  const optimisticCaseIndex = casesPage.indexOf("const optimisticCase = createOptimisticCase");
+  const createCaseRequestIndex = casesPage.indexOf('const response = await api.post("/cases", payload);', optimisticCaseIndex);
+  const firstCloseAfterOptimisticIndex = casesPage.indexOf("closeDrawers();", optimisticCaseIndex);
+  assert.ok(optimisticCaseIndex >= 0 && createCaseRequestIndex > optimisticCaseIndex);
+  assert.ok(firstCloseAfterOptimisticIndex > createCaseRequestIndex, "the case drawer must stay open until creation is confirmed");
+  assert.match(caseController, /agencyId_creationIdempotencyKey/);
   assert.match(profile, /initialEntry=\{initialBillingEntry\}/);
   assert.match(profile, /state: \{ frontDeskIntake: \{ action: "appointment" \} \}/);
   assert.match(billingCard, /initialPaymentType=\{entryPreset\?\.paymentType\}/);

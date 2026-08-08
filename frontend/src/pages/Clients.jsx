@@ -22,6 +22,8 @@ import { useAuth } from "../auth/AuthContext";
 import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
 
+const newClientOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+
 const defaultFormState = {
   fullName: "",
   email: "",
@@ -754,6 +756,7 @@ export default function Clients() {
   const [editingClient, setEditingClient] = useState(() => readClientDraft()?.editingClient || null);
   const [formState, setFormState] = useState(() => readClientDraft()?.formState || defaultFormState);
   const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
+  const [clientCreateIdempotencyKey, setClientCreateIdempotencyKey] = useState(() => readClientDraft()?.clientCreateIdempotencyKey || newClientOperationKey());
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [assigningClientIds, setAssigningClientIds] = useState([]);
@@ -807,8 +810,8 @@ export default function Clients() {
       clearClientDraft();
       return;
     }
-    writeClientDraft({ editingClient, formState, frontDeskIntake });
-  }, [showForm, editingClient, formState, frontDeskIntake]);
+    writeClientDraft({ editingClient, formState, frontDeskIntake, clientCreateIdempotencyKey });
+  }, [showForm, editingClient, formState, frontDeskIntake, clientCreateIdempotencyKey]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -948,6 +951,7 @@ export default function Clients() {
     setActiveActionMenuId(null);
     setEditingClient(null);
     setFormState(defaultFormState);
+    setClientCreateIdempotencyKey(newClientOperationKey());
     setFrontDeskIntake(defaultFrontDeskIntakeState);
     setFormError("");
     setShowForm(true);
@@ -996,6 +1000,7 @@ export default function Clients() {
         phone: formState.phone.trim(),
         address: formState.address.trim(),
         assignedUserId: formState.assignedUserId || "",
+        ...(!isEditing ? { idempotencyKey: clientCreateIdempotencyKey } : {}),
       };
 
       if (!payload.email) {

@@ -23,6 +23,8 @@ import CasesCommandBar from "../components/cases/CasesCommandBar";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
 
+const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+
 const STAGE_OPTIONS = [
   "Lead",
   "Consultation",
@@ -1182,6 +1184,7 @@ export default function Cases() {
   const [editingCase, setEditingCase] = useState(null);
   const [viewingCase, setViewingCase] = useState(null);
   const [formState, setFormState] = useState(defaultFormState);
+  const [caseCreateIdempotencyKey, setCaseCreateIdempotencyKey] = useState(newCaseOperationKey);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState("");
@@ -1459,6 +1462,7 @@ export default function Cases() {
     setViewingCase(null);
     setEditingCase(null);
     setFormState(defaultFormState);
+    setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
     setShowForm(true);
@@ -1469,6 +1473,7 @@ export default function Cases() {
     setViewingCase(null);
     setEditingCase(null);
     setFormState({ ...defaultFormState, clientId });
+    setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
     setShowForm(true);
@@ -1557,6 +1562,7 @@ export default function Cases() {
 
       const payload = {
         ...formState,
+        ...(!isEditing ? { idempotencyKey: caseCreateIdempotencyKey } : {}),
         assignedUserId: formState.assignedUserId || "",
         nextAction:
           (formState.nextAction || "").trim() ||
@@ -1590,41 +1596,39 @@ export default function Cases() {
 
       const optimisticCase = createOptimisticCase(formState, clients, users);
       setCases((current) => [optimisticCase, ...current]);
-      closeDrawers();
 
       try {
         const response = await api.post("/cases", payload);
         const savedCase = response.data.data || response.data;
 
-        if (savedCase?.id) {
-          setCases((current) =>
-            replaceOptimisticCase(current, optimisticCase.id, savedCase),
-          );
+        if (!savedCase?.id) {
+          throw new Error("The case response could not be confirmed. Please try again.");
+        }
 
-          if (afterCreateActionRef.current === "professional-payment") {
-            afterCreateActionRef.current = "";
-            navigate(`/app/clients/${encodeURIComponent(payload.clientId)}`, {
-              state: {
-                openBillingEntry: true,
-                billingEntry: {
-                  mode: "new",
-                  paymentType: "fees",
-                  caseId: savedCase.id,
-                  afterSave: bookAppointmentAfterPaymentRef.current ? "appointment" : "",
-                },
+        setCases((current) =>
+          replaceOptimisticCase(current, optimisticCase.id, savedCase),
+        );
+
+        if (afterCreateActionRef.current === "professional-payment") {
+          afterCreateActionRef.current = "";
+          setShowForm(false);
+          navigate(`/app/clients/${encodeURIComponent(payload.clientId)}`, {
+            state: {
+              openBillingEntry: true,
+              billingEntry: {
+                mode: "new",
+                paymentType: "fees",
+                caseId: savedCase.id,
+                afterSave: bookAppointmentAfterPaymentRef.current ? "appointment" : "",
               },
-            });
-            bookAppointmentAfterPaymentRef.current = false;
-            return;
-          }
-        } else {
-          setCases((current) =>
-            rollbackOptimisticCase(current, optimisticCase.id),
-          );
-          await loadWorkspaceData({ quiet: true });
+            },
+          });
+          bookAppointmentAfterPaymentRef.current = false;
+          return;
         }
 
         setToast({ type: "success", message: "Case created successfully" });
+        closeDrawers();
       } catch (requestError) {
         setCases((current) =>
           rollbackOptimisticCase(current, optimisticCase.id),
@@ -1635,7 +1639,7 @@ export default function Cases() {
         });
         setFormState(formState);
         setFormError(
-          requestError.response?.data?.message || "Unable to save case.",
+          requestError.response?.data?.message || requestError.message || "Unable to save case.",
         );
         setShowForm(true);
       }
