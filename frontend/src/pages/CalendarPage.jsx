@@ -762,9 +762,22 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                 <button type="button" onClick={() => onStatus("Scheduled")} className="h-10 w-full rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">Unmark attended</button>
               ) : null}
               {appointment.status === "NoShow" ? (
-                <button type="button" onClick={() => setResched(true)} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-amber-200 bg-white text-xs font-semibold text-amber-800 transition hover:bg-amber-50">
-                  <CalendarDays className="h-4 w-4" /> Reschedule missed appointment
-                </button>
+                <div className="space-y-2 rounded-2xl border border-amber-200/80 bg-amber-50/60 p-3">
+                  {role !== "frontdesk" ? (
+                    <div className="px-1 pb-1">
+                      <p className="text-xs font-semibold text-slate-800">Was the consultation completed another way?</p>
+                      <p className="mt-1 text-[11px] leading-4 text-slate-500">Correct the attendance record without changing the original appointment time.</p>
+                    </div>
+                  ) : null}
+                  {role !== "frontdesk" ? (
+                    <button type="button" onClick={() => onStatus("Completed")} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
+                      <Check className="h-4 w-4" /> Mark as attended
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => setResched(true)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2.5 text-sm font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:bg-amber-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2">
+                    <CalendarDays className="h-4 w-4" /> Reschedule missed appointment
+                  </button>
+                </div>
               ) : null}
             </div>
           ) : null}

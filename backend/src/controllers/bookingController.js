@@ -1501,7 +1501,7 @@ export async function convertAppointmentToClient(req, res) {
 // and appointmentNoShowService.js's automatic end-of-day poller, so both
 // paths get identical side effects (lead-consultation sync, event log,
 // completion follow-up, staff/client notifications, waitlist offer, and —
-// importantly — voiding any open payment hold) with nothing to drift out of
+// importantly — closing an open payment hold when cancelled) with nothing to drift out of
 // sync between a human-triggered and a system-triggered status change.
 // actorUserId is null for the automatic path; every downstream call here
 // already treats a null actor as "system-triggered" (recordAppointmentEvent
@@ -1547,7 +1547,7 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
   if (status === "Cancelled") {
     await offerWaitlistOpening(data).catch(() => {});
   }
-  if (["Cancelled", "NoShow"].includes(status)) {
+  if (status === "Cancelled") {
     await voidOpenPaymentHoldForAppointment(agencyId, existing.id);
   }
   return data;
@@ -1568,7 +1568,11 @@ export async function updateBookingAppointmentStatus(req, res) {
     if (req.auth.role !== "admin") throw createHttpError(403, "Only an admin can unmark an appointment.", "FORBIDDEN");
     if (existing.status !== "Completed") throw createHttpError(409, "Only an appointment marked attended can be unmarked.", "ALREADY_DONE");
   } else {
-    if (existing.status !== "Scheduled") {
+    // A missed appointment may have been completed outside the calendar
+    // (for example, the consultant took the call later). Let authorized
+    // staff correct NoShow -> Completed without first rescheduling it.
+    const correctingNoShowToCompleted = existing.status === "NoShow" && status === "Completed";
+    if (existing.status !== "Scheduled" && !correctingNoShowToCompleted) {
       throw createHttpError(409, "Only a scheduled appointment can be completed, cancelled, or marked no-show.", "ALREADY_DONE");
     }
     if (status === "Completed" && req.auth.role === "frontdesk") {
