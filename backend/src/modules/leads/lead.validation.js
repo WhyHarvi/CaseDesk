@@ -3,6 +3,8 @@ import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { localDateTimeToUtc } from "../../services/bookingAvailabilityService.js";
 import { LEAD_CONSULTATION_OUTCOMES, LEAD_CONSULTATION_STATUSES, LEAD_INITIAL_PAYMENT_STATUSES, LEAD_PRIORITIES, LEAD_QUALIFICATION_OUTCOMES, LEAD_RETAINER_STATUSES, LEAD_STAGES, LEAD_STATUSES, LEAD_TEMPERATURES } from "./lead.constants.js";
 import { CASE_STAGES } from "../../constants/caseStages.js";
+import { canonicalCaseType } from "../../services/workflowService.js";
+import { isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake } from "../../utils/studyIntake.js";
 
 const text = (value, field, { required = false, max = 500 } = {}) => {
   if (value === undefined || value === null || value === "") {
@@ -242,14 +244,20 @@ export function parseLeadReactivation(body = {}) {
 }
 
 export function parseLeadConversion(body = {}) {
-  return {
+  const conversion = {
     fullName: text(body.fullName, "fullName", { required: true, max: 200 }),
-    caseType: text(body.caseType, "caseType", { required: true, max: 200 }),
+    caseType: canonicalCaseType(text(body.caseType, "caseType", { required: true, max: 200 })),
     caseStage: enumValue(body.caseStage, "caseStage", CASE_STAGES, "Documents Pending"),
     caseNextAction: text(body.caseNextAction, "caseNextAction", { required: true, max: 500 }),
+    studyIntakeMonth: normalizeStudyIntakeMonth(dateValue(body.studyIntakeMonth, "studyIntakeMonth")),
     actualValue: optionalNumber(body.actualValue, "actualValue", { min: 0, max: 100000000 }),
     notes: text(body.notes, "notes", { max: 5000 }),
   };
+  if (!isStudyPermitCaseType(conversion.caseType)) conversion.studyIntakeMonth = null;
+  if (isStudyPermitCaseType(conversion.caseType) && stageRequiresStudyIntake(conversion.caseStage) && !conversion.studyIntakeMonth) {
+    throw createHttpError(400, "studyIntakeMonth is required for a Study Permit case at Documents Pending or later.", "STUDY_INTAKE_REQUIRED");
+  }
+  return conversion;
 }
 
 const FRONTDESK_ACTIVITY_TYPES = ["INCOMING_CALL", "OUTGOING_CALL", "MISSED_CALL", "WHATSAPP_RECEIVED", "WHATSAPP_SENT", "SMS_RECEIVED", "SMS_SENT", "EMAIL_RECEIVED", "EMAIL_SENT", "INTERNAL_NOTE"];

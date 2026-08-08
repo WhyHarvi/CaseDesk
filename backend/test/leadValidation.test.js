@@ -102,8 +102,15 @@ test("commercial tracking accepts supported retainer and payment states", () => 
 
 test("conversion requires a client identity, case type, and first action", () => {
   const conversion = parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect identity documents", actualValue: 3200 });
+  const studyConversion = parseLeadConversion({ fullName: "Avery Singh", caseType: "Study", caseNextAction: "Collect identity documents", studyIntakeMonth: "2027-09-01" });
   assert.equal(conversion.caseStage, "Documents Pending");
   assert.equal(conversion.actualValue, 3200);
+  assert.equal(studyConversion.caseType, "Study Permit");
+  assert.equal(studyConversion.studyIntakeMonth.toISOString(), "2027-09-01T00:00:00.000Z");
+  assert.throws(
+    () => parseLeadConversion({ fullName: "Avery Singh", caseType: "Study Permit", caseNextAction: "Collect identity documents" }),
+    /studyIntakeMonth is required/,
+  );
   assert.throws(() => parseLeadConversion({ caseType: "Work Permit", caseNextAction: "Collect documents" }), /fullName is required/);
   assert.throws(() => parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit" }), /caseNextAction is required/);
 });

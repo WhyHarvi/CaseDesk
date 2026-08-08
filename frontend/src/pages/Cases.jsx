@@ -22,6 +22,9 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
+import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
+import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
+import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 
 const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
@@ -55,6 +58,7 @@ const defaultFormState = {
   nextAction: "",
   submittedAt: "",
   decisionAt: "",
+  studyIntakeMonth: "",
 };
 
 const cardClassName =
@@ -310,6 +314,7 @@ function createOptimisticCase(formState, clients, users) {
     nextAction: formState.nextAction.trim() || getDefaultNextAction(stage),
     submittedAt: formState.submittedAt || null,
     decisionAt: formState.decisionAt || null,
+    studyIntakeMonth: studyIntakeApiValue(formState.studyIntakeMonth),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     client,
@@ -700,6 +705,7 @@ function CaseMobileCard({
             >
               {item.caseType}
             </Link>
+            {isStudyPermitCaseType(item.caseType) ? <span className="mt-2 block"><StudyIntakeBadge value={item.studyIntakeMonth} /></span> : null}
             <Link
               to={`/app/cases/${item.id}`}
               target="_blank"
@@ -944,6 +950,22 @@ function CaseFormDrawer({
                 </select>
               </label>
             </div>
+            {isStudyPermitCaseType(formState.caseType) ? (
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-slate-700">
+                  Academic intake {stageRequiresStudyIntake(formState.stage) ? <span className="text-rose-500">*</span> : null}
+                </span>
+                <StudyIntakeSelect
+                  required={stageRequiresStudyIntake(formState.stage)}
+                  value={formState.studyIntakeMonth}
+                  onChange={onChange}
+                  className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                />
+                <span className="mt-1.5 block text-xs text-slate-500">
+                  Required from Documents Pending onward. Choose the month the student is expected to begin studies.
+                </span>
+              </label>
+            ) : null}
           </div>
         </section>
 
@@ -1104,6 +1126,7 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
               <h3 className="mt-1 text-xl font-semibold text-slate-950">
                 {item.caseType}
               </h3>
+              {isStudyPermitCaseType(item.caseType) ? <span className="mt-2 block"><StudyIntakeBadge value={item.studyIntakeMonth} /></span> : null}
             </div>
             <CaseStageBadge stage={item.stage} />
           </div>
@@ -1177,6 +1200,7 @@ export default function Cases() {
   const [documents, setDocuments] = useState([]);
   const [payments, setPayments] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
+  const [studyIntakeOptions, setStudyIntakeOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -1198,6 +1222,7 @@ export default function Cases() {
       status: "all",
       staff: "all",
       priority: "all",
+      intake: "all",
     };
   });
   const [refreshing, setRefreshing] = useState(false);
@@ -1214,12 +1239,18 @@ export default function Cases() {
   const isEditing = Boolean(editingCase);
 
   useEffect(() => {
-    loadWorkspaceData({ view: registerView });
-  }, [registerView]);
+    loadWorkspaceData({ view: registerView, studyIntake: filters.intake });
+  }, [registerView, filters.intake]);
 
   useEffect(() => {
     api.get("/cases/case-types").then((response) => setCaseTypeOptions(response.data.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    api.get("/cases/study-intakes", { params: { view: registerView } })
+      .then((response) => setStudyIntakeOptions(response.data.data || []))
+      .catch(() => setStudyIntakeOptions([]));
+  }, [registerView]);
 
   useEffect(() => {
     if (searchParams.get("action") !== "create") return undefined;
@@ -1315,7 +1346,7 @@ export default function Cases() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showForm, viewingCase]);
 
-  async function loadWorkspaceData({ quiet = false, view = registerView } = {}) {
+  async function loadWorkspaceData({ quiet = false, view = registerView, studyIntake = filters.intake } = {}) {
     const requestId = ++loadRequestRef.current;
     try {
       if (quiet) {
@@ -1326,14 +1357,14 @@ export default function Cases() {
 
       const requests = quiet
         ? [
-            api.getFresh("/cases", { params: { view } }),
+            api.getFresh("/cases", { params: { view, studyIntake, limit: 100 } }),
             api.getFresh("/clients"),
             api.getFresh("/leads/staff"),
             api.getFresh("/client-documents"),
             api.getFresh("/cases/payment-summaries"),
           ]
         : [
-            api.get("/cases", { params: { view } }),
+            api.get("/cases", { params: { view, studyIntake, limit: 100 } }),
             api.get("/clients"),
             api.get("/leads/staff"),
             api.get("/client-documents"),
@@ -1413,6 +1444,7 @@ export default function Cases() {
           caseItem.assignedTo,
           caseItem.nextAction,
           caseItem.paymentStatus,
+          isStudyPermitCaseType(caseItem.caseType) ? formatStudyIntake(caseItem.studyIntakeMonth) : null,
         ]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(query));
@@ -1427,6 +1459,16 @@ export default function Cases() {
         filters.staff === "all" || caseItem.assignedTo === filters.staff;
       const matchesPriority =
         filters.priority === "all" || caseItem.priority === filters.priority;
+      const intakeKey = studyIntakeValue(caseItem.studyIntakeMonth);
+      const currentDate = new Date();
+      const currentIntakeKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}`;
+      const matchesIntake =
+        filters.intake === "all" ||
+        (isStudyPermitCaseType(caseItem.caseType) && (
+          (filters.intake === "missing" && !intakeKey) ||
+          (filters.intake === "past" && Boolean(intakeKey) && intakeKey < currentIntakeKey) ||
+          intakeKey === filters.intake
+        ));
 
       return (
         matchesSearch &&
@@ -1434,7 +1476,8 @@ export default function Cases() {
         matchesStage &&
         matchesStatus &&
         matchesStaff &&
-        matchesPriority
+        matchesPriority &&
+        matchesIntake
       );
     });
   }, [enrichedCases, filters, searchQuery]);
@@ -1495,6 +1538,7 @@ export default function Cases() {
       nextAction: item.nextAction || "",
       submittedAt: formatDateForInput(item.submittedAt),
       decisionAt: formatDateForInput(item.decisionAt),
+      studyIntakeMonth: studyIntakeValue(item.studyIntakeMonth),
     });
     setFormError("");
     setDrawerClosing(false);
@@ -1534,6 +1578,10 @@ export default function Cases() {
     setFormState((current) => {
       const nextState = { ...current, [name]: value };
 
+      if (name === "caseType" && !isStudyPermitCaseType(value)) {
+        nextState.studyIntakeMonth = "";
+      }
+
       if (name === "stage" && !current.nextAction) {
         nextState.nextAction = getDefaultNextAction(value);
       }
@@ -1550,6 +1598,7 @@ export default function Cases() {
       status: "all",
       staff: "all",
       priority: "all",
+      intake: "all",
     });
   }
 
@@ -1564,6 +1613,9 @@ export default function Cases() {
         ...formState,
         ...(!isEditing ? { idempotencyKey: caseCreateIdempotencyKey } : {}),
         assignedUserId: formState.assignedUserId || "",
+        studyIntakeMonth: isStudyPermitCaseType(formState.caseType)
+          ? studyIntakeApiValue(formState.studyIntakeMonth)
+          : null,
         nextAction:
           (formState.nextAction || "").trim() ||
           getDefaultNextAction(formState.stage),
@@ -1834,6 +1886,7 @@ export default function Cases() {
                 setSearchQuery={setSearchQuery}
                 filters={filters}
                 setFilters={setFilters}
+                studyIntakeOptions={studyIntakeOptions}
                 onNewCase={openCreateForm}
                 onSelectCase={(caseItem) => {
                   openQuickView(caseItem);
@@ -1872,7 +1925,7 @@ export default function Cases() {
                               onClick={() => {
                                 setActiveActionMenuId(null);
                                 setSearchQuery("");
-                                setFilters({ caseType: "all", stage: "all", status: "all", staff: "all", priority: "all" });
+                                setFilters({ caseType: "all", stage: "all", status: "all", staff: "all", priority: "all", intake: "all" });
                                 setRegisterView(id);
                               }}
                               className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition ${
@@ -1967,6 +2020,7 @@ export default function Cases() {
                                 >
                                   {item.caseType}
                                 </Link>
+                                {isStudyPermitCaseType(item.caseType) ? <span className="mt-2 block"><StudyIntakeBadge value={item.studyIntakeMonth} /></span> : null}
                               </td>
                               <td className="px-4 py-5">
                                 <div className="space-y-2">

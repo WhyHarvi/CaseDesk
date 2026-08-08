@@ -8,6 +8,7 @@ import {
   getCasePermissions,
   listCases,
   listCaseTypes,
+  listStudyIntakes,
   restoreCase,
   softDeleteCase,
   unarchiveCase,
@@ -71,6 +72,7 @@ const router = Router();
 
 router.get("/", asyncHandler(listCases));
 router.get("/case-types", asyncHandler(listCaseTypes));
+router.get("/study-intakes", asyncHandler(listStudyIntakes));
 router.get(
   "/payment-summaries",
   requirePortalCapability("financialData"),

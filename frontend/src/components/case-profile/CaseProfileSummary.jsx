@@ -14,8 +14,10 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import PortalAccessCard from "../clients/PortalAccessCard";
+import StudyIntakeBadge from "../cases/StudyIntakeBadge";
 import { ExpandingPillMenu, QuickActionLink, SimpleActionPill } from "./CaseProfileActions";
 import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./caseProfileUtils";
+import { isStudyPermitCaseType } from "../../utils/studyIntake";
 
 export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, onContactClient, onEditClient }) {
   return (
@@ -35,6 +37,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                   <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${getStageStyles(caseItem.stage || caseItem.status)}`}>
                     {caseItem.stage || caseItem.status || "Open"}
                   </span>
+                  {isStudyPermitCaseType(caseItem.caseType) ? <StudyIntakeBadge value={caseItem.studyIntakeMonth} /> : null}
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
                   {caseItem.client?.phone || "No mobile"} <span className="mx-1.5 text-slate-300">•</span>

@@ -38,6 +38,8 @@ import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
+import caseBillingRetainerRoutes from "./routes/caseBillingRetainerRoutes.js";
+import agencyBillingSettingsRoutes from "./routes/agencyBillingSettingsRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
 import {
   startBookingReminderWorker,
@@ -260,6 +262,27 @@ app.use(
     capabilities: ["financialData"],
   }),
   feeCategoryRoutes,
+);
+app.use(
+  "/api/case-billing-retainer",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    caseTabs: ["billing"],
+    capabilities: ["financialData"],
+  }),
+  caseBillingRetainerRoutes,
+);
+app.use(
+  "/api/billing-settings",
+  requireAuth,
+  staffUser,
+  requirePortalArea({
+    pages: ["payments"],
+    caseTabs: ["billing"],
+    capabilities: ["financialData"],
+  }),
+  agencyBillingSettingsRoutes,
 );
 app.use(
   "/api/case-easy-import",

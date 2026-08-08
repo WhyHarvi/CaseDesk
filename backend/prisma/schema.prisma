@@ -583,6 +583,7 @@ model Agency {
   microsoftMailboxConnection     AgencyMicrosoftMailboxConnection?
   userMailboxConnections         UserMailboxConnection[]
   quickBooksSettings             AgencyQuickBooksSettings?
+  billingSettings                AgencyBillingSettings?
   bookingPaymentHolds            BookingPaymentHold[]
   quickBooksWebhookEvents        QuickBooksWebhookEvent[]
   oomaSettings                   AgencyOomaSettings?
@@ -807,15 +808,17 @@ model CaseManualLedgerEntry {
 }
 
 model PaymentScheduleTemplate {
-  id           String                               @id @default(uuid())
-  agencyId     String                               @map("agency_id")
-  caseType     String                               @map("case_type")
-  name         String
-  isActive     Boolean                              @default(true) @map("is_active")
-  createdAt    DateTime                             @default(now()) @map("created_at")
-  updatedAt    DateTime                             @updatedAt @map("updated_at")
-  agency       Agency                               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  installments PaymentScheduleTemplateInstallment[]
+  id              String                               @id @default(uuid())
+  agencyId        String                               @map("agency_id")
+  caseType        String                               @map("case_type")
+  name            String
+  caseTags        String[]                             @default([]) @map("case_tags")
+  isSystemDefault Boolean                              @default(false) @map("is_system_default")
+  isActive        Boolean                              @default(true) @map("is_active")
+  createdAt       DateTime                             @default(now()) @map("created_at")
+  updatedAt       DateTime                             @updatedAt @map("updated_at")
+  agency          Agency                               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  installments    PaymentScheduleTemplateInstallment[]
 
   @@index([agencyId, caseType])
   @@map("payment_schedule_templates")
@@ -937,6 +940,23 @@ model AgencyQuickBooksSettings {
   agency                Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("agency_quickbooks_settings")
+}
+
+model AgencyBillingSettings {
+  id                          String    @id @default(uuid())
+  agencyId                    String    @unique @map("agency_id")
+  taxRatePercent               Decimal   @default(13.0) @map("tax_rate_percent") @db.Decimal(5, 2)
+  taxRegisteredName           String?   @map("tax_registered_name")
+  taxNumber                   String?   @map("tax_number")
+  retainerSignatureImage      String?   @map("retainer_signature_image")
+  retainerSignatureUpdatedAt  DateTime? @map("retainer_signature_updated_at")
+  retainerSignatureUpdatedById String?  @map("retainer_signature_updated_by_id")
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @updatedAt @map("updated_at")
+  agency                      Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  retainerSignatureUpdatedBy  User?     @relation("RetainerSignatureUpdatedByUser", fields: [retainerSignatureUpdatedById], references: [id], onDelete: SetNull)
+
+  @@map("agency_billing_settings")
 }
 
 model AgencyFeeCategory {
@@ -1177,6 +1197,7 @@ model User {
   createdPaymentSchedules              CasePaymentSchedule[]           @relation("PaymentScheduleCreator")
   createdPaymentInstallments           CasePaymentInstallment[]        @relation("PaymentInstallmentCreator")
   voidedPaymentInstallments            CasePaymentInstallment[]        @relation("PaymentInstallmentVoider")
+  retainerSignatureUpdates             AgencyBillingSettings[]         @relation("RetainerSignatureUpdatedByUser")
   updatedClientInformationProfiles     ClientInformationProfile[]      @relation("ClientInformationProfileUpdater")
   updatedCaseInformationProfiles       CaseInformationProfile[]        @relation("CaseInformationProfileUpdater")
   verifiedCaseInformationSectionStates CaseInformationSectionState[]   @relation("CaseInformationSectionStateVerifier")
@@ -1392,6 +1413,7 @@ model Case {
   nextAction                   String?                        @map("next_action")
   submittedAt                  DateTime?                      @map("submitted_at")
   decisionAt                   DateTime?                      @map("decision_at")
+  studyIntakeMonth             DateTime?                      @map("study_intake_month") @db.Date
   creationIdempotencyKey       String?                        @map("creation_idempotency_key")
   archivedAt                   DateTime?                      @map("archived_at")
   deletedAt                    DateTime?                      @map("deleted_at")
@@ -1432,6 +1454,7 @@ model Case {
 
   @@index([agencyId])
   @@unique([agencyId, creationIdempotencyKey])
+  @@index([agencyId, studyIntakeMonth])
   @@index([clientId])
   @@index([assignedUserId])
   @@index([agencyId, archivedAt])

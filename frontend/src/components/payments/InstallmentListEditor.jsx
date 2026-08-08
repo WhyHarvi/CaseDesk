@@ -10,9 +10,10 @@ import Select from "../ui/Select";
 // generic "Fees" / "Disbursement" labels made the government-fee option
 // easy to miss or mistake for a professional fee.
 const PAYMENT_TYPES = [
-  { value: "fees", label: "Professional fees", icon: Banknote },
-  { value: "disbursement", label: "Govt. fee disbursement", icon: Landmark },
+  { value: "fees", label: "Professional fees", icon: Banknote, kind: "Professional" },
+  { value: "disbursement", label: "Govt. fee disbursement", icon: Landmark, kind: "Government" },
 ];
+const TAXABLE_KINDS = new Set(["Professional", "Consultation"]);
 
 let nextTempId = 1;
 export function blankInstallment() {
@@ -40,7 +41,7 @@ export default function InstallmentListEditor({ installments, onChange, lockedId
 
   useEffect(() => {
     getFeeCategories({ includeInactive: true })
-      .then((rows) => setPaymentTypes(rows.map((category) => ({ value: category.code, label: category.name, active: category.isActive }))))
+      .then((rows) => setPaymentTypes(rows.map((category) => ({ value: category.code, label: category.name, active: category.isActive, kind: category.kind }))))
       .catch(() => {});
   }, []);
   function updateRow(index, patch) {
@@ -78,6 +79,15 @@ export default function InstallmentListEditor({ installments, onChange, lockedId
                   <Select disabled={locked} value={row.paymentType} onChange={(event) => updateRow(index, { paymentType: event.target.value })} className="mt-1 w-full">
                     {paymentTypes.filter((type) => type.active !== false || type.value === row.paymentType).map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                   </Select>
+                  {(() => {
+                    const kind = paymentTypes.find((type) => type.value === row.paymentType)?.kind;
+                    if (!kind) return null;
+                    return (
+                      <span className={`mt-1 inline-block text-[10px] font-semibold ${TAXABLE_KINDS.has(kind) ? "text-amber-600" : "text-slate-400"}`}>
+                        {TAXABLE_KINDS.has(kind) ? "Taxable (HST applies)" : "Not taxed"}
+                      </span>
+                    );
+                  })()}
                 </label>
                 <label className="block text-[11px] font-medium text-slate-500">Amount (CAD)
                   <input

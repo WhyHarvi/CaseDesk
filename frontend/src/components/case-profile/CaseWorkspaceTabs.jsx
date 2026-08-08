@@ -52,6 +52,7 @@ import AgreementsLettersWorkspace from "./AgreementsLettersWorkspace";
 import AppointmentsWorkspace from "./AppointmentsWorkspace";
 import CaseBillingWorkspace from "./CaseBillingWorkspace";
 import CasePaymentScheduleWorkspace from "./CasePaymentScheduleWorkspace";
+import RetainerStatusCard from "./RetainerStatusCard";
 const CommunicationWorkspace = lazyWithRetry(
   () => import("./CommunicationWorkspace"),
   "case-communication-workspace",
@@ -3305,6 +3306,53 @@ function ProfileDetailsGrid({
   );
 }
 
+// Fix 7.1 — the Billing tab's own component so its retainer-gating state
+// (useState) doesn't have to live inside CaseWorkspacePanel, which already
+// returns early for every other tab before this one would ever be reached
+// and can't call hooks conditionally.
+function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreementsTab }) {
+  const [retainerStatus, setRetainerStatus] = useState(null);
+  const [showPaymentsAnyway, setShowPaymentsAnyway] = useState(false);
+  const retainerFinalized = retainerStatus?.source === "existing" && retainerStatus.document?.correspondenceStatus === "Finalized";
+  const paymentsUnlocked = retainerFinalized || showPaymentsAnyway;
+
+  return (
+    <div className="space-y-6">
+      <RetainerStatusCard caseItem={caseItem} onOpenAgreementsTab={onOpenAgreementsTab} onStatusChange={setRetainerStatus} />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <CompactMetric label="Total Fee (incl. HST)" value={formatCurrency(paymentSummary.totalFee)} />
+        <CompactMetric label="Paid" value={formatCurrency(paymentSummary.paidAmount)} />
+        <CompactMetric label="Remaining" value={formatCurrency(paymentSummary.balance)} />
+        <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</p>
+          <span className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${getPaymentStatusStyles(paymentSummary.status)}`}>
+            {paymentSummary.status}
+          </span>
+        </div>
+      </div>
+
+      {paymentsUnlocked ? (
+        <>
+          <CasePaymentScheduleWorkspace caseItem={caseItem} />
+          <div className="border-t border-slate-100 pt-6">
+            <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} />
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowPaymentsAnyway(true)}
+          className="flex w-full items-center justify-between gap-2 rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50/60 px-5 py-4 text-left text-sm text-slate-500 transition hover:border-slate-400 hover:bg-slate-100"
+        >
+          <span>Payment schedule and invoices unlock once the retainer is countersigned — click to work with them now anyway.</span>
+          <ChevronDown className="h-4 w-4 shrink-0" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function CaseWorkspacePanel({
   activeTab,
   caseItem,
@@ -3380,6 +3428,7 @@ function CaseWorkspacePanel({
   onSaveSpouseDetails,
   savingSpouseDetails,
   spouseDetailsError,
+  onOpenAgreementsTab,
 }) {
   const activeWorkflowSteps = workflowSteps.filter(
     (step) => step.isActive !== false,
@@ -3558,36 +3607,12 @@ function CaseWorkspacePanel({
 
   if (activeTab === "BILLING") {
     return (
-      <div className="space-y-6">
-        <div className="grid gap-3 md:grid-cols-4">
-          <CompactMetric
-            label="Total Fee"
-            value={formatCurrency(paymentSummary.totalFee)}
-          />
-          <CompactMetric
-            label="Paid"
-            value={formatCurrency(paymentSummary.paidAmount)}
-          />
-          <CompactMetric
-            label="Remaining"
-            value={formatCurrency(paymentSummary.balance)}
-          />
-          <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-              Status
-            </p>
-            <span
-              className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${getPaymentStatusStyles(paymentSummary.status)}`}
-            >
-              {paymentSummary.status}
-            </span>
-          </div>
-        </div>
-        <CasePaymentScheduleWorkspace caseItem={caseItem} />
-        <div className="border-t border-slate-100 pt-6">
-          <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} />
-        </div>
-      </div>
+      <BillingTabPanel
+        caseItem={caseItem}
+        paymentSummary={paymentSummary}
+        highlightId={highlightId}
+        onOpenAgreementsTab={onOpenAgreementsTab}
+      />
     );
   }
 
@@ -3908,6 +3933,7 @@ export default function CaseWorkspaceTabs({
               onSaveSpouseDetails={onSaveSpouseDetails}
               savingSpouseDetails={savingSpouseDetails}
               spouseDetailsError={spouseDetailsError}
+              onOpenAgreementsTab={() => setActiveTab("AGREEMENTS & LETTERS")}
             />
           </motion.div>
         </AnimatePresence>

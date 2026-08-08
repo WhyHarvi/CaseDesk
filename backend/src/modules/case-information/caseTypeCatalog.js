@@ -1,10 +1,10 @@
-import { DEFAULT_WORKFLOW_TEMPLATES, getTemplateCaseTypeKeys, normalizeCaseType } from "../../services/workflowService.js";
+import { canonicalCaseType, DEFAULT_WORKFLOW_TEMPLATES, getTemplateCaseTypeKeys, normalizeCaseType } from "../../services/workflowService.js";
 
 // Case type is free text on Case.caseType (no enum) — agencies can type
 // anything. This resolves that free text down to one of the known
 // workflow-template buckets shared with workflowService.js, rather than
 // maintaining a second, competing alias list.
-export { normalizeCaseType };
+export { canonicalCaseType, normalizeCaseType };
 
 const CASE_TYPE_KEYS = DEFAULT_WORKFLOW_TEMPLATES.map((template) => normalizeCaseType(template.caseType));
 

@@ -5,6 +5,7 @@ import api from "../../services/api";
 import PaymentCommunicationSettingsCard from "./PaymentCommunicationSettingsCard";
 import PaymentScheduleTemplatesCard from "./PaymentScheduleTemplatesCard";
 import QuickBooksMappingCard from "./QuickBooksMappingCard";
+import BillingSignatureSettingsCard from "./BillingSignatureSettingsCard";
 
 const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
 
@@ -149,6 +150,11 @@ export default function PaymentsSettingsPanel() {
           <p className="flex items-start gap-2.5"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cash</span> gets recorded from the case billing tab — CaseDesk posts a Receive Payment to QuickBooks so the books stay current.</span></p>
           <p className="flex items-start gap-2.5"><CreditCard className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cards</span> — if your QuickBooks company has QuickBooks Payments turned on, every invoice automatically gets a "Pay now" link shown to the client. Nothing to configure here.</span></p>
         </div>
+      </section>
+
+      <section>
+        <h3 className="mb-3 px-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Retainer &amp; tax</h3>
+        <BillingSignatureSettingsCard />
       </section>
 
       <section>

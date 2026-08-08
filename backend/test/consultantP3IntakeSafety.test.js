@@ -148,7 +148,7 @@ test("client case and follow-up removal paths preserve history", async () => {
   assert.match(casesPage, /\{ id: "closed", label: "Closed"/);
   assert.match(casesPage, /\{ id: "archived", label: "Archived"/);
   assert.match(casesPage, /\{ id: "trash", label: "Trash"/);
-  assert.match(casesPage, /api\.get\("\/cases", \{ params: \{ view \} \}\)/);
+  assert.match(casesPage, /api\.get\("\/cases", \{ params: \{ view, studyIntake, limit: 100 \} \}\)/);
   assert.doesNotMatch(casesPage, /CaseTrashOverlay/);
   assert.match(caseProfile, /cases\/\$\{caseItem\.id\}\/archive/);
   assert.match(caseProfile, /Restore from archive/);

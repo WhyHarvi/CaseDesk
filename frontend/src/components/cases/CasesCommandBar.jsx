@@ -4,6 +4,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
+import { formatStudyIntake, studyIntakeValue } from "../../utils/studyIntake";
 
 const CASE_TYPES = [
   "Canadian Citizenship",
@@ -59,6 +60,7 @@ export default function CasesCommandBar({
   setSearchQuery,
   filters,
   setFilters,
+  studyIntakeOptions = [],
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -71,6 +73,11 @@ export default function CasesCommandBar({
     return uniqueStaff.length ? uniqueStaff : [];
   }, [cases]);
 
+  const visibleStudyIntakes = useMemo(() => [...new Set([
+    ...studyIntakeOptions,
+    ...cases.map((item) => studyIntakeValue(item.studyIntakeMonth)).filter(Boolean),
+  ])].sort(), [cases, studyIntakeOptions]);
+
   const activeFilters = Object.entries(filters || {}).filter(
     ([, value]) => value && value !== "all"
   );
@@ -79,6 +86,8 @@ export default function CasesCommandBar({
     setFilters((prev) => ({
       ...prev,
       [key]: value,
+      ...(key === "intake" && value !== "all" ? { caseType: "Study Permit" } : {}),
+      ...(key === "caseType" && value !== "Study Permit" ? { intake: "all" } : {}),
     }));
   };
 
@@ -89,6 +98,7 @@ export default function CasesCommandBar({
       status: "all",
       staff: "all",
       priority: "all",
+      intake: "all",
     });
   };
 
@@ -146,7 +156,7 @@ export default function CasesCommandBar({
 
       {filtersOpen ? (
         <div className="mt-3 rounded-[28px] border border-white/70 bg-white/75 p-4 shadow-md shadow-slate-200/40 backdrop-blur-xl">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-7">
             <SelectControl
               label="Case Type"
               value={filters.caseType}
@@ -156,6 +166,21 @@ export default function CasesCommandBar({
               {CASE_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {type}
+                </option>
+              ))}
+            </SelectControl>
+
+            <SelectControl
+              label="Academic Intake"
+              value={filters.intake}
+              onChange={(value) => updateFilter("intake", value)}
+            >
+              <option value="all">All Intakes</option>
+              <option value="missing">Intake Not Set</option>
+              <option value="past">Past Intakes</option>
+              {visibleStudyIntakes.map((value) => (
+                <option key={value} value={value}>
+                  {formatStudyIntake(value)}
                 </option>
               ))}
             </SelectControl>

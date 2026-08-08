@@ -1019,7 +1019,7 @@ export async function convertLead(req, db = prisma) {
       client = await tx.client.update({ where: { id: lead.earlyClientId }, data: { fullName: values.fullName } });
       caseItem = await tx.case.update({
         where: { id: lead.earlyCaseId },
-        data: { caseType: values.caseType, stage: values.caseStage, nextAction: values.caseNextAction },
+        data: { caseType: values.caseType, stage: values.caseStage, nextAction: values.caseNextAction, studyIntakeMonth: values.studyIntakeMonth },
       });
     } else {
       await lockAgencyContactIntake(tx, agencyId);
@@ -1034,7 +1034,7 @@ export async function convertLead(req, db = prisma) {
         data: { agencyId, clientNumber, fullName: values.fullName, phone: lead.phone, phoneNormalized: lead.phoneNormalized, email: lead.email, emailNormalized: lead.emailNormalized, preferredLanguage: lead.preferredLanguage, status: "Active", assignedUserId: lead.ownerUserId },
       });
       caseItem = await tx.case.create({
-        data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction },
+        data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction, studyIntakeMonth: values.studyIntakeMonth },
       });
     }
 

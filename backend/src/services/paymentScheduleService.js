@@ -3,10 +3,12 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { CASE_STAGES } from "../constants/caseStages.js";
 import { createInvoiceRecord } from "./caseInvoiceService.js";
-import { requireFeeCategory } from "./feeCategoryService.js";
+import { ensureFeeCategories, requireFeeCategory } from "./feeCategoryService.js";
 import { notifyInstallmentInvoiced, notifyStaffInstallmentVoided } from "./paymentNotificationService.js";
 import { voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
+import { templateMatchesCase } from "./correspondenceTemplateService.js";
+import { ensureDefaultBillingTemplates } from "./billingTemplateDefaults.js";
 
 const TRIGGER_TYPES = new Set(["Date", "Stage"]);
 
@@ -48,15 +50,30 @@ async function validateInstallmentsInput(agencyId, installments) {
 
 // ---------- Templates ----------
 
+function tags(value) {
+  return [...new Set((Array.isArray(value) ? value : []).map((item) => String(item ?? "").trim().slice(0, 80).toLowerCase()).filter(Boolean))].slice(0, 20);
+}
+
+// Case.caseType is free text (no enum — agencies can type anything), so an
+// exact-string match against a template's caseType would miss most real
+// cases. This mirrors templateMatchesCase's forgiving substring/alias
+// resolution already used for CorrespondenceTemplate (retainer content),
+// so a payment template tagged "sowp extension" still matches a case typed
+// "SOWP Extension" or "Spousal Open WP Extension". System-default templates
+// sort first so the agency's own fee schedule is always the one a case
+// opens to.
 export async function listScheduleTemplates(agencyId, caseType) {
-  return prisma.paymentScheduleTemplate.findMany({
-    where: { agencyId, isActive: true, ...(caseType ? { caseType } : {}) },
+  await ensureDefaultBillingTemplates(agencyId);
+  const all = await prisma.paymentScheduleTemplate.findMany({
+    where: { agencyId, isActive: true },
     include: { installments: { orderBy: { sortOrder: "asc" } } },
     orderBy: { name: "asc" },
   });
+  const filtered = caseType ? all.filter((template) => templateMatchesCase(template, caseType)) : all;
+  return filtered.sort((a, b) => (b.isSystemDefault ? 1 : 0) - (a.isSystemDefault ? 1 : 0) || a.name.localeCompare(b.name));
 }
 
-export async function createScheduleTemplate(agencyId, { caseType, name, installments }) {
+export async function createScheduleTemplate(agencyId, { caseType, name, caseTags, isSystemDefault, installments }) {
   const trimmedName = String(name || "").trim().slice(0, 150);
   const trimmedCaseType = String(caseType || "").trim().slice(0, 120);
   if (!trimmedName) throw createHttpError(400, "Name the template.", "VALIDATION_ERROR");
@@ -69,13 +86,15 @@ export async function createScheduleTemplate(agencyId, { caseType, name, install
       agencyId,
       caseType: trimmedCaseType,
       name: trimmedName,
+      caseTags: tags(caseTags),
+      isSystemDefault: Boolean(isSystemDefault),
       installments: { create: validated.map((item, index) => ({ ...item, sortOrder: index })) },
     },
     include: { installments: { orderBy: { sortOrder: "asc" } } },
   });
 }
 
-export async function updateScheduleTemplate(agencyId, templateId, { name, isActive, installments }) {
+export async function updateScheduleTemplate(agencyId, templateId, { name, caseTags, isSystemDefault, isActive, installments }) {
   const existing = await prisma.paymentScheduleTemplate.findFirst({ where: { id: templateId, agencyId } });
   if (!existing) throw createHttpError(404, "Template not found.", "NOT_FOUND");
   const data = {};
@@ -84,6 +103,8 @@ export async function updateScheduleTemplate(agencyId, templateId, { name, isAct
     if (!trimmedName) throw createHttpError(400, "Name the template.", "VALIDATION_ERROR");
     data.name = trimmedName;
   }
+  if (caseTags !== undefined) data.caseTags = tags(caseTags);
+  if (typeof isSystemDefault === "boolean") data.isSystemDefault = isSystemDefault;
   if (typeof isActive === "boolean") data.isActive = isActive;
 
   if (installments !== undefined) {
@@ -115,6 +136,25 @@ function resolveTriggerDate(signingDate, days) {
   return new Date(new Date(signingDate).getTime() + days * 24 * 60 * 60_000);
 }
 
+// Live tax preview for the schedule editor — computed straight off the
+// schedule's own installments (not the invoiced/paid totals
+// getCasePaymentSummary tracks), so staff see "+ HST" update as they build
+// or edit a schedule, before anything is invoiced.
+async function attachTaxBreakdown(schedule, agencyId) {
+  if (!schedule) return schedule;
+  const [kindByCode, taxRatePercent] = await Promise.all([getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
+  let taxableSubtotal = 0;
+  let nonTaxableSubtotal = 0;
+  for (const installment of schedule.installments) {
+    if (installment.status === "Void") continue;
+    const kind = kindByCode.get(installment.paymentType) || "Other";
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(installment.amount);
+    else nonTaxableSubtotal += Number(installment.amount);
+  }
+  const tax = Math.round(taxableSubtotal * taxRatePercent) / 100;
+  return { ...schedule, taxSummary: { taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent, totalFee: taxableSubtotal + tax + nonTaxableSubtotal } };
+}
+
 export async function getCaseSchedule(agencyId, caseId) {
   const schedule = await prisma.casePaymentSchedule.findFirst({
     where: { agencyId, caseId },
@@ -125,7 +165,7 @@ export async function getCaseSchedule(agencyId, caseId) {
       },
     },
   });
-  return schedule;
+  return attachTaxBreakdown(schedule, agencyId);
 }
 
 export async function createCaseSchedule(agencyId, { caseId, signingDate, installments, actorUserId }) {
@@ -302,13 +342,27 @@ export async function voidRemainingInstallments(agencyId, caseId, { reason, acto
 // amounts (what was agreed to be charged, invoiced or not yet); paid =
 // sum of (invoice.amount - invoice.balance) across the installments that
 // have actually been invoiced; balance = the rest still owed.
-function summarizeCaseBilling(installments, invoices, legacyPayments = []) {
+//
+// Tax (Ontario HST, agency-configurable via AgencyBillingSettings) applies
+// only to Professional and Consultation fee-category kinds — never to
+// Government disbursements or Other pass-through costs (biometrics,
+// third-party fees). kindByCode maps a paymentType code ("fees",
+// "disbursement", ...) to its AgencyFeeCategory.kind. Legacy Payment rows
+// have no fee-category association (dead code path, see above) and are
+// folded into the non-taxable bucket so totalFee still equals
+// taxableSubtotal + tax + nonTaxableSubtotal.
+const TAXABLE_FEE_KINDS = new Set(["Professional", "Consultation"]);
+
+function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindByCode = new Map(), taxRatePercent = 13) {
   const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
   const linkedInvoiceIds = new Set(installments.map((item) => item.caseInvoiceId).filter(Boolean));
-  let totalFee = 0;
   let paidAmount = 0;
+  let taxableSubtotal = 0;
+  let nonTaxableSubtotal = 0;
   for (const installment of installments) {
-    totalFee += Number(installment.amount);
+    const kind = kindByCode.get(installment.paymentType) || "Other";
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(installment.amount);
+    else nonTaxableSubtotal += Number(installment.amount);
     if (installment.caseInvoiceId) {
       const invoice = invoiceById.get(installment.caseInvoiceId);
       if (invoice) paidAmount += Number(invoice.amount) - Number(invoice.balance);
@@ -316,31 +370,55 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = []) {
   }
   for (const invoice of invoices) {
     if (linkedInvoiceIds.has(invoice.id) || ["Void", "Voided"].includes(invoice.status)) continue;
-    totalFee += Number(invoice.amount);
+    const kind = kindByCode.get(invoice.paymentType) || "Other";
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(invoice.amount);
+    else nonTaxableSubtotal += Number(invoice.amount);
     paidAmount += Math.max(0, Number(invoice.amount) - Number(invoice.balance));
   }
   for (const payment of legacyPayments) {
-    totalFee += Number(payment.totalFee);
+    nonTaxableSubtotal += Number(payment.totalFee);
     paidAmount += Number(payment.paidAmount);
   }
+  const tax = Math.round(taxableSubtotal * taxRatePercent) / 100;
+  const totalFee = taxableSubtotal + tax + nonTaxableSubtotal;
   const balance = Math.max(totalFee - paidAmount, 0);
   const status = totalFee === 0 ? "Unpaid" : balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
-  return { totalFee, paidAmount, balance, status };
+  return { totalFee, paidAmount, balance, status, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent };
 }
 
-const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" };
+const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid", taxableSubtotal: 0, nonTaxableSubtotal: 0, tax: 0, taxRatePercent: 13 };
+
+export async function getAgencyTaxRatePercent(agencyId) {
+  const settings = await prisma.agencyBillingSettings.findUnique({ where: { agencyId }, select: { taxRatePercent: true } });
+  return settings ? Number(settings.taxRatePercent) : 13;
+}
+
+async function getFeeCategoryKindMap(agencyId) {
+  // Ensure the 4 default categories (fees/disbursement/consultation/other)
+  // exist before reading kinds — a brand-new agency that hasn't yet opened
+  // any billing screen has no AgencyFeeCategory rows at all, and an empty
+  // map here would silently make every "fees" installment fall back to
+  // "Other" (non-taxable), which is wrong: Professional fees must always be
+  // taxable regardless of whether this is the first billing action an
+  // agency has ever taken.
+  await ensureFeeCategories(agencyId);
+  const categories = await prisma.agencyFeeCategory.findMany({ where: { agencyId }, select: { code: true, kind: true } });
+  return new Map(categories.map((category) => [category.code, category.kind]));
+}
 
 export async function getCasePaymentSummary(agencyId, caseId) {
-  const [installments, invoices, legacyPayments] = await Promise.all([
+  const [installments, invoices, legacyPayments, kindByCode, taxRatePercent] = await Promise.all([
     prisma.casePaymentInstallment.findMany({
       where: { agencyId, caseId, status: { not: "Void" } },
-      select: { amount: true, caseInvoiceId: true },
+      select: { amount: true, caseInvoiceId: true, paymentType: true },
     }),
-    prisma.caseInvoice.findMany({ where: { agencyId, caseId }, select: { id: true, caseId: true, amount: true, balance: true, status: true } }),
+    prisma.caseInvoice.findMany({ where: { agencyId, caseId }, select: { id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true } }),
     prisma.payment.findMany({ where: { agencyId, caseId }, select: { totalFee: true, paidAmount: true } }),
+    getFeeCategoryKindMap(agencyId),
+    getAgencyTaxRatePercent(agencyId),
   ]);
-  if (!installments.length && !invoices.length && !legacyPayments.length) return { ...EMPTY_SUMMARY };
-  return summarizeCaseBilling(installments, invoices, legacyPayments);
+  if (!installments.length && !invoices.length && !legacyPayments.length) return { ...EMPTY_SUMMARY, taxRatePercent };
+  return summarizeCaseBilling(installments, invoices, legacyPayments, kindByCode, taxRatePercent);
 }
 
 /**
@@ -349,14 +427,14 @@ export async function getCasePaymentSummary(agencyId, caseId) {
  * for list views like the case dashboard.
  */
 export async function getCasePaymentSummariesByCase(agencyId) {
-  const [installments, invoices, legacyPayments] = await Promise.all([prisma.casePaymentInstallment.findMany({
+  const [installments, invoices, legacyPayments, kindByCode, taxRatePercent] = await Promise.all([prisma.casePaymentInstallment.findMany({
     where: { agencyId, status: { not: "Void" } },
-    select: { caseId: true, amount: true, caseInvoiceId: true },
+    select: { caseId: true, amount: true, caseInvoiceId: true, paymentType: true },
   }), prisma.caseInvoice.findMany({
-    where: { agencyId }, select: { id: true, caseId: true, amount: true, balance: true, status: true },
+    where: { agencyId }, select: { id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true },
   }), prisma.payment.findMany({
     where: { agencyId }, select: { caseId: true, totalFee: true, paidAmount: true },
-  })]);
+  }), getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
 
   const byCaseId = new Map();
   for (const installment of installments) {
@@ -372,7 +450,7 @@ export async function getCasePaymentSummariesByCase(agencyId) {
   const summaries = new Map();
   const caseIds = new Set([...byCaseId.keys(), ...invoicesByCase.keys(), ...legacyByCase.keys()]);
   for (const caseId of caseIds) {
-    summaries.set(caseId, summarizeCaseBilling(byCaseId.get(caseId) || [], invoicesByCase.get(caseId) || [], legacyByCase.get(caseId) || []));
+    summaries.set(caseId, summarizeCaseBilling(byCaseId.get(caseId) || [], invoicesByCase.get(caseId) || [], legacyByCase.get(caseId) || [], kindByCode, taxRatePercent));
   }
   return summaries;
 }

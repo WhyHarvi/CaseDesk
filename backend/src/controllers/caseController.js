@@ -1,5 +1,5 @@
 import prisma from "../services/prisma/client.js";
-import { assignDefaultWorkflowToCase } from "../services/workflowService.js";
+import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels, normalizeCaseType } from "../services/workflowService.js";
 import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNames.js";
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
@@ -12,6 +12,7 @@ import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingServ
 import { syncLeadConsultationFromAppointment } from "../services/leadConsultationAppointmentService.js";
 import { offerWaitlistOpening } from "../services/bookingWaitlistService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../utils/studyIntake.js";
 
 const include = {
   client: {
@@ -45,6 +46,7 @@ const fields = {
   nextAction: fieldParsers.stringField,
   submittedAt: fieldParsers.dateField,
   decisionAt: fieldParsers.dateField,
+  studyIntakeMonth: fieldParsers.dateField,
 };
 
 import { CASE_STAGES } from "../constants/caseStages.js";
@@ -80,8 +82,11 @@ function validateCasePayload(payload, existing = null) {
     resolved.priority ||= "Normal";
   }
   if (Object.hasOwn(resolved, "caseType")) {
-    resolved.caseType = String(resolved.caseType || "").trim();
+    resolved.caseType = canonicalCaseType(resolved.caseType);
     if (!resolved.caseType || resolved.caseType.length > 180) throw createHttpError(400, "Case type is required and must be 180 characters or fewer.", "VALIDATION_ERROR");
+  }
+  if (Object.hasOwn(resolved, "studyIntakeMonth")) {
+    resolved.studyIntakeMonth = normalizeStudyIntakeMonth(resolved.studyIntakeMonth);
   }
   if (!existing && !resolved.caseType) throw createHttpError(400, "Case type is required.", "VALIDATION_ERROR");
   if (Object.hasOwn(resolved, "stage") && !CASE_STAGES.includes(resolved.stage)) throw createHttpError(400, "Case stage is invalid.", "VALIDATION_ERROR");
@@ -95,7 +100,37 @@ function validateCasePayload(payload, existing = null) {
   if (!existing && !TERMINAL_CASE_STATUSES.has(finalStatus) && !String(resolved.nextAction || "").trim()) {
     throw createHttpError(400, "An active case requires a clear next action.", "VALIDATION_ERROR");
   }
+  const finalCaseType = resolved.caseType ?? existing?.caseType;
+  const finalStage = resolved.stage ?? existing?.stage;
+  if (!isStudyPermitCaseType(finalCaseType)) {
+    if (Object.hasOwn(resolved, "caseType") || Object.hasOwn(resolved, "studyIntakeMonth")) resolved.studyIntakeMonth = null;
+  } else {
+    const finalIntake = Object.hasOwn(resolved, "studyIntakeMonth") ? resolved.studyIntakeMonth : existing?.studyIntakeMonth;
+    const intakeRuleTouched = !existing || Object.hasOwn(resolved, "caseType") || Object.hasOwn(resolved, "stage") || Object.hasOwn(resolved, "studyIntakeMonth");
+    if (intakeRuleTouched && stageRequiresStudyIntake(finalStage) && !finalIntake) {
+      throw createHttpError(400, "Choose the academic intake before moving a Study Permit case to Documents Pending or later.", "STUDY_INTAKE_REQUIRED");
+    }
+  }
   return resolved;
+}
+
+function studyIntakeFilterWhere(value) {
+  const filter = String(value || "").trim();
+  if (!filter || filter === "all") return [];
+  const studyPermitCase = {
+    OR: [
+      { caseType: { equals: "Study Permit", mode: "insensitive" } },
+      { caseType: { equals: "Study", mode: "insensitive" } },
+    ],
+  };
+  if (filter === "missing") return [{ AND: [studyPermitCase, { studyIntakeMonth: null }] }];
+  const now = new Date();
+  const currentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  if (filter === "past") return [{ AND: [studyPermitCase, { studyIntakeMonth: { lt: currentMonth } }] }];
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(filter)) return [];
+  const start = new Date(`${filter}-01T00:00:00.000Z`);
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+  return [{ AND: [studyPermitCase, { studyIntakeMonth: { gte: start, lt: end } }] }];
 }
 
 const controller = createCrudController({
@@ -112,6 +147,7 @@ const controller = createCrudController({
     AND: [
       caseRegisterWhere(req),
       ...(req.query.status ? [{ status: req.query.status }] : []),
+      ...studyIntakeFilterWhere(req.query.studyIntake),
     ],
   }),
   activityEntity: "case",
@@ -138,7 +174,9 @@ async function syncCaseDocumentsFromTemplates(tx, { agencyId, clientId, caseId, 
     tx.documentTemplate.findMany({
       where: {
         agencyId,
-        caseType,
+        OR: canonicalCaseTypeLabels(caseType).map((label) => ({
+          caseType: { equals: label, mode: "insensitive" },
+        })),
       },
       orderBy: [{ createdAt: "asc" }],
       select: {
@@ -264,6 +302,7 @@ export async function createCase(req, res) {
 
   const activityDetails = [
     "Case created",
+    result.data.studyIntakeMonth ? `Intake: ${formatStudyIntakeMonth(result.data.studyIntakeMonth)}` : null,
     result.templateSync.createdCount
       ? `${result.templateSync.createdCount} template documents added`
       : null,
@@ -345,6 +384,9 @@ export async function updateCase(req, res) {
 
   const activityDetails = [
     "Case updated",
+    studyIntakeKey(result.data.studyIntakeMonth) !== studyIntakeKey(existing.studyIntakeMonth)
+      ? `Intake changed from ${formatStudyIntakeMonth(existing.studyIntakeMonth)} to ${formatStudyIntakeMonth(result.data.studyIntakeMonth)}`
+      : null,
     result.templateSync.createdCount
       ? `${result.templateSync.createdCount} template documents added`
       : null,
@@ -744,9 +786,10 @@ export async function listCaseTypes(req, res) {
   const countsByNormalized = new Map();
   const bump = (caseType, weight) => {
     if (!caseType) return;
-    const normalized = caseType.toLowerCase();
+    const canonical = canonicalCaseType(caseType);
+    const normalized = normalizeCaseType(canonical);
     const counts = countsByNormalized.get(normalized) || new Map();
-    counts.set(caseType, (counts.get(caseType) || 0) + weight);
+    counts.set(canonical, (counts.get(canonical) || 0) + weight);
     countsByNormalized.set(normalized, counts);
   };
   for (const { caseType } of cases) bump(caseType, 1);
@@ -757,6 +800,29 @@ export async function listCaseTypes(req, res) {
     .sort((a, b) => a.localeCompare(b));
 
   res.json({ data: caseTypes });
+}
+
+export async function listStudyIntakes(req, res) {
+  const data = await prisma.case.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      AND: [
+        caseAccessWhere(req),
+        caseRegisterWhere(req),
+        {
+          OR: [
+            { caseType: { equals: "Study Permit", mode: "insensitive" } },
+            { caseType: { equals: "Study", mode: "insensitive" } },
+          ],
+        },
+        { studyIntakeMonth: { not: null } },
+      ],
+    },
+    select: { studyIntakeMonth: true },
+    distinct: ["studyIntakeMonth"],
+    orderBy: { studyIntakeMonth: "asc" },
+  });
+  res.json({ data: data.map((item) => studyIntakeKey(item.studyIntakeMonth)).filter(Boolean) });
 }
 
 export const listCases = controller.list;

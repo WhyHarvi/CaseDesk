@@ -109,6 +109,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     caseType: "Study Permit",
     name: "Study Permit Workflow",
     description: "Default milestones for a study permit application.",
+    aliases: ["Study"],
     steps: [
       workflowStep("Initial Consultation", "Assess eligibility; identify designated learning institutions and suitable programs.", "High"),
       workflowStep("Assessment Questionnaire", "Client completes intake form including academic history and proof of funding."),
@@ -182,6 +183,24 @@ function normalizeNullableString(value) {
 
 export function getTemplateCaseTypeKeys(template) {
   return [template.caseType, ...(template.aliases || [])].map(normalizeCaseType);
+}
+
+// Case types are stored as text because agencies can add their own services,
+// but known aliases should always collapse to the curated display label. This
+// keeps dropdowns, workflow matching, and document templates on one value.
+export function canonicalCaseType(value) {
+  const trimmed = String(value || "").trim().replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  const normalized = normalizeCaseType(trimmed);
+  const template = DEFAULT_WORKFLOW_TEMPLATES.find((item) => getTemplateCaseTypeKeys(item).includes(normalized));
+  return template?.caseType || trimmed;
+}
+
+export function canonicalCaseTypeLabels(value) {
+  const canonical = canonicalCaseType(value);
+  if (!canonical) return [];
+  const template = DEFAULT_WORKFLOW_TEMPLATES.find((item) => normalizeCaseType(item.caseType) === normalizeCaseType(canonical));
+  return template ? [template.caseType, ...(template.aliases || [])] : [canonical];
 }
 
 function templateMatchesCaseType(template, caseType) {

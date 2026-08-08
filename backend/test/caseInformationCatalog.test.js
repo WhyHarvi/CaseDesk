@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isKnownCaseTypeKey, listCaseTypeKeys, resolveCaseTypeKey } from "../src/modules/case-information/caseTypeCatalog.js";
+import { canonicalCaseType, isKnownCaseTypeKey, listCaseTypeKeys, resolveCaseTypeKey } from "../src/modules/case-information/caseTypeCatalog.js";
 
 test("resolves an exact case type match", () => {
   assert.equal(resolveCaseTypeKey("Study Permit"), "study permit");
+});
+
+test("normalizes Study and Study Permit to one canonical case type", () => {
+  assert.equal(canonicalCaseType("Study"), "Study Permit");
+  assert.equal(canonicalCaseType("  study   permit "), "Study Permit");
+  assert.equal(canonicalCaseType("Custom Humanitarian Matter"), "Custom Humanitarian Matter");
 });
 
 test("resolves via a known alias", () => {

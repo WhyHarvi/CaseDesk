@@ -104,14 +104,20 @@ export async function listCaseCorrespondence(req, res) {
   res.json({ data });
 }
 
-export async function updateCorrespondenceStatus(req, res) {
-  const status = clean(req.body.status, 40);
+// Core status-transition logic, factored out of the route handler so the
+// Billing tab's "Approve and send" action (Fix 4.1 — same transition, but
+// restricted to Agreement-kind documents and gated to admin/consultant
+// roles) can call the exact same code instead of a second copy. `options`
+// lets a caller impose an extra restriction the generic Agreements &
+// Letters workspace doesn't need.
+export async function changeCorrespondenceStatus(agencyId, documentId, status, { actorUserId, requireKind } = {}) {
   if (!correspondenceStatuses.has(status)) throw createHttpError(400, "Invalid correspondence status");
   const existing = await prisma.writtenDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, correspondenceKind: { not: null } },
+    where: { id: documentId, agencyId, correspondenceKind: { not: null } },
     include: { clientDocument: true, case: { select: { archivedAt: true, deletedAt: true } } },
   });
   if (!existing) throw createHttpError(404, "Agreement or letter not found");
+  if (requireKind && existing.correspondenceKind !== requireKind) throw createHttpError(404, "Agreement or letter not found");
   if (existing.case?.archivedAt || existing.case?.deletedAt) throw createHttpError(409, "Restore this case before changing its correspondence workflow");
   if (status === "Signed") throw createHttpError(409, "Signed status is created only when the client completes the e-signature");
   if (existing.correspondenceKind === "Agreement" && existing.correspondenceStatus === "Issued" && status !== "Issued") throw createHttpError(409, "This agreement is awaiting the client signature and cannot be moved backward");
@@ -121,7 +127,7 @@ export async function updateCorrespondenceStatus(req, res) {
   if (["Issued", "Finalized"].includes(status) && !existing.clientDocumentId) throw createHttpError(409, "Save the document to CaseDesk before issuing it");
   if (existing.correspondenceKind === "Agreement" && status === "Issued") {
     const portalLink = await prisma.clientUser.findFirst({
-      where: { agencyId: req.user.agencyId, clientId: existing.clientId },
+      where: { agencyId, clientId: existing.clientId },
       select: { id: true },
     });
     if (!portalLink) throw createHttpError(409, "Invite this client to the portal before sending an agreement for signature");
@@ -133,13 +139,13 @@ export async function updateCorrespondenceStatus(req, res) {
   if (issued && !publishedDocumentId) {
     if (!existing.clientDocument?.storageKey) throw createHttpError(409, "The saved working file is unavailable");
     const extension = path.extname(existing.clientDocument.originalFilename || "").toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12) || ".docx";
-    copiedStorageKey = path.posix.join(req.user.agencyId, existing.caseId, `${randomUUID()}${extension}`);
+    copiedStorageKey = path.posix.join(agencyId, existing.caseId, `${randomUUID()}${extension}`);
     try {
       await copyStorageFile(DOCUMENT_BUCKET, existing.clientDocument.storageKey, copiedStorageKey);
       let normalizedName = normalizeDocumentName(existing.title);
       const duplicate = await prisma.clientDocument.findFirst({ where: { caseId: existing.caseId, normalizedName } });
       if (duplicate) normalizedName = normalizeDocumentName(`${existing.title} issued ${Date.now()}`);
-      const published = await prisma.clientDocument.create({ data: { agencyId: req.user.agencyId, clientId: existing.clientId, caseId: existing.caseId, documentName: existing.title, normalizedName, visibility: "Client", status: "Uploaded", notes: `Issued ${existing.correspondenceKind.toLowerCase()} from CaseDesk Writer`, storageKey: copiedStorageKey, originalFilename: existing.clientDocument.originalFilename, mimeType: existing.clientDocument.mimeType, fileSize: existing.clientDocument.fileSize, receivedAt: new Date(), uploadedById: req.user.id } });
+      const published = await prisma.clientDocument.create({ data: { agencyId, clientId: existing.clientId, caseId: existing.caseId, documentName: existing.title, normalizedName, visibility: "Client", status: "Uploaded", notes: `Issued ${existing.correspondenceKind.toLowerCase()} from CaseDesk Writer`, storageKey: copiedStorageKey, originalFilename: existing.clientDocument.originalFilename, mimeType: existing.clientDocument.mimeType, fileSize: existing.clientDocument.fileSize, receivedAt: new Date(), uploadedById: actorUserId } });
 
       // Atomically claim the right to publish — the WHERE re-checks
       // issuedClientDocumentId is still null at claim time, so a concurrent
@@ -168,8 +174,14 @@ export async function updateCorrespondenceStatus(req, res) {
     }
   }
 
-  const data = await prisma.writtenDocument.update({ where: { id: existing.id }, data: { correspondenceStatus: status, ...(issued ? { issuedAt: existing.issuedAt || new Date(), issuedById: req.user.id } : status === "Draft" ? { issuedAt: null, issuedById: null, issuedClientDocumentId: null } : {}) }, include: documentInclude });
-  await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, clientId: existing.clientId, caseId: existing.caseId, action: "correspondence.status_updated", details: `${existing.title} marked ${status.toLowerCase()}` });
+  const data = await prisma.writtenDocument.update({ where: { id: existing.id }, data: { correspondenceStatus: status, ...(issued ? { issuedAt: existing.issuedAt || new Date(), issuedById: actorUserId } : status === "Draft" ? { issuedAt: null, issuedById: null, issuedClientDocumentId: null } : {}) }, include: documentInclude });
+  await recordActivity({ agencyId, userId: actorUserId, clientId: existing.clientId, caseId: existing.caseId, action: "correspondence.status_updated", details: `${existing.title} marked ${status.toLowerCase()}` });
+  return data;
+}
+
+export async function updateCorrespondenceStatus(req, res) {
+  const status = clean(req.body.status, 40);
+  const data = await changeCorrespondenceStatus(req.user.agencyId, req.params.id, status, { actorUserId: req.user.id });
   res.json({ data });
 }
 

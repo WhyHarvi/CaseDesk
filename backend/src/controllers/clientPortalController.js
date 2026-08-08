@@ -10,6 +10,7 @@ import { getCaseSchedule } from "../services/paymentScheduleService.js";
 import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
+import { logger } from "../services/logger.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -224,7 +225,7 @@ function signatureBlockHtml({ signerName, signedAt, signatureMethod = "typed", s
   ].join("");
 }
 
-function drawnSignatureImage(value) {
+export function drawnSignatureImage(value) {
   if (typeof value !== "string" || value.length > 600_000) throw createHttpError(400, "Draw your signature inside the signature box.", "INVALID_SIGNATURE");
   const match = value.match(/^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!match) throw createHttpError(400, "The drawn signature image is invalid.", "INVALID_SIGNATURE");
@@ -984,6 +985,66 @@ export async function applyAgreementSignature({ agreement, agencyId, clientId, s
     metadata: { writtenDocumentId: agreement.id, signerName, signedAt: signedAt.toISOString(), consent: true, signatureMethod },
   });
 
+  // Fix 6.2 — auto-countersign: the instant the client's own signature
+  // commits, if the agency has a stored signature configured (Settings —
+  // one single agency-wide signature, not per-admin, per how this was
+  // scoped), immediately stamp it in as a second signature block and
+  // finalize the document in the same operation — no separate manual
+  // "Finalize" click. Strictly additive: an agency that hasn't captured a
+  // signature yet keeps today's exact behaviour and simply stops at
+  // Signed. Never allowed to undo or fail the client's signature above,
+  // which has already committed by this point.
+  if (agreement.correspondenceKind === "Agreement" || !agreement.correspondenceKind) {
+    try {
+      const billingSettings = await prisma.agencyBillingSettings.findUnique({ where: { agencyId }, select: { retainerSignatureImage: true } });
+      if (billingSettings?.retainerSignatureImage) {
+        const agency = await prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true } });
+        const agencySignerName = agency?.legalName || agency?.name || "Authorized signatory";
+        const countersignedAt = new Date();
+        const countersignedContentHtml = `${signedContentHtml}${signatureBlockHtml({ signerName: agencySignerName, signedAt: countersignedAt, signatureMethod: "drawn", signatureImage: billingSettings.retainerSignatureImage })}`;
+        const countersignedFileHtml = renderDocument({ ...agreement, contentHtml: countersignedContentHtml });
+        const countersignedStorageKey = path.posix.join(agencyId, agreement.caseId || `client-${clientId}`, `${randomUUID()}.html`);
+        const countersignedFilename = `${String(agreement.title || "agreement").replace(/[^\w\s.-]/g, "").trim().slice(0, 120) || "agreement"} (finalized).html`;
+        const countersignedBuffer = Buffer.from(countersignedFileHtml, "utf8");
+        await writeDocumentFile(countersignedStorageKey, countersignedBuffer, "text/html");
+        let finalizeCommitted = false;
+        try {
+          const updated = await prisma.writtenDocument.updateMany({
+            where: { id: agreement.id, agencyId, clientId, correspondenceKind: "Agreement", correspondenceStatus: "Signed" },
+            data: { correspondenceStatus: "Finalized", contentHtml: countersignedContentHtml },
+          });
+          if (updated.count === 1) {
+            finalizeCommitted = true;
+            if (issuedDocument) {
+              await prisma.clientDocument.update({
+                where: { id: issuedDocument.id },
+                data: { storageKey: countersignedStorageKey, originalFilename: countersignedFilename, mimeType: "text/html", fileSize: countersignedBuffer.length, receivedAt: countersignedAt },
+              }).catch(() => {});
+            }
+          }
+        } finally {
+          if (!finalizeCommitted) await removeDocumentFile(countersignedStorageKey).catch(() => {});
+        }
+        if (finalizeCommitted) {
+          await removeDocumentFile(signedStorageKey).catch(() => {});
+          await recordActivity({
+            agencyId,
+            userId,
+            clientId,
+            caseId: agreement.caseId,
+            action: "correspondence.retainer_countersigned",
+            details: `${agreement.title} auto-countersigned by ${agencySignerName}`,
+            entityType: "writtenDocument",
+            entityId: agreement.id,
+            metadata: { writtenDocumentId: agreement.id, agencySignerName, countersignedAt: countersignedAt.toISOString() },
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn("agreement.auto_countersign_failed", { agencyId, agreementId: agreement.id, reason: error?.message });
+    }
+  }
+
   return { signerName, signedAt, signatureMethod };
 }
 
@@ -1007,7 +1068,15 @@ export async function signPortalAgreement(req, res) {
     clientId: link.clientId,
     signerName: req.body?.fullName,
     consent: req.body?.consent,
-    signatureMethod: req.body?.signatureMethod,
+    // Agreements (retainers) are finger/stylus signature only — forced here
+    // rather than trusted from the request body, matching
+    // publicRetainerController.js's signManagedRetainer (the pre-portal Lead
+    // signing path, which already enforces this). Before this fix, a
+    // logged-in portal client could sign a case-level retainer with a typed
+    // name — this endpoint only ever handles correspondenceKind "Agreement"
+    // (see the findFirst above), so there's no other document type here
+    // that should allow typed.
+    signatureMethod: "drawn",
     signatureImage: req.body?.signatureImage,
     userId: req.auth.userId,
   });

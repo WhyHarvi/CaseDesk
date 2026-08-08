@@ -75,12 +75,18 @@ export async function getCorrespondenceContext(agencyId, caseId, userId) {
   return { agency, caseItem, client: caseItem.client, consultant };
 }
 
+// Keys here render as an empty string when unset instead of the usual
+// "[Add X]" <mark> placeholder — because they're only ever used inside an
+// HTML attribute (an <img src="">), where a literal "[Add Logo Url]" mark
+// tag would produce broken markup rather than a visibly-missing field.
+const RAW_ATTRIBUTE_KEYS = new Set(["agency.logoUrl"]);
+
 export function renderCorrespondenceHtml(contentHtml, context) {
   const { agency, caseItem, client, consultant } = context;
   const values = {
-    "agency.name": agency?.name, "agency.address": agency?.address, "agency.phone": agency?.phone, "agency.email": agency?.email,
+    "agency.name": agency?.name, "agency.address": agency?.address, "agency.phone": agency?.phone, "agency.email": agency?.email, "agency.logoUrl": agency?.logoUrl,
     "client.fullName": client?.fullName, "client.address": client?.address, "client.phone": client?.phone, "client.email": client?.email, "client.dateOfBirth": client?.dateOfBirth ? new Date(client.dateOfBirth).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }) : null,
-    "consultant.fullName": consultant?.fullName, "consultant.email": consultant?.email, "consultant.licenseNumber": consultant?.licenseNumber,
+    "consultant.fullName": consultant?.fullName, "consultant.email": consultant?.email, "consultant.phone": consultant?.phone, "consultant.licenseNumber": consultant?.licenseNumber,
     "case.caseType": caseItem.caseType, "case.stage": caseItem.stage, "case.nextAction": caseItem.nextAction, "case.submittedAt": caseItem.submittedAt ? new Date(caseItem.submittedAt).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }) : null, "case.decisionAt": caseItem.decisionAt ? new Date(caseItem.decisionAt).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }) : null,
     "current.longDate": new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" }),
   };
@@ -88,6 +94,7 @@ export function renderCorrespondenceHtml(contentHtml, context) {
   const html = String(contentHtml || "").replace(/\{\{([a-zA-Z0-9.]+)\}\}/g, (_, key) => {
     const value = values[key];
     if (value !== undefined && value !== null && String(value).trim()) return escapeHtml(value);
+    if (RAW_ATTRIBUTE_KEYS.has(key)) return "";
     missing.push(key);
     const label = key.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2");
     return `<mark data-casedesk-missing="${escapeHtml(key)}">[Add ${escapeHtml(label)}]</mark>`;

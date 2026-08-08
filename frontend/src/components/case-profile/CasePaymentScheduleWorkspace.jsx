@@ -29,6 +29,30 @@ function triggerLabel(installment) {
   return `${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
 }
 
+function TaxSummaryBar({ taxSummary }) {
+  if (!taxSummary) return null;
+  return (
+    <div className="mt-3 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <span className="text-slate-500">Professional / consultation subtotal</span>
+        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.taxableSubtotal)}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
+        <span className="text-slate-500">HST ({Number(taxSummary.taxRatePercent)}%)</span>
+        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.tax)}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
+        <span className="text-slate-500">Govt. fees &amp; disbursements <span className="text-slate-400">(not taxed)</span></span>
+        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.nonTaxableSubtotal)}</span>
+      </div>
+      <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2">
+        <span className="text-sm font-semibold text-slate-900">Total</span>
+        <span className="text-sm font-bold text-slate-900">{formatMoney(taxSummary.totalFee)}</span>
+      </div>
+    </div>
+  );
+}
+
 function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
@@ -128,7 +152,9 @@ function TemplatePicker({ caseType, onPick }) {
             onClick={() => onPick(template)}
             className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
           >
-            <Sparkles className="h-3.5 w-3.5 text-fuchsia-500" /> {template.name} <ChevronRight className="h-3 w-3 text-slate-300" />
+            <Sparkles className="h-3.5 w-3.5 text-fuchsia-500" /> {template.name}
+            {template.isSystemDefault ? <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">System</span> : null}
+            <ChevronRight className="h-3 w-3 text-slate-300" />
           </button>
         ))}
       </div>
@@ -340,6 +366,7 @@ export default function CasePaymentScheduleWorkspace({ caseItem }) {
               ))}
             </AnimatePresence>
           </div>
+          <TaxSummaryBar taxSummary={schedule.taxSummary} />
         </div>
       )}
     </div>
