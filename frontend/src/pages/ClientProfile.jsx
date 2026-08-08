@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import PageContainer from "../components/layout/PageContainer";
 import api from "../services/api";
 import PortalAccessCard from "../components/clients/PortalAccessCard";
@@ -30,7 +30,7 @@ import ClientBillingCard from "../components/clients/ClientBillingCard";
 import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
-import { hasCapability } from "../auth/portalAccess";
+import { canAccessPage, hasCapability } from "../auth/portalAccess";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 
 const defaultNoteFormState = {
@@ -254,7 +254,7 @@ function NoteCard({ note, canManage, onEdit, onDelete, deletingId }) {
   );
 }
 
-function CaseRow({ item, isPrimary = false }) {
+function CaseRow({ item, isPrimary = false, canOpenCase = false }) {
   const assignedLabel = item.assignedUser?.fullName || "Unassigned";
   const updatedLabel = formatDate(item.updatedAt || item.createdAt);
 
@@ -288,15 +288,17 @@ function CaseRow({ item, isPrimary = false }) {
         >
           {item.stage || item.status || "Open"}
         </span>
-        <Link
-          to={`/cases/${item.id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-        >
-          Open case
-          <ArrowUpRight className="h-4 w-4" />
-        </Link>
+        {canOpenCase ? (
+          <Link
+            to={`/app/cases/${item.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Open case
+            <ArrowUpRight className="h-4 w-4" />
+          </Link>
+        ) : null}
       </div>
     </div>
   );
@@ -305,10 +307,13 @@ function CaseRow({ item, isPrimary = false }) {
 export default function ClientProfile() {
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { role, appUser, membership } = useAuth();
   const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
   const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
   const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
+  const canOpenCases = canAccessPage(role, membership?.permissions, "cases");
+  const initialBillingEntry = location.state?.openBillingEntry ? location.state.billingEntry : null;
   const canReassignClient = ["admin", "frontdesk"].includes(role);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -596,9 +601,9 @@ export default function ClientProfile() {
             <Pencil className="h-4 w-4" />
             Edit profile
           </button>
-          {currentCase ? (
+          {currentCase && canOpenCases ? (
             <Link
-              to={`/cases/${currentCase.id}`}
+              to={`/app/cases/${currentCase.id}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
@@ -606,15 +611,15 @@ export default function ClientProfile() {
               Open active case
               <ArrowUpRight className="h-4 w-4" />
             </Link>
-          ) : (
+          ) : !cases.length && canOpenCases ? (
             <Link
-              to="/cases"
+              to={`/app/cases?action=create&clientId=${encodeURIComponent(client.id)}`}
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
             >
-              Go to cases
-              <ArrowUpRight className="h-4 w-4" />
+              <Plus className="h-4 w-4" />
+              Create case
             </Link>
-          )}
+          ) : null}
         </div>
       }
     >
@@ -727,14 +732,20 @@ export default function ClientProfile() {
                     </span>{" "}
                     {currentCase ? (
                       <>
-                        <Link
-                          to={`/cases/${currentCase.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-slate-900 underline decoration-slate-300 underline-offset-4 transition hover:decoration-slate-900"
-                        >
-                          {currentCase.caseType || "Open case"}
-                        </Link>
+                        {canOpenCases ? (
+                          <Link
+                            to={`/app/cases/${currentCase.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-slate-900 underline decoration-slate-300 underline-offset-4 transition hover:decoration-slate-900"
+                          >
+                            {currentCase.caseType || "Open case"}
+                          </Link>
+                        ) : (
+                          <span className="text-slate-900">
+                            {currentCase.caseType || "Case on file"}
+                          </span>
+                        )}
                         <span className="text-slate-400">
                           {" "}
                           • {currentCase.stage || currentCase.status || "Open"}
@@ -853,6 +864,7 @@ export default function ClientProfile() {
                     key={item.id}
                     item={item}
                     isPrimary={item.id === currentCase?.id}
+                    canOpenCase={canOpenCases}
                   />
                 ))
               ) : (
@@ -969,7 +981,12 @@ export default function ClientProfile() {
 
             {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
 
-            {canAccessFinancialData ? <ClientBillingCard clientId={client.id} clientName={client.fullName} onOpenStatement={() => setStatementOpen(true)} /> : null}
+            {canAccessFinancialData ? <ClientBillingCard clientId={client.id} clientName={client.fullName} initialEntry={initialBillingEntry} onEntrySaved={(_result, preset) => {
+              if (preset?.afterSave !== "appointment") return;
+              navigate(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`, {
+                state: { frontDeskIntake: { action: "appointment" } },
+              });
+            }} onOpenStatement={() => setStatementOpen(true)} /> : null}
 
             {canAccessInternalNotes ? <article className="rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur">
               <div className="flex items-center justify-between gap-3">

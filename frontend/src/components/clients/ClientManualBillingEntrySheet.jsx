@@ -11,10 +11,11 @@ const shortDate = (value) => new Date(value).toLocaleDateString("en-CA", { month
 
 const fieldClass = "mt-1.5 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3.5 text-sm text-slate-800 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100";
 
-export default function ClientManualBillingEntrySheet({ open, clientId, clientName, onClose, onSaved }) {
+export default function ClientManualBillingEntrySheet({ open, clientId, clientName, initialMode = "", initialPaymentType = "", initialCaseId = "", onClose, onSaved }) {
   const [options, setOptions] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [confirmPaidOverride, setConfirmPaidOverride] = useState(false);
@@ -26,6 +27,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
     if (!open) return;
     let active = true;
     setLoading(true);
+    setOptions(null);
     setError("");
     setWarning("");
     setConfirmPaidOverride(false);
@@ -35,14 +37,21 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
         setOptions(result);
         const firstInvoice = result.invoices?.[0];
         const firstAppointment = result.appointments?.find((item) => item.paymentHold?.status !== "Paid" || !item.paymentHold?.manualPaymentReference);
-        const firstCategory = result.categories?.find((item) => item.mapped);
+        const requestedCategory = result.categories?.find((item) => item.code === initialPaymentType);
+        const firstCategory = initialPaymentType
+          ? (requestedCategory?.mapped ? requestedCategory : null)
+          : result.categories?.find((item) => item.mapped);
+        const requestedCase = result.cases?.find((item) => item.id === initialCaseId);
         const nextKind = firstInvoice ? "invoice" : "appointment";
         setTargetKind(nextKind);
-        setMode(firstInvoice || firstAppointment ? "existing" : "new");
+        setMode(initialMode === "new" && result.cases?.length ? "new" : firstInvoice || firstAppointment ? "existing" : "new");
+        if (initialMode === "new" && initialPaymentType && !requestedCategory?.mapped) {
+          setError("Professional fees must be mapped to a QuickBooks item in Settings before this charge can be created.");
+        }
         setForm({
           invoiceId: firstInvoice?.id || "",
           appointmentId: firstAppointment?.id || "",
-          caseId: result.cases?.[0]?.id || "",
+          caseId: requestedCase?.id || result.cases?.[0]?.id || "",
           paymentType: firstCategory?.code || "",
           description: "",
           chargeAmount: "",
@@ -57,7 +66,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
       .catch((reason) => { if (active) setError(reason.response?.data?.message || "Payment options could not be loaded."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [open, clientId]);
+  }, [open, clientId, initialMode, initialPaymentType, initialCaseId, loadAttempt]);
 
   const availableAppointments = useMemo(() => (options?.appointments || []).filter((item) => item.paymentHold?.status !== "Paid" || (item.paymentHold?.paymentMethod === "ETransfer" && !item.paymentHold?.manualPaymentReference)), [options]);
   const selectedInvoice = options?.invoices?.find((item) => item.id === form.invoiceId);
@@ -117,8 +126,19 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
       });
       await onSaved?.(result);
       if (result.paymentWarning) {
-        setWarning(result.paymentWarning);
-        setForm((current) => ({ ...current, idempotencyKey: newKey() }));
+        const createdInvoice = result.invoice;
+        setOptions((current) => current ? {
+          ...current,
+          invoices: [createdInvoice, ...(current.invoices || []).filter((item) => item.id !== createdInvoice.id)],
+        } : current);
+        setMode("existing");
+        setTargetKind("invoice");
+        setWarning(`${result.paymentWarning} The invoice was created only once; retry below to apply the payment to that invoice.`);
+        setForm((current) => ({
+          ...current,
+          invoiceId: createdInvoice.id,
+          amount: current.amount,
+        }));
       } else {
         onClose();
       }
@@ -164,7 +184,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
                     <section className="space-y-4 rounded-[1.5rem] border border-white bg-white p-4 shadow-sm">
                       <div className="flex items-center gap-2"><FilePlus2 className="h-4 w-4 text-sky-600" /><p className="text-xs font-semibold text-slate-800">Create the charge first, then apply this payment</p></div>
                       <label className="block text-xs font-medium text-slate-600">Case<select required value={form.caseId} onChange={(event) => update("caseId", event.target.value)} className={fieldClass}><option value="">Choose case</option>{(options?.cases || []).map((item) => <option key={item.id} value={item.id}>{item.caseType} · {item.stage || item.status}</option>)}</select></label>
-                      <label className="block text-xs font-medium text-slate-600">Agency fee category<select required value={form.paymentType} onChange={(event) => update("paymentType", event.target.value)} className={fieldClass}><option value="">Choose fee category</option>{(options?.categories || []).map((item) => <option key={item.code} value={item.code} disabled={!item.mapped}>{item.name}{item.mapped ? "" : " · needs QuickBooks mapping"}</option>)}</select></label>
+                      <label className="block text-xs font-medium text-slate-600">Agency fee category<select required value={form.paymentType} onChange={(event) => { update("paymentType", event.target.value); setError(""); }} className={fieldClass}><option value="">Choose fee category</option>{(options?.categories || []).map((item) => <option key={item.code} value={item.code} disabled={!item.mapped}>{item.name}{item.mapped ? "" : " · needs QuickBooks mapping"}</option>)}</select></label>
                       <label className="block text-xs font-medium text-slate-600">Description<input required maxLength={500} value={form.description} onChange={(event) => update("description", event.target.value)} className={fieldClass} placeholder="What this charge is for" /></label>
                       <label className="block text-xs font-medium text-slate-600">Total charge<input required type="number" min="0.01" max="1000000" step="0.01" value={form.chargeAmount} onChange={(event) => { const value = event.target.value; setForm((current) => ({ ...current, chargeAmount: value, amount: current.amount || value })); }} className={fieldClass} /></label>
                     </section>
@@ -180,7 +200,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
                   </section>
 
                   {warning ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-800">{warning}</div> : null}
-                  {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs leading-5 text-rose-700">{error}</div> : null}
+                  {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs leading-5 text-rose-700">{error}{!options && !loading ? <button type="button" onClick={() => setLoadAttempt((value) => value + 1)} className="mt-3 flex h-9 items-center justify-center rounded-full border border-rose-200 bg-white px-4 font-semibold text-rose-700">Try again</button> : null}</div> : null}
                 </div>
                 <footer className="border-t border-white bg-white/85 p-4"><button type="submit" disabled={saving || loading || (mode === "existing" && targetKind === "invoice" && !form.invoiceId) || (mode === "existing" && targetKind === "appointment" && (!form.appointmentId || (selectedAppointment?.isFreeConsultation && !confirmPaidOverride)))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-45">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{saving ? "Saving payment…" : repairingAppointment ? "Save missing payment details" : selectedAppointment?.isFreeConsultation ? "Convert and record payment" : "Record payment"}</button></footer>
               </form>

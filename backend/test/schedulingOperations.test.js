@@ -156,13 +156,17 @@ test("active checkout holds consume daily consultant capacity exactly once", asy
       bufferMinutes: 0,
     },
   };
+  let paymentHoldWhere = null;
   const db = {
     bookingSessionTypeStaff: { findMany: async () => [] },
     user: { findMany: async () => [user] },
     appointment: { findMany: async () => [], groupBy: async () => [] },
     // A paid waitlist checkout temporarily has both rows for one seat.
     bookingSlotHold: { findMany: async () => [{ assignedToId: "alpha", startsAt: start, endsAt: end }] },
-    bookingPaymentHold: { findMany: async () => [{ assignedToId: "alpha", startsAt: start, endsAt: end }] },
+    bookingPaymentHold: { findMany: async ({ where }) => {
+      paymentHoldWhere = where;
+      return [{ assignedToId: "alpha", startsAt: start, endsAt: end }];
+    } },
   };
   const chosen = await chooseAppointmentAssignee({
     agencyId: "agency",
@@ -171,6 +175,7 @@ test("active checkout holds consume daily consultant capacity exactly once", asy
     db,
   });
   assert.equal(chosen.id, "alpha");
+  assert.equal(paymentHoldWhere.appointmentId, null);
 
   user.schedulingPreference.maxDailyAppointments = 1;
   await assert.rejects(
@@ -462,28 +467,69 @@ test("front-desk card reservations use durable delivery and remain recoverable a
   assert.match(migration, /booking_message_deliveries_parent_check/);
 });
 
-test("front-desk non-card payments preserve references and failed attempts for retry", async () => {
-  const [controller, holdService, calendarPage, paymentsPage, migration] = await Promise.all([
+test("front-desk e-transfers may book before payment while preserving an actionable accounting trail", async () => {
+  const [controller, holdService, webhookService, dashboard, overview, calendarPage, paymentsPage, migration] = await Promise.all([
     readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
     readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/quickbooksWebhookService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/dashboardController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/paymentsOverviewService.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
     readFile(new URL("../prisma/migrations/20260804220000_manual_payment_reference_and_recovery/migration.sql", import.meta.url), "utf8"),
   ]);
 
-  assert.match(controller, /Enter the e-transfer transaction number before booking/);
+  assert.doesNotMatch(controller, /Enter the e-transfer transaction number before booking/);
+  assert.match(controller, /createPendingWalkInETransfer/);
+  assert.match(controller, /paymentMethod === "ETransfer" && !paymentReference/);
   assert.match(controller, /manualPaymentHold = await prisma\.bookingPaymentHold\.findUnique/);
+  assert.match(holdService, /export async function createPendingWalkInETransfer/);
+  assert.match(holdService, /status: "AwaitingPayment"[\s\S]*expiresAt: null[\s\S]*paymentMethod: "ETransfer"[\s\S]*manualPaymentReference: null/);
+  assert.match(holdService, /booking_payment\.etransfer_pending/);
+  assert.match(holdService, /resolvePendingETransferNotification/);
   assert.match(holdService, /status: "RecordingPayment"/);
   assert.match(holdService, /status: "PaymentFailed"/);
   assert.match(holdService, /manualPaymentReference: paymentReference/);
   assert.match(holdService, /paymentReference: paymentReference \|\| `CD-/);
   assert.match(holdService, /\["Scheduled", "Completed", "NoShow", "Cancelled"\]/);
-  assert.match(calendarPage, /E-transfer transaction number \*/);
+  assert.match(webhookService, /findQuickBooksPaymentForInvoice/);
+  assert.match(webhookService, /manualPaymentReference: reconciledPaymentReference/);
+  assert.match(dashboard, /OPEN_BOOKING_PAYMENT_STATUSES/);
+  assert.match(overview, /eTransferPaymentPending/);
+  assert.match(overview, /transactionReferenceMissing/);
+  assert.match(calendarPage, /E-transfer transaction number \(optional\)/);
+  assert.match(calendarPage, /leave this blank—the appointment will still be booked and payment will remain pending/);
+  assert.doesNotMatch(calendarPage, /required=\{form\.paymentMethod === "ETransfer"\}/);
+  assert.match(calendarPage, /E-transfer payment pending/);
   assert.match(calendarPage, /No consultation payment is recorded/);
+  assert.match(paymentsPage, /E-transfer pending/);
+  assert.match(paymentsPage, /Transaction # missing/);
   assert.match(paymentsPage, /Recording failed/);
   assert.match(migration, /manual_payment_reference/);
   assert.match(migration, /payment_error/);
   assert.match(migration, /ALTER COLUMN "guest_email" DROP NOT NULL/);
+});
+
+test("front-desk client intake cannot misclassify a custom charge as a consultation payment", async () => {
+  const [controller, paymentService, calendarPage, clientsPage] = await Promise.all([
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Clients.jsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.doesNotMatch(controller, /req\.body\?\.paymentAmount/);
+  assert.match(controller, /Number\(settings\.consultFeeAmount\)/);
+  assert.doesNotMatch(paymentService, /requestedAmount/);
+  assert.doesNotMatch(calendarPage, /paymentAmount:/);
+  assert.doesNotMatch(clientsPage, /paymentAmount:/);
+  assert.doesNotMatch(clientsPage, /Book \+ consult fee/);
+  assert.match(clientsPage, /Charge the fee or skip/);
+  assert.match(clientsPage, /Professional fee/);
+  assert.match(calendarPage, /idempotencyKey: form\.idempotencyKey/);
+  assert.match(controller, /existingRequestAppointment/);
+  assert.match(controller, /agencyId_idempotencyKey/);
+  assert.match(paymentService, /createPaymentHoldForStaffBooking[\s\S]*idempotencyKey = null/);
 });
 
 test("case invoice e-transfers require and retain their bank transaction number", async () => {
@@ -507,7 +553,7 @@ test("case invoice e-transfers require and retain their bank transaction number"
 });
 
 test("client billing can record agency fee categories and repair paid appointment references", async () => {
-  const [controller, clientRoutes, bookingRoutes, holdService, quickBooks, billingCard, entrySheet, calendar] = await Promise.all([
+  const [controller, clientRoutes, bookingRoutes, holdService, quickBooks, billingCard, entrySheet, calendar, invoiceService, schema, idempotencyMigration] = await Promise.all([
     readFile(new URL("../src/controllers/accountStatementController.js", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/clientRoutes.js", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/bookingRoutes.js", import.meta.url), "utf8"),
@@ -516,6 +562,9 @@ test("client billing can record agency fee categories and repair paid appointmen
     readFile(new URL("../../frontend/src/components/clients/ClientBillingCard.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/caseInvoiceService.js", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/schema.prisma", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260808170000_case_invoice_idempotency/migration.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(clientRoutes, /billing\/manual-entry-options/);
@@ -530,6 +579,10 @@ test("client billing can record agency fee categories and repair paid appointmen
   assert.match(controller, /appointment\.client_linked_for_billing/);
   assert.match(controller, /overrideFreeConsultation: req\.body\?\.overrideFreeConsultation === true/);
   assert.match(controller, /paymentWarning/);
+  assert.ok(controller.indexOf("validateManualPaymentInput") < controller.indexOf("createCaseInvoice(req.auth.agencyId"));
+  assert.ok(controller.indexOf("assertManualPaymentReferenceAvailable") < controller.indexOf("createCaseInvoice(req.auth.agencyId"));
+  assert.match(controller, /creationIdempotencyKey/);
+  assert.match(controller, /notifyClient: false/);
   assert.match(bookingRoutes, /appointments\/:id\/payment-details/);
   assert.match(holdService, /updatePaidAppointmentPaymentDetails/);
   assert.match(holdService, /findQuickBooksPaymentIdForInvoice/);
@@ -544,7 +597,16 @@ test("client billing can record agency fee categories and repair paid appointmen
   assert.match(entrySheet, /add missing transaction #/);
   assert.match(entrySheet, /Convert this free appointment to paid/);
   assert.match(entrySheet, /matched by contact/);
+  assert.match(entrySheet, /setMode\("existing"\)/);
+  assert.match(entrySheet, /The invoice was created only once; retry below/);
+  assert.match(entrySheet, /setLoadAttempt/);
   assert.match(calendar, /Add missing transaction number/);
+  assert.match(invoiceService, /requestId: operationKey \? `case-invoice-/);
+  assert.match(invoiceService, /lastPaymentIdempotencyKey === operationKey/);
+  assert.match(schema, /creationIdempotencyKey/);
+  assert.match(schema, /lastPaymentIdempotencyKey/);
+  assert.match(idempotencyMigration, /creation_idempotency_key/);
+  assert.match(idempotencyMigration, /last_payment_idempotency_key/);
 });
 
 test("free follow-up consultations require a prior settled booking and a 15-minute session", async () => {

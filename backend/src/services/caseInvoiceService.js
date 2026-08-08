@@ -15,6 +15,10 @@ import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
+function normalizeIdempotencyKey(value) {
+  return String(value || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
+}
+
 export function deriveCaseInvoiceStatus(row) {
   const balance = Number(row.balance);
   const amount = Number(row.amount);
@@ -39,7 +43,14 @@ export async function requireMappedItem(agencyId, paymentType) {
  * activity logging, or notification — callers (manual creation, schedule
  * triggers) each layer those on since the details differ between them.
  */
-export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentType, description, amount, dueDate, actorUserId }) {
+export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null }) {
+  const operationKey = normalizeIdempotencyKey(idempotencyKey);
+  if (operationKey) {
+    const existing = await prisma.caseInvoice.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId, creationIdempotencyKey: operationKey } },
+    });
+    if (existing) return existing;
+  }
   const itemId = await requireMappedItem(agencyId, paymentType);
 
   // Validate the cached customer link before every new invoice. A numeric
@@ -59,6 +70,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
       description,
       amount,
       dueDate: dueDate || undefined,
+      requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   } catch (error) {
     // The client's cached QuickBooks customer id can go stale (deleted,
@@ -81,32 +93,55 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
       description,
       amount,
       dueDate: dueDate || undefined,
+      requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   }
 
-  const row = await prisma.caseInvoice.create({
-    data: {
-      agencyId,
-      caseId,
-      clientId: client.id,
-      paymentType,
-      description,
-      qbInvoiceId: invoice.id,
-      qbInvoiceNumber: invoice.docNumber,
-      qbInvoiceLink: invoice.invoiceLink,
-      qbSyncToken: invoice.syncToken,
-      amount,
-      balance: invoice.balance,
-      status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
-      dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
-      createdById: actorUserId,
-      lastSyncedAt: new Date(),
-    },
-  });
-  return row;
+  try {
+    return await prisma.caseInvoice.create({
+      data: {
+        agencyId,
+        caseId,
+        clientId: client.id,
+        paymentType,
+        description,
+        qbInvoiceId: invoice.id,
+        qbInvoiceNumber: invoice.docNumber,
+        qbInvoiceLink: invoice.invoiceLink,
+        qbSyncToken: invoice.syncToken,
+        amount,
+        balance: invoice.balance,
+        status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
+        dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
+        createdById: actorUserId,
+        creationIdempotencyKey: operationKey,
+        lastSyncedAt: new Date(),
+      },
+    });
+  } catch (error) {
+    if (error?.code !== "P2002") throw error;
+    const existing = await prisma.caseInvoice.findFirst({
+      where: {
+        agencyId,
+        OR: [
+          { qbInvoiceId: invoice.id },
+          ...(operationKey ? [{ creationIdempotencyKey: operationKey }] : []),
+        ],
+      },
+    });
+    if (existing) return existing;
+    throw error;
+  }
 }
 
-export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId }) {
+export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null, notifyClient = true }) {
+  const operationKey = normalizeIdempotencyKey(idempotencyKey);
+  if (operationKey) {
+    const existing = await prisma.caseInvoice.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId, creationIdempotencyKey: operationKey } },
+    });
+    if (existing) return existing;
+  }
   const category = await requireFeeCategory(agencyId, paymentType);
   const trimmedDescription = String(description || "").trim().slice(0, 500);
   if (!trimmedDescription) throw createHttpError(400, "A description is required.", "VALIDATION_ERROR");
@@ -126,6 +161,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     amount: numericAmount,
     dueDate,
     actorUserId,
+    idempotencyKey: operationKey,
   });
 
   await recordActivity({
@@ -141,9 +177,11 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
 
   // Best-effort on every channel — a notification hiccup here must never
   // surface as a failure to the staff member who just billed.
-  await notifyInvoiceCreated({ agencyId, invoice: row, actorUserId }).catch((error) => {
-    logger.warn("invoice.notify_failed", { agencyId, invoiceId: row.id, reason: error.message });
-  });
+  if (notifyClient) {
+    await notifyInvoiceCreated({ agencyId, invoice: row, actorUserId }).catch((error) => {
+      logger.warn("invoice.notify_failed", { agencyId, invoiceId: row.id, reason: error.message });
+    });
+  }
 
   return row;
 }
@@ -211,7 +249,7 @@ export async function getClientInvoicePdf(agencyId, { clientId, invoiceId }) {
   return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
 }
 
-export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId }) {
+export function validateManualPaymentInput({ amount, method = "Cash", transactionReference, paymentDate }) {
   const methodName = method === "ETransfer" ? "E-transfer" : method === "Cash" ? "Cash" : null;
   if (!methodName) throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
@@ -222,21 +260,37 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
     throw createHttpError(400, "Enter a payment amount greater than $0.", "VALIDATION_ERROR");
   }
+  const transactionDate = normalizeCasePaymentDate(paymentDate);
+  return { method, methodName, paymentReference, numericAmount, transactionDate };
+}
+
+export async function assertManualPaymentReferenceAvailable(agencyId, paymentReference) {
+  if (!paymentReference) return;
+  const [invoiceDuplicate, appointmentDuplicate] = await Promise.all([
+    prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+    prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference }, select: { id: true } }),
+  ]);
+  if (invoiceDuplicate || appointmentDuplicate) {
+    throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
+  }
+}
+
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId }) {
+  const operationKey = normalizeIdempotencyKey(idempotencyKey);
   const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  if (operationKey && row.lastPaymentIdempotencyKey === operationKey) return row;
+
+  const { methodName, paymentReference, numericAmount, transactionDate } = validateManualPaymentInput({
+    amount,
+    method,
+    transactionReference,
+    paymentDate,
+  });
   if (numericAmount > Number(row.balance) + 0.01) {
     throw createHttpError(400, `That's more than the outstanding balance of $${Number(row.balance).toFixed(2)}.`, "VALIDATION_ERROR");
   }
-  const transactionDate = normalizeCasePaymentDate(paymentDate);
-  if (paymentReference) {
-    const [invoiceDuplicate, appointmentDuplicate] = await Promise.all([
-      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
-      prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference }, select: { id: true } }),
-    ]);
-    if (invoiceDuplicate || appointmentDuplicate) {
-      throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
-    }
-  }
+  await assertManualPaymentReferenceAvailable(agencyId, paymentReference);
   const client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { qbCustomerId: true } });
   if (!client?.qbCustomerId) throw createHttpError(409, "This client is not linked to QuickBooks.", "QBO_CLIENT_NOT_LINKED");
 
@@ -249,7 +303,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     paymentReference: paymentReference || undefined,
     transactionDate: transactionDate?.qboDate,
     privateNote: `CaseDesk ${methodName} payment${paymentReference ? ` — transaction ${paymentReference}` : ""}${note ? ` — ${String(note).trim().slice(0, 300)}` : ""}`,
-    requestId: `case-pay-${row.id.slice(0, 8)}-${String(idempotencyKey || Date.now()).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 24)}`,
+    requestId: `case-pay-${row.id.slice(0, 8)}-${String(operationKey || Date.now()).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 24)}`,
   });
 
   const [refreshed] = await getQuickBooksInvoicesByIds(agencyId, [row.qbInvoiceId]);
@@ -264,6 +318,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
       lastPaymentReference: paymentReference,
       lastPaymentAt: transactionDate?.paidAt || new Date(),
       lastQbPaymentId: payment.id,
+      lastPaymentIdempotencyKey: operationKey,
       lastSyncedAt: new Date(),
     },
   });

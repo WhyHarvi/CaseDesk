@@ -30,3 +30,43 @@ test("client management stores searchable identity fields and archives without d
   assert.match(profile, /Preferred language/);
   assert.match(profile, /Identification/);
 });
+
+test("front desk client intake separates consultation payments from professional fees", async () => {
+  const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet] = await Promise.all([
+    source("../../frontend/src/pages/Clients.jsx"),
+    source("../../frontend/src/pages/CalendarPage.jsx"),
+    source("../../frontend/src/pages/Cases.jsx"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+    source("../../frontend/src/components/clients/ClientBillingCard.jsx"),
+    source("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx"),
+  ]);
+
+  assert.match(clientsPage, /showFrontDeskActions=\{role === "frontdesk" && !isEditing\}/);
+  assert.match(clientsPage, /Book appointment/);
+  assert.match(clientsPage, /Charge the fee or skip/);
+  assert.doesNotMatch(clientsPage, /Book \+ consult fee/);
+  assert.doesNotMatch(clientsPage, /You can adjust it for this intake/);
+  assert.match(clientsPage, /professional-payment/);
+  assert.match(clientsPage, /Professional fee/);
+  assert.match(clientsPage, /Also book a consultation/);
+  assert.match(clientsPage, /bookAppointmentAfterPayment/);
+  assert.match(clientsPage, /after=professional-payment/);
+  assert.match(clientsPage, /\/app\/calendar\?bookForClient=/);
+  assert.match(clientsPage, /state: \{[\s\S]*frontDeskIntake:/);
+  assert.match(calendarPage, /role === "frontdesk" \? location\.state\?\.frontDeskIntake/);
+  assert.match(calendarPage, /How will they pay\?/);
+  assert.match(calendarPage, /intakePaymentRequested \? \[\] : \[\["Skip", "Skip"\]\]/);
+  assert.match(calendarPage, /Client created — finish the appointment/);
+  assert.match(calendarPage, /idempotencyKey: newBookingOperationKey\(\)/);
+  assert.match(calendarPage, /idempotencyKey: form\.idempotencyKey/);
+  assert.match(casesPage, /afterCreateActionRef\.current === "professional-payment"/);
+  assert.match(casesPage, /openBillingEntry: true/);
+  assert.match(casesPage, /paymentType: "fees"/);
+  assert.match(casesPage, /afterSave: bookAppointmentAfterPaymentRef\.current \? "appointment" : ""/);
+  assert.match(casesPage, /function cancelDrawers\(\)[\s\S]*afterCreateActionRef\.current = ""/);
+  assert.match(profile, /initialEntry=\{initialBillingEntry\}/);
+  assert.match(profile, /state: \{ frontDeskIntake: \{ action: "appointment" \} \}/);
+  assert.match(billingCard, /initialPaymentType=\{entryPreset\?\.paymentType\}/);
+  assert.match(entrySheet, /initialMode === "new"/);
+  assert.match(entrySheet, /item\.code === initialPaymentType/);
+});

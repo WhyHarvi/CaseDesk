@@ -28,7 +28,7 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, updatePaidAppointmentPaymentDetails as updatePaidAppointmentPaymentDetailsService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
+import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, createPendingWalkInETransfer, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, updatePaidAppointmentPaymentDetails as updatePaidAppointmentPaymentDetailsService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -617,6 +617,7 @@ export async function listCalendarAppointments(req, res) {
 
 export async function createBookingAppointment(req, res) {
   const body = req.body || {};
+  const idempotencyKey = String(body.idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 180) || null;
   const startsAt = new Date(String(body.startsAt || ""));
   if (Number.isNaN(startsAt.getTime())) throw createHttpError(400, "A valid start time is required.", "VALIDATION_ERROR");
 
@@ -703,8 +704,22 @@ export async function createBookingAppointment(req, res) {
 
   const subject = String(body.subject || "").trim().slice(0, 200) || (sessionType ? sessionType.name : "Appointment");
   const effectiveBuffer = sessionType?.bufferMinutes ?? settings.bufferMinutes;
+  const paymentMethod = ["Card", "Cash", "ETransfer"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
+  const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
+  const paymentReference = String(body.paymentReference || "").trim().slice(0, 100) || null;
+  const [existingRequestAppointment, existingRequestHold] = idempotencyKey
+    ? await Promise.all([
+        prisma.appointment.findUnique({
+          where: { agencyId_idempotencyKey: { agencyId: req.auth.agencyId, idempotencyKey } },
+          include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+        }),
+        prisma.bookingPaymentHold.findUnique({
+          where: { agencyId_idempotencyKey: { agencyId: req.auth.agencyId, idempotencyKey } },
+        }),
+      ])
+    : [null, null];
   const pool = assignedToId ? null : await eligibleSchedulingStaff({ agencyId: req.auth.agencyId, sessionTypeId: sessionType?.id || null, meetingMode: requestedMeetingMode });
-  for (const occurrenceStart of startDates) {
+  for (const occurrenceStart of existingRequestAppointment || existingRequestHold ? [] : startDates) {
     const dayKey = localDateKey(occurrenceStart, settings.timezone);
     const offeredAvailability = await availabilityForRange({
       agencyId: req.auth.agencyId,
@@ -729,17 +744,6 @@ export async function createBookingAppointment(req, res) {
   // page). Cash/e-transfer/free walk-ins still book immediately below —
   // staff already know the fee is settled or will be collected in person,
   // so there's nothing to wait on.
-  const paymentMethod = ["Card", "Cash", "ETransfer"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
-  const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
-  const paymentReference = String(body.paymentReference || "").trim().slice(0, 100) || null;
-  if (paymentMethod === "ETransfer" && feeApplies && !paymentReference) {
-    throw createHttpError(
-      400,
-      "Enter the e-transfer transaction number before booking the appointment.",
-      "VALIDATION_ERROR",
-    );
-  }
-
   if (paymentMethod === "Card" && feeApplies) {
     if (startDates.length > 1) {
       throw createHttpError(400, "Card payment isn't available for recurring appointments yet — choose cash, e-transfer, or skip payment for now.", "VALIDATION_ERROR");
@@ -771,6 +775,7 @@ export async function createBookingAppointment(req, res) {
       amount: Number(settings.consultFeeAmount),
       bufferMinutes: effectiveBuffer,
       actorUserId: req.auth.userId,
+      idempotencyKey,
     });
     res.status(202).json({
       data: {
@@ -791,12 +796,35 @@ export async function createBookingAppointment(req, res) {
     return;
   }
 
-  const seriesKey = startDates.length > 1 ? randomUUID() : null;
-  const createdAppointments = await prisma.$transaction(async (tx) => {
-    const created = [];
-    for (const [index, occurrenceStart] of startDates.entries()) {
+  const requestedSeriesKey = startDates.length > 1 ? randomUUID() : null;
+  let createdAppointments;
+  let createdNewCount = 0;
+  if (existingRequestAppointment) {
+    createdAppointments = existingRequestAppointment.seriesKey
+      ? await prisma.appointment.findMany({
+          where: { agencyId: req.auth.agencyId, seriesKey: existingRequestAppointment.seriesKey },
+          include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+          orderBy: { recurrenceIndex: "asc" },
+        })
+      : [existingRequestAppointment];
+  } else {
+    const creation = await prisma.$transaction(async (tx) => {
+      const created = [];
+      let newCount = 0;
+      for (const [index, occurrenceStart] of startDates.entries()) {
       const occurrenceEnd = new Date(occurrenceStart.getTime() + durationMinutes * 60_000);
+      const occurrenceIdempotencyKey = idempotencyKey ? (index === 0 ? idempotencyKey : `${idempotencyKey}:${index + 1}`.slice(0, 200)) : null;
       await lockSchedulingTransaction(tx, req.auth.agencyId, occurrenceStart);
+      if (occurrenceIdempotencyKey) {
+        const existing = await tx.appointment.findUnique({
+          where: { agencyId_idempotencyKey: { agencyId: req.auth.agencyId, idempotencyKey: occurrenceIdempotencyKey } },
+          include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+        });
+        if (existing) {
+          created.push(existing);
+          continue;
+        }
+      }
       const assignee = await chooseAppointmentAssignee({
         agencyId: req.auth.agencyId,
         sessionTypeId: sessionType?.id || null,
@@ -847,23 +875,24 @@ export async function createBookingAppointment(req, res) {
         createdById: req.auth.userId,
         source: body.source === "WalkIn" ? "WalkIn" : "Internal",
         isFreeConsultation: freeEligibility.eligible,
+        idempotencyKey: occurrenceIdempotencyKey,
         reminderDueAt: new Date(occurrenceStart.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),
         referenceCode: appointmentReference(),
-        seriesKey,
-        recurrenceIndex: seriesKey ? index + 1 : null,
-        recurrenceCount: seriesKey ? startDates.length : null,
+        seriesKey: requestedSeriesKey,
+        recurrenceIndex: requestedSeriesKey ? index + 1 : null,
+        recurrenceCount: requestedSeriesKey ? startDates.length : null,
         status: "Scheduled",
       },
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
       });
-      await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: seriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source } });
+      await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: requestedSeriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source } });
       if (requestedMeetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, {
           appointment,
           action: "SYNC",
           notifyKind: "booked",
           actorUserId: req.auth.userId,
-          dedupeSuffix: seriesKey ? `series-${index + 1}` : "",
+          dedupeSuffix: requestedSeriesKey ? `series-${index + 1}` : "",
         });
       } else {
         await sendBookingMessages({
@@ -871,42 +900,62 @@ export async function createBookingAppointment(req, res) {
           appointment,
           kind: "booked",
           actorUserId: req.auth.userId,
-          dedupeSuffix: seriesKey ? `series-${index + 1}` : "",
+          dedupeSuffix: requestedSeriesKey ? `series-${index + 1}` : "",
           db: tx,
         });
       }
       created.push(appointment);
-    }
-    return created;
-  });
+      newCount += 1;
+      }
+      return { appointments: created, newCount };
+    });
+    createdAppointments = creation.appointments;
+    createdNewCount = creation.newCount;
+  }
   const data = createdAppointments[0];
+  const seriesKey = data?.seriesKey || requestedSeriesKey;
 
-  if (createdAppointments.some((appointment) => appointment.meetingMode !== MEETING_MODES.ZOOM)) void processBookingMessageDeliveries();
+  if (createdNewCount && createdAppointments.some((appointment) => appointment.meetingMode !== MEETING_MODES.ZOOM)) void processBookingMessageDeliveries();
 
-  await recordActivity({
-    agencyId: req.auth.agencyId,
-    userId: req.auth.userId,
-    clientId: client?.id || null,
-    caseId: null,
-    action: "appointment.booked",
-    details: `${subject} booked for ${client?.fullName || guestName} on ${localDateKey(startsAt, settings.timezone)}${startDates.length > 1 ? ` (${startDates.length} recurring appointments)` : ""}`,
-  });
-  invalidateDashboardCache(req.auth.agencyId);
+  if (createdNewCount) {
+    await recordActivity({
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      clientId: client?.id || null,
+      caseId: null,
+      action: "appointment.booked",
+      details: `${subject} booked for ${client?.fullName || guestName} on ${localDateKey(startsAt, settings.timezone)}${startDates.length > 1 ? ` (${startDates.length} recurring appointments)` : ""}`,
+    });
+    invalidateDashboardCache(req.auth.agencyId);
+  }
 
   // Only the first occurrence of a recurring series gets the consultation
   // fee recorded — a consult fee belongs to the initial visit, not every
   // future occurrence in the series.
   let manualPaymentWarning = null;
-  let manualPaymentHold = null;
+  let manualPaymentHold = data.paymentHold?.status === "Paid" ? data.paymentHold : null;
   if ((paymentMethod === "Cash" || paymentMethod === "ETransfer") && feeApplies) {
     try {
-      manualPaymentHold = await recordWalkInManualPaymentService(req.auth.agencyId, {
-        appointmentId: data.id,
-        method: paymentMethod,
-        transactionReference: paymentReference,
-        note: null,
-        actorUserId: req.auth.userId,
-      });
+      if (manualPaymentHold) {
+        // A transport retry after the original request succeeded must return
+        // the paid appointment, not attempt to charge it a second time.
+      } else {
+      manualPaymentHold = paymentMethod === "ETransfer" && !paymentReference
+        ? await createPendingWalkInETransfer(req.auth.agencyId, {
+            appointmentId: data.id,
+            actorUserId: req.auth.userId,
+          })
+        : await recordWalkInManualPaymentService(req.auth.agencyId, {
+            appointmentId: data.id,
+            method: paymentMethod,
+            transactionReference: paymentReference,
+            note: null,
+            actorUserId: req.auth.userId,
+          });
+      }
+      if (manualPaymentHold.status === "PaymentFailed") {
+        manualPaymentWarning = "The appointment was booked and the e-transfer is still flagged as pending, but its QuickBooks invoice needs attention.";
+      }
     } catch (error) {
       manualPaymentWarning = error.message || "Could not record the payment automatically.";
       manualPaymentHold = await prisma.bookingPaymentHold.findUnique({

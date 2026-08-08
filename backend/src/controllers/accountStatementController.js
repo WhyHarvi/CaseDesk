@@ -5,9 +5,15 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { buildAccountStatement, buildClientBillingLedger, createStatementGeneration } from "../services/accountStatementService.js";
 import { generateAccountStatementPdf } from "../services/accountStatementPdfService.js";
 import { listFeeCategories } from "../services/feeCategoryService.js";
-import { createCaseInvoice, recordManualPayment as recordCaseInvoiceManualPayment } from "../services/caseInvoiceService.js";
+import {
+  assertManualPaymentReferenceAvailable,
+  createCaseInvoice,
+  recordManualPayment as recordCaseInvoiceManualPayment,
+  validateManualPaymentInput,
+} from "../services/caseInvoiceService.js";
 import { recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "../services/bookingPaymentHoldService.js";
 import { normalizeContact } from "../services/contactDuplicateService.js";
+import { notifyInvoiceCreated } from "../services/paymentNotificationService.js";
 
 async function getScopedClient(req) {
   const client = await prisma.client.findFirst({
@@ -234,11 +240,29 @@ export async function createClientManualBillingEntry(req, res) {
       select: { id: true },
     });
     if (!caseItem) throw createHttpError(404, "Choose one of this client's active cases.", "NOT_FOUND");
+    const operationKey = String(req.body?.idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200);
+    if (!operationKey) throw createHttpError(400, "This billing form has expired. Close it and try again.", "VALIDATION_ERROR");
     const chargeAmount = Number(req.body?.chargeAmount);
     const receivedAmount = Number(req.body?.amount);
+    if (!Number.isFinite(chargeAmount) || chargeAmount <= 0 || chargeAmount > 1_000_000) {
+      throw createHttpError(400, "Enter a total charge between $0.01 and $1,000,000.", "VALIDATION_ERROR");
+    }
     if (!Number.isFinite(receivedAmount) || receivedAmount <= 0 || receivedAmount > chargeAmount) {
       throw createHttpError(400, "The amount received must be greater than $0 and cannot exceed the charge.", "VALIDATION_ERROR");
     }
+    const validatedPayment = validateManualPaymentInput({
+      amount: receivedAmount,
+      method: commonPayment.method,
+      transactionReference: commonPayment.transactionReference,
+      paymentDate: commonPayment.paymentDate,
+    });
+    const existingInvoice = await prisma.caseInvoice.findUnique({
+      where: { agencyId_creationIdempotencyKey: { agencyId: req.auth.agencyId, creationIdempotencyKey: operationKey } },
+    });
+    if (existingInvoice?.lastPaymentIdempotencyKey === operationKey) {
+      return res.json({ data: { entryType, paymentRecorded: true, invoice: existingInvoice, reused: true } });
+    }
+    await assertManualPaymentReferenceAvailable(req.auth.agencyId, validatedPayment.paymentReference);
     const invoice = await createCaseInvoice(req.auth.agencyId, {
       caseId: caseItem.id,
       paymentType: req.body?.paymentType,
@@ -246,6 +270,8 @@ export async function createClientManualBillingEntry(req, res) {
       amount: chargeAmount,
       dueDate: req.body?.paymentDate || undefined,
       actorUserId: req.auth.userId,
+      idempotencyKey: operationKey,
+      notifyClient: false,
     });
     try {
       const updated = await recordCaseInvoiceManualPayment(req.auth.agencyId, {
@@ -253,8 +279,15 @@ export async function createClientManualBillingEntry(req, res) {
         caseId: caseItem.id,
         invoiceId: invoice.id,
         amount: receivedAmount,
-        idempotencyKey: req.body?.idempotencyKey,
+        idempotencyKey: operationKey,
       });
+      if (!existingInvoice && Number(updated.balance) > 0) {
+        await notifyInvoiceCreated({
+          agencyId: req.auth.agencyId,
+          invoice: { ...updated, amount: updated.balance },
+          actorUserId: req.auth.userId,
+        }).catch(() => {});
+      }
       return res.status(201).json({ data: { entryType, paymentRecorded: true, invoice: updated } });
     } catch (error) {
       return res.status(201).json({

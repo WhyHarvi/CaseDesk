@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import {
   cancelBookingAppointment,
@@ -51,6 +51,8 @@ import Select from "../components/ui/Select";
 import ClientCombobox, { useClientMatches } from "../components/ui/ClientCombobox";
 import api from "../services/api";
 
+const newBookingOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRID_START_HOUR = 7;
 const GRID_END_HOUR = 20;
@@ -77,6 +79,14 @@ const APPOINTMENT_STATUS_TONE = {
   Cancelled: "bg-rose-50 text-rose-700 ring-rose-200",
   NoShow: "bg-amber-50 text-amber-700 ring-amber-200",
 };
+
+function eTransferPaymentAttention(hold) {
+  if (!hold || hold.paymentMethod !== "ETransfer") return null;
+  if (hold.status === "PaymentFailed") return "Payment record failed";
+  const reference = hold.manualPaymentReference || hold.paymentReference;
+  if (reference || ["Voided", "Refunded", "Expired", "Cancelled", "Failed"].includes(hold.status)) return null;
+  return hold.status === "Paid" ? "Transaction # missing" : "E-transfer pending";
+}
 
 function startOfWeek(date) {
   const copy = new Date(date);
@@ -233,7 +243,7 @@ function DetailRow({ icon: Icon, children }) {
   );
 }
 
-function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onOpenNotes, onStatus, role, settings }) {
+function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onRescheduled, onConverted, onOpenNotes, onStatus, onPaymentUpdated, role, settings }) {
   const start = new Date(appointment.startsAt);
   const effectiveClient = appointment.client || appointment.matchedClient || null;
   const clientProfilePath = effectiveClient?.id
@@ -280,6 +290,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [paidDetailsMethod, setPaidDetailsMethod] = useState(appointment.paymentHold?.paymentMethod || "ETransfer");
   const [manualBusy, setManualBusy] = useState("");
   const [manualError, setManualError] = useState("");
+  const paymentAttention = eTransferPaymentAttention(payNow);
   const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
     ? "preparing link"
     : appointment.meetingSyncStatus === "Retrying"
@@ -346,6 +357,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       });
       setPayNow(result);
       setManualNote("");
+      onPaymentUpdated?.(result);
     } catch (reason) {
       setManualError(reason.response?.data?.message || "Could not record this payment.");
     } finally {
@@ -368,6 +380,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       });
       setPayNow(result);
       setPaidDetailsOpen(false);
+      onPaymentUpdated?.(result);
     } catch (reason) {
       setManualError(reason.response?.data?.message || "Could not update the payment details.");
     } finally {
@@ -411,6 +424,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
         if (!active) return;
         setPayNow(result);
         setPayNowError("");
+        if (!["AwaitingPayment", "Confirming"].includes(result.status)) onPaymentUpdated?.(result);
         if (["AwaitingPayment", "Confirming"].includes(result.status)) {
           timer = window.setTimeout(refreshPayment, 5_000);
         }
@@ -426,7 +440,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       active = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [payNow?.id, payNow?.status]);
+  }, [payNow?.id, payNow?.status, onPaymentUpdated]);
 
   useEffect(() => {
     if (!resched) return;
@@ -497,6 +511,11 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${APPOINTMENT_STATUS_TONE[appointment.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>
             {appointment.status === "NoShow" ? "No-show" : appointment.status}
           </span>
+          {paymentAttention ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 ring-1 ring-inset ring-amber-200">
+              <Wallet className="h-3 w-3" /> {paymentAttention}
+            </span>
+          ) : null}
         </div>
         <button
           type="button"
@@ -612,7 +631,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             ) : payNow.status === "PaymentFailed" ? (
               <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
                 <p className="text-xs font-semibold text-rose-700">Payment record needs attention</p>
-                <p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "QuickBooks could not record this payment. Correct the issue and retry below."}</p>
+                <p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "QuickBooks could not record this payment. Correct the issue and retry below."} The appointment remains scheduled.</p>
+              </div>
+            ) : payNow.paymentMethod === "ETransfer" && !payNow.paymentReference ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> E-transfer payment pending</p>
+                <p className="mt-1 text-xs leading-5 text-amber-700">The appointment is confirmed. Enter the transaction number below after the payment is received; this warning stays active until then.</p>
+                {payNow.invoiceNumber ? <p className="mt-1 text-[11px] text-amber-600">QuickBooks invoice #{payNow.invoiceNumber}</p> : null}
               </div>
             ) : payNow.status === "AwaitingPayment" && payNow.payNowUrl ? (
               <>
@@ -787,9 +812,9 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, settings }) {
+function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialIntake, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "" });
+  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
   const [selectedClient, setSelectedClient] = useState(null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -815,8 +840,9 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       startsAt: "",
       date: initialDate || current.date,
       assignedToId: role === "consultant" ? userId : current.assignedToId,
-      paymentMethod: "",
-      paymentReference: "",
+      paymentMethod: initialIntake?.action === "appointment-payment" ? initialIntake.paymentMethod || "" : "",
+      paymentReference: initialIntake?.action === "appointment-payment" ? initialIntake.paymentReference || "" : "",
+      idempotencyKey: newBookingOperationKey(),
       mode: initialClient ? "client" : current.mode,
       clientId: initialClient?.id || "",
     }));
@@ -828,7 +854,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setPaymentActionError("");
     setPaymentRecipient("");
     setConfirmPaymentCancel(false);
-  }, [open, role, userId, initialDate, initialClient]);
+  }, [open, role, userId, initialDate, initialClient, initialIntake]);
 
   useEffect(() => {
     if (!open) return;
@@ -893,7 +919,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   const activeTypes = sessionTypes.filter((type) => type.isActive);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
   const consultFeeAmount = Number(settings?.consultFeeAmount) || 0;
-  const showsPaymentStep = consultFeeAmount > 0 && freeEligibility?.eligible !== true;
+  const intakePaymentRequested = initialIntake?.action === "appointment-payment";
+  const showsPaymentStep = intakePaymentRequested || (consultFeeAmount > 0 && freeEligibility?.eligible !== true);
   const zoomCandidateId = role === "consultant" ? userId : form.assignedToId;
   const zoomHostAvailable = zoomCandidateId
     ? staff.some((member) => member.id === zoomCandidateId && member.zoomHostMapping?.status === "active")
@@ -958,7 +985,6 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     event.preventDefault();
     if (!form.startsAt) { setError("Pick an available time."); return; }
     if (showsPaymentStep && !form.paymentMethod) { setError("Choose how the client will pay."); return; }
-    if (showsPaymentStep && form.paymentMethod === "ETransfer" && !form.paymentReference.trim()) { setError("Enter the e-transfer transaction number."); return; }
     setSaving(true);
     setError("");
     try {
@@ -978,6 +1004,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
         paymentMethod: showsPaymentStep && form.paymentMethod !== "Skip" ? form.paymentMethod : undefined,
         paymentReference: showsPaymentStep && ["Cash", "ETransfer"].includes(form.paymentMethod) ? form.paymentReference.trim() || undefined : undefined,
+        idempotencyKey: form.idempotencyKey,
       });
       if (created.pending) {
         setPendingHold({ ...created, holdId: created.holdId });
@@ -1061,6 +1088,21 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               </div>
             ) : (
             <form onSubmit={submit} className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+              {initialIntake ? (
+                <div className={`rounded-2xl border p-3.5 ${initialIntake.action === "appointment-payment" ? "border-emerald-200 bg-emerald-50" : "border-sky-200 bg-sky-50"}`}>
+                  <div className="flex items-start gap-2.5">
+                    {initialIntake.action === "appointment-payment" ? <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />}
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800">Client created — finish the appointment</p>
+                      <p className="mt-1 text-[11px] leading-4 text-slate-600">
+                        {initialIntake.action === "appointment-payment"
+                          ? `${initialIntake.paymentMethod === "Card" ? "The card payment link" : `${initialIntake.paymentMethod || "The payment"} details`} will be applied when you book the selected slot.`
+                          : "The new client is already selected. Choose the meeting format, staff member, date, and time."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
                 {[["client", "Existing client"], ["guest", "Walk-in / guest"]].map(([mode, label]) => (
                   <button key={mode} type="button" onClick={() => setForm((c) => ({ ...c, mode }))} className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${form.mode === mode ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
@@ -1117,7 +1159,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 </div>
               )}
 
-              {freeEligibility?.enabled ? (
+              {freeEligibility?.enabled && !intakePaymentRequested ? (
                 freeEligibility.eligible ? (
                   <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free 15-minute follow-up available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
                 ) : freeEligibility.reason === "PAID_BOOKING_REQUIRED" ? (
@@ -1130,26 +1172,30 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               ) : null}
 
               {showsPaymentStep ? (
-                <div>
+                <div className={initialIntake?.action === "appointment-payment" ? "rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3" : ""}>
                   <p className="text-xs font-medium text-slate-600">How will they pay? — {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
-                  <div className="mt-1.5 grid grid-cols-4 gap-1.5">
-                    {[["Card", "Card"], ["Cash", "Cash"], ["ETransfer", "E-transfer"], ["Skip", "Skip"]].map(([value, label]) => (
-                      <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value, paymentReference: ["Cash", "ETransfer"].includes(value) ? c.paymentReference : "" }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
+                  <div className={`mt-1.5 grid gap-1.5 ${intakePaymentRequested ? "grid-cols-3" : "grid-cols-4"}`}>
+                    {[["Card", "Card"], ["Cash", "Cash"], ["ETransfer", "E-transfer"], ...(intakePaymentRequested ? [] : [["Skip", "Skip"]])].map(([value, label]) => (
+                      <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value, paymentReference: c.paymentMethod === value ? c.paymentReference : "" }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
                         {label}
                       </button>
                     ))}
                   </div>
                   {["Cash", "ETransfer"].includes(form.paymentMethod) ? (
                     <label className="mt-2 block text-xs font-medium text-slate-600">
-                      {form.paymentMethod === "ETransfer" ? "E-transfer transaction number *" : "Cash receipt / reference (optional)"}
+                      {form.paymentMethod === "ETransfer" ? "E-transfer transaction number (optional)" : "Cash receipt / reference (optional)"}
                       <input
                         value={form.paymentReference}
                         onChange={(event) => setForm((current) => ({ ...current, paymentReference: event.target.value }))}
                         maxLength={100}
-                        required={form.paymentMethod === "ETransfer"}
-                        placeholder={form.paymentMethod === "ETransfer" ? "Enter bank transaction number" : "Receipt or internal reference"}
+                        placeholder={form.paymentMethod === "ETransfer" ? "Enter it now, or leave blank and add it later" : "Receipt or internal reference"}
                         className={`mt-1.5 ${input}`}
                       />
+                      {form.paymentMethod === "ETransfer" ? (
+                        <span className="mt-1.5 block text-[11px] leading-4 text-slate-500">
+                          If the payment has arrived, enter its transaction number now. Otherwise leave this blank—the appointment will still be booked and payment will remain pending.
+                        </span>
+                      ) : null}
                     </label>
                   ) : null}
                   {form.paymentMethod === "Card" ? (
@@ -1251,6 +1297,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
 export default function CalendarPage() {
   const { role, appUser } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedAppointmentId = searchParams.get("appointment") || "";
   const linkedDate = searchParams.get("date");
@@ -1266,6 +1314,7 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [prefillClient, setPrefillClient] = useState(null);
+  const [prefillIntake, setPrefillIntake] = useState(null);
   const [selected, setSelected] = useState(null);
   const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
   const [notesAppointmentId, setNotesAppointmentId] = useState(null);
@@ -1314,12 +1363,18 @@ export default function CalendarPage() {
     const bookForClientId = searchParams.get("bookForClient");
     if (!bookForClientId) return;
     let cancelled = false;
+    const intake = role === "frontdesk" ? location.state?.frontDeskIntake || null : null;
+    setPrefillIntake(intake);
     api.get(`/clients/${bookForClientId}`).then((response) => {
       if (cancelled) return;
       setPrefillClient(response.data.data.client);
       setSheetOpen(true);
-    }).catch(() => {});
-    setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("bookForClient"); return next; }, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.delete("bookForClient");
+      navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: null });
+    }).catch((reason) => {
+      if (!cancelled) setError(reason.response?.data?.message || "The new client was saved, but appointment booking could not be opened.");
+    });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1381,6 +1436,28 @@ export default function CalendarPage() {
       }, { replace: true });
     }
   }
+
+  const handlePaymentUpdated = useCallback((result) => {
+    const mergePayment = (item) => {
+      if (!item) return item;
+      return {
+        ...item,
+        paymentHold: {
+          ...item.paymentHold,
+          id: result.id,
+          status: result.status,
+          amount: result.amount,
+          paidAt: result.paidAt,
+          paymentMethod: result.paymentMethod,
+          manualPaymentReference: result.paymentReference ?? result.manualPaymentReference ?? null,
+          paymentError: result.paymentError,
+          qbInvoiceNumber: result.invoiceNumber ?? result.qbInvoiceNumber,
+        },
+      };
+    };
+    setAppointments((current) => current.map((item) => item.paymentHold?.id === result.id ? mergePayment(item) : item));
+    setSelected((current) => current?.paymentHold?.id === result.id ? mergePayment(current) : current);
+  }, []);
 
   async function cancelSelected(scope = "single") {
     if (!selected) return;
@@ -1526,6 +1603,7 @@ export default function CalendarPage() {
                         const isFocused = focusedAppointmentId === item.id;
                         const isDone = item.status === "Completed";
                         const isNoShow = item.status === "NoShow";
+                        const paymentAttention = eTransferPaymentAttention(item.paymentHold);
                         const displayName = item.client?.fullName || item.guestName || item.subject;
                         const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                         const outerGutter = 5;
@@ -1541,14 +1619,15 @@ export default function CalendarPage() {
                             key={item.id}
                             type="button"
                             onClick={() => setSelected(item)}
-                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}`}
-                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}`}
+                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
+                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
                             className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
                             style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
                             <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
                               <ModeIcon className="h-3 w-3 shrink-0" />
                               {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
+                              {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
                               <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
                             </p>
                             {!isCompact && !isNarrowWeekPill ? (
@@ -1635,6 +1714,7 @@ export default function CalendarPage() {
                   else setAppointments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
                   setSelected(updated);
                 }}
+                onPaymentUpdated={handlePaymentUpdated}
               />
             ) : (
               <motion.div
@@ -1650,6 +1730,7 @@ export default function CalendarPage() {
                     {upcoming.map((item) => {
                       const tone = toneFor(item);
                       const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
+                      const paymentAttention = eTransferPaymentAttention(item.paymentHold);
                       return (
                         <button key={item.id} type="button" onClick={() => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); }} className={`flex w-full items-center gap-3 rounded-2xl px-2 py-1.5 text-left transition-[background-color,box-shadow] duration-[3800ms] hover:bg-slate-50 ${focusedAppointmentId === item.id ? "bg-amber-100 ring-2 ring-amber-300" : ""}`}>
                           <span className={`h-2 w-2 shrink-0 rounded-full ${tone.chip}`} />
@@ -1658,6 +1739,7 @@ export default function CalendarPage() {
                             <span className="block text-xs text-slate-400">
                               {new Date(item.startsAt).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" })} · {formatTime(item.startsAt)}
                             </span>
+                            {paymentAttention ? <span className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-amber-700"><Wallet className="h-3 w-3" /> {paymentAttention}</span> : null}
                           </span>
                         </button>
                       );
@@ -1674,7 +1756,7 @@ export default function CalendarPage() {
 
       <NewAppointmentSheet
         open={sheetOpen}
-        onClose={() => { setSheetOpen(false); setPrefillClient(null); }}
+        onClose={() => { setSheetOpen(false); setPrefillClient(null); setPrefillIntake(null); }}
         onCreated={(created) => { setAppointments((current) => [...current, created]); setSelected(created); }}
         onRefresh={() => load({ fresh: true, background: true })}
         staff={staff}
@@ -1683,6 +1765,7 @@ export default function CalendarPage() {
         userId={appUser?.id}
         initialDate={dateKey(selectedDate)}
         initialClient={prefillClient}
+        initialIntake={prefillIntake}
         settings={bookingSettings}
       />
       {notesAppointmentId ? (

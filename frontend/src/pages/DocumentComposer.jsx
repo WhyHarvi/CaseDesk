@@ -179,7 +179,7 @@ export default function DocumentComposer() {
               contentHtml: "",
             })
           ).data.data;
-          navigate(`/cases/${id}/documents/${writer.id}/edit`, {
+          navigate(`/app/cases/${id}/documents/${writer.id}/edit`, {
             replace: true,
           });
         }
@@ -349,7 +349,7 @@ export default function DocumentComposer() {
       setDirty(false);
       setAutosaveState("Saved");
       if (saveAsCopy)
-        navigate(`/cases/${id}/documents/${targetWriter.id}/edit`, {
+        navigate(`/app/cases/${id}/documents/${targetWriter.id}/edit`, {
           replace: true,
         });
       setWrittenDocument(versionResponse.data.data);
@@ -450,7 +450,7 @@ export default function DocumentComposer() {
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(`/cases/${id}`)}
+              onClick={() => navigate(`/app/cases/${id}`)}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50"
               aria-label="Back to case"
             >

@@ -24,6 +24,7 @@ const caseSummarySelect = {
   client: { select: { id: true, fullName: true } },
 };
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
+const OPEN_BOOKING_PAYMENT_STATUSES = ["AwaitingPayment", "Confirming", "RecordingPayment", "PaymentFailed"];
 export const DASHBOARD_HIDDEN_ACTIVITY_ACTIONS = Object.freeze(["USER_LOGIN", "USER_LOGOUT"]);
 export const DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS = Object.freeze([
   "invoice.created",
@@ -334,12 +335,12 @@ export async function getDashboardSummary(req, res) {
       : Promise.resolve({ _sum: { balance: null } }),
     canViewFinancialData
       ? prisma.bookingPaymentHold.count({
-          where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+          where: { ...bookingPaymentHoldWhere, status: { in: OPEN_BOOKING_PAYMENT_STATUSES } },
         })
       : Promise.resolve(0),
     canViewFinancialData
       ? prisma.bookingPaymentHold.aggregate({
-          where: { ...bookingPaymentHoldWhere, status: "AwaitingPayment" },
+          where: { ...bookingPaymentHoldWhere, status: { in: OPEN_BOOKING_PAYMENT_STATUSES } },
           _sum: { amount: true },
         })
       : Promise.resolve({ _sum: { amount: null } }),

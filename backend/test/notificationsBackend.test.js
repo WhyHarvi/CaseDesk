@@ -152,6 +152,16 @@ test("financial exception notifications deep-link to the exact review surface", 
   );
   assert.equal(
     focusedNotificationActionUrl({
+      type: "booking_payment.etransfer_pending",
+      entityType: "bookingPaymentHold",
+      entityId: "hold-8",
+      metadata: { appointmentId: "appointment/8" },
+      actionUrl: "/app/payments",
+    }),
+    "/app/calendar?appointment=appointment%2F8",
+  );
+  assert.equal(
+    focusedNotificationActionUrl({
       type: "appointment.meeting_sync_failed",
       entityType: "appointment",
       entityId: "appointment-4",

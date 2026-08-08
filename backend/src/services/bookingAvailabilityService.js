@@ -261,6 +261,9 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     where: {
       agencyId,
       assignedToId: { in: staffIds },
+      // A walk-in e-transfer hold is linked to an Appointment that already
+      // consumes this seat. Only pre-appointment checkout holds belong here.
+      appointmentId: null,
       OR: [{ status: "AwaitingPayment", expiresAt: { gt: now } }, { status: "Confirming" }],
       startsAt: { lt: rangeEnd },
       endsAt: { gt: rangeStart },
@@ -344,7 +347,7 @@ export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt
     if (hold) return hold;
   }
   if (tx.bookingPaymentHold) {
-    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }], startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}), ...sameGroup }, select: { id: true, startsAt: true } });
+    const paymentHold = await tx.bookingPaymentHold.findFirst({ where: { agencyId, assignedToId, appointmentId: null, OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }], startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) }, endsAt: { gt: new Date(new Date(startsAt).getTime() - buffer) }, ...(excludePaymentHoldId ? { id: { not: excludePaymentHoldId } } : {}), ...sameGroup }, select: { id: true, startsAt: true } });
     if (paymentHold) return paymentHold;
   }
   if (!tx.schedulingBlock) return null;

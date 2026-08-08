@@ -6,7 +6,7 @@ import {
   getQuickBooksPayment,
   getQuickBooksRefundReceipt,
   listQuickBooksRefundReceiptsSince,
-  findQuickBooksPaymentIdForInvoice,
+  findQuickBooksPaymentForInvoice,
 } from "./quickbooksService.js";
 import { assertSlotAvailable } from "./bookingAvailabilityService.js";
 import { lockSchedulingTransaction } from "./schedulingAssignmentService.js";
@@ -16,7 +16,7 @@ import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
-import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
 
@@ -635,10 +635,30 @@ export async function confirmPaymentHold(agencyId, holdId) {
   // block confirming a payment that has genuinely already landed; it just
   // means the "Refund in QuickBooks" link falls back to the Invoice screen
   // instead of the more precise Payment screen.
-  const qbPaymentId = await findQuickBooksPaymentIdForInvoice(agencyId, hold.qbCustomerId, hold.qbInvoiceId).catch((error) => {
+  const qbPayment = await findQuickBooksPaymentForInvoice(agencyId, hold.qbCustomerId, hold.qbInvoiceId).catch((error) => {
     logger.warn("booking_payment_hold.payment_id_lookup_failed", { agencyId, holdId, reason: error.message });
     return null;
   });
+  const qbPaymentId = qbPayment?.id || null;
+  let reconciledPaymentReference = hold.paymentMethod === "ETransfer"
+    ? String(qbPayment?.paymentReference || "").trim().slice(0, 100) || null
+    : null;
+  if (reconciledPaymentReference) {
+    const [bookingDuplicate, invoiceDuplicate] = await Promise.all([
+      prisma.bookingPaymentHold.findFirst({
+        where: { agencyId, manualPaymentReference: reconciledPaymentReference, id: { not: hold.id } },
+        select: { id: true },
+      }),
+      prisma.caseInvoice.findFirst({
+        where: { agencyId, lastPaymentReference: reconciledPaymentReference },
+        select: { id: true },
+      }),
+    ]);
+    if (bookingDuplicate || invoiceDuplicate) {
+      logger.warn("booking_payment_hold.reconciled_reference_duplicate", { agencyId, holdId, paymentReference: reconciledPaymentReference });
+      reconciledPaymentReference = null;
+    }
+  }
   try {
     // Walk-in (front-desk) holds already have their Appointment — it was
     // created immediately through the normal staff booking flow, with no
@@ -646,9 +666,31 @@ export async function confirmPaymentHold(agencyId, holdId) {
     // creating a second appointment or lead would be wrong here.
     if (hold.appointmentId) {
       const appointment = await prisma.$transaction(async (tx) => {
-        await tx.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Paid", paidAt: new Date(), paymentMethod: hold.paymentMethod || "Online", ...(qbPaymentId ? { qbPaymentId } : {}) } });
+        await tx.bookingPaymentHold.update({
+          where: { id: hold.id },
+          data: {
+            status: "Paid",
+            paidAt: new Date(),
+            paymentMethod: hold.paymentMethod || "Online",
+            ...(qbPaymentId ? { qbPaymentId } : {}),
+            ...(reconciledPaymentReference
+              ? { manualPaymentReference: reconciledPaymentReference }
+              : {}),
+          },
+        });
         return tx.appointment.findUnique({ where: { id: hold.appointmentId }, include: { assignedTo: { select: { id: true, fullName: true } }, client: { select: { fullName: true, email: true, phone: true } } } });
       });
+      if (reconciledPaymentReference) {
+        await resolveNotifications({
+          agencyId,
+          entityType: "bookingPaymentHold",
+          entityId: hold.id,
+          types: ["booking_payment.etransfer_pending"],
+        }).catch((error) => {
+          logger.warn("booking_payment_hold.pending_etransfer_resolution_failed", { agencyId, holdId: hold.id, reason: error.message });
+        });
+      }
+      invalidateDashboardCache(agencyId);
       await recordActivity({
         agencyId,
         userId: null,

@@ -1,6 +1,7 @@
 import {
   BriefcaseBusiness,
   Archive,
+  CalendarDays,
   CalendarClock,
   ChevronDown,
   Download,
@@ -16,8 +17,9 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
 
 const defaultFormState = {
@@ -33,6 +35,11 @@ const defaultFormState = {
   identificationExpiryDate: "",
   status: "Lead",
   assignedUserId: "",
+};
+
+const defaultFrontDeskIntakeState = {
+  action: "client-only",
+  bookAppointmentAfterPayment: true,
 };
 
 const cardClassName =
@@ -230,6 +237,10 @@ function ClientDrawer({
   users,
   isEditing,
   closing,
+  showFrontDeskActions,
+  frontDeskIntake,
+  onFrontDeskIntakeChange,
+  canRecordProfessionalFee,
 }) {
   return (
     <div
@@ -263,7 +274,9 @@ function ClientDrawer({
               </h2>
 
               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                Save the core client details first. Case, documents, payments, and follow-ups can be handled from the client profile.
+                {showFrontDeskActions
+                  ? "Create the profile, then continue into appointment booking, consultation payment, or categorized professional billing."
+                  : "Save the core client details first. Case, documents, payments, and follow-ups can be handled from the client profile."}
               </p>
             </div>
 
@@ -432,6 +445,66 @@ function ClientDrawer({
               </label>
             </section>
 
+            {showFrontDeskActions ? (
+              <section className="rounded-[1.75rem] border border-sky-100 bg-gradient-to-br from-white to-sky-50/80 p-5 shadow-[0_18px_50px_rgba(14,165,233,0.1)]">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-sky-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-700">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Front-desk intake
+                  </div>
+                  <h3 className="mt-3 text-sm font-semibold text-slate-950">What should happen after the client is saved?</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">Choose the next step now. The next screen will open with the new client already selected.</p>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  {[
+                    { value: "client-only", label: "Save only", helper: "Create the profile" },
+                    { value: "appointment", label: "Book appointment", helper: "Charge the fee or skip" },
+                    ...(canRecordProfessionalFee
+                      ? [{ value: "professional-payment", label: "Professional fee", helper: "Create case, charge and payment" }]
+                      : []),
+                  ].map(({ value, label, helper }) => {
+                    const active = frontDeskIntake.action === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => onFrontDeskIntakeChange({ action: value })}
+                        className={`rounded-2xl border px-3.5 py-3 text-left transition ${active ? "border-sky-400 bg-sky-600 text-white shadow-[0_12px_28px_rgba(2,132,199,0.2)]" : "border-slate-200 bg-white text-slate-700 hover:border-sky-200 hover:bg-sky-50"}`}
+                      >
+                        <span className="block text-xs font-semibold">{label}</span>
+                        <span className={`mt-1 block text-[11px] leading-4 ${active ? "text-sky-100" : "text-slate-400"}`}>{helper}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {frontDeskIntake.action === "professional-payment" ? (
+                  <div className="mt-4 rounded-2xl border border-violet-100 bg-white/90 p-4">
+                    <div className="flex items-center gap-2">
+                      <BriefcaseBusiness className="h-4 w-4 text-violet-600" />
+                      <p className="text-xs font-semibold text-slate-800">Professional charge and payment</p>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">After the client is saved, create their case. CaseDesk will then open the billing form with <strong>Professional fees</strong> selected so you can enter the total charge, amount received, and payment reference.</p>
+                    <p className="mt-2 text-[11px] leading-5 text-slate-500">This keeps professional services separate from the consultation item and creates the correct QuickBooks invoice trail.</p>
+                    <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border border-violet-100 bg-violet-50/70 px-3.5 py-3 text-xs leading-5 text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={frontDeskIntake.bookAppointmentAfterPayment}
+                        onChange={(event) => onFrontDeskIntakeChange({ bookAppointmentAfterPayment: event.target.checked })}
+                        className="mt-1 h-4 w-4 rounded border-violet-300 text-violet-600 focus:ring-violet-300"
+                      />
+                      <span><strong className="block font-semibold text-slate-900">Also book a consultation</strong>Open appointment booking with this client selected after the professional payment is recorded.</span>
+                    </label>
+                  </div>
+                ) : null}
+
+                {!canRecordProfessionalFee ? (
+                  <p className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 px-3.5 py-3 text-[11px] leading-5 text-amber-800">Professional fee intake becomes available when this front-desk role has Cases, Financial data, and all-record client/case access in Portal Access.</p>
+                ) : null}
+              </section>
+            ) : null}
+
             {formError ? (
               <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
                 {formError}
@@ -454,7 +527,13 @@ function ClientDrawer({
                 disabled={saving}
                 className="inline-flex h-11 items-center justify-center rounded-2xl bg-slate-950 px-6 text-sm font-semibold text-white shadow-[0_18px_42px_rgba(15,23,42,0.24)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
               >
-                {saving ? "Saving..." : isEditing ? "Save changes" : "Create client"}
+                {saving
+                  ? "Saving..."
+                  : isEditing
+                    ? "Save changes"
+                    : showFrontDeskActions && frontDeskIntake.action !== "client-only"
+                      ? "Create client & continue"
+                      : "Create client"}
               </button>
             </div>
           </div>
@@ -658,8 +737,15 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 }
 
 export default function Clients() {
-  const { role } = useAuth();
+  const { role, membership } = useAuth();
+  const navigate = useNavigate();
   const canReassignClients = ["admin", "frontdesk"].includes(role);
+  const portalAccess = getPortalAccess(role, membership?.permissions);
+  const canRecordProfessionalFee =
+    canAccessPage(role, membership?.permissions, "cases") &&
+    hasCapability(role, membership?.permissions, "financialData") &&
+    portalAccess.data.clients === "all" &&
+    portalAccess.data.cases === "all";
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -667,6 +753,7 @@ export default function Clients() {
   const [showForm, setShowForm] = useState(() => Boolean(readClientDraft()));
   const [editingClient, setEditingClient] = useState(() => readClientDraft()?.editingClient || null);
   const [formState, setFormState] = useState(() => readClientDraft()?.formState || defaultFormState);
+  const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [assigningClientIds, setAssigningClientIds] = useState([]);
@@ -720,8 +807,8 @@ export default function Clients() {
       clearClientDraft();
       return;
     }
-    writeClientDraft({ editingClient, formState });
-  }, [showForm, editingClient, formState]);
+    writeClientDraft({ editingClient, formState, frontDeskIntake });
+  }, [showForm, editingClient, formState, frontDeskIntake]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -849,6 +936,7 @@ export default function Clients() {
 
     window.setTimeout(() => {
       setFormState(defaultFormState);
+      setFrontDeskIntake(defaultFrontDeskIntakeState);
       setEditingClient(null);
       setFormError("");
       setShowForm(false);
@@ -860,6 +948,7 @@ export default function Clients() {
     setActiveActionMenuId(null);
     setEditingClient(null);
     setFormState(defaultFormState);
+    setFrontDeskIntake(defaultFrontDeskIntakeState);
     setFormError("");
     setShowForm(true);
   }
@@ -867,6 +956,7 @@ export default function Clients() {
   function openEditForm(client) {
     setActiveActionMenuId(null);
     setEditingClient(client);
+    setFrontDeskIntake(defaultFrontDeskIntakeState);
     setFormState({
       fullName: client.fullName || "",
       email: client.email || "",
@@ -927,7 +1017,26 @@ export default function Clients() {
       if (isEditing) {
         await api.patch(`/clients/${editingClient.id}`, payload);
       } else {
-        await api.post("/clients", payload);
+        const response = await api.post("/clients", payload);
+        const createdClient = response.data.data;
+        if (role === "frontdesk" && frontDeskIntake.action === "professional-payment") {
+          setShowForm(false);
+          clearClientDraft();
+          navigate(`/app/cases?action=create&clientId=${encodeURIComponent(createdClient.id)}&after=professional-payment&bookAppointment=${frontDeskIntake.bookAppointmentAfterPayment ? "true" : "false"}`);
+          return;
+        }
+        if (role === "frontdesk" && frontDeskIntake.action !== "client-only") {
+          setShowForm(false);
+          clearClientDraft();
+          navigate(`/app/calendar?bookForClient=${encodeURIComponent(createdClient.id)}`, {
+            state: {
+              frontDeskIntake: {
+                action: frontDeskIntake.action,
+              },
+            },
+          });
+          return;
+        }
       }
 
       await loadClients();
@@ -1460,6 +1569,10 @@ export default function Clients() {
           users={users}
           isEditing={isEditing}
           closing={drawerClosing}
+          showFrontDeskActions={role === "frontdesk" && !isEditing}
+          frontDeskIntake={frontDeskIntake}
+          onFrontDeskIntakeChange={(patch) => setFrontDeskIntake((current) => ({ ...current, ...patch }))}
+          canRecordProfessionalFee={canRecordProfessionalFee}
         />
       ) : null}
     </section>

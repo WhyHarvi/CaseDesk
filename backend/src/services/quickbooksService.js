@@ -609,11 +609,15 @@ export async function listQuickBooksPaymentsForCustomer(agencyId, customerId) {
 // actual Payment so that link lands on the Receive Payment screen instead,
 // where QuickBooks' own Refund action is pre-filled with the right
 // customer and amount.
-export async function findQuickBooksPaymentIdForInvoice(agencyId, customerId, invoiceId) {
+export async function findQuickBooksPaymentForInvoice(agencyId, customerId, invoiceId) {
   if (!customerId || !invoiceId) return null;
   const payments = await listQuickBooksPaymentsForCustomer(agencyId, customerId);
-  const match = payments.find((payment) => payment.allocations.some((allocation) => allocation.invoiceId === invoiceId));
-  return match?.id || null;
+  return payments.find((payment) => payment.allocations.some((allocation) => allocation.invoiceId === invoiceId)) || null;
+}
+
+export async function findQuickBooksPaymentIdForInvoice(agencyId, customerId, invoiceId) {
+  const payment = await findQuickBooksPaymentForInvoice(agencyId, customerId, invoiceId);
+  return payment?.id || null;
 }
 
 export async function listQuickBooksInvoicesForCustomer(agencyId, customerId) {

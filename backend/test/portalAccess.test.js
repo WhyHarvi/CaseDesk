@@ -141,6 +141,36 @@ test("Portal Access is admin-only and wired to both UI and server routes", async
   assert.match(server, /requirePortalCapability\("financialData"\)/);
 });
 
+test("client case actions use the guarded case workspace for front-desk users", async () => {
+  const [clientProfile, cases, documentComposer, appRoutes] =
+    await Promise.all([
+      source("../../frontend/src/pages/ClientProfile.jsx"),
+      source("../../frontend/src/pages/Cases.jsx"),
+      source("../../frontend/src/pages/DocumentComposer.jsx"),
+      source("../../frontend/src/routes/AppRoutes.jsx"),
+    ]);
+
+  assert.match(clientProfile, /to=\{`\/app\/cases\/\$\{item\.id\}`\}/);
+  assert.match(clientProfile, /canOpenCases = canAccessPage/);
+  assert.match(clientProfile, /action=create&clientId=/);
+  assert.match(clientProfile, /Create case/);
+  assert.match(clientProfile, /!cases\.length && canOpenCases/);
+  assert.doesNotMatch(clientProfile, /to=\{`\/cases\//);
+  assert.doesNotMatch(cases, /to=\{`\/cases\//);
+  assert.match(cases, /searchParams\.get\("action"\) !== "create"/);
+  assert.match(cases, /openCreateFormForClient\(createClientId\)/);
+  assert.match(cases, /get\(`\/clients\/\$\{createClientId\}`\)/);
+  assert.doesNotMatch(documentComposer, /navigate\(`\/cases\//);
+  assert.match(
+    appRoutes,
+    /function Legacy\([\s\S]*?<InternalRoute allowFrontdesk>/,
+  );
+  assert.match(
+    appRoutes,
+    /path="\/app\/cases\/:id"[\s\S]*?<Access page="cases">/,
+  );
+});
+
 test("open sessions refresh portal access without recording repeated logins", async () => {
   const [authController, authRoutes, authContext, authGuards] =
     await Promise.all([

@@ -747,6 +747,8 @@ model CaseInvoice {
   lastPaymentReference String?                  @map("last_payment_reference")
   lastPaymentAt        DateTime?                @map("last_payment_at")
   lastQbPaymentId      String?                  @map("last_qb_payment_id")
+  creationIdempotencyKey String?                @map("creation_idempotency_key")
+  lastPaymentIdempotencyKey String?             @map("last_payment_idempotency_key")
   createdById          String?                  @map("created_by_id")
   createdAt            DateTime                 @default(now()) @map("created_at")
   updatedAt            DateTime                 @updatedAt @map("updated_at")
@@ -759,6 +761,8 @@ model CaseInvoice {
   followUps            FollowUp[]
 
   @@unique([agencyId, qbInvoiceId])
+  @@unique([agencyId, creationIdempotencyKey])
+  @@unique([agencyId, lastPaymentIdempotencyKey])
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
   @@map("case_invoices")

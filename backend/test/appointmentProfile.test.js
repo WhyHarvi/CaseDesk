@@ -55,6 +55,19 @@ test("a no-show appointment can be rescheduled through the normal protected flow
   assert.match(controller, /types: \["appointment\.no_show"\]/);
 });
 
+test("a no-show can be corrected to attended when the consultation happened outside the calendar", async () => {
+  const [calendar, controller] = await Promise.all([
+    source("../../frontend/src/pages/CalendarPage.jsx"),
+    source("../src/controllers/bookingController.js"),
+  ]);
+  assert.match(calendar, /Mark as attended/);
+  assert.match(calendar, /Correct the attendance record without changing the original appointment time/);
+  assert.match(calendar, /appointment\.status === "NoShow"[\s\S]*onStatus\("Completed"\)[\s\S]*Reschedule missed appointment/);
+  assert.match(controller, /correctingNoShowToCompleted = existing\.status === "NoShow" && status === "Completed"/);
+  assert.match(controller, /existing\.status !== "Scheduled" && !correctingNoShowToCompleted/);
+  assert.match(controller, /status === "Completed" && req\.auth\.role === "frontdesk"/);
+});
+
 test("appointment profile limits consultants to assigned or related appointments", () => {
   const where = appointmentProfileAccessWhere({ auth: { role: "consultant", userId: "user-1" } });
   assert.ok(Array.isArray(where.OR));

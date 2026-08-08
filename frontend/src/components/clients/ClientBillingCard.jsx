@@ -44,13 +44,14 @@ function Metric({ label, value, tone = "text-slate-950" }) {
   );
 }
 
-export default function ClientBillingCard({ clientId, clientName, onOpenStatement }) {
+export default function ClientBillingCard({ clientId, clientName, onOpenStatement, onEntrySaved, initialEntry = null }) {
   const { role } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [entryOpen, setEntryOpen] = useState(false);
+  const [entryOpen, setEntryOpen] = useState(Boolean(initialEntry));
+  const [entryPreset, setEntryPreset] = useState(initialEntry);
   // Front desk can record a payment only when Portal Access has already
   // granted financialData and client access; the API repeats both checks.
   const canRecord = ["admin", "consultant", "frontdesk"].includes(role);
@@ -87,7 +88,7 @@ export default function ClientBillingCard({ clientId, clientName, onOpenStatemen
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {canRecord ? <button type="button" onClick={() => setEntryOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50"><Plus className="h-3.5 w-3.5" /> Add entry</button> : null}
+          {canRecord ? <button type="button" onClick={() => { setEntryPreset(null); setEntryOpen(true); }} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50"><Plus className="h-3.5 w-3.5" /> Add entry</button> : null}
           <button type="button" onClick={() => load({ quiet: true })} disabled={refreshing} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-950 disabled:opacity-50" aria-label="Refresh billing">
             <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
@@ -144,7 +145,10 @@ export default function ClientBillingCard({ clientId, clientName, onOpenStatemen
           </div>
         </>
       )}
-      {canRecord ? <ClientManualBillingEntrySheet open={entryOpen} clientId={clientId} clientName={clientName || data?.client?.fullName || "Client"} onClose={() => setEntryOpen(false)} onSaved={() => load({ quiet: true })} /> : null}
+      {canRecord ? <ClientManualBillingEntrySheet open={entryOpen} clientId={clientId} clientName={clientName || data?.client?.fullName || "Client"} initialMode={entryPreset?.mode} initialPaymentType={entryPreset?.paymentType} initialCaseId={entryPreset?.caseId} onClose={() => { setEntryOpen(false); setEntryPreset(null); }} onSaved={async (result) => {
+        await load({ quiet: true });
+        if (!result?.paymentWarning && entryPreset?.afterSave) await onEntrySaved?.(result, entryPreset);
+      }} /> : null}
     </article>
   );
 }

@@ -18,11 +18,12 @@ import {
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
 import { captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
-import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { paymentHoldMeetingFields } from "./bookingMeetingModeService.js";
 import { paymentHoldDeliverySummary, queuePaymentHoldMessages, sendBookingMessages } from "./bookingNotificationService.js";
 import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import { requireFeeCategory } from "./feeCategoryService.js";
+import { invalidateDashboardCache } from "./dashboardCache.js";
 
 // Standalone resolver, deliberately not layered onto caseInvoiceService.js's
 // requireMappedItem/PAYMENT_TYPES — those are also consumed by payment
@@ -284,12 +285,19 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
   amount,
   bufferMinutes,
   actorUserId,
+  idempotencyKey = null,
 }) {
   const itemId = await requireConsultFeeItem(agencyId);
   const holdMinutes = settings.consultFeeHoldMinutes;
 
-  const hold = await prisma.$transaction(async (tx) => {
+  const reservation = await prisma.$transaction(async (tx) => {
     await lockSchedulingTransaction(tx, agencyId, startsAt);
+    if (idempotencyKey) {
+      const existing = await tx.bookingPaymentHold.findUnique({
+        where: { agencyId_idempotencyKey: { agencyId, idempotencyKey } },
+      });
+      if (existing) return { hold: existing, reused: true };
+    }
     const expiresAt = new Date(Date.now() + holdMinutes * 60_000);
     const assignee = await chooseAppointmentAssignee({
       agencyId,
@@ -304,7 +312,7 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
     const conflict = await assertSlotAvailable(tx, { agencyId, assignedToId: assignee.id, startsAt, endsAt, bufferMinutes, meetingMode });
     if (conflict) throw createHttpError(409, "That time was just taken. Pick another slot.", "SLOT_TAKEN");
 
-    return tx.bookingPaymentHold.create({
+    const hold = await tx.bookingPaymentHold.create({
       data: {
         agencyId,
         assignedToId: assignee.id,
@@ -325,9 +333,13 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
         expiresAt,
         source: "WalkIn",
         createdById: actorUserId,
+        idempotencyKey,
       },
     });
+    return { hold, reused: false };
   });
+  const { hold, reused } = reservation;
+  if (reused && hold.qbInvoiceId) return hold;
 
   let holdDeleted = false;
   async function releaseHold() {
@@ -345,6 +357,7 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
       itemId,
       description: `${sessionTypeName || subject || "Consultation"} — consultation booking`,
       amount,
+      requestId: idempotencyKey ? `staff-booking-${idempotencyKey}` : undefined,
     });
     createdInvoice = invoice;
     if (!invoice.invoiceLink) {
@@ -500,6 +513,187 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
       logger.warn("booking_payment_hold.payment_request_message_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
     });
   }
+  return hold;
+}
+
+const PENDING_ETRANSFER_NOTIFICATION_TYPE = "booking_payment.etransfer_pending";
+
+async function notifyPendingETransfer(agencyId, appointment, hold, actorUserId) {
+  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  if (!recipientIds.length) return;
+  const hasReference = Boolean(hold.manualPaymentReference);
+  await notifyUsers({
+    agencyId,
+    recipientIds,
+    actorUserId,
+    includeActor: true,
+    type: PENDING_ETRANSFER_NOTIFICATION_TYPE,
+    category: "payments",
+    title: hasReference ? "E-transfer could not be recorded" : "E-transfer needs attention",
+    body: hasReference
+      ? `${hold.guestName}'s appointment is booked, but the ${Number(hold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} e-transfer could not be recorded in QuickBooks. Open the appointment, correct the issue, and retry.`
+      : `${hold.guestName}'s appointment is booked, but the ${Number(hold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} e-transfer is not fully recorded. Add the transaction number after payment is received.`,
+    severity: "warning",
+    attentionLevel: "action_required",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}`,
+    metadata: { appointmentId: appointment.id, holdId: hold.id, amount: Number(hold.amount), paymentError: hold.paymentError || null },
+    dedupeKey: `booking_payment_hold:${hold.id}:etransfer_pending`,
+    channels: ["in_app"],
+    expiresAt: null,
+  });
+}
+
+export async function resolvePendingETransferNotification(agencyId, holdId) {
+  if (!holdId) return 0;
+  return resolveNotifications({
+    agencyId,
+    entityType: "bookingPaymentHold",
+    entityId: holdId,
+    types: [PENDING_ETRANSFER_NOTIFICATION_TYPE],
+  });
+}
+
+// An e-transfer may be promised before it has reached the bank account. The
+// appointment is real immediately, while this non-expiring hold keeps the fee
+// outstanding everywhere until staff record the transaction number (or QBO
+// reconciliation observes a payment carrying one). The local row is created before any
+// QuickBooks call so a provider outage can never make the debt disappear.
+export async function createPendingWalkInETransfer(agencyId, { appointmentId, actorUserId }) {
+  const appointment = await prisma.appointment.findFirst({
+    where: { id: appointmentId, agencyId },
+    include: { client: { select: { id: true, fullName: true, email: true, phone: true } } },
+  });
+  if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+  if (appointment.isFreeConsultation) throw createHttpError(409, "This is a free consultation — no payment is needed.", "FREE_CONSULTATION");
+
+  const existing = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
+  if (existing) return existing;
+
+  const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
+  const amount = Number(settings?.consultFeeAmount || 0);
+  if (!amount) throw createHttpError(409, "Set a consultation fee in Settings before tracking an e-transfer.", "VALIDATION_ERROR");
+
+  const name = appointment.client?.fullName || appointment.guestName;
+  const email = appointment.client?.email || appointment.guestEmail;
+  const phone = appointment.client?.phone || appointment.guestPhone;
+  let hold;
+  try {
+    hold = await prisma.bookingPaymentHold.create({
+      data: {
+        agencyId,
+        assignedToId: appointment.assignedToId,
+        sessionTypeId: appointment.sessionTypeId,
+        startsAt: appointment.startsAt,
+        endsAt: appointment.endsAt,
+        guestName: name,
+        guestEmail: email || null,
+        guestEmailNormalized: email?.toLowerCase() || null,
+        guestPhone: phone || null,
+        meetingMode: appointment.meetingMode,
+        meetingPhoneNumber: appointment.meetingPhoneNumber,
+        meetingProvider: appointment.meetingProvider,
+        amount,
+        status: "AwaitingPayment",
+        source: "WalkIn",
+        expiresAt: null,
+        appointmentId: appointment.id,
+        clientId: appointment.clientId || null,
+        createdById: actorUserId,
+        paymentMethod: "ETransfer",
+        manualPaymentReference: null,
+      },
+    });
+  } catch (error) {
+    if (error?.code !== "P2002") throw error;
+    hold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
+    if (!hold) throw error;
+  }
+
+  await notifyPendingETransfer(agencyId, appointment, hold, actorUserId).catch((error) => {
+    logger.warn("booking_payment_hold.pending_etransfer_notification_failed", { agencyId, holdId: hold.id, reason: error.message });
+  });
+  invalidateDashboardCache(agencyId);
+
+  let createdInvoice = null;
+  let qbCustomerId = null;
+  try {
+    const itemId = await requireConsultFeeItem(agencyId);
+    qbCustomerId = await resolveQuickBooksCustomerForBooking(agencyId, {
+      clientId: appointment.clientId,
+      name,
+      email,
+      phone,
+    });
+    const invoice = await createQuickBooksInvoice(agencyId, {
+      customerId: qbCustomerId,
+      itemId,
+      description: `Consultation — ${name}`,
+      amount,
+      requestId: `pending-etransfer-consult-invoice-${hold.id}`,
+    });
+    createdInvoice = invoice;
+    hold = await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: {
+        qbCustomerId,
+        qbInvoiceId: invoice.id,
+        qbInvoiceNumber: invoice.docNumber,
+        qbInvoiceLink: invoice.invoiceLink,
+        qbSyncToken: invoice.syncToken,
+        paymentError: null,
+      },
+    });
+  } catch (error) {
+    // If QuickBooks accepted the invoice but the first local patch failed,
+    // retry that idempotent patch once. If the database still cannot retain
+    // the invoice identifiers, void it so CaseDesk never leaves an orphaned
+    // charge that reconciliation cannot find.
+    if (createdInvoice?.id && qbCustomerId) {
+      try {
+        hold = await prisma.bookingPaymentHold.update({
+          where: { id: hold.id },
+          data: {
+            qbCustomerId,
+            qbInvoiceId: createdInvoice.id,
+            qbInvoiceNumber: createdInvoice.docNumber,
+            qbInvoiceLink: createdInvoice.invoiceLink,
+            qbSyncToken: createdInvoice.syncToken,
+            paymentError: null,
+          },
+        });
+        logger.warn("booking_payment_hold.pending_etransfer_invoice_persist_recovered", { agencyId, holdId: hold.id, invoiceId: createdInvoice.id });
+      } catch (persistError) {
+        await voidQuickBooksInvoice(agencyId, { id: createdInvoice.id, syncToken: createdInvoice.syncToken }).catch((voidError) => {
+          logger.warn("booking_payment_hold.pending_etransfer_void_after_persist_failure_failed", { agencyId, holdId: hold.id, invoiceId: createdInvoice.id, reason: voidError.message });
+        });
+        const paymentError = String(persistError?.message || error?.message || "QuickBooks invoice could not be saved in CaseDesk.").slice(0, 1000);
+        hold = await prisma.bookingPaymentHold.update({
+          where: { id: hold.id },
+          data: { status: "PaymentFailed", paymentError },
+        });
+      }
+    } else {
+      const paymentError = String(error?.message || "QuickBooks invoice could not be created.").slice(0, 1000);
+      hold = await prisma.bookingPaymentHold.update({
+        where: { id: hold.id },
+        data: { status: "PaymentFailed", paymentError },
+      });
+      logger.warn("booking_payment_hold.pending_etransfer_invoice_failed", { agencyId, holdId: hold.id, reason: paymentError });
+    }
+  }
+
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: appointment.clientId,
+    caseId: appointment.caseId,
+    action: "appointment.etransfer_payment_pending",
+    details: `Appointment booked for ${hold.guestName}; the ${Number(hold.amount).toFixed(2)} e-transfer remains outstanding.`,
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+  }).catch(() => {});
   return hold;
 }
 
@@ -718,6 +912,11 @@ export async function recordWalkInManualPayment(agencyId, {
       },
     });
 
+    await resolvePendingETransferNotification(agencyId, hold.id).catch((error) => {
+      logger.warn("booking_payment_hold.pending_etransfer_resolution_failed", { agencyId, holdId: hold.id, reason: error.message });
+    });
+    invalidateDashboardCache(agencyId);
+
     const methodLabel = method === "Cash" ? "cash" : "e-transfer";
     await recordActivity({
       agencyId,
@@ -743,6 +942,11 @@ export async function recordWalkInManualPayment(agencyId, {
         paymentError,
       },
     }).catch(() => {});
+    if (method === "ETransfer") {
+      await notifyPendingETransfer(agencyId, appointment, { ...hold, status: "PaymentFailed", paymentError }, actorUserId).catch((notifyError) => {
+        logger.warn("booking_payment_hold.failed_etransfer_notification_failed", { agencyId, holdId: hold.id, reason: notifyError.message });
+      });
+    }
     await recordActivity({
       agencyId,
       userId: actorUserId,
@@ -834,6 +1038,9 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
       ...(transactionDate ? { paidAt: transactionDate.paidAt } : {}),
     },
   });
+  await resolvePendingETransferNotification(agencyId, hold.id).catch((error) => {
+    logger.warn("booking_payment_hold.pending_etransfer_resolution_failed", { agencyId, holdId: hold.id, reason: error.message });
+  });
   await recordActivity({
     agencyId,
     userId: actorUserId,
@@ -848,24 +1055,33 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
   return updated;
 }
 
-// Cancelling or no-showing an appointment that still has a pending
+// Cancelling an appointment that still has a pending
 // (unpaid) payment hold previously left that hold and its QuickBooks
 // invoice open forever — nothing ever revisited it once the appointment
 // itself was closed out. Called from the appointment cancel/status-update
-// paths for exactly those two outcomes; deliberately NOT called for
-// "Completed" — if the consultation actually happened, the fee is still
-// owed and the invoice should stay open for staff to collect or record.
+// paths. Deliberately NOT called for "Completed" or "NoShow" — if the
+// consultation happened or the client missed it, the fee can still be owed
+// under the consultation terms and should stay open for staff to resolve.
 // Best-effort by design: a QuickBooks hiccup here must never block the
 // appointment status change itself.
 export async function voidOpenPaymentHoldForAppointment(agencyId, appointmentId) {
   const hold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
-  if (!hold || hold.status !== "AwaitingPayment") return null;
+  const safelyUnpaid = hold?.status === "AwaitingPayment" || (
+    hold?.status === "PaymentFailed" &&
+    hold.paymentMethod === "ETransfer" &&
+    !hold.manualPaymentReference &&
+    !hold.qbPaymentId
+  );
+  if (!hold || !safelyUnpaid) return null;
   if (hold.qbInvoiceId) {
     await voidQuickBooksInvoice(agencyId, { id: hold.qbInvoiceId, syncToken: hold.qbSyncToken }).catch((error) => {
       logger.warn("booking_payment_hold.void_on_appointment_closed_failed", { agencyId, holdId: hold.id, reason: error.message });
     });
   }
-  return prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Voided", voidedAt: new Date() } });
+  const updated = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { status: "Voided", voidedAt: new Date() } });
+  await resolvePendingETransferNotification(agencyId, hold.id).catch(() => {});
+  invalidateDashboardCache(agencyId);
+  return updated;
 }
 
 export async function resendPaymentHoldRequest(agencyId, holdId, { email = null, phone = undefined, actorUserId = null } = {}) {

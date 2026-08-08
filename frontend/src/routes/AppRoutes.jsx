@@ -186,7 +186,7 @@ function Internal({ children, allowFrontdesk = false }) {
 }
 function Legacy({ path }) {
   return (
-    <InternalRoute>
+    <InternalRoute allowFrontdesk>
       <Navigate to={`/app${path}`} replace />
     </InternalRoute>
   );

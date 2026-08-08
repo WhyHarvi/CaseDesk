@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
@@ -691,7 +691,7 @@ function CaseMobileCard({
           </div>
           <div>
             <Link
-              to={`/cases/${item.id}`}
+              to={`/app/cases/${item.id}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-semibold text-slate-950 transition hover:text-sky-700"
@@ -699,7 +699,7 @@ function CaseMobileCard({
               {item.caseType}
             </Link>
             <Link
-              to={`/cases/${item.id}`}
+              to={`/app/cases/${item.id}`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-0.5 block text-sm text-slate-500 transition hover:text-sky-700"
@@ -1167,7 +1167,8 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
 }
 
 export default function Cases() {
-  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
@@ -1200,6 +1201,9 @@ export default function Cases() {
   const [registerView, setRegisterView] = useState("active");
   const [activeActionMenuId, setActiveActionMenuId] = useState(null);
   const loadRequestRef = useRef(0);
+  const handledCreateRequestRef = useRef("");
+  const afterCreateActionRef = useRef("");
+  const bookAppointmentAfterPaymentRef = useRef(false);
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth >= 1024 : true,
   );
@@ -1213,6 +1217,61 @@ export default function Cases() {
   useEffect(() => {
     api.get("/cases/case-types").then((response) => setCaseTypeOptions(response.data.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("action") !== "create") return undefined;
+    const createClientId = searchParams.get("clientId") || "";
+    if (!createClientId || handledCreateRequestRef.current === createClientId)
+      return undefined;
+
+    let active = true;
+
+    const openForClient = (clientRecord) => {
+      if (!active) return;
+      handledCreateRequestRef.current = createClientId;
+      afterCreateActionRef.current = searchParams.get("after") || "";
+      bookAppointmentAfterPaymentRef.current = searchParams.get("bookAppointment") === "true";
+      if (clientRecord?.id) {
+        setClients((current) =>
+          current.some((item) => item.id === clientRecord.id)
+            ? current
+            : [clientRecord, ...current],
+        );
+      }
+      openCreateFormForClient(createClientId);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("action");
+      nextParams.delete("clientId");
+      nextParams.delete("after");
+      nextParams.delete("bookAppointment");
+      setSearchParams(nextParams, { replace: true });
+    };
+
+    const existingClient = clients.find((item) => item.id === createClientId);
+    if (existingClient) {
+      openForClient(existingClient);
+      return () => {
+        active = false;
+      };
+    }
+
+    api
+      .get(`/clients/${createClientId}`)
+      .then((response) => openForClient(response.data.data?.client))
+      .catch((requestError) => {
+        if (!active) return;
+        setToast({
+          type: "error",
+          message:
+            requestError.response?.data?.message ||
+            "This client could not be selected for a new case.",
+        });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -1394,6 +1453,8 @@ export default function Cases() {
   }
 
   function openCreateForm() {
+    afterCreateActionRef.current = "";
+    bookAppointmentAfterPaymentRef.current = false;
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(null);
@@ -1403,7 +1464,19 @@ export default function Cases() {
     setShowForm(true);
   }
 
+  function openCreateFormForClient(clientId) {
+    setActiveActionMenuId(null);
+    setViewingCase(null);
+    setEditingCase(null);
+    setFormState({ ...defaultFormState, clientId });
+    setFormError("");
+    setDrawerClosing(false);
+    setShowForm(true);
+  }
+
   function openEditForm(item) {
+    afterCreateActionRef.current = "";
+    bookAppointmentAfterPaymentRef.current = false;
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(item);
@@ -1424,6 +1497,8 @@ export default function Cases() {
   }
 
   function openQuickView(item) {
+    afterCreateActionRef.current = "";
+    bookAppointmentAfterPaymentRef.current = false;
     setActiveActionMenuId(null);
     setShowForm(false);
     setEditingCase(null);
@@ -1440,6 +1515,12 @@ export default function Cases() {
       setDrawerClosing(false);
       resetFormState();
     }, 220);
+  }
+
+  function cancelDrawers() {
+    afterCreateActionRef.current = "";
+    bookAppointmentAfterPaymentRef.current = false;
+    closeDrawers();
   }
 
   function handleInputChange(event) {
@@ -1519,6 +1600,23 @@ export default function Cases() {
           setCases((current) =>
             replaceOptimisticCase(current, optimisticCase.id, savedCase),
           );
+
+          if (afterCreateActionRef.current === "professional-payment") {
+            afterCreateActionRef.current = "";
+            navigate(`/app/clients/${encodeURIComponent(payload.clientId)}`, {
+              state: {
+                openBillingEntry: true,
+                billingEntry: {
+                  mode: "new",
+                  paymentType: "fees",
+                  caseId: savedCase.id,
+                  afterSave: bookAppointmentAfterPaymentRef.current ? "appointment" : "",
+                },
+              },
+            });
+            bookAppointmentAfterPaymentRef.current = false;
+            return;
+          }
         } else {
           setCases((current) =>
             rollbackOptimisticCase(current, optimisticCase.id),
@@ -1840,7 +1938,7 @@ export default function Cases() {
                                   </div>
                                   <div>
                                     <Link
-                                      to={`/cases/${item.id}`}
+                                      to={`/app/cases/${item.id}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="font-semibold text-slate-900 transition hover:text-sky-700"
@@ -1858,7 +1956,7 @@ export default function Cases() {
                               </td>
                               <td className="px-4 py-5">
                                 <Link
-                                  to={`/cases/${item.id}`}
+                                  to={`/app/cases/${item.id}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="font-semibold text-slate-900 transition hover:text-sky-700"
@@ -1986,7 +2084,7 @@ export default function Cases() {
           formState={formState}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
-          onCancel={closeDrawers}
+          onCancel={cancelDrawers}
           saving={saving}
           formError={formError}
           clients={clients}

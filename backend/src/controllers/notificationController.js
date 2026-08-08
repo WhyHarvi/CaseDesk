@@ -45,6 +45,12 @@ export function focusedNotificationActionUrl(notification) {
   ) {
     return `/app/payments?source=booking_payment&hold=${encodeURIComponent(notification.entityId)}`;
   }
+  if (
+    notification?.type === "booking_payment.etransfer_pending" &&
+    notification?.metadata?.appointmentId
+  ) {
+    return `/app/calendar?appointment=${encodeURIComponent(notification.metadata.appointmentId)}`;
+  }
   if (notification?.entityType === "appointment" && notification.entityId) {
     return `/app/calendar?appointment=${encodeURIComponent(notification.entityId)}`;
   }

@@ -313,6 +313,12 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
     paymentReference: row.manualPaymentReference,
     paymentError: row.paymentError,
     paymentFailed: row.status === "PaymentFailed",
+    eTransferPaymentPending: row.paymentMethod === "ETransfer"
+      && ["AwaitingPayment", "Confirming", "RecordingPayment", "PaymentFailed"].includes(row.status)
+      && (!row.manualPaymentReference || row.status === "PaymentFailed"),
+    transactionReferenceMissing: row.paymentMethod === "ETransfer"
+      && row.status === "Paid"
+      && !row.manualPaymentReference,
     createdAt: row.createdAt,
     paidAt: row.paidAt,
     dueDate: null,

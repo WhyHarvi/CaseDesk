@@ -129,6 +129,9 @@ export async function chooseAppointmentAssignee({
       where: {
         agencyId,
         assignedToId: { in: ids },
+        // Linked walk-in holds already have an Appointment in dailyCounts;
+        // counting both would make one consultation consume two seats.
+        appointmentId: null,
         OR: [{ status: "AwaitingPayment", expiresAt: { gt: new Date() } }, { status: "Confirming" }],
         startsAt: { gte: dayStart, lt: dayEnd },
       },
