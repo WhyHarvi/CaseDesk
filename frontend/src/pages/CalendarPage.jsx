@@ -53,6 +53,37 @@ import api from "../services/api";
 
 const newBookingOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
+// Keeps the New Appointment sheet open (and whatever was filled in) across a
+// browser reload, the same way the Add Client drawer does — sessionStorage
+// so a stale draft never resurfaces in a new tab days later.
+const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft";
+
+function readAppointmentDraft() {
+  try {
+    const raw = window.sessionStorage.getItem(APPOINTMENT_DRAFT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeAppointmentDraft(draft) {
+  try {
+    window.sessionStorage.setItem(APPOINTMENT_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Storage unavailable (private browsing, quota) — the sheet still works,
+    // it just won't survive a reload.
+  }
+}
+
+function clearAppointmentDraft() {
+  try {
+    window.sessionStorage.removeItem(APPOINTMENT_DRAFT_STORAGE_KEY);
+  } catch {
+    // Nothing to clean up if storage was never reachable.
+  }
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRID_START_HOUR = 7;
 const GRID_END_HOUR = 20;
@@ -814,8 +845,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
 
 function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialIntake, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
-  const [form, setForm] = useState({ mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
-  const [selectedClient, setSelectedClient] = useState(null);
+  // Set once at mount and never again — distinguishes "the sheet is open
+  // because a draft was restored on page load" from every other reason
+  // `open` might be true, so the reset effect below only skips its normal
+  // clear-the-form behavior on that one specific restore.
+  const isRestoringDraft = useRef(Boolean(open) && Boolean(readAppointmentDraft()));
+  const [form, setForm] = useState(() => readAppointmentDraft()?.form || { mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
+  const [selectedClient, setSelectedClient] = useState(() => readAppointmentDraft()?.selectedClient || null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -835,6 +871,13 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   useEffect(() => {
     if (!open) return;
+    if (isRestoringDraft.current) {
+      // The sheet is open on this very first render because a draft was
+      // restored from a reload, not because it was just freshly opened —
+      // skip the usual reset so the restored form isn't immediately wiped.
+      isRestoringDraft.current = false;
+      return;
+    }
     setForm((current) => ({
       ...current,
       startsAt: "",
@@ -855,6 +898,14 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setPaymentRecipient("");
     setConfirmPaymentCancel(false);
   }, [open, role, userId, initialDate, initialClient, initialIntake]);
+
+  useEffect(() => {
+    if (!open) {
+      clearAppointmentDraft();
+      return;
+    }
+    writeAppointmentDraft({ form, selectedClient });
+  }, [open, form, selectedClient]);
 
   useEffect(() => {
     if (!open) return;
@@ -1312,7 +1363,7 @@ export default function CalendarPage() {
   const [staffFilter, setStaffFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(() => Boolean(readAppointmentDraft()));
   const [prefillClient, setPrefillClient] = useState(null);
   const [prefillIntake, setPrefillIntake] = useState(null);
   const [selected, setSelected] = useState(null);

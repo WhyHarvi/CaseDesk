@@ -128,6 +128,24 @@ test("frontdesk's ignorePastCutoff reveals today's already-passed slots too", ()
   assert.equal(frontdeskSlots[0].startsAt, "2026-08-03T13:00:00.000Z", "the day's grid should start at the office's opening time, not now");
 });
 
+test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+  assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
+  assert.match(calendar, /function readAppointmentDraft\(\)/);
+  assert.match(calendar, /function writeAppointmentDraft\(draft\)/);
+  assert.match(calendar, /function clearAppointmentDraft\(\)/);
+  assert.match(calendar, /const \[sheetOpen, setSheetOpen\] = useState\(\(\) => Boolean\(readAppointmentDraft\(\)\)\)/);
+  assert.match(calendar, /const \[form, setForm\] = useState\(\(\) => readAppointmentDraft\(\)\?\.form \|\|/);
+  assert.match(calendar, /const \[selectedClient, setSelectedClient\] = useState\(\(\) => readAppointmentDraft\(\)\?\.selectedClient \|\| null\)/);
+  // The restored draft must survive the existing "reset the form" effect
+  // that would otherwise wipe it back to blank the instant the sheet mounts
+  // already open.
+  assert.match(calendar, /const isRestoringDraft = useRef\(Boolean\(open\) && Boolean\(readAppointmentDraft\(\)\)\)/);
+  assert.match(calendar, /if \(isRestoringDraft\.current\) {/);
+  assert.match(calendar, /writeAppointmentDraft\(\{ form, selectedClient \}\)/);
+  assert.match(calendar, /clearAppointmentDraft\(\);/);
+});
+
 test("assignment prefers the existing client's consultant when free", async () => {
   const users = ["alpha", "beta"].map((id) => ({ id, fullName: id, role: "consultant", schedulingPreference: null }));
   const db = {
