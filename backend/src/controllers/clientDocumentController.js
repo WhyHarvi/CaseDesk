@@ -41,6 +41,12 @@ const include = {
       updatedAt: true,
     },
   },
+  folder: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
 };
 
 const commonFields = {
@@ -53,6 +59,7 @@ const commonFields = {
   receivedAt: fieldParsers.dateField,
   dueAt: fieldParsers.dateField,
   visibility: fieldParsers.enumField(["Client", "Internal"]),
+  folderId: fieldParsers.relationField,
 };
 
 const createFields = {
@@ -97,12 +104,22 @@ export async function createClientDocument(req, res) {
 export async function updateClientDocument(req, res) {
   const existing = await prisma.clientDocument.findFirst({
     where: { id: req.params.id, agencyId: req.user.agencyId },
-    select: { documentName: true, visibility: true },
+    select: { documentName: true, visibility: true, caseId: true },
   });
   if (!existing) throw createHttpError(404, "Client document not found");
   const visibility = req.body.visibility || existing.visibility;
   const documentName = req.body.documentName ?? existing.documentName;
   req.body.normalizedName = visibility === "Client" ? normalizeDocumentName(documentName) : null;
+  // Folders only organize a consultant's own internal working files — a
+  // client-requested document stays flat under its checklist item.
+  if (Object.hasOwn(req.body, "folderId") && req.body.folderId) {
+    if (visibility !== "Internal") throw createHttpError(400, "Only internal working files can be filed into a folder", "VALIDATION_ERROR");
+    const folder = await prisma.documentFolder.findFirst({
+      where: { id: req.body.folderId, agencyId: req.user.agencyId, caseId: existing.caseId },
+      select: { id: true },
+    });
+    if (!folder) throw createHttpError(404, "Folder not found");
+  }
   try {
     await controller.update(req, res);
   } catch (error) {
@@ -141,6 +158,17 @@ export async function uploadClientDocumentFile(req, res) {
   const storageKey = path.posix.join(req.user.agencyId, destinationCaseId || `client-${destinationClientId}`, `${randomUUID()}${extension}`);
   await writeDocumentFile(storageKey, req.file.buffer, req.file.mimetype);
 
+  let folderId = String(req.body.folderId || "").trim() || null;
+  if (folderId && !existing) {
+    const folder = await prisma.documentFolder.findFirst({
+      where: { id: folderId, agencyId: req.user.agencyId, caseId: destinationCaseId },
+      select: { id: true },
+    });
+    if (!folder) throw createHttpError(404, "Folder not found");
+  } else if (existing) {
+    folderId = null; // re-uploading a file onto an existing document never moves it between folders here
+  }
+
   let committed = false;
   try {
     const documentName = String(req.body.documentName || req.file.originalname).trim();
@@ -173,6 +201,7 @@ export async function uploadClientDocumentFile(req, res) {
             agency: { connect: { id: req.user.agencyId } },
             client: { connect: { id: destinationClientId } },
             ...(destinationCaseId ? { case: { connect: { id: destinationCaseId } } } : {}),
+            ...(folderId ? { folder: { connect: { id: folderId } } } : {}),
             uploadedBy: { connect: { id: req.user.id } },
             ...fileData,
           },

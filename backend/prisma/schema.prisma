@@ -519,6 +519,7 @@ model Agency {
   cases                          Case[]
   documentTemplates              DocumentTemplate[]
   clientDocuments                ClientDocument[]
+  documentFolders                DocumentFolder[]
   notes                          Note[]
   followUps                      FollowUp[]
   payments                       Payment[]
@@ -1119,6 +1120,7 @@ model User {
   caseAssessments                      CaseAssessment[]
   uploadedDocuments                    ClientDocument[]                @relation("UploadedDocumentUser")
   reviewedDocuments                    ClientDocument[]                @relation("ReviewedDocumentUser")
+  createdDocumentFolders               DocumentFolder[]
   uploadedSharedLibraryDocuments       SharedLibraryDocument[]         @relation("UploadedSharedLibraryUser")
   createdWrittenDocuments              WrittenDocument[]               @relation("CreatedWrittenDocumentUser")
   updatedWrittenDocuments              WrittenDocument[]               @relation("UpdatedWrittenDocumentUser")
@@ -1399,6 +1401,7 @@ model Case {
   client                       Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
   assignedUser                 User?                          @relation("AssignedCaseUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
   clientDocuments              ClientDocument[]
+  documentFolders              DocumentFolder[]
   writtenDocuments             WrittenDocument[]
   notes                        Note[]
   followUps                    FollowUp[]
@@ -2505,6 +2508,10 @@ model ClientDocument {
   uploadedById                  String?                @map("uploaded_by_id")
   reviewedById                  String?                @map("reviewed_by_id")
   sourceSharedLibraryDocumentId String?                @map("source_shared_library_document_id")
+  // Only meaningful for a consultant's own internal working files
+  // (visibility: Internal) — client-facing requested documents are never
+  // filed into a folder, they stay flat under their checklist item.
+  folderId                      String?                @map("folder_id")
   createdAt                     DateTime               @default(now()) @map("created_at")
   updatedAt                     DateTime               @updatedAt @map("updated_at")
   agency                        Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -2513,6 +2520,7 @@ model ClientDocument {
   uploadedBy                    User?                  @relation("UploadedDocumentUser", fields: [uploadedById], references: [id], onDelete: SetNull)
   reviewedBy                    User?                  @relation("ReviewedDocumentUser", fields: [reviewedById], references: [id], onDelete: SetNull)
   sourceSharedLibraryDocument   SharedLibraryDocument? @relation(fields: [sourceSharedLibraryDocumentId], references: [id], onDelete: Restrict)
+  folder                        DocumentFolder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
   writtenDocument               WrittenDocument?       @relation("WorkingWrittenDocument")
   issuedWrittenDocument         WrittenDocument?       @relation("IssuedWrittenDocument")
   followUps                     FollowUp[]
@@ -2525,7 +2533,27 @@ model ClientDocument {
   @@index([reviewedById])
   @@index([agencyId, status, dueAt])
   @@index([sourceSharedLibraryDocumentId])
+  @@index([folderId])
   @@map("client_documents")
+}
+
+model DocumentFolder {
+  id          String          @id @default(uuid())
+  agencyId    String          @map("agency_id")
+  caseId      String          @map("case_id")
+  name        String
+  createdById String?         @map("created_by_id")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case        Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  documents   ClientDocument[]
+
+  @@unique([caseId, name])
+  @@index([agencyId])
+  @@index([caseId])
+  @@map("document_folders")
 }
 
 model CaseForm {

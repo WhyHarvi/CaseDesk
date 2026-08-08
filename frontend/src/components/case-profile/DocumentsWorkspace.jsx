@@ -11,6 +11,7 @@ import {
   FilePlus2,
   Folder,
   FolderOpen,
+  FolderPlus,
   Link2,
   ListChecks,
   Plus,
@@ -585,7 +586,11 @@ function SharedLibraryAddDialog({ item, saving, error, onClose, onAdd }) {
   return createPortal(<div className="fixed inset-0 z-[390] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0" aria-label="Cancel" /><motion.div initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="relative w-full max-w-lg overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)]"><div className="flex items-start justify-between px-6 pb-4 pt-6"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">Add to this case</p><h3 className="mt-1 text-lg font-semibold">{item.title}</h3><p className="mt-1 text-sm text-slate-500">Choose how this workspace resource should be used.</p></div><button type="button" onClick={onClose}><X className="h-4 w-4" /></button></div><div className="space-y-2 px-6 pb-6">{options.map((option) => <button key={option.id} type="button" onClick={() => setMode(option.id)} className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition ${mode === option.id ? "border-sky-200 bg-sky-50/70 ring-1 ring-sky-100" : "border-slate-200 hover:bg-slate-50"}`}><span className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-full ${mode === option.id ? "bg-sky-500 text-white" : "border border-slate-300"}`}>{mode === option.id ? <Check className="h-3.5 w-3.5" /> : null}</span><span><span className="block text-sm font-semibold text-slate-900">{option.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span></span></button>)}{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold">Cancel</button><button type="button" onClick={() => onAdd(mode)} disabled={saving} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Adding…" : "Add to Case"}</button></div></motion.div></div>, document.body);
 }
 
-function DocumentRow({ document, uploading, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, highlighted, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete }) {
+function NewFolderDialog({ name, saving, error, onChangeName, onClose, onSubmit }) {
+  return createPortal(<div className="fixed inset-0 z-[390] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0" aria-label="Cancel new folder" /><motion.form initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} onSubmit={onSubmit} className="relative w-full max-w-sm overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)]"><div className="flex items-start justify-between px-6 pb-4 pt-6"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">My Documents</p><h3 className="mt-1 text-lg font-semibold text-slate-950">New folder</h3></div><button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100"><X className="h-4 w-4" /></button></div><div className="space-y-3 px-6 pb-6"><label className="block text-sm font-semibold text-slate-800">Folder name<input autoFocus required maxLength={120} value={name} onChange={(event) => onChangeName(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-normal outline-none focus:border-sky-400" placeholder="e.g. Financial documents" /></label>{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">Cancel</button><button type="submit" disabled={saving || !name.trim()} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating…" : "Create Folder"}</button></div></motion.form></div>, document.body);
+}
+
+function DocumentRow({ document, uploading, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, highlighted, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete, folderControl }) {
   const fileInput = useRef(null);
   const [dragging, setDragging] = useState(false);
   const received = Boolean(document.storageKey);
@@ -633,6 +638,7 @@ function DocumentRow({ document, uploading, updating, selectable, selected, inte
             <DocumentStatusPicker documentItem={document} value={document.status} onChange={(status) => onChangeStatus(document, status)} disabled={statusUpdating || updating} compact />
           </>
         )}
+        {folderControl}
         {deletable ? <button type="button" onClick={() => onDelete(document)} disabled={updating || fileBusy || uploading !== undefined} aria-label={`Delete ${document.documentName}`} title="Delete document" className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}
       </div>
       {dragging ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-sky-50/90 text-xs font-semibold text-sky-700 backdrop-blur-[1px]"><UploadCloud className="mr-2 h-4 w-4" />Drop to upload for “{document.documentName}”</div> : null}
@@ -686,6 +692,14 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   const [myDocumentProgress, setMyDocumentProgress] = useState(0);
   const [myDocumentTotal, setMyDocumentTotal] = useState(0);
   const [myDocumentIndex, setMyDocumentIndex] = useState(0);
+  const [workingFolders, setWorkingFolders] = useState([]);
+  const [workingFoldersLoading, setWorkingFoldersLoading] = useState(true);
+  const [openWorkingFolder, setOpenWorkingFolder] = useState(null);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [folderSaving, setFolderSaving] = useState(false);
+  const [folderError, setFolderError] = useState("");
+  const [movingDocumentId, setMovingDocumentId] = useState("");
   const [fileBusyId, setFileBusyId] = useState("");
   const [fileActionError, setFileActionError] = useState("");
   const [preview, setPreview] = useState(null);
@@ -714,10 +728,13 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
     () => writtenDocuments.filter((item) => !item.clientDocument),
     [writtenDocuments],
   );
-  const myFolderItems = useMemo(
-    () => [...unfiledDrafts.map((item) => ({ id: `draft-${item.id}`, draft: item })), ...myDocuments],
-    [myDocuments, unfiledDrafts],
-  );
+  // Drafts (WrittenDocument) have no folderId at all — they only ever show
+  // at the My Documents root, never inside a working folder.
+  const myFolderItems = useMemo(() => {
+    if (openWorkingFolder) return myDocuments.filter((item) => item.folderId === openWorkingFolder);
+    return [...unfiledDrafts.map((item) => ({ id: `draft-${item.id}`, draft: item })), ...myDocuments.filter((item) => !item.folderId)];
+  }, [myDocuments, unfiledDrafts, openWorkingFolder]);
+  const myDocumentsTotalCount = myDocuments.length + unfiledDrafts.length;
   const clientDocs = useMemo(
     () => deduplicateDocuments(documents.filter((item) => !isMyDocument(item) && item.status !== "NotRequired" && item.status !== "Finalized")),
     [documents],
@@ -740,7 +757,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   const receivedCount = clientDocs.filter((item) => item.storageKey).length;
   const folders = [
     { id: "client", title: "Client Documents", subtitle: `${clientDocs.length} requested files`, detail: `${receivedCount} of ${clientDocs.length} received`, count: clientDocs.length },
-    { id: "mine", title: "My Documents", subtitle: "Private working files and drafts", count: myFolderItems.length },
+    { id: "mine", title: "My Documents", subtitle: "Private working files and drafts", count: myDocumentsTotalCount },
     { id: "shared", title: "Shared Library", subtitle: "Workspace templates and reusable resources", count: sharedDocuments.length },
     { id: "finalized", title: "Finalized Documents", subtitle: "Reviewed and ready", count: finalizedDocuments.length },
     { id: "unassigned", title: "Unassigned Documents", subtitle: "Requirements removed from this case", count: unassignedDocuments.length },
@@ -839,11 +856,70 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
     return () => { active = false; };
   }, []);
 
+  function loadWorkingFolders() {
+    return api.get(`/client-documents/folders?caseId=${encodeURIComponent(caseId)}`)
+      .then((response) => setWorkingFolders(response.data.data || []))
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    let active = true;
+    setWorkingFoldersLoading(true);
+    loadWorkingFolders().finally(() => { if (active) setWorkingFoldersLoading(false); });
+    return () => { active = false; };
+  }, [caseId]);
+
+  async function createWorkingFolder(event) {
+    event.preventDefault();
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      setFolderSaving(true);
+      setFolderError("");
+      await api.post("/client-documents/folders", { caseId, name });
+      await loadWorkingFolders();
+      setNewFolderName("");
+      setNewFolderOpen(false);
+    } catch (requestError) {
+      setFolderError(requestError.response?.data?.message || "Unable to create folder.");
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function deleteWorkingFolder(folder) {
+    try {
+      setFolderSaving(true);
+      setFolderError("");
+      await api.delete(`/client-documents/folders/${folder.id}`);
+      await loadWorkingFolders();
+      if (openWorkingFolder === folder.id) setOpenWorkingFolder(null);
+    } catch (requestError) {
+      setFileActionError(requestError.response?.data?.message || "Unable to delete folder.");
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function moveDocumentToFolder(document, folderId) {
+    try {
+      setMovingDocumentId(document.id);
+      setFileActionError("");
+      await api.patch(`/client-documents/${document.id}`, { folderId: folderId || "" });
+      await onRefreshDocuments();
+    } catch (requestError) {
+      setFileActionError(requestError.response?.data?.message || "Unable to move document.");
+    } finally {
+      setMovingDocumentId("");
+    }
+  }
+
   useEffect(() => {
     setSelectedDocumentIds(new Set());
     setFolderPage(1);
     setStatusFilter("all");
     setCategoryFilter("all");
+    setOpenWorkingFolder(null);
     if (openFolder) localStorage.setItem(`casedesk:documents-folder:${caseId}`, openFolder);
   }, [caseId, openFolder]);
 
@@ -908,7 +984,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
         // Sequential, not parallel — keeps a single, honest progress readout
         // and avoids a burst of simultaneous large uploads against the
         // storage backend when someone selects a whole folder at once.
-        await onUploadMyDocument(file, setMyDocumentProgress);
+        await onUploadMyDocument(file, setMyDocumentProgress, openWorkingFolder || undefined);
       }
       setOpenFolder("mine");
     } catch {
@@ -1137,10 +1213,31 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   }
 
   function renderMyDocuments(items) {
+    const currentFolder = workingFolders.find((folder) => folder.id === openWorkingFolder);
     return (
       <div>
-        {items.map((document) => document.draft ? <button key={document.id} type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex w-full items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button> : <DocumentRow key={document.id} document={document} internal fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} />)}
-        {!items.length && filteredEmptyMessage ? <p className="p-8 text-center text-sm text-slate-500">{filteredEmptyMessage}</p> : null}{!myFolderItems.length && !filteredEmptyMessage ? <div className="flex flex-col items-center px-5 py-10 text-center"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UploadCloud className="h-5 w-5" /></span><p className="mt-3 text-sm font-semibold text-slate-800">No internal documents yet</p><p className="mt-1 text-xs text-slate-500">Upload working files, drafts, or supporting material for this case.</p><button type="button" onClick={() => myDocumentInput.current?.click()} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Upload Documents</button></div> : null}
+        {!openWorkingFolder ? (
+          <div className="grid grid-cols-2 gap-2 border-b border-slate-100 p-3 sm:grid-cols-3 lg:grid-cols-4">
+            {workingFolders.map((folder) => (
+              <div key={folder.id} className="group relative flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 transition hover:border-sky-300 hover:bg-sky-50/50">
+                <button type="button" onClick={() => setOpenWorkingFolder(folder.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+                  <Folder className="h-4 w-4 shrink-0 text-sky-500" />
+                  <span className="min-w-0"><span className="block truncate text-xs font-semibold text-slate-800">{folder.name}</span><span className="block text-[10px] text-slate-400">{folder.documentCount} file{folder.documentCount === 1 ? "" : "s"}</span></span>
+                </button>
+                <button type="button" onClick={() => deleteWorkingFolder(folder)} disabled={folderSaving} aria-label={`Delete folder ${folder.name}`} title="Delete empty folder" className="shrink-0 rounded-full p-1 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100 disabled:opacity-40"><Trash2 className="h-3 w-3" /></button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setNewFolderOpen(true)} className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs font-semibold text-slate-500 transition hover:border-sky-300 hover:text-sky-700"><FolderPlus className="h-3.5 w-3.5" />New Folder</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 border-b border-slate-100 px-4 py-2.5">
+            <button type="button" onClick={() => setOpenWorkingFolder(null)} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 transition hover:text-slate-800"><ChevronLeft className="h-3.5 w-3.5" />My Documents</button>
+            <span className="text-slate-300">/</span>
+            <span className="text-xs font-semibold text-slate-800">{currentFolder?.name}</span>
+          </div>
+        )}
+        {items.map((document) => document.draft ? <button key={document.id} type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex w-full items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button> : <DocumentRow key={document.id} document={document} internal fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} folderControl={workingFolders.length ? <select value={document.folderId || ""} disabled={movingDocumentId === document.id} onChange={(event) => moveDocumentToFolder(document, event.target.value)} className="h-8 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none focus:border-sky-300 disabled:opacity-50"><option value="">No folder</option>{workingFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select> : null} />)}
+        {!items.length && filteredEmptyMessage ? <p className="p-8 text-center text-sm text-slate-500">{filteredEmptyMessage}</p> : null}{!items.length && !filteredEmptyMessage ? <div className="flex flex-col items-center px-5 py-10 text-center"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UploadCloud className="h-5 w-5" /></span><p className="mt-3 text-sm font-semibold text-slate-800">{openWorkingFolder ? "No files in this folder yet" : "No internal documents yet"}</p><p className="mt-1 text-xs text-slate-500">Upload working files, drafts, or supporting material for this case.</p><button type="button" onClick={() => myDocumentInput.current?.click()} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Upload Documents</button></div> : null}
       </div>
     );
   }
@@ -1229,6 +1326,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
       {sharedEditTarget ? <SharedLibraryEditDialog item={sharedEditTarget} saving={sharedSaving} error={sharedActionError} onClose={() => setSharedEditTarget(null)} onSave={editSharedDocument} /> : null}
       {sharedDeleteTarget ? <SharedLibraryDeleteDialog item={sharedDeleteTarget} saving={sharedBusyId === sharedDeleteTarget.id} error={sharedActionError} onClose={() => setSharedDeleteTarget(null)} onDelete={() => deleteSharedDocument(sharedDeleteTarget)} /> : null}
       {sharedAddTarget ? <SharedLibraryAddDialog item={sharedAddTarget} saving={sharedSaving} error={sharedActionError} onClose={() => setSharedAddTarget(null)} onAdd={addSharedDocumentToCase} /> : null}
+      {newFolderOpen ? <NewFolderDialog name={newFolderName} saving={folderSaving} error={folderError} onChangeName={setNewFolderName} onClose={() => { setNewFolderOpen(false); setNewFolderName(""); setFolderError(""); }} onSubmit={createWorkingFolder} /> : null}
     </div>
   );
 }

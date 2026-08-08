@@ -983,7 +983,7 @@ export default function CaseProfile() {
     }
   }
 
-  async function uploadMyCaseDocument(file, onProgress) {
+  async function uploadMyCaseDocument(file, onProgress, folderId) {
     try {
       setCaseDocumentsSaving(true);
       setCaseDocumentsError("");
@@ -993,6 +993,7 @@ export default function CaseProfile() {
       formData.append("caseId", id);
       formData.append("documentName", file.name);
       formData.append("visibility", "Internal");
+      if (folderId) formData.append("folderId", folderId);
       const response = await api.post("/client-documents/upload", formData, {
         timeout: 60000,
         onUploadProgress: (event) => {

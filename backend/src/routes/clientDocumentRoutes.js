@@ -10,10 +10,21 @@ import {
   updateClientDocument,
   updateClientDocumentStatus,
 } from "../controllers/clientDocumentController.js";
+import {
+  createDocumentFolder,
+  deleteDocumentFolder,
+  listDocumentFolders,
+  renameDocumentFolder,
+} from "../controllers/documentFolderController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
+
+router.get("/folders", asyncHandler(listDocumentFolders));
+router.post("/folders", asyncHandler(createDocumentFolder));
+router.patch("/folders/:id", asyncHandler(renameDocumentFolder));
+router.delete("/folders/:id", asyncHandler(deleteDocumentFolder));
 
 router.get("/", asyncHandler(listClientDocuments));
 router.post("/upload", receiveDocumentFile, asyncHandler(uploadClientDocumentFile));

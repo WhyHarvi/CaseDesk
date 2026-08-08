@@ -14,8 +14,48 @@ test("case document upload accepts multiple files in one pick, uploaded sequenti
   // the storage backend simultaneously, and progress needs to stay honest
   // for a single file at a time.
   assert.match(workspace, /for \(const \[index, file\] of toUpload\.entries\(\)\) \{/);
-  assert.match(workspace, /await onUploadMyDocument\(file, setMyDocumentProgress\)/);
+  assert.match(workspace, /await onUploadMyDocument\(file, setMyDocumentProgress, openWorkingFolder \|\| undefined\)/);
   // Oversized files are skipped, not fatal to the rest of the batch.
   assert.match(workspace, /if \(!toUpload\.length\) return;/);
   assert.match(workspace, /myDocumentTotal > 1 \? `Uploading \$\{myDocumentIndex\} of \$\{myDocumentTotal\} — \$\{myDocumentProgress\}%`/);
+});
+
+test("consultants can organize My Documents into folders, scoped to one case and one level deep", async () => {
+  const [schema, migration, folderController, documentController, routes, workspace, caseProfile] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260808173600_document_folders/migration.sql"),
+    source("../src/controllers/documentFolderController.js"),
+    source("../src/controllers/clientDocumentController.js"),
+    source("../src/routes/clientDocumentRoutes.js"),
+    source("../../frontend/src/components/case-profile/DocumentsWorkspace.jsx"),
+    source("../../frontend/src/pages/CaseProfile.jsx"),
+  ]);
+
+  assert.match(schema, /model DocumentFolder \{/);
+  assert.match(schema, /@@unique\(\[caseId, name\]\)/);
+  assert.match(schema, /folderId\s+String\?\s+@map\("folder_id"\)/);
+  assert.match(migration, /CREATE TABLE "document_folders"/);
+  assert.match(migration, /ADD COLUMN "folder_id" TEXT/);
+
+  // A folder only ever organizes a consultant's own internal working files —
+  // never a client-requested document, and never across cases.
+  assert.match(folderController, /async function requireCase\(req, caseId\)/);
+  assert.match(documentController, /if \(visibility !== "Internal"\) throw createHttpError\(400, "Only internal working files can be filed into a folder"/);
+  assert.match(documentController, /caseId: existing\.caseId/);
+  // Deleting a folder is blocked while it still has files in it — nothing
+  // silently orphans or cascades away a real document.
+  assert.match(folderController, /if \(existing\._count\.documents > 0\)/);
+
+  assert.match(routes, /router\.get\("\/folders", asyncHandler\(listDocumentFolders\)\)/);
+  assert.match(routes, /router\.post\("\/folders", asyncHandler\(createDocumentFolder\)\)/);
+
+  assert.match(workspace, /const \[openWorkingFolder, setOpenWorkingFolder\] = useState\(null\)/);
+  assert.match(workspace, /function moveDocumentToFolder\(document, folderId\)/);
+  assert.match(workspace, /myDocuments\.filter\(\(item\) => item\.folderId === openWorkingFolder\)/);
+  // The My Documents tile's own count must stay the grand total regardless
+  // of which sub-folder is currently open, not the filtered view's count.
+  assert.match(workspace, /count: myDocumentsTotalCount/);
+
+  assert.match(caseProfile, /async function uploadMyCaseDocument\(file, onProgress, folderId\)/);
+  assert.match(caseProfile, /if \(folderId\) formData\.append\("folderId", folderId\)/);
 });
