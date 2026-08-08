@@ -153,7 +153,7 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
 
       <div className="mt-3.5 flex flex-wrap items-center gap-2">
         {canOpenWriter && ["Draft", "Saved", "ReadyToIssue"].includes(document.correspondenceStatus) ? (
-          <button type="button" onClick={onOpenAgreementsTab} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+          <button type="button" onClick={() => window.open(`/cases/${caseItem.id}/documents/${document.id}/edit`, "_blank", "noopener,noreferrer")} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
             Open in Writer
           </button>
         ) : null}
