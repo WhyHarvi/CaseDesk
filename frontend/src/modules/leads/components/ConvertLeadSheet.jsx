@@ -1,5 +1,6 @@
 import { ArrowRight, CheckCircle2, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import CaseTypeCombobox from "../../../components/ui/CaseTypeCombobox";
 import api from "../../../services/api";
 import { CASE_STAGES } from "../../../constants/caseStages";
 import { leadName } from "../leadPresentation";
@@ -7,9 +8,10 @@ import { leadName } from "../leadPresentation";
 const fieldClass = "mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100";
 
 export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
+  const initialCaseType = String(lead.immigrationInterest || "").trim();
   const [form, setForm] = useState({
     fullName: leadName(lead) === "Unnamed lead" ? "" : leadName(lead),
-    caseType: lead.immigrationInterest || "",
+    caseType: initialCaseType,
     // A converted lead has already been through Lead/Consultation/Retainer —
     // the real next step is gathering intake documents, so that's the
     // sensible default rather than restarting the pipeline from the top.
@@ -18,8 +20,25 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
     actualValue: lead.estimatedValue || "",
     notes: "",
   });
+  const [caseTypeOptions, setCaseTypeOptions] = useState(initialCaseType ? [initialCaseType] : []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api.get("/cases/case-types")
+      .then((response) => {
+        if (!active) return;
+        const options = [...(response.data.data || []), initialCaseType].filter(Boolean);
+        const unique = new Map(options.map((option) => [String(option).trim().toLowerCase(), String(option).trim()]));
+        setCaseTypeOptions([...unique.values()].sort((left, right) => left.localeCompare(right)));
+      })
+      .catch(() => {
+        // Keep the lead's existing immigration interest usable when the
+        // suggestions endpoint is temporarily unavailable.
+      });
+    return () => { active = false; };
+  }, [initialCaseType]);
 
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
   const submit = async (event) => {
@@ -51,7 +70,19 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
           {error ? <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="sm:col-span-2 text-sm font-medium text-slate-700">Client name<input required name="fullName" value={form.fullName} onChange={update} className={fieldClass} /></label>
-            <label className="text-sm font-medium text-slate-700">Case type<input required name="caseType" value={form.caseType} onChange={update} className={fieldClass} placeholder="e.g. Work Permit" /></label>
+            <label className="text-sm font-medium text-slate-700">
+              Case type
+              <div className="mt-1.5">
+                <CaseTypeCombobox
+                  required
+                  name="caseType"
+                  value={form.caseType}
+                  onChange={update}
+                  options={caseTypeOptions}
+                  placeholder="Select or search case type"
+                />
+              </div>
+            </label>
             <label className="text-sm font-medium text-slate-700">Starting stage<select required name="caseStage" value={form.caseStage} onChange={update} className={fieldClass}>{CASE_STAGES.filter((stage) => stage !== "Closed").map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
             <label className="sm:col-span-2 text-sm font-medium text-slate-700">First case action<input required name="caseNextAction" value={form.caseNextAction} onChange={update} className={fieldClass} /></label>
             <label className="text-sm font-medium text-slate-700">Actual value (CAD)<input name="actualValue" type="number" min="0" step="0.01" value={form.actualValue} onChange={update} className={fieldClass} /></label>

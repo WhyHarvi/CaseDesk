@@ -96,6 +96,21 @@ test("lead dashboard names open the existing lead detail sheet", async () => {
   assert.doesNotMatch(page, /money\.format\(summary\.openPipelineValue\)/);
 });
 
+test("lead conversion uses the agency case-type dropdown", async () => {
+  const sheet = await readFile(
+    new URL(
+      "../../frontend/src/modules/leads/components/ConvertLeadSheet.jsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(sheet, /CaseTypeCombobox/);
+  assert.match(sheet, /api\.get\("\/cases\/case-types"\)/);
+  assert.match(sheet, /options=\{caseTypeOptions\}/);
+  assert.doesNotMatch(sheet, /Case type<input/);
+});
+
 test("lead RLS is agency scoped and no client policy is granted", async () => {
   const sql = await readFile(new URL("../prisma/migrations/20260714150000_add_lead_foundation/migration.sql", import.meta.url), "utf8");
   assert.match(sql, /ALTER TABLE "leads" ENABLE ROW LEVEL SECURITY/);
