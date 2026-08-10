@@ -261,3 +261,48 @@ test("pressing Escape while completing a consultation does not discard the in-pr
     /!qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose\(\)/,
   );
 });
+
+test("consultation notes survive a browser reload the same way the New Appointment sheet and Client drawer do", async () => {
+  const [sheet, overlay, leadDetail] = await Promise.all([
+    source(
+      "../../frontend/src/modules/leads/components/CompleteConsultationSheet.jsx",
+    ),
+    source(
+      "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",
+    ),
+    source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
+  ]);
+
+  // The sheet mirrors its form into sessionStorage, keyed by consultation
+  // id, and hydrates from it on mount instead of always starting blank.
+  assert.match(
+    sheet,
+    /const CONSULTATION_DRAFT_STORAGE_KEY = "casedesk:consultation-complete-draft"/,
+  );
+  assert.match(sheet, /function readConsultationDraft\(\)/);
+  assert.match(sheet, /function writeConsultationDraft\(draft\)/);
+  assert.match(sheet, /function clearConsultationDraft\(\)/);
+  assert.match(sheet, /export function getDraftConsultationId\(\)/);
+  assert.match(
+    sheet,
+    /if \(draft\?\.consultationId === consultation\.id\) return draft\.form;/,
+  );
+  assert.match(
+    sheet,
+    /writeConsultationDraft\(\{ consultationId: consultation\.id, form \}\);/,
+  );
+  // A real close (Cancel, X, or the backdrop) discards the draft so it never
+  // resurrects on the next unrelated "Complete consultation" click; only a
+  // reload while the sheet is still open should bring it back.
+  assert.match(sheet, /function closeAndDiscardDraft\(\)/);
+  assert.match(sheet, /clearConsultationDraft\(\);\n\s*onSaved\(response\.data\.data\);/);
+
+  // Both places that render the sheet only keep it open in plain React
+  // state, which a reload wipes — so each restores completingConsultation
+  // from the sessionStorage draft once its own data (consultations /
+  // appointment) has loaded back in, reattaching the still-open sheet to
+  // the right consultation.
+  assert.match(overlay, /getDraftConsultationId\(\) === appointment\.leadConsultation\.id\) setCompletingConsultation\(true\)/);
+  assert.match(leadDetail, /const match = consultations\.find\(\(item\) => item\.id === draftConsultationId\);/);
+  assert.match(leadDetail, /if \(match\) setCompletingConsultation\(match\);/);
+});
