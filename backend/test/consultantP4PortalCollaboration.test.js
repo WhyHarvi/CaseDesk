@@ -182,6 +182,33 @@ test("case E-Sign centre reuses the portal agreement lifecycle without manual si
   assert.doesNotMatch(workspace, /<option value="Signed">Signed<\/option>/);
 });
 
+test("My Documents can safely delete editable Writer documents and their saved files", async () => {
+  const [controller, routes, clientDocuments, workspace] = await Promise.all([
+    source("../src/controllers/writtenDocumentController.js"),
+    source("../src/routes/writtenDocumentRoutes.js"),
+    source("../src/controllers/clientDocumentController.js"),
+    source("../../frontend/src/components/case-profile/DocumentsWorkspace.jsx"),
+  ]);
+
+  const deletion = controller.slice(
+    controller.indexOf("export async function deleteWrittenDocument"),
+    controller.indexOf("export async function updateWrittenDocumentDraft"),
+  );
+  assert.match(routes, /router\.delete\("\/:id", asyncHandler\(deleteWrittenDocument\)\)/);
+  assert.match(deletion, /agencyId: req\.user\.agencyId/);
+  assert.match(deletion, /requireEditableDocument\(existing\)/);
+  assert.match(deletion, /tx\.writtenDocument\.deleteMany/);
+  assert.match(deletion, /correspondenceStatus: \{ notIn: \["Issued", "Signed", "Finalized"\] \}/);
+  assert.match(deletion, /tx\.clientDocument\.deleteMany/);
+  assert.match(deletion, /removeDocumentFile\(storageKey\)/);
+  assert.match(deletion, /action: "written_document\.deleted"/);
+  assert.match(clientDocuments, /writtenDocument:[\s\S]*correspondenceStatus: true/);
+  assert.match(workspace, /title="Delete written document"/);
+  assert.match(workspace, /api\.delete\(`\/written-documents\/\$\{writer\.id\}`\)/);
+  assert.match(workspace, /Writer draft, its version history, and the stored Word file/);
+  assert.match(workspace, /lockedWrittenDocumentStatuses/);
+});
+
 test("client E-Sign requires a touch-drawn signature rendered into the signed agreement", async () => {
   const [portalController, agreementCard, signaturePad, portalApi] = await Promise.all([
     source("../src/controllers/clientPortalController.js"),

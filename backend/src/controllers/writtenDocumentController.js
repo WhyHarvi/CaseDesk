@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { removeDocumentFile } from "../services/documentStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 
@@ -88,6 +89,63 @@ export async function listWrittenDocuments(req, res) {
 
 export async function getWrittenDocument(req, res) {
   res.json({ data: await findWrittenDocument(req) });
+}
+
+export async function deleteWrittenDocument(req, res) {
+  const existing = await prisma.writtenDocument.findFirst({
+    where: { id: req.params.id, agencyId: req.user.agencyId },
+    include: {
+      clientDocument: { select: { id: true, storageKey: true } },
+      issuedClientDocument: { select: { id: true, storageKey: true } },
+      case: { select: { archivedAt: true, deletedAt: true } },
+    },
+  });
+  if (!existing) throw createHttpError(404, "Written document not found");
+  if (existing.case?.archivedAt || existing.case?.deletedAt) {
+    throw createHttpError(409, "Restore this case before deleting the written document");
+  }
+  requireEditableDocument(existing);
+
+  const linkedDocuments = [existing.clientDocument, existing.issuedClientDocument].filter(Boolean);
+  await prisma.$transaction(async (tx) => {
+    const deleted = await tx.writtenDocument.deleteMany({
+      where: {
+        id: existing.id,
+        agencyId: req.user.agencyId,
+        case: { archivedAt: null, deletedAt: null },
+        OR: [
+          { correspondenceStatus: null },
+          { correspondenceStatus: { notIn: ["Issued", "Signed", "Finalized"] } },
+        ],
+      },
+    });
+    if (deleted.count !== 1) {
+      throw createHttpError(409, "This written document changed and can no longer be deleted");
+    }
+    if (linkedDocuments.length) {
+      await tx.clientDocument.deleteMany({
+        where: {
+          id: { in: linkedDocuments.map((item) => item.id) },
+          agencyId: req.user.agencyId,
+        },
+      });
+    }
+  });
+  await Promise.all(
+    linkedDocuments
+      .map((item) => item.storageKey)
+      .filter(Boolean)
+      .map((storageKey) => removeDocumentFile(storageKey).catch(() => {})),
+  );
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    clientId: existing.clientId,
+    caseId: existing.caseId,
+    action: "written_document.deleted",
+    details: `${existing.title} deleted`,
+  });
+  res.status(204).send();
 }
 
 export async function updateWrittenDocumentDraft(req, res) {

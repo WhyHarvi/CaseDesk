@@ -34,6 +34,7 @@ const myDocumentMarker = "[MY_DOCUMENT]";
 const acceptedDocumentTypes = ".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.txt";
 const documentPageSize = 10;
 const sharedLibraryCategories = ["Templates", "IRCC Guides", "Checklists", "Letters & Agreements", "Sample Affidavits", "Internal Precedents", "General"];
+const lockedWrittenDocumentStatuses = new Set(["Issued", "Signed", "Finalized"]);
 const documentStatusOptions = [
   { value: "Requested", label: "Requested", message: "Waiting for client upload", requiresFile: false, pill: "border-slate-200 bg-slate-100/90 text-slate-700", dot: "bg-slate-400", icon: "bg-slate-100 text-slate-600" },
   { value: "Uploaded", label: "Uploaded", message: "Ready for initial review", requiresFile: true, pill: "border-sky-200 bg-sky-50 text-sky-700", dot: "bg-sky-500", icon: "bg-sky-50 text-sky-600" },
@@ -60,6 +61,10 @@ function formatDocumentDate(value) {
   if (!value) return "";
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function canDeleteWrittenDocument(documentItem) {
+  return !lockedWrittenDocumentStatuses.has(documentItem?.correspondenceStatus);
 }
 
 function DocumentStatusPicker({ documentItem, value, onChange, disabled, compact = false }) {
@@ -554,10 +559,10 @@ function DocumentPreviewOverlay({ preview, onClose, onDownload, onChangeStatus, 
   );
 }
 
-function DeleteDocumentDialog({ documentItem, saving, error, onClose, onConfirm }) {
+function DeleteDocumentDialog({ documentItem, saving, error, onClose, onConfirm, description }) {
   const documentItems = Array.isArray(documentItem) ? documentItem : [documentItem];
   const bulk = documentItems.length > 1;
-  return createPortal(<div className="fixed inset-0 z-[360] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0 cursor-default" aria-label="Cancel delete" /><motion.section initial={{ opacity: 0, scale: 0.94, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="relative w-full max-w-md overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)] backdrop-blur-xl"><div className="px-6 pb-5 pt-6 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600 ring-8 ring-rose-50/50"><Trash2 className="h-5 w-5" /></span><p className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-500">Delete {bulk ? "documents" : "document"}</p><h3 className="mt-2 text-lg font-semibold text-slate-950">{bulk ? `Delete ${documentItems.length} selected documents?` : `Delete “${documentItems[0].documentName}”?`}</h3><p className="mt-2 text-sm leading-6 text-slate-500">This permanently removes the selected {bulk ? "document records and their stored files" : "document record and its stored file"} from CaseDesk.</p>{error ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">Keep {bulk ? "them" : "it"}</button><button type="button" onClick={onConfirm} disabled={saving} className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Deleting…" : `Delete ${bulk ? `${documentItems.length} Documents` : "Document"}`}</button></div></motion.section></div>, document.body);
+  return createPortal(<div className="fixed inset-0 z-[360] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0 cursor-default" aria-label="Cancel delete" /><motion.section initial={{ opacity: 0, scale: 0.94, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="relative w-full max-w-md overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)] backdrop-blur-xl"><div className="px-6 pb-5 pt-6 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600 ring-8 ring-rose-50/50"><Trash2 className="h-5 w-5" /></span><p className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-500">Delete {bulk ? "documents" : "document"}</p><h3 className="mt-2 text-lg font-semibold text-slate-950">{bulk ? `Delete ${documentItems.length} selected documents?` : `Delete “${documentItems[0].documentName || documentItems[0].title}”?`}</h3><p className="mt-2 text-sm leading-6 text-slate-500">{description || `This permanently removes the selected ${bulk ? "document records and their stored files" : "document record and its stored file"} from CaseDesk.`}</p>{error ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:opacity-50">Keep {bulk ? "them" : "it"}</button><button type="button" onClick={onConfirm} disabled={saving} className="rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Deleting…" : `Delete ${bulk ? `${documentItems.length} Documents` : "Document"}`}</button></div></motion.section></div>, document.body);
 }
 
 function SharedLibraryUploadDialog({ saving, error, onClose, onUpload }) {
@@ -706,6 +711,9 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   const [previewError, setPreviewError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletingId, setDeletingId] = useState("");
+  const [writtenDeleteTarget, setWrittenDeleteTarget] = useState(null);
+  const [writtenDeletingId, setWrittenDeletingId] = useState("");
+  const [writtenDeleteError, setWrittenDeleteError] = useState("");
   const [statusUpdatingId, setStatusUpdatingId] = useState("");
   const [sharedDocuments, setSharedDocuments] = useState([]);
   const [sharedLoading, setSharedLoading] = useState(true);
@@ -911,6 +919,30 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
       setFileActionError(requestError.response?.data?.message || "Unable to move document.");
     } finally {
       setMovingDocumentId("");
+    }
+  }
+
+  function requestWrittenDocumentDelete(target) {
+    setWrittenDeleteError("");
+    setWrittenDeleteTarget(target);
+  }
+
+  async function deleteWriterDocument() {
+    const target = writtenDeleteTarget;
+    const writer = target?.draft || target?.writtenDocument || target;
+    if (!writer?.id) return;
+    try {
+      setWrittenDeletingId(writer.id);
+      setWrittenDeleteError("");
+      await api.delete(`/written-documents/${writer.id}`);
+      setWrittenDocuments((current) => current.filter((item) => item.id !== writer.id));
+      if (target?.writtenDocument) await onRefreshDocuments?.();
+      if (preview?.documentItem?.id === target?.id) closePreview();
+      setWrittenDeleteTarget(null);
+    } catch (requestError) {
+      setWrittenDeleteError(requestError.response?.data?.message || "Unable to delete this written document.");
+    } finally {
+      setWrittenDeletingId("");
     }
   }
 
@@ -1236,7 +1268,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             <span className="text-xs font-semibold text-slate-800">{currentFolder?.name}</span>
           </div>
         )}
-        {items.map((document) => document.draft ? <button key={document.id} type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex w-full items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button> : <DocumentRow key={document.id} document={document} internal fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} folderControl={workingFolders.length ? <select value={document.folderId || ""} disabled={movingDocumentId === document.id} onChange={(event) => moveDocumentToFolder(document, event.target.value)} className="h-8 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none focus:border-sky-300 disabled:opacity-50"><option value="">No folder</option>{workingFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select> : null} />)}
+        {items.map((document) => document.draft ? <div key={document.id} className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 transition hover:bg-slate-50"><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex min-w-0 flex-1 items-center justify-between gap-4 text-left"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button>{canDeleteWrittenDocument(document.draft) ? <button type="button" onClick={() => requestWrittenDocumentDelete(document.draft)} disabled={writtenDeletingId === document.draft.id} aria-label={`Delete ${document.draft.title}`} title="Delete written document" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}</div> : <DocumentRow key={document.id} document={document} internal fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} deletable={Boolean(document.writtenDocument) && canDeleteWrittenDocument(document.writtenDocument)} onDelete={requestWrittenDocumentDelete} folderControl={workingFolders.length ? <select value={document.folderId || ""} disabled={movingDocumentId === document.id} onChange={(event) => moveDocumentToFolder(document, event.target.value)} className="h-8 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none focus:border-sky-300 disabled:opacity-50"><option value="">No folder</option>{workingFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select> : null} />)}
         {!items.length && filteredEmptyMessage ? <p className="p-8 text-center text-sm text-slate-500">{filteredEmptyMessage}</p> : null}{!items.length && !filteredEmptyMessage ? <div className="flex flex-col items-center px-5 py-10 text-center"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UploadCloud className="h-5 w-5" /></span><p className="mt-3 text-sm font-semibold text-slate-800">{openWorkingFolder ? "No files in this folder yet" : "No internal documents yet"}</p><p className="mt-1 text-xs text-slate-500">Upload working files, drafts, or supporting material for this case.</p><button type="button" onClick={() => myDocumentInput.current?.click()} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Upload Documents</button></div> : null}
       </div>
     );
@@ -1320,8 +1352,9 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
         />
       ) : null}
       {confirmAssignment ? <ConfirmAssignmentChange documentItems={confirmAssignment.documentItems} targetStatus={confirmAssignment.targetStatus} saving={bulkUpdating || assignmentUpdatingId === confirmAssignment.documentItems[0]?.id} error={error} onClose={() => setConfirmAssignment(null)} onConfirm={confirmAssignmentChange} /> : null}
-      {preview ? <DocumentPreviewOverlay preview={preview} onClose={closePreview} onDownload={() => preview.shared ? downloadSharedDocument(preview.documentItem) : downloadDocument(preview.documentItem)} statusUpdating={statusUpdatingId === preview.documentItem?.id} onChangeStatus={(status) => changeDocumentStatus(preview.documentItem, status)} onPrevious={previewIndex > 0 ? () => navigatePreview(-1) : undefined} onNext={previewIndex >= 0 && previewIndex < previewableDocuments.length - 1 ? () => navigatePreview(1) : undefined} positionLabel={previewIndex >= 0 ? `${previewIndex + 1} of ${previewableDocuments.length} · Secure document preview` : "Secure document preview"} error={previewError} onAddToCase={preview.shared ? () => { setSharedActionError(""); setSharedAddTarget(preview.documentItem); } : undefined} editLabel={preview.shared ? "Edit resource" : "Edit document"} onEdit={preview.shared ? (sharedCanManage ? () => { setSharedActionError(""); setSharedEditTarget(preview.documentItem); } : undefined) : preview.documentItem?.writtenDocument ? () => window.open(`/cases/${caseId}/documents/${preview.documentItem.writtenDocument.id}/edit`, "_blank", "noopener,noreferrer") : undefined} onDelete={preview.shared ? (sharedCanManage ? () => { setSharedActionError(""); setSharedDeleteTarget(preview.documentItem); } : undefined) : () => { const target = preview.documentItem; closePreview(); setDeleteTarget(target); }} /> : null}
+      {preview ? <DocumentPreviewOverlay preview={preview} onClose={closePreview} onDownload={() => preview.shared ? downloadSharedDocument(preview.documentItem) : downloadDocument(preview.documentItem)} statusUpdating={statusUpdatingId === preview.documentItem?.id} onChangeStatus={(status) => changeDocumentStatus(preview.documentItem, status)} onPrevious={previewIndex > 0 ? () => navigatePreview(-1) : undefined} onNext={previewIndex >= 0 && previewIndex < previewableDocuments.length - 1 ? () => navigatePreview(1) : undefined} positionLabel={previewIndex >= 0 ? `${previewIndex + 1} of ${previewableDocuments.length} · Secure document preview` : "Secure document preview"} error={previewError} onAddToCase={preview.shared ? () => { setSharedActionError(""); setSharedAddTarget(preview.documentItem); } : undefined} editLabel={preview.shared ? "Edit resource" : "Edit document"} onEdit={preview.shared ? (sharedCanManage ? () => { setSharedActionError(""); setSharedEditTarget(preview.documentItem); } : undefined) : preview.documentItem?.writtenDocument ? () => window.open(`/cases/${caseId}/documents/${preview.documentItem.writtenDocument.id}/edit`, "_blank", "noopener,noreferrer") : undefined} onDelete={preview.shared ? (sharedCanManage ? () => { setSharedActionError(""); setSharedDeleteTarget(preview.documentItem); } : undefined) : preview.documentItem?.writtenDocument ? (canDeleteWrittenDocument(preview.documentItem.writtenDocument) ? () => { const target = preview.documentItem; closePreview(); requestWrittenDocumentDelete(target); } : undefined) : () => { const target = preview.documentItem; closePreview(); setDeleteTarget(target); }} /> : null}
       {deleteTarget ? <DeleteDocumentDialog documentItem={deleteTarget} saving={Boolean(deletingId)} error={error} onClose={() => setDeleteTarget(null)} onConfirm={async () => { const targets = Array.isArray(deleteTarget) ? deleteTarget : [deleteTarget]; try { setDeletingId(targets.length > 1 ? "bulk" : targets[0].id); await Promise.all(targets.map((item) => onDeleteDocument(item.id))); setSelectedDocumentIds(new Set()); setDeleteTarget(null); } finally { setDeletingId(""); } }} /> : null}
+      {writtenDeleteTarget ? <DeleteDocumentDialog documentItem={{ title: writtenDeleteTarget.draft?.title || writtenDeleteTarget.writtenDocument?.title || writtenDeleteTarget.title }} saving={Boolean(writtenDeletingId)} error={writtenDeleteError} description="This permanently removes the Writer draft, its version history, and the stored Word file if it has been saved." onClose={() => { setWrittenDeleteTarget(null); setWrittenDeleteError(""); }} onConfirm={deleteWriterDocument} /> : null}
       {sharedUploadOpen ? <SharedLibraryUploadDialog saving={sharedSaving} error={sharedError} onClose={() => setSharedUploadOpen(false)} onUpload={uploadSharedDocument} /> : null}
       {sharedEditTarget ? <SharedLibraryEditDialog item={sharedEditTarget} saving={sharedSaving} error={sharedActionError} onClose={() => setSharedEditTarget(null)} onSave={editSharedDocument} /> : null}
       {sharedDeleteTarget ? <SharedLibraryDeleteDialog item={sharedDeleteTarget} saving={sharedBusyId === sharedDeleteTarget.id} error={sharedActionError} onClose={() => setSharedDeleteTarget(null)} onDelete={() => deleteSharedDocument(sharedDeleteTarget)} /> : null}

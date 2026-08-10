@@ -38,6 +38,7 @@ const include = {
       id: true,
       title: true,
       status: true,
+      correspondenceStatus: true,
       updatedAt: true,
     },
   },
