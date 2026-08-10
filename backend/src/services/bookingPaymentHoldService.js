@@ -446,7 +446,10 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
   // ever exist per appointment, so an existing one (any status) is always
   // returned rather than attempting a second invoice for the same booking.
   const existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
-  if (existingHold) return existingHold;
+  if (existingHold) {
+    await resolveMissingAppointmentPaymentNotification(agencyId, appointmentId).catch(() => {});
+    return existingHold;
+  }
 
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   if (!settings?.consultFeeAmount) throw createHttpError(409, "Set a consultation fee in Settings before generating a pay-now link.", "VALIDATION_ERROR");
@@ -513,10 +516,135 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
       logger.warn("booking_payment_hold.payment_request_message_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
     });
   }
+  await resolveMissingAppointmentPaymentNotification(agencyId, appointment.id).catch((error) => {
+    logger.warn("booking_payment_hold.missing_payment_resolution_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
+  });
+  invalidateDashboardCache(agencyId);
   return hold;
 }
 
 const PENDING_ETRANSFER_NOTIFICATION_TYPE = "booking_payment.etransfer_pending";
+const MISSING_APPOINTMENT_PAYMENT_NOTIFICATION_TYPE = "booking_payment.appointment_missing";
+
+function missingAppointmentPaymentWhere(agencyIds = null) {
+  return {
+    ...(agencyIds ? { agencyId: { in: agencyIds } } : {}),
+    status: "Scheduled",
+    isFreeConsultation: false,
+    paymentHold: { is: null },
+    // A consultation fee belongs to the first visit in a recurring series,
+    // not every later occurrence (the booking controller follows the same
+    // rule when it records cash/e-transfer payments).
+    OR: [
+      { seriesKey: null },
+      { recurrenceIndex: null },
+      { recurrenceIndex: 1 },
+    ],
+  };
+}
+
+export async function notifyMissingAppointmentPayment(agencyId, appointment, actorUserId = null) {
+  if (!appointment?.id) return [];
+  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  if (!recipientIds.length) return [];
+  const clientName = appointment.client?.fullName || appointment.guestName || "A client";
+  const updatedAt = new Date(appointment.updatedAt || appointment.createdAt || Date.now()).toISOString();
+  return notifyUsers({
+    agencyId,
+    recipientIds,
+    actorUserId,
+    includeActor: true,
+    type: MISSING_APPOINTMENT_PAYMENT_NOTIFICATION_TYPE,
+    category: "payments",
+    title: "Consultation payment not recorded",
+    body: `${clientName}'s appointment is scheduled, but no consultation payment or payment method is recorded. Open the appointment and record the payment.`,
+    severity: "warning",
+    attentionLevel: "action_required",
+    entityType: "appointment",
+    entityId: appointment.id,
+    actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}`,
+    metadata: {
+      appointmentId: appointment.id,
+      clientId: appointment.clientId || appointment.client?.id || null,
+      startsAt: appointment.startsAt || null,
+    },
+    // updatedAt lets a resolved warning be re-created if an appointment is
+    // later re-opened as Scheduled, without re-alerting every scheduler run.
+    dedupeKey: `appointment:${appointment.id}:payment_missing:${updatedAt}`,
+    channels: ["in_app"],
+    expiresAt: null,
+  });
+}
+
+export async function resolveMissingAppointmentPaymentNotification(agencyId, appointmentId) {
+  if (!appointmentId) return 0;
+  return resolveNotifications({
+    agencyId,
+    entityType: "appointment",
+    entityId: appointmentId,
+    types: [MISSING_APPOINTMENT_PAYMENT_NOTIFICATION_TYPE],
+  });
+}
+
+// Backfills older appointments that were booked with "Skip payment" before
+// this warning existed, and clears warnings after payment is recorded, the
+// appointment is made free, or it is no longer scheduled. This makes the
+// alert durable without requiring a data migration or a staff page visit.
+export async function reconcileMissingAppointmentPaymentAlerts() {
+  const billableSettings = await prisma.bookingSettings.findMany({
+    where: { consultFeeAmount: { gt: 0 } },
+    select: { agencyId: true },
+  });
+  const billableAgencyIds = billableSettings.map((item) => item.agencyId);
+  const missingAppointments = await prisma.appointment.findMany({
+    where: missingAppointmentPaymentWhere(billableAgencyIds),
+    select: {
+      id: true,
+      agencyId: true,
+      clientId: true,
+      guestName: true,
+      startsAt: true,
+      createdAt: true,
+      updatedAt: true,
+      client: { select: { id: true, fullName: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 2000,
+  });
+  for (const appointment of missingAppointments) {
+    await notifyMissingAppointmentPayment(appointment.agencyId, appointment).catch((error) => {
+      logger.warn("booking_payment_hold.missing_payment_notification_failed", {
+        agencyId: appointment.agencyId,
+        appointmentId: appointment.id,
+        reason: error.message,
+      });
+    });
+  }
+
+  const openNotifications = await prisma.notification.findMany({
+    where: { type: MISSING_APPOINTMENT_PAYMENT_NOTIFICATION_TYPE, resolvedAt: null },
+    select: { agencyId: true, entityId: true },
+    take: 5000,
+  });
+  const appointmentIds = [...new Set(openNotifications.map((item) => item.entityId).filter(Boolean))];
+  if (!appointmentIds.length) return { missing: missingAppointments.length, resolved: 0 };
+
+  const stillMissing = await prisma.appointment.findMany({
+    where: { AND: [{ id: { in: appointmentIds } }, missingAppointmentPaymentWhere(billableAgencyIds)] },
+    select: { id: true },
+  });
+  const stillMissingIds = new Set(stillMissing.map((item) => item.id));
+  const stale = [...new Map(
+    openNotifications
+      .filter((item) => item.entityId && !stillMissingIds.has(item.entityId))
+      .map((item) => [`${item.agencyId}:${item.entityId}`, item]),
+  ).values()];
+  let resolved = 0;
+  for (const notification of stale) {
+    resolved += await resolveMissingAppointmentPaymentNotification(notification.agencyId, notification.entityId);
+  }
+  return { missing: missingAppointments.length, resolved };
+}
 
 async function notifyPendingETransfer(agencyId, appointment, hold, actorUserId) {
   const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
@@ -569,7 +697,10 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
   if (appointment.isFreeConsultation) throw createHttpError(409, "This is a free consultation — no payment is needed.", "FREE_CONSULTATION");
 
   const existing = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
-  if (existing) return existing;
+  if (existing) {
+    await resolveMissingAppointmentPaymentNotification(agencyId, appointmentId).catch(() => {});
+    return existing;
+  }
 
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   const amount = Number(settings?.consultFeeAmount || 0);
@@ -610,6 +741,10 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
     hold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
     if (!hold) throw error;
   }
+
+  await resolveMissingAppointmentPaymentNotification(agencyId, appointment.id).catch((error) => {
+    logger.warn("booking_payment_hold.missing_payment_resolution_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
+  });
 
   await notifyPendingETransfer(agencyId, appointment, hold, actorUserId).catch((error) => {
     logger.warn("booking_payment_hold.pending_etransfer_notification_failed", { agencyId, holdId: hold.id, reason: error.message });
@@ -840,6 +975,11 @@ export async function recordWalkInManualPayment(agencyId, {
       },
     });
   }
+
+  await resolveMissingAppointmentPaymentNotification(agencyId, appointment.id).catch((error) => {
+    logger.warn("booking_payment_hold.missing_payment_resolution_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
+  });
+  invalidateDashboardCache(agencyId);
 
   try {
     const itemId = await requireConsultFeeItem(agencyId);

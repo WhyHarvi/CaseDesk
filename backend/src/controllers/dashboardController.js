@@ -25,6 +25,12 @@ const caseSummarySelect = {
 };
 const OPEN_CASE_STATUSES = ["Open", "Active", "On Hold"];
 const OPEN_BOOKING_PAYMENT_STATUSES = ["AwaitingPayment", "Confirming", "RecordingPayment", "PaymentFailed"];
+const MISSING_APPOINTMENT_PAYMENT_WHERE = {
+  status: "Scheduled",
+  isFreeConsultation: false,
+  paymentHold: { is: null },
+  OR: [{ seriesKey: null }, { recurrenceIndex: null }, { recurrenceIndex: 1 }],
+};
 export const DASHBOARD_HIDDEN_ACTIVITY_ACTIONS = Object.freeze(["USER_LOGIN", "USER_LOGOUT"]);
 export const DASHBOARD_FINANCIAL_ACTIVITY_ACTIONS = Object.freeze([
   "invoice.created",
@@ -271,6 +277,8 @@ export async function getDashboardSummary(req, res) {
     pendingCaseInvoiceTotals,
     pendingBookingHolds,
     pendingBookingHoldTotals,
+    missingAppointmentPayments,
+    bookingPaymentSettings,
     casePipelineRaw,
     upcomingAppointments,
     upcomingFollowUps,
@@ -344,6 +352,17 @@ export async function getDashboardSummary(req, res) {
           _sum: { amount: true },
         })
       : Promise.resolve({ _sum: { amount: null } }),
+    canViewFinancialData
+      ? prisma.appointment.count({
+          where: { AND: [appointmentWhere, MISSING_APPOINTMENT_PAYMENT_WHERE] },
+        })
+      : Promise.resolve(0),
+    canViewFinancialData
+      ? prisma.bookingSettings.findUnique({
+          where: { agencyId: req.auth.agencyId },
+          select: { consultFeeAmount: true },
+        })
+      : Promise.resolve(null),
     prisma.case.groupBy({
       by: ["stage"],
       where: caseWhere,
@@ -521,6 +540,9 @@ export async function getDashboardSummary(req, res) {
     documentActionsByClient,
     casesWaitingUpdateByClient,
   });
+  const billableMissingAppointmentPayments = Number(bookingPaymentSettings?.consultFeeAmount ?? 0) > 0
+    ? missingAppointmentPayments
+    : 0;
 
   const data = {
       timezone,
@@ -536,15 +558,17 @@ export async function getDashboardSummary(req, res) {
         appointmentsToday,
         ...(canViewFinancialData
           ? {
-              // Combines legacy retainers, case invoices, and consultation
-              // payment holds. The entire block is omitted when Financial
-              // Information is disabled for the team member.
+              // Combines legacy retainers, case invoices, consultation
+              // payment holds, and scheduled paid consultations for which
+              // no payment record has been created yet. The entire block is
+              // omitted when Financial Information is disabled.
               pendingPayments:
-                pendingLegacyPayments + pendingCaseInvoices + pendingBookingHolds,
+                pendingLegacyPayments + pendingCaseInvoices + pendingBookingHolds + billableMissingAppointmentPayments,
               pendingPaymentBalance:
                 Number(pendingLegacyPaymentTotals._sum.balance ?? 0) +
                 Number(pendingCaseInvoiceTotals._sum.balance ?? 0) +
-                Number(pendingBookingHoldTotals._sum.amount ?? 0),
+                Number(pendingBookingHoldTotals._sum.amount ?? 0) +
+                billableMissingAppointmentPayments * Number(bookingPaymentSettings?.consultFeeAmount ?? 0),
             }
           : {}),
         casesWaitingUpdate: casesWaitingUpdateCount,

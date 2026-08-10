@@ -9,6 +9,7 @@ import {
   notifyUsers,
 } from "./notificationService.js";
 import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
+import { reconcileMissingAppointmentPaymentAlerts } from "./bookingPaymentHoldService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
 let timer = null;
@@ -360,11 +361,12 @@ export async function runNotificationScheduler(now = new Date()) {
   try {
     const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
     await resolveCompletedAndExpiredNotifications(now);
+    await reconcileMissingAppointmentPaymentAlerts();
     await taskNotifications(now, horizon);
     await followUpNotifications(now, horizon);
     // Appointment confirmations and reminders already use the dedicated
-    // booking email/SMS pipeline. Repeating them in the notification centre
-    // made every appointment appear several times.
+    // booking email/SMS pipeline. The reconciliation above is only for the
+    // staff-facing billing exception, not a duplicate client reminder.
     await documentNotifications(now, horizon);
     await questionnaireNotifications(now, horizon);
     await leadNotifications(now, horizon);

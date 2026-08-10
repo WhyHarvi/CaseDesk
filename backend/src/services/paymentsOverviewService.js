@@ -325,6 +325,67 @@ async function fetchBookingPaymentRows(agencyId, { from, to }) {
   }));
 }
 
+async function fetchMissingAppointmentPaymentRows(agencyId, { from, to }) {
+  const [appointments, settings] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        agencyId,
+        status: "Scheduled",
+        isFreeConsultation: false,
+        paymentHold: { is: null },
+        OR: [{ seriesKey: null }, { recurrenceIndex: null }, { recurrenceIndex: 1 }],
+        ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+      },
+      select: {
+        id: true,
+        clientId: true,
+        caseId: true,
+        subject: true,
+        guestName: true,
+        startsAt: true,
+        createdAt: true,
+        client: { select: { fullName: true } },
+        case: { select: { caseType: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: MAX_ROWS_PER_SOURCE,
+    }),
+    prisma.bookingSettings.findUnique({
+      where: { agencyId },
+      select: { consultFeeAmount: true },
+    }),
+  ]);
+  const amount = Number(settings?.consultFeeAmount || 0);
+  if (amount <= 0) return [];
+  return appointments.map((appointment) => ({
+    id: `appointment_payment_missing:${appointment.id}`,
+    recordId: appointment.id,
+    source: "booking_payment",
+    type: "Consultation booking",
+    description: "Consultation fee · payment not recorded",
+    clientName: appointment.client?.fullName || appointment.guestName || "Unknown client",
+    clientId: appointment.clientId,
+    appointmentId: appointment.id,
+    appointmentStartsAt: appointment.startsAt,
+    caseId: appointment.caseId,
+    caseType: appointment.case?.caseType || null,
+    amount,
+    balance: amount,
+    status: "Open",
+    bookingStatus: "MissingPayment",
+    missingAppointmentPayment: true,
+    qbInvoiceNumber: null,
+    qbInvoiceLink: null,
+    qbPaymentId: null,
+    qbRefundUrl: null,
+    paymentMethod: null,
+    paymentReference: null,
+    createdAt: appointment.createdAt,
+    paidAt: null,
+    dueDate: appointment.startsAt,
+  }));
+}
+
 async function fetchLegacyPaymentRows(agencyId, { from, to }) {
   const rows = await prisma.payment.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
@@ -368,13 +429,14 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
     logger.warn("payments_overview.refund_reconcile_failed", { agencyId, reason: error.message });
   });
   const dateRange = { from: from ? new Date(from) : null, to: to ? new Date(to) : null };
-  const [caseInvoices, bookingPayments, legacyPayments] = await Promise.all([
+  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, dateRange),
     fetchBookingPaymentRows(agencyId, dateRange),
+    fetchMissingAppointmentPaymentRows(agencyId, dateRange),
     fetchLegacyPaymentRows(agencyId, dateRange),
   ]);
 
-  let combined = [...caseInvoices, ...bookingPayments, ...legacyPayments];
+  let combined = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments];
   // Voided rows are clutter in the default view (an abandoned checkout, a
   // cancelled invoice draft) — real information, but not something staff
   // need to see mixed into "all payments" by default. Still fully visible
@@ -403,12 +465,13 @@ export async function getPaymentsSummary(agencyId) {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [caseInvoices, bookingPayments, legacyPayments] = await Promise.all([
+  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, {}),
     fetchBookingPaymentRows(agencyId, {}),
+    fetchMissingAppointmentPaymentRows(agencyId, {}),
     fetchLegacyPaymentRows(agencyId, {}),
   ]);
-  const all = [...caseInvoices, ...bookingPayments, ...legacyPayments];
+  const all = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments];
 
   let totalCollected = 0;
   let outstandingBalance = 0;
@@ -450,7 +513,7 @@ export async function getPaymentsSummary(agencyId) {
     if (row.status === "Overdue") overdueCount += 1;
 
     const invoicedBucket = trendByKey.get(monthKeyOf(row.createdAt));
-    if (invoicedBucket && row.status !== "Voided") invoicedBucket.invoiced += row.amount;
+    if (invoicedBucket && row.status !== "Voided" && !row.missingAppointmentPayment) invoicedBucket.invoiced += row.amount;
 
     const statusEntry = statusBreakdown[row.status] || { count: 0, amount: 0 };
     statusEntry.count += 1;
@@ -471,7 +534,7 @@ export async function getPaymentsSummary(agencyId) {
     paidLastMonth,
     overdueCount,
     manualBookingCount: bookingPayments.filter((row) => row.needsManualBooking).length,
-    totalTransactions: all.length,
+    totalTransactions: all.filter((row) => !row.missingAppointmentPayment).length,
     monthlyTrend: trendMonths.map(({ key, ...rest }) => rest),
     statusBreakdown,
     typeBreakdown,

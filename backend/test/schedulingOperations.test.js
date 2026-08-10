@@ -528,6 +528,36 @@ test("front-desk e-transfers may book before payment while preserving an actiona
   assert.match(migration, /ALTER COLUMN "guest_email" DROP NOT NULL/);
 });
 
+test("scheduled paid consultations without a payment row remain visible and actionable", async () => {
+  const [controller, holdService, scheduler, dashboard, overview, calendarPage, paymentsPage] = await Promise.all([
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/notificationScheduler.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/dashboardController.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/paymentsOverviewService.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/Payments.jsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(holdService, /booking_payment\.appointment_missing/);
+  assert.match(holdService, /export async function reconcileMissingAppointmentPaymentAlerts/);
+  assert.match(holdService, /paymentHold: \{ is: null \}/);
+  assert.match(holdService, /\{ recurrenceIndex: 1 \}/);
+  assert.match(holdService, /resolveMissingAppointmentPaymentNotification/);
+  assert.match(scheduler, /await reconcileMissingAppointmentPaymentAlerts\(\)/);
+  assert.match(controller, /feeApplies && !paymentMethod/);
+  assert.match(controller, /will remain flagged until its consultation payment is recorded/);
+  assert.match(controller, /appointmentId: hold\.appointmentId/);
+  assert.match(dashboard, /missingAppointmentPayments/);
+  assert.match(overview, /missingAppointmentPayment: true/);
+  assert.match(overview, /description: "Consultation fee · payment not recorded"/);
+  assert.match(calendarPage, /function appointmentPaymentAttention/);
+  assert.match(calendarPage, /Payment not recorded/);
+  assert.match(calendarPage, /item\?\.id === result\.appointmentId/);
+  assert.match(paymentsPage, /row\.missingAppointmentPayment/);
+  assert.match(paymentsPage, /Payment not recorded/);
+});
+
 test("front-desk client intake cannot misclassify a custom charge as a consultation payment", async () => {
   const [controller, paymentService, calendarPage, clientsPage] = await Promise.all([
     readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),

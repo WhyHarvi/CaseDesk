@@ -81,7 +81,7 @@ function formatDate(value) {
 // exact thing it's for" ask.
 function paymentLink(row) {
   if (row.source === "booking_payment") {
-    if ((row.eTransferPaymentPending || row.transactionReferenceMissing) && row.appointmentId) {
+    if ((row.missingAppointmentPayment || row.eTransferPaymentPending || row.transactionReferenceMissing) && row.appointmentId) {
       const date = row.appointmentStartsAt ? new Date(row.appointmentStartsAt).toISOString().slice(0, 10) : "";
       return `/app/calendar?appointment=${row.appointmentId}${date ? `&date=${date}` : ""}`;
     }
@@ -1067,6 +1067,14 @@ export default function Payments() {
                                 className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
                               >
                                 <ShieldAlert className="h-3 w-3" /> Recording failed
+                              </span>
+                            ) : null}
+                            {row.missingAppointmentPayment ? (
+                              <span
+                                title="The consultation is scheduled, but no payment or payment method has been recorded. Open the appointment to record it."
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                              >
+                                <Wallet className="h-3 w-3" /> Payment not recorded
                               </span>
                             ) : null}
                             {row.eTransferPaymentPending ? (

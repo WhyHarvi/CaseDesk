@@ -111,8 +111,16 @@ const APPOINTMENT_STATUS_TONE = {
   NoShow: "bg-amber-50 text-amber-700 ring-amber-200",
 };
 
-function eTransferPaymentAttention(hold) {
-  if (!hold || hold.paymentMethod !== "ETransfer") return null;
+function appointmentRequiresPaymentRecord(appointment, settings) {
+  return appointment?.status === "Scheduled"
+    && !appointment.isFreeConsultation
+    && Number(settings?.consultFeeAmount || 0) > 0
+    && (!appointment.seriesKey || !appointment.recurrenceIndex || appointment.recurrenceIndex === 1);
+}
+
+function appointmentPaymentAttention(appointment, hold = appointment?.paymentHold, settings = null) {
+  if (!hold) return appointmentRequiresPaymentRecord(appointment, settings) ? "Payment not recorded" : null;
+  if (hold.paymentMethod !== "ETransfer") return null;
   if (hold.status === "PaymentFailed") return "Payment record failed";
   const reference = hold.manualPaymentReference || hold.paymentReference;
   if (reference || ["Voided", "Refunded", "Expired", "Cancelled", "Failed"].includes(hold.status)) return null;
@@ -321,7 +329,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   const [paidDetailsMethod, setPaidDetailsMethod] = useState(appointment.paymentHold?.paymentMethod || "ETransfer");
   const [manualBusy, setManualBusy] = useState("");
   const [manualError, setManualError] = useState("");
-  const paymentAttention = eTransferPaymentAttention(payNow);
+  const paymentAttention = appointmentPaymentAttention(appointment, payNow, settings);
   const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
     ? "preparing link"
     : appointment.meetingSyncStatus === "Retrying"
@@ -356,6 +364,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     try {
       const result = await createWalkInPayNowLink(appointment.id);
       setPayNow(result);
+      onPaymentUpdated?.(result);
     } catch (reason) {
       setPayNowError(reason.response?.data?.message || "Could not generate a pay-now link.");
     } finally {
@@ -684,9 +693,17 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
               <p className="text-xs leading-5 text-amber-700">Invoice created in QuickBooks, but online card payment isn't available on this company yet. Collect payment via cash or e-transfer instead.</p>
             )
           ) : appointment.status === "Scheduled" ? (
-            <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className="flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
-              {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
-            </button>
+            <div>
+              {appointmentRequiresPaymentRecord(appointment, settings) ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> Payment not recorded</p>
+                  <p className="mt-1 text-xs leading-5 text-amber-700">This appointment is scheduled, but no consultation payment or payment method is recorded. The warning remains until payment is recorded.</p>
+                </div>
+              ) : null}
+              <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className={`${appointmentRequiresPaymentRecord(appointment, settings) ? "mt-3 " : ""}flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50`}>
+                {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
+              </button>
+            </div>
           ) : (
             <p className="text-xs leading-5 text-slate-500">No consultation payment is recorded. If payment was received previously, record it below to restore the billing history.</p>
           )}
@@ -1506,8 +1523,9 @@ export default function CalendarPage() {
         },
       };
     };
-    setAppointments((current) => current.map((item) => item.paymentHold?.id === result.id ? mergePayment(item) : item));
-    setSelected((current) => current?.paymentHold?.id === result.id ? mergePayment(current) : current);
+    const matchesPayment = (item) => item?.paymentHold?.id === result.id || item?.id === result.appointmentId;
+    setAppointments((current) => current.map((item) => matchesPayment(item) ? mergePayment(item) : item));
+    setSelected((current) => matchesPayment(current) ? mergePayment(current) : current);
   }, []);
 
   async function cancelSelected(scope = "single") {
@@ -1654,7 +1672,7 @@ export default function CalendarPage() {
                         const isFocused = focusedAppointmentId === item.id;
                         const isDone = item.status === "Completed";
                         const isNoShow = item.status === "NoShow";
-                        const paymentAttention = eTransferPaymentAttention(item.paymentHold);
+                        const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
                         const displayName = item.client?.fullName || item.guestName || item.subject;
                         const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
                         const outerGutter = 5;
@@ -1781,7 +1799,7 @@ export default function CalendarPage() {
                     {upcoming.map((item) => {
                       const tone = toneFor(item);
                       const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
-                      const paymentAttention = eTransferPaymentAttention(item.paymentHold);
+                      const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
                       return (
                         <button key={item.id} type="button" onClick={() => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); }} className={`flex w-full items-center gap-3 rounded-2xl px-2 py-1.5 text-left transition-[background-color,box-shadow] duration-[3800ms] hover:bg-slate-50 ${focusedAppointmentId === item.id ? "bg-amber-100 ring-2 ring-amber-300" : ""}`}>
                           <span className={`h-2 w-2 shrink-0 rounded-full ${tone.chip}`} />

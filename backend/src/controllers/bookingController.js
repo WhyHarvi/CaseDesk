@@ -28,7 +28,18 @@ import {
 } from "../services/schedulingAssignmentService.js";
 import { appointmentReference, recordAppointmentEvent, recurrenceStarts } from "../services/appointmentOperationsService.js";
 import { offerWaitlistOpening, releaseExpiredWaitlistHolds } from "../services/bookingWaitlistService.js";
-import { cancelPaymentHoldRequest as cancelPaymentHoldRequestService, createPaymentHoldForStaffBooking, createPaymentHoldForWalkIn, createPendingWalkInETransfer, recordWalkInManualPayment as recordWalkInManualPaymentService, resendPaymentHoldRequest as resendPaymentHoldRequestService, updatePaidAppointmentPaymentDetails as updatePaidAppointmentPaymentDetailsService, voidOpenPaymentHoldForAppointment } from "../services/bookingPaymentHoldService.js";
+import {
+  cancelPaymentHoldRequest as cancelPaymentHoldRequestService,
+  createPaymentHoldForStaffBooking,
+  createPaymentHoldForWalkIn,
+  createPendingWalkInETransfer,
+  notifyMissingAppointmentPayment,
+  recordWalkInManualPayment as recordWalkInManualPaymentService,
+  resendPaymentHoldRequest as resendPaymentHoldRequestService,
+  resolveMissingAppointmentPaymentNotification,
+  updatePaidAppointmentPaymentDetails as updatePaidAppointmentPaymentDetailsService,
+  voidOpenPaymentHoldForAppointment,
+} from "../services/bookingPaymentHoldService.js";
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -934,6 +945,16 @@ export async function createBookingAppointment(req, res) {
   // future occurrence in the series.
   let manualPaymentWarning = null;
   let manualPaymentHold = data.paymentHold?.status === "Paid" ? data.paymentHold : null;
+  if (createdNewCount && feeApplies && !paymentMethod) {
+    manualPaymentWarning = "The appointment was booked without payment and will remain flagged until its consultation payment is recorded.";
+    await notifyMissingAppointmentPayment(req.auth.agencyId, data, req.auth.userId).catch((error) => {
+      logger.warn("booking.missing_payment_notification_failed", {
+        agencyId: req.auth.agencyId,
+        appointmentId: data.id,
+        reason: error.message,
+      });
+    });
+  }
   if ((paymentMethod === "Cash" || paymentMethod === "ETransfer") && feeApplies) {
     try {
       if (manualPaymentHold) {
@@ -1109,6 +1130,7 @@ export async function createWalkInPayNowLink(req, res) {
   res.status(201).json({
     data: {
       id: hold.id,
+      appointmentId: hold.appointmentId,
       status: hold.status,
       amount: hold.amount,
       invoiceNumber: hold.qbInvoiceNumber,
@@ -1135,6 +1157,7 @@ export async function recordWalkInManualPayment(req, res) {
   res.status(201).json({
     data: {
       id: hold.id,
+      appointmentId: hold.appointmentId,
       status: hold.status,
       amount: hold.amount,
       paidAt: hold.paidAt,
@@ -1157,6 +1180,7 @@ export async function updatePaidAppointmentPaymentDetails(req, res) {
   res.json({
     data: {
       id: hold.id,
+      appointmentId: hold.appointmentId,
       status: hold.status,
       amount: hold.amount,
       paidAt: hold.paidAt,
@@ -1223,6 +1247,7 @@ export async function cancelBookingAppointment(req, res) {
     void processBookingMessageDeliveries();
     await Promise.all(cancelled.map((item) => offerWaitlistOpening(item).catch(() => {})));
     await Promise.all(cancelled.map((item) => voidOpenPaymentHoldForAppointment(req.auth.agencyId, item.id)));
+    await Promise.all(cancelled.map((item) => resolveMissingAppointmentPaymentNotification(req.auth.agencyId, item.id).catch(() => {})));
     await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.series_cancelled", details: `${series.length} recurring appointments cancelled` });
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...cancelled.find((item) => item.id === existing.id), seriesAffected: series.length } });
@@ -1258,6 +1283,7 @@ export async function cancelBookingAppointment(req, res) {
   void processBookingMessageDeliveries();
   await offerWaitlistOpening(data).catch(() => {});
   await voidOpenPaymentHoldForAppointment(req.auth.agencyId, existing.id);
+  await resolveMissingAppointmentPaymentNotification(req.auth.agencyId, existing.id).catch(() => {});
   res.json({ data });
 }
 
@@ -1598,6 +1624,9 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
   }
   if (status === "Cancelled") {
     await voidOpenPaymentHoldForAppointment(agencyId, existing.id);
+  }
+  if (status !== "Scheduled") {
+    await resolveMissingAppointmentPaymentNotification(agencyId, existing.id).catch(() => {});
   }
   return data;
 }
