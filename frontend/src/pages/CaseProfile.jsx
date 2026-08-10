@@ -40,6 +40,17 @@ function isRecoverableCaseLoadError(error) {
   return !status || status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+function triggerFileDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function fetchAllCaseDocuments(caseId, fresh = false) {
   const get = fresh ? api.getFresh : api.get;
   const limit = 100;
@@ -72,6 +83,7 @@ export default function CaseProfile() {
   const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
   const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
   const canAccessCaseCommunication = canAccessCaseTab(role, membership?.permissions, "communication");
+  const canAccessCaseForms = canAccessCaseTab(role, membership?.permissions, "forms");
   const [caseItem, setCaseItem] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
@@ -90,6 +102,8 @@ export default function CaseProfile() {
   const recoveryAttemptRef = useRef(0);
   const loadGenerationRef = useRef(0);
   const [activeToolbarTray, setActiveToolbarTray] = useState("");
+  const [applicationDownloadBusy, setApplicationDownloadBusy] = useState(false);
+  const [applicationDownloadError, setApplicationDownloadError] = useState("");
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
@@ -360,6 +374,72 @@ export default function CaseProfile() {
       navigate(`${location.pathname}?${params.toString()}`);
     } catch (requestError) {
       setCommunicationSetup({ channel, reason: "provider", detail: requestError.response?.data?.message || "Communication readiness could not be checked." });
+    }
+  }
+
+  // "Download application" bundles every case form that currently has a
+  // stored file (official IRCC imports, filled/working copies, client-signed
+  // uploads) into one download — a single file downloads directly, several
+  // are zipped together, matching what "download current copy" already does
+  // per-form in the Forms tab.
+  async function downloadApplicationPackage() {
+    if (applicationDownloadBusy) return;
+    setApplicationDownloadError("");
+    setApplicationDownloadBusy(true);
+    try {
+      const response = await api.get(`/case-forms?caseId=${caseItem.id}`);
+      const forms = (response.data.data || []).filter((item) => item.storageKey);
+      if (!forms.length) {
+        setApplicationDownloadError("No form files have been added to this case yet — add or fill in forms from the Forms tab first.");
+        return;
+      }
+
+      if (forms.length === 1) {
+        const [form] = forms;
+        const fileResponse = await api.get(`/case-forms/${form.id}/file?download=1`, { responseType: "blob", timeout: 60000 });
+        triggerFileDownload(fileResponse.data, form.originalFilename || form.title);
+        return;
+      }
+
+      const usedNames = new Set();
+      function uniqueEntryName(base) {
+        let name = String(base || "Form").trim() || "Form";
+        let suffix = 2;
+        while (usedNames.has(name.toLowerCase())) {
+          const dot = name.lastIndexOf(".");
+          name = dot > 0 ? `${base.slice(0, dot)} (${suffix})${base.slice(dot)}` : `${base} (${suffix})`;
+          suffix += 1;
+        }
+        usedNames.add(name.toLowerCase());
+        return name;
+      }
+
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      let failures = 0;
+      for (const form of forms) {
+        try {
+          const fileResponse = await api.get(`/case-forms/${form.id}/file?download=1`, { responseType: "blob", timeout: 60000 });
+          const buffer = await fileResponse.data.arrayBuffer();
+          zip.file(uniqueEntryName(form.originalFilename || form.title), buffer);
+        } catch {
+          failures += 1;
+        }
+      }
+      if (!Object.keys(zip.files).length) {
+        setApplicationDownloadError("None of this case's form files could be downloaded. Try again in a moment.");
+        return;
+      }
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const safeClientName = String(caseItem.client?.fullName || "Client").replace(/[\\/:*?"<>|]+/g, " ").trim() || "Client";
+      triggerFileDownload(zipBlob, `${safeClientName} - Application Forms.zip`);
+      if (failures) {
+        setApplicationDownloadError(`${failures} form${failures === 1 ? "" : "s"} could not be included and ${failures === 1 ? "was" : "were"} skipped.`);
+      }
+    } catch (requestError) {
+      setApplicationDownloadError(requestError.response?.data?.message || "Unable to download the application package.");
+    } finally {
+      setApplicationDownloadBusy(false);
     }
   }
 
@@ -1800,7 +1880,9 @@ export default function CaseProfile() {
           activeToolbarTray={activeToolbarTray}
           setActiveToolbarTray={setActiveToolbarTray}
           canManagePermissions={role === "admin" && !caseItem.deletedAt}
+          canDownloadApplication={canAccessCaseForms}
           onOpenWorkflow={openWorkflowOverlay}
+          onDownloadApplication={downloadApplicationPackage}
           onOpenApplicants={() => {
             setActiveToolbarTray("");
             setApplicantsOverlayOpen(true);
@@ -1838,6 +1920,16 @@ export default function CaseProfile() {
             setDeleteCaseDialogOpen(true);
           }}
         />
+
+        {applicationDownloadBusy ? (
+          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Preparing the application download…
+          </div>
+        ) : applicationDownloadError ? (
+          <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {applicationDownloadError}
+          </div>
+        ) : null}
 
         <CaseActionDialog
           open={archiveCaseDialogOpen}

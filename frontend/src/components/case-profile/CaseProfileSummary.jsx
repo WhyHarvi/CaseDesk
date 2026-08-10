@@ -119,7 +119,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, onOpenWorkflow, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -127,12 +127,13 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems.filter((item) => item !== "Manage Permissions" || canManagePermissions)}
+            items={caseOptionItems.filter((item) => (item !== "Manage Permissions" || canManagePermissions) && (item !== "Download application" || canDownloadApplication))}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
             onToggle={() => setActiveToolbarTray((current) => (current === "case-options" ? "" : "case-options"))}
             onSelect={(item) => {
+              if (item === "Download application") onDownloadApplication?.();
               if (item === "Applicants") onOpenApplicants();
               if (item === "Manage Permissions") onOpenPermissions?.();
               if (item === "E-Sign") onOpenESign?.();
