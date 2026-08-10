@@ -504,6 +504,16 @@ model Agency {
   avatarMimeType                 String?                            @map("avatar_mime_type")
   businessNumber                 String?                            @map("business_number")
   taxNumber                      String?                            @map("tax_number")
+  // The agency's designated owner/signing authority — a fixed identity for
+  // documents like the retainer agreement that should always show the
+  // person who runs the agency, independent of which staff member happens
+  // to be assigned to a given case. Deliberately plain text rather than a
+  // User relation: a small agency's "owner" for signing purposes doesn't
+  // have to be a CaseDesk staff account.
+  ownerFullName                  String?                            @map("owner_full_name")
+  ownerLicenseNumber             String?                            @map("owner_license_number")
+  ownerPhone                     String?                            @map("owner_phone")
+  ownerEmail                     String?                            @map("owner_email")
   defaultCurrency                String                             @default("CAD") @map("default_currency")
   locale                         String                             @default("en-CA")
   timezone                       String                             @default("America/Toronto")
@@ -2839,6 +2849,14 @@ model CorrespondenceTemplate {
   sourceName       String?                         @map("source_name")
   sourceUrl        String?                         @map("source_url")
   isSystemDefault  Boolean                         @default(false) @map("is_system_default")
+  // Distinguishes the one Agreement template that stands in for "the
+  // retainer" (what CaseWorkspaceTabs' Billing tab / caseBillingRetainer*
+  // resolve and show) from every other Agreement-kind template (amendments,
+  // risk acknowledgements, joint-retainer consents, etc.) that also happens
+  // to be a system default tagged "general". Without this flag, resolution
+  // picked whichever general-tagged Agreement template sorted first
+  // alphabetically, which was wrong as soon as more than one existed.
+  isRetainerTemplate Boolean                       @default(false) @map("is_retainer_template")
   isActive         Boolean                         @default(true) @map("is_active")
   versionNumber    Int                             @default(1) @map("version_number")
   createdById      String?                         @map("created_by_id")

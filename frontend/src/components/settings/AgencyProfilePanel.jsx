@@ -1,4 +1,4 @@
-import { Building2, Camera, Globe2, Landmark, MapPin, PhoneCall, Mail, Clock3, Coins, Trash2 } from "lucide-react";
+import { Building2, Camera, Globe2, Landmark, MapPin, PhoneCall, Mail, Clock3, Coins, Trash2, UserRound, BadgeCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
@@ -19,6 +19,10 @@ const emptyForm = {
   defaultCurrency: "",
   businessNumber: "",
   taxNumber: "",
+  ownerFullName: "",
+  ownerLicenseNumber: "",
+  ownerPhone: "",
+  ownerEmail: "",
 };
 
 function formFromAgency(agency) {
@@ -238,6 +242,15 @@ export default function AgencyProfilePanel() {
         { icon: Landmark, label: "Legal Name", value: agency?.legalName },
         { icon: Landmark, label: "Business Number", value: agency?.businessNumber },
         { icon: Landmark, label: "Tax Number", value: agency?.taxNumber },
+      ],
+    },
+    {
+      title: "Owner / signing authority",
+      rows: [
+        { icon: UserRound, label: "Owner Name", value: agency?.ownerFullName },
+        { icon: BadgeCheck, label: "License Number", value: agency?.ownerLicenseNumber },
+        { icon: PhoneCall, label: "Owner Phone", value: agency?.ownerPhone },
+        { icon: Mail, label: "Owner Email", value: agency?.ownerEmail },
       ],
     },
   ];
@@ -460,6 +473,28 @@ export default function AgencyProfilePanel() {
                       <Field label="Tax number">
                         <TextInput value={form.taxNumber} maxLength={60} onChange={set("taxNumber")} placeholder="123456789 RT0001" />
                       </Field>
+                    </div>
+
+                    <div className="border-t border-slate-100 pt-5">
+                      <p className="mb-1 text-sm font-semibold text-slate-950">Owner / signing authority</p>
+                      <p className="mb-4 text-xs text-slate-500">
+                        Shown on documents like the retainer agreement — a fixed identity for your agency, independent of
+                        which staff member is assigned to a case.
+                      </p>
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <Field label="Owner full name">
+                          <TextInput value={form.ownerFullName} maxLength={160} onChange={set("ownerFullName")} placeholder="Jane Smith, RCIC" />
+                        </Field>
+                        <Field label="License number">
+                          <TextInput value={form.ownerLicenseNumber} maxLength={60} onChange={set("ownerLicenseNumber")} placeholder="R123456" />
+                        </Field>
+                        <Field label="Owner phone">
+                          <TextInput value={form.ownerPhone} maxLength={40} onChange={set("ownerPhone")} placeholder="+1 (416) 555-0199" />
+                        </Field>
+                        <Field label="Owner email">
+                          <TextInput type="email" value={form.ownerEmail} maxLength={254} onChange={set("ownerEmail")} placeholder="owner@company.com" />
+                        </Field>
+                      </div>
                     </div>
 
                     {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}

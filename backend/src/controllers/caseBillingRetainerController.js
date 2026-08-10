@@ -30,8 +30,13 @@ async function scopedCase(req, caseId) {
 // to show.
 async function resolveRetainerTemplate(agencyId, caseType) {
   await ensureDefaultCorrespondenceTemplates(agencyId);
+  // isRetainerTemplate scopes this to the one Agreement template meant to
+  // stand in for "the retainer" — without it, this picked whichever
+  // isSystemDefault, general-tagged Agreement template sorted first
+  // alphabetically (e.g. "Additional Services / Retainer Amendment" beating
+  // an agency's actual retainer template), which was wrong.
   const templates = await prisma.correspondenceTemplate.findMany({
-    where: { agencyId, isActive: true, kind: "Agreement", isSystemDefault: true },
+    where: { agencyId, isActive: true, kind: "Agreement", isSystemDefault: true, isRetainerTemplate: true },
     orderBy: { title: "asc" },
   });
   const specific = templates.find((template) => !template.caseTags.includes("general") && templateMatchesCase(template, caseType));

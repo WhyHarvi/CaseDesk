@@ -21,6 +21,10 @@ const agencySelect = {
   defaultCurrency: true,
   businessNumber: true,
   taxNumber: true,
+  ownerFullName: true,
+  ownerLicenseNumber: true,
+  ownerPhone: true,
+  ownerEmail: true,
   avatarStorageKey: true,
   avatarMimeType: true,
   createdAt: true,
@@ -46,6 +50,15 @@ function requiredEmail(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
     throw createHttpError(400, "Enter a valid public email address.", "VALIDATION_ERROR");
+  }
+  return normalized;
+}
+
+function optionalEmail(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw createHttpError(400, "Enter a valid owner email address.", "VALIDATION_ERROR");
   }
   return normalized;
 }
@@ -96,6 +109,10 @@ function publicAgency(agency, stats = undefined) {
     defaultCurrency: agency.defaultCurrency,
     businessNumber: agency.businessNumber,
     taxNumber: agency.taxNumber,
+    ownerFullName: agency.ownerFullName,
+    ownerLicenseNumber: agency.ownerLicenseNumber,
+    ownerPhone: agency.ownerPhone,
+    ownerEmail: agency.ownerEmail,
     hasAvatar: Boolean(agency.avatarStorageKey),
     createdAt: agency.createdAt,
     ...(stats ? { stats } : {}),
@@ -129,6 +146,13 @@ export async function updateAgencyProfile(req, res) {
     defaultCurrency: validCurrency(req.body.defaultCurrency) || "CAD",
     businessNumber: optionalText(req.body.businessNumber, "Business number", 60),
     taxNumber: optionalText(req.body.taxNumber, "Tax number", 60),
+    // The agency's designated owner/signing authority — a fixed identity used
+    // on documents like the retainer agreement, independent of whichever
+    // staff member happens to be assigned to a given case.
+    ownerFullName: optionalText(req.body.ownerFullName, "Owner full name", 160),
+    ownerLicenseNumber: optionalText(req.body.ownerLicenseNumber, "Owner license number", 60),
+    ownerPhone: optionalText(req.body.ownerPhone, "Owner phone", 40),
+    ownerEmail: optionalEmail(req.body.ownerEmail),
   };
   let nextAvatar = null;
   if (req.file) {

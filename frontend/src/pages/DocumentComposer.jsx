@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table } from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
@@ -55,6 +56,21 @@ function writerStatusOptions(document) {
   }
   return options;
 }
+
+// Plain @tiptap/extension-image only tracks src/alt/title — a merge-rendered
+// template's <img style="max-height:80px;..."> (e.g. an agency logo) would
+// otherwise lose its sizing the instant it's loaded into the editor. This
+// preserves the style attribute (and a couple of common presentational ones)
+// across the round trip instead.
+const StyledImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      style: { default: null, parseHTML: (element) => element.getAttribute("style"), renderHTML: (attributes) => (attributes.style ? { style: attributes.style } : {}) },
+      width: { default: null, parseHTML: (element) => element.getAttribute("width"), renderHTML: (attributes) => (attributes.width ? { width: attributes.width } : {}) },
+    };
+  },
+});
 
 const toolButton =
   "flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 disabled:opacity-35";
@@ -147,6 +163,7 @@ export default function DocumentComposer() {
       TableRow,
       TableHeader,
       TableCell,
+      StyledImage.configure({ inline: false }),
       Placeholder.configure({ placeholder: "Start writing your document…" }),
     ],
     content: "",
@@ -444,7 +461,19 @@ export default function DocumentComposer() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#e9eaed] text-slate-900">
-      <style>{`@media print{.writer-chrome{display:none!important}.writer-scroll{overflow:visible!important;padding:0!important}.writer-page{box-shadow:none!important;margin:0!important;min-height:auto!important}.writer-page-header,.writer-page-footer{display:block!important}}`}</style>
+      <style>{`
+        @media print{.writer-chrome{display:none!important}.writer-scroll{overflow:visible!important;padding:0!important}.writer-page{box-shadow:none!important;margin:0!important;min-height:auto!important}.writer-page-header,.writer-page-footer{display:block!important}}
+        .writer-page .ProseMirror table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
+        .writer-page .ProseMirror table td,.writer-page .ProseMirror table th{border:1px solid #cbd5e1;padding:8px 10px;vertical-align:top;}
+        .writer-page .ProseMirror table th{background:#f1f5f9;font-weight:600;text-align:left;}
+        .writer-page .ProseMirror h1{font-size:23px;font-weight:700;letter-spacing:0.01em;margin:20px 0 12px;color:#0f172a;}
+        .writer-page .ProseMirror h2{font-size:15px;font-weight:700;margin:22px 0 8px;color:#1f3a5f;border-bottom:1px solid #e2e8f0;padding-bottom:5px;}
+        .writer-page .ProseMirror img{max-height:90px;max-width:280px;display:block;margin:0 auto 10px;}
+        .writer-page .ProseMirror p{margin:0 0 10px;}
+        .writer-page .ProseMirror ol,.writer-page .ProseMirror ul{margin:0 0 10px 22px;padding:0;}
+        .writer-page .ProseMirror li{margin-bottom:5px;}
+        .writer-page .ProseMirror li p{margin:0;}
+      `}</style>
       <header className="writer-chrome border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
