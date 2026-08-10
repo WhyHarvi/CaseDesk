@@ -129,10 +129,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   }, [initialLead]);
 
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && onClose();
+    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, onClose]);
+  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, completingConsultation, onClose]);
 
   useEffect(() => {
     if (tab !== "messages") return;

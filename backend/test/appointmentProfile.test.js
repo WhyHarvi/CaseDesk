@@ -233,3 +233,31 @@ test("completed appointments reuse an existing pending follow-up", async () => {
   assert.equal(result, existing);
   assert.equal(createCalled, false);
 });
+
+test("pressing Escape while completing a consultation does not discard the in-progress notes", async () => {
+  const [overlay, leadDetail] = await Promise.all([
+    source(
+      "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",
+    ),
+    source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
+  ]);
+
+  // The overlay's global Escape listener closes the whole appointment
+  // profile (discarding whatever was typed into the Complete Consultation
+  // sheet) unless it also checks completingConsultation, the same way it
+  // already checks `saving`.
+  assert.match(
+    overlay,
+    /event\.key === "Escape" && !saving && !completingConsultation && onClose\(\)/,
+  );
+
+  // Same bug, same fix, in the lead detail sheet's Escape listener: it
+  // already guards on sibling sheets like bookingOpen/activeAction/
+  // selectedAppointmentId, but was missing completingConsultation, so
+  // Escape while writing consultation notes closed the entire lead detail
+  // sheet instead of doing nothing.
+  assert.match(
+    leadDetail,
+    /!qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose\(\)/,
+  );
+});

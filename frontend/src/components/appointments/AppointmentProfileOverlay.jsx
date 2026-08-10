@@ -123,10 +123,10 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     if (appointmentId) setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !saving && onClose();
+    const close = (event) => event.key === "Escape" && !saving && !completingConsultation && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onClose, saving]);
+  }, [onClose, saving, completingConsultation]);
 
   const person = useMemo(() => personFor(appointment), [appointment]);
   const clientNotes = appointment?.clientNotes ?? appointment?.notes ?? [];
