@@ -129,7 +129,7 @@ function DocumentStatusPicker({ documentItem, value, onChange, disabled, compact
   );
 }
 
-function isMyDocument(documentItem) {
+export function isMyDocument(documentItem) {
   return documentItem.visibility === "Internal" || String(documentItem.notes || "").startsWith(myDocumentMarker);
 }
 

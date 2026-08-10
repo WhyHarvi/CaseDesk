@@ -63,33 +63,47 @@ test("case operations continue to feed the consultant-safe activity timeline", a
   assert.match(taskController, /recordActivity\(/);
 });
 
-test("the case profile's Download application option actually downloads the case's filed forms", async () => {
-  const [page, summary, formRoutes] = await Promise.all([
+test("the case profile's Download application option opens a real forms + documents download center", async () => {
+  const [page, summary, overlay, formRoutes, documentRoutes] = await Promise.all([
     source("../../frontend/src/pages/CaseProfile.jsx"),
     source("../../frontend/src/components/case-profile/CaseProfileSummary.jsx"),
+    source("../../frontend/src/components/case-profile/DownloadApplicationOverlay.jsx"),
     source("../src/routes/caseFormRoutes.js"),
+    source("../src/routes/clientDocumentRoutes.js"),
   ]);
 
   // "Download application" used to sit in the case-options menu with no
-  // handler at all — selecting it did nothing. It should fetch every case
-  // form that has a stored file and hand the user a real download: the file
-  // directly when there's one, a zip when there's more than one.
+  // handler at all — selecting it did nothing. It now opens an overlay that
+  // lists every filed form and uploaded client document that has a stored
+  // file, lets the consultant mark a subset (or jump straight to everything
+  // already Finalized) and download either a single file, the selection, or
+  // the whole case bundled into one zip.
   assert.match(summary, /if \(item === "Download application"\) onDownloadApplication\?\.\(\)/);
-  assert.match(page, /async function downloadApplicationPackage\(\)/);
-  assert.match(page, /api\.get\(`\/case-forms\?caseId=\$\{caseItem\.id\}`\)/);
-  assert.match(page, /filter\(\(item\) => item\.storageKey\)/);
-  assert.match(page, /await import\("jszip"\)/);
-  assert.match(page, /case-forms\/\$\{form\.id\}\/file\?download=1/);
+  assert.match(page, /setDownloadApplicationOverlayOpen\(true\)/);
+  assert.match(page, /<DownloadApplicationOverlay/);
+  assert.match(page, /documents=\{documents\}/);
+
+  assert.match(overlay, /api\.get\(`\/case-forms\?caseId=\$\{caseItem\.id\}`\)/);
+  assert.match(overlay, /url: `\/case-forms\/\$\{form\.id\}\/file\?download=1`/);
+  assert.match(overlay, /url: `\/client-documents\/\$\{item\.id\}\/file\?download=1`/);
+  assert.match(overlay, /!isMyDocument\(item\)/);
+  assert.match(overlay, /await import\("jszip"\)/);
+  assert.match(overlay, /function selectFinalized/);
+  assert.match(overlay, /FINALIZED_STATUS = "Finalized"/);
+  assert.match(overlay, /Download selected/);
+  assert.match(overlay, /Download all as ZIP/);
+  assert.match(overlay, /No files to download yet/);
   assert.match(formRoutes, /router\.get\("\/", asyncHandler\(listCaseForms\)\)/);
   assert.match(formRoutes, /router\.get\("\/:id\/file", asyncHandler\(serveCaseFormFile\)\)/);
+  assert.match(documentRoutes, /router\.get\("\/:id\/file", asyncHandler\(serveClientDocumentFile\)\)/);
 
-  // A no-op is worse than a clear message here — the option is easy to reach
-  // for a case that hasn't had any forms filled in yet.
-  assert.match(page, /No form files have been added to this case yet/);
-
-  // The Forms tab is a permission-gated case tab; a role that can't see it
-  // shouldn't be able to pull every filed form through this menu instead.
+  // Forms and Documents are each permission-gated case tabs; a role that
+  // can't see one shouldn't be able to pull its files through this menu
+  // instead, and the overlay only opens at all if at least one is visible.
   assert.match(page, /canAccessCaseForms = canAccessCaseTab\(role, membership\?\.permissions, "forms"\)/);
-  assert.match(page, /canDownloadApplication=\{canAccessCaseForms\}/);
+  assert.match(page, /canAccessCaseDocuments = canAccessCaseTab\(role, membership\?\.permissions, "documents"\)/);
+  assert.match(page, /canDownloadApplication=\{canAccessCaseForms \|\| canAccessCaseDocuments\}/);
   assert.match(summary, /item !== "Download application" \|\| canDownloadApplication/);
+  assert.match(page, /canAccessForms=\{canAccessCaseForms\}/);
+  assert.match(page, /canAccessDocuments=\{canAccessCaseDocuments\}/);
 });
