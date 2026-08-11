@@ -292,13 +292,6 @@ function initialsFor(name) {
   return String(name || "").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "?";
 }
 
-// The pill only has room for a first name next to the avatar — the full
-// name is still available in the title/aria-label and everywhere else
-// (hover card, detail panel) for anyone who needs the rest of it.
-function firstNameFor(name) {
-  return String(name || "").trim().split(/\s+/)[0] || "?";
-}
-
 // A solid-fill circle in the appointment's existing per-staff tone color —
 // there's no client photo field in the data model, so this stands in for
 // the avatar a reference design would use, while keeping the same color
@@ -398,18 +391,14 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
   const start = new Date(item.startsAt);
   const end = new Date(item.endsAt);
   const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
-  const height = Math.max(32, ((end - start) / 3600000) * HOUR_PX - 3);
-  // 52 pushed even the default 30-minute appointment (41px at 88px/hour)
-  // into the icon-only compact layout, so the avatar never actually showed
-  // up for the most common booking length. 40 keeps only genuinely tight
-  // 15-minute slots compact.
-  const isCompact = height < 40;
+  const height = Math.max(26, ((end - start) / 3600000) * HOUR_PX - 3);
+  const isCompact = height < 44;
   const isNarrowWeekPill = view === "week" && columns > 1;
   const isDone = item.status === "Completed";
   const isNoShow = item.status === "NoShow";
   const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
   const displayName = item.client?.fullName || item.guestName || item.subject;
-  const firstName = firstNameFor(displayName);
+  const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
   const outerGutter = 5;
   const columnGap = 4;
   const horizontalStyle = columns === 1
@@ -429,36 +418,23 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
       onBlur={onHoverEnd}
       title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
       aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
-      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "px-2.5 py-1" : "px-3 py-2"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
+      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
       style={{ top: Math.max(0, top), height, ...horizontalStyle }}
     >
-      {isCompact ? (
-        <p className={`flex w-full items-center gap-1.5 overflow-hidden whitespace-nowrap text-ellipsis font-semibold leading-[1.15] text-[12px] ${tone.title}`}>
-          <InitialsAvatar name={displayName} tone={tone} className="h-4 w-4 text-[7px]" />
-          {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
-          {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
-          <span className="min-w-0 overflow-hidden text-ellipsis">{firstName}</span>
+      <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
+        <ModeIcon className="h-3 w-3 shrink-0" />
+        {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
+        {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
+        <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
+      </p>
+      {!isCompact && !isNarrowWeekPill ? (
+        <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
+          {formatTime(item.startsAt)}
+          {item.sessionType ? ` · ${item.sessionType.name}` : ""}
+          {isNoShow ? " · No-show" : ""}
+          {paymentAttention ? ` · ${paymentAttention}` : ""}
         </p>
-      ) : (
-        <div className="flex min-w-0 items-center gap-2.5">
-          <InitialsAvatar name={displayName} tone={tone} className={isNarrowWeekPill ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs"} />
-          <div className="min-w-0 flex-1">
-            <p className={`flex items-center gap-1 overflow-hidden font-semibold leading-[1.2] ${isNarrowWeekPill ? "text-[12px] line-clamp-2" : "text-[13px] line-clamp-1"} ${tone.title}`}>
-              {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
-              {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
-              <span className="min-w-0 truncate">{firstName}</span>
-            </p>
-            {!isNarrowWeekPill ? (
-              <p className={`mt-1 truncate text-[12px] leading-tight ${tone.meta}`}>
-                {formatTime(item.startsAt)}
-                {item.sessionType ? ` · ${item.sessionType.name}` : ""}
-                {isNoShow ? " · No-show" : ""}
-                {paymentAttention ? ` · ${paymentAttention}` : ""}
-              </p>
-            ) : null}
-          </div>
-        </div>
-      )}
+      ) : null}
     </button>
   );
 }

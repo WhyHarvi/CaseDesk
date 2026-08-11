@@ -972,7 +972,7 @@ test("staff appointment notifications use the durable delivery queue", async () 
   assert.match(service, /if \(channel === "staff"\) throw error/);
 });
 
-test("the calendar grid marks the half-hour boundary as well as the hour, and shows an avatar-led hover preview", async () => {
+test("the calendar grid marks the half-hour boundary as well as the hour, and offers a click-through hover preview", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
 
   // A second, visually quieter gridline layer at the half-hour mark — the
@@ -981,13 +981,8 @@ test("the calendar grid marks the half-hour boundary as well as the hour, and sh
   assert.match(calendar, /className="absolute inset-x-0 border-t border-slate-100\/90" style=\{\{ top: index \* HOUR_PX \}\}/);
   assert.match(calendar, /className="absolute inset-x-0 border-t border-dashed border-slate-100" style=\{\{ top: \(index \+ 0\.5\) \* HOUR_PX \}\}/);
 
-  // The appointment pill is its own component now (was inlined in the day
-  // loop) so the same avatar-led layout renders for every occurrence of an
-  // appointment, and non-compact pills show an initials avatar instead of
-  // just a mode icon in the name row — the compact (very short) layout is
-  // untouched since there isn't room for an avatar there.
+  // The appointment pill is its own component (was inlined in the day loop).
   assert.match(calendar, /function AppointmentPill\(\{ item, column, columns, view, tone, isSelected, isFocused, bookingSettings, onSelect, onHoverStart, onHoverEnd \}\)/);
-  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className=\{isNarrowWeekPill \? "h-6 w-6 text-\[10px\]" : "h-8 w-8 text-xs"\}/);
   assert.match(calendar, /\{positionedDayItems\.map\(\(\{ item, column, columns \}\) => \(\s*<AppointmentPill/);
 
   // Hover is additive to the existing click-opens-panel behaviour — it
@@ -1006,37 +1001,24 @@ test("the calendar grid marks the half-hour boundary as well as the hour, and sh
   assert.match(calendar, /const phone = item\.client\?\.phone \|\| item\.guestPhone \|\| "";/);
 });
 
-test("appointment pills label the round avatar with a first name, keeping the full name in the tooltip", async () => {
+test("appointment pills dropped the avatar experiment — one consistent icon+full-name layout, no avatar, on every pill", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+  const pillSource = calendar.slice(calendar.indexOf("function AppointmentPill"), calendar.indexOf("function EventDetails"));
 
-  // Only the visible label shrinks to a first name — the avatar's initials,
-  // the hover card, and the title/aria-label all keep working off the full
-  // name so nothing else on the calendar loses information.
-  assert.match(calendar, /function firstNameFor\(name\) \{/);
-  assert.match(calendar, /return String\(name \|\| ""\)\.trim\(\)\.split\(\/\\s\+\/\)\[0\] \|\| "\?";/);
-  assert.match(calendar, /const firstName = firstNameFor\(displayName\);/);
-  assert.match(calendar, /<span className="min-w-0 overflow-hidden text-ellipsis">\{firstName\}<\/span>/);
-  assert.match(calendar, /<span className="min-w-0 truncate">\{firstName\}<\/span>/);
+  // Two rounds of avatar tuning (add it, resize it, add it to compact pills
+  // too) still left the name hard to read and the layout inconsistent
+  // between compact and full-size pills — direct user feedback. Reverted to
+  // a single structure for every pill: a mode icon, then the full name, no
+  // InitialsAvatar and no first-name truncation.
+  assert.doesNotMatch(pillSource, /InitialsAvatar/);
+  assert.doesNotMatch(calendar, /function firstNameFor/);
+  assert.match(pillSource, /const ModeIcon = MEETING_MODE_ICON\[item\.meetingMode\] \|\| MapPin;/);
+  assert.match(pillSource, /<ModeIcon className="h-3 w-3 shrink-0" \/>/);
+  assert.match(pillSource, /<span className="min-w-0 overflow-hidden text-ellipsis">\{displayName\}<\/span>/);
+  assert.match(pillSource, /const isCompact = height < 44;/);
+  assert.match(pillSource, /const height = Math\.max\(26, \(\(end - start\) \/ 3600000\) \* HOUR_PX - 3\);/);
 
-  // Title/aria-label and the avatar itself still use the full name.
-  assert.match(calendar, /title=\{`\$\{displayName\} · /);
-  assert.match(calendar, /<InitialsAvatar name=\{displayName\}/);
-});
-
-test("the default 30-minute appointment is tall enough to actually show the avatar, and even compact pills carry a small one", async () => {
-  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
-
-  // At 88px/hour a 30-minute appointment is 41px tall. The old 52px compact
-  // threshold silently classified that as compact, so the avatar added
-  // earlier never actually rendered for the most common booking length —
-  // only for 45-minute-plus appointments. 40 is the fix: only genuinely
-  // tight 15-minute slots (32px, floored) stay compact.
-  assert.match(calendar, /const isCompact = height < 40;/);
-  assert.doesNotMatch(calendar, /const isCompact = height < 52;/);
-
-  // Compact pills no longer fall back to a plain mode icon — they get a
-  // small avatar too, so an avatar is visible on every appointment
-  // regardless of how short it is.
-  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className="h-4 w-4 text-\[7px\]" \/>/);
-  assert.doesNotMatch(calendar, /<ModeIcon className="h-3 w-3 shrink-0" \/>/);
+  // The hover card keeps its own avatar — the feedback was about the pill
+  // itself, not the preview popover that only appears on hover.
+  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className="h-9 w-9 text-xs" \/>/);
 });
