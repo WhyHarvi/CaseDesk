@@ -177,8 +177,11 @@ test("the calendar grid gives appointments real room instead of cramming them in
 
   // At 60px/hour a 15-minute appointment (e.g. the free follow-up type)
   // rendered at ~15px tall — barely one line of tiny text before crowding
-  // the next block. 72px/hour is the single biggest lever for legibility.
-  assert.match(calendar, /const HOUR_PX = 72;/);
+  // the next block. More room per hour is the single biggest lever for
+  // legibility; the exact value has since grown again (72 -> 88) to match
+  // a reference design's chunkier blocks, but the scaling relationship
+  // below is what actually matters and must hold at any HOUR_PX value.
+  assert.match(calendar, /const HOUR_PX = 88;/);
   // The half-hour label positions must scale with HOUR_PX, not assume the
   // old 60px/hour (1px-per-minute) relationship — a real bug this same
   // redesign introduced and then caught: changing HOUR_PX alone would have
@@ -984,7 +987,7 @@ test("the calendar grid marks the half-hour boundary as well as the hour, and sh
   // just a mode icon in the name row — the compact (very short) layout is
   // untouched since there isn't room for an avatar there.
   assert.match(calendar, /function AppointmentPill\(\{ item, column, columns, view, tone, isSelected, isFocused, bookingSettings, onSelect, onHoverStart, onHoverEnd \}\)/);
-  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className=\{isNarrowWeekPill \? "h-5 w-5 text-\[9px\]" : "h-6 w-6 text-\[10px\]"\}/);
+  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className=\{isNarrowWeekPill \? "h-6 w-6 text-\[10px\]" : "h-8 w-8 text-xs"\}/);
   assert.match(calendar, /\{positionedDayItems\.map\(\(\{ item, column, columns \}\) => \(\s*<AppointmentPill/);
 
   // Hover is additive to the existing click-opens-panel behaviour — it

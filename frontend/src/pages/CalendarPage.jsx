@@ -88,11 +88,11 @@ function clearAppointmentDraft() {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRID_START_HOUR = 7;
 const GRID_END_HOUR = 20;
-// 72px/hour (was 60) — a 15-minute appointment used to get ~15px, barely
-// enough for one line of tiny text before the next block visually crowded
-// it. More room per hour is the single biggest lever for making the grid
-// legible instead of cramped.
-const HOUR_PX = 72;
+// 88px/hour (was 72, originally 60) — matching the reference screenshot's
+// chunkier appointment blocks meant more than just fitting text: there
+// needed to be real room for an avatar plus two lines without the block
+// looking squeezed.
+const HOUR_PX = 88;
 
 const EVENT_TONES = [
   { chip: "bg-sky-500", block: "border-sky-400 bg-sky-50/90 hover:bg-sky-100/90", title: "text-sky-900", meta: "text-sky-600" },
@@ -391,8 +391,8 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
   const start = new Date(item.startsAt);
   const end = new Date(item.endsAt);
   const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
-  const height = Math.max(26, ((end - start) / 3600000) * HOUR_PX - 3);
-  const isCompact = height < 44;
+  const height = Math.max(32, ((end - start) / 3600000) * HOUR_PX - 3);
+  const isCompact = height < 52;
   const isNarrowWeekPill = view === "week" && columns > 1;
   const isDone = item.status === "Completed";
   const isNoShow = item.status === "NoShow";
@@ -418,7 +418,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
       onBlur={onHoverEnd}
       title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
       aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
-      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
+      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "px-2.5 py-1" : "px-3 py-2"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
       style={{ top: Math.max(0, top), height, ...horizontalStyle }}
     >
       {isCompact ? (
@@ -429,16 +429,16 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
           <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
         </p>
       ) : (
-        <div className="flex min-w-0 items-center gap-2">
-          <InitialsAvatar name={displayName} tone={tone} className={isNarrowWeekPill ? "h-5 w-5 text-[9px]" : "h-6 w-6 text-[10px]"} />
+        <div className="flex min-w-0 items-center gap-2.5">
+          <InitialsAvatar name={displayName} tone={tone} className={isNarrowWeekPill ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs"} />
           <div className="min-w-0 flex-1">
-            <p className={`flex items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px] line-clamp-2" : "text-[12px] line-clamp-1"} ${tone.title}`}>
+            <p className={`flex items-center gap-1 overflow-hidden font-semibold leading-[1.2] ${isNarrowWeekPill ? "text-[12px] line-clamp-2" : "text-[13px] line-clamp-1"} ${tone.title}`}>
               {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
               {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
               <span className="min-w-0 truncate">{displayName}</span>
             </p>
             {!isNarrowWeekPill ? (
-              <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
+              <p className={`mt-1 truncate text-[12px] leading-tight ${tone.meta}`}>
                 {formatTime(item.startsAt)}
                 {item.sessionType ? ` · ${item.sessionType.name}` : ""}
                 {isNoShow ? " · No-show" : ""}
