@@ -3,7 +3,7 @@ import {
   clientAccessWhere,
   relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
-import { leadAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
+import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
 import { logger } from "../services/logger.js";
 import prisma from "../services/prisma/client.js";
 import {
@@ -72,11 +72,15 @@ const searchWhenAllowed = (allowed, req, source, operation) =>
     : Promise.resolve(skippedSearch());
 
 async function searchLeads(req, query, digits) {
+  // Deliberately not filtered to leadSegmentWhere("STANDARD") — a person
+  // searching by name has no way to know a lead landed in the bulk-import
+  // review queue instead of the normal pipeline, and "search can't find
+  // someone who's actually in the system" is a worse experience than
+  // surfacing them clearly labeled as Import Review.
   const leads = await prisma.lead.findMany({
     where: {
       agencyId: req.auth.agencyId,
       deletedAt: null,
-      ...leadSegmentWhere(),
       AND: [
         leadAccessWhere(req),
         {
@@ -100,20 +104,29 @@ async function searchLeads(req, query, digits) {
     take: RESULT_LIMIT,
   });
 
-  return leads.map((lead) => ({
-    id: lead.id,
-    type: "lead",
-    title:
-      [lead.firstName, lead.lastName].filter(Boolean).join(" ") ||
-      lead.leadNumber,
-    subtitle: join(
-      lead.leadNumber,
-      lead.originalSource?.name,
-      lead.owner?.fullName,
-    ),
-    meta: join(lead.stage, lead.status),
-    url: `/leads?search=${encodeURIComponent(lead.leadNumber)}`,
-  }));
+  return leads.map((lead) => {
+    const inReview = lead.pipelineSegment === "IMPORT_REVIEW";
+    // The Leads list and Import Review list are two different routes, each
+    // hardcoded to one segment — a link into the wrong one silently shows
+    // no results, so which page a result opens depends on where the lead
+    // actually lives, not just its lead number.
+    const listPath = inReview ? "/leads/review" : "/leads";
+
+    return {
+      id: lead.id,
+      type: "lead",
+      title:
+        [lead.firstName, lead.lastName].filter(Boolean).join(" ") ||
+        lead.leadNumber,
+      subtitle: join(
+        lead.leadNumber,
+        lead.originalSource?.name,
+        lead.owner?.fullName,
+      ),
+      meta: join(inReview ? "Import Review" : null, lead.stage, lead.status),
+      url: `${listPath}?search=${encodeURIComponent(lead.leadNumber)}`,
+    };
+  });
 }
 
 async function searchInternalRecords(req, query, digits, access) {

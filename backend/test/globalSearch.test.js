@@ -110,3 +110,24 @@ test("global search UI uses an unclipped portal and opens every result", async (
   assert.match(clientProfile, /useFadingHighlight\(highlightedNoteId/);
   assert.match(clientProfile, /domIdPrefix: "client-note-"/);
 });
+
+test("lead search surfaces Import Review leads too, clearly labeled and routed to the right list", async () => {
+  const controller = await source("../src/controllers/globalSearchController.js");
+
+  // Previously scoped to leadSegmentWhere() (defaults to "STANDARD"), so a
+  // lead created by the Admissions bulk import was invisible to search no
+  // matter how exactly someone typed their name or lead number — a real
+  // report ("we are unable to see it through search bar" for a specific,
+  // real, non-deleted lead). Removed the segment filter entirely and
+  // labeled the result instead of hiding it.
+  assert.doesNotMatch(controller, /\.\.\.leadSegmentWhere\(\)/);
+  assert.match(controller, /const inReview = lead\.pipelineSegment === "IMPORT_REVIEW";/);
+  assert.match(controller, /meta: join\(inReview \? "Import Review" : null, lead\.stage, lead\.status\)/);
+
+  // The Leads list and Import Review list are separate routes, each
+  // hardcoded to one segment (see LeadsPage) — a result has to link to
+  // whichever one the lead actually lives in, or clicking it opens a list
+  // that silently shows nothing for that lead.
+  assert.match(controller, /const listPath = inReview \? "\/leads\/review" : "\/leads";/);
+  assert.match(controller, /url: `\$\{listPath\}\?search=\$\{encodeURIComponent\(lead\.leadNumber\)\}`/);
+});
