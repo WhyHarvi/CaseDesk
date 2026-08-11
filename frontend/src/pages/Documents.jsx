@@ -2,12 +2,15 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Download,
   Ellipsis,
+  Eye,
   FileArchive,
   FileBadge2,
   Filter,
   Grid2X2,
   List,
+  Loader2,
   Pencil,
   Plus,
   ShieldCheck,
@@ -19,6 +22,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
+import { buildDocumentPreview, releaseDocumentPreview } from "../components/case-profile/documentPreview";
 
 const defaultFormState = {
   clientId: "",
@@ -356,6 +360,102 @@ function DocumentFormModal({
   );
 }
 
+function SpreadsheetPreview({ sheet }) {
+  if (!sheet?.rows?.length) {
+    return <p className="text-sm text-slate-500">No worksheet data was found.</p>;
+  }
+
+  return (
+    <div className="h-full overflow-auto rounded-xl bg-white p-4 shadow-sm">
+      <table className="min-w-full border-collapse text-xs">
+        <tbody>
+          {sheet.rows.slice(0, 200).map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className="border border-slate-200 px-2 py-1 text-slate-700">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DocumentPreviewOverlay({ preview, onClose, onDownload }) {
+  let content;
+
+  if (preview.kind === "no-file") {
+    content = (
+      <div className="flex h-full flex-col items-center justify-center text-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm"><FileBadge2 className="h-6 w-6" /></span>
+        <p className="mt-4 text-sm font-semibold text-slate-900">No file has been uploaded for this document yet</p>
+        <p className="mt-1 text-xs text-slate-500">This is a document request record — upload a file to preview it here.</p>
+      </div>
+    );
+  } else if (preview.kind === "frame") {
+    content = <iframe title={preview.name} src={preview.url} className="h-full w-full rounded-xl bg-white shadow-sm" />;
+  } else if (preview.kind === "image") {
+    content = (
+      <div className="flex h-full items-center justify-center overflow-auto rounded-xl bg-slate-200/60">
+        <img src={preview.url} alt={preview.name} className="max-h-full max-w-full object-contain" />
+      </div>
+    );
+  } else if (preview.kind === "text") {
+    content = <pre className="h-full overflow-auto whitespace-pre-wrap rounded-xl bg-white p-5 font-mono text-xs leading-6 text-slate-700 shadow-sm">{preview.text}</pre>;
+  } else if (preview.kind === "html") {
+    content = (
+      <div
+        className="h-full overflow-auto rounded-xl bg-white p-6 shadow-sm [&_a]:text-sky-700 [&_h1]:mb-4 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:my-4 [&_h2]:text-xl [&_h2]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_li]:list-disc [&_p]:mb-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-200 [&_td]:p-2 [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-50 [&_th]:p-2"
+        dangerouslySetInnerHTML={{ __html: preview.html }}
+      />
+    );
+  } else if (preview.kind === "spreadsheet") {
+    content = <SpreadsheetPreview sheet={preview.sheets?.[0]} />;
+  } else {
+    content = (
+      <div className="flex h-full flex-col items-center justify-center text-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm"><FileBadge2 className="h-6 w-6" /></span>
+        <p className="mt-4 text-sm font-semibold text-slate-900">Preview is not available for this file type</p>
+        <button type="button" onClick={onDownload} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Download document</button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-slate-950/70 p-4 backdrop-blur-sm sm:p-8"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="flex items-center justify-between gap-4 rounded-t-2xl bg-white px-5 py-3.5 shadow-sm">
+        <p className="min-w-0 truncate text-sm font-semibold text-slate-950">{preview.name}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          {preview.kind !== "no-file" ? (
+            <button
+              type="button"
+              onClick={onDownload}
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <Download className="h-3.5 w-3.5" /> Download
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close preview"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden rounded-b-2xl bg-slate-100 p-4">{content}</div>
+    </div>
+  );
+}
+
 function SummaryCard({ icon, iconClassName, label, value, delta }) {
   return (
     <div className={`${cardClassName} p-4 sm:p-5`}>
@@ -377,9 +477,10 @@ function SummaryCard({ icon, iconClassName, label, value, delta }) {
   );
 }
 
-function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
+function DocumentRow({ item, highlighted, onView, onEdit, onDelete, deletingId, previewLoadingId }) {
   const typeMeta = getTypeMeta(item.documentName);
   const fileMeta = getFileMeta(item.documentName);
+  const isPreviewLoading = previewLoadingId === item.id;
 
   return (
     <tr id={`document-row-${item.id}`} className={`border-t border-slate-100 text-sm text-slate-700 ring-inset ${fadingHighlightClass(highlighted)}`}>
@@ -387,15 +488,15 @@ function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
         <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-300" />
       </td>
       <td className="px-4 py-5 align-top">
-        <div className="flex items-start gap-4">
+        <button type="button" onClick={() => onView(item.raw)} className="flex items-start gap-4 text-left">
           <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${fileMeta.iconWrap}`}>
             <FileBadge2 className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <p className="truncate font-medium text-slate-900">{item.documentName}</p>
+            <p className="truncate font-medium text-slate-900 hover:underline">{item.documentName}</p>
             <p className="mt-1 truncate text-slate-400">{item.fileName}</p>
           </div>
-        </div>
+        </button>
       </td>
       <td className="px-4 py-5 align-top">
         <p className="font-medium text-slate-800">{item.caseLabel}</p>
@@ -413,6 +514,15 @@ function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
       </td>
       <td className="px-4 py-5 align-top">
         <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => onView(item.raw)}
+            disabled={isPreviewLoading}
+            className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={`View ${item.documentName}`}
+          >
+            {isPreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+          </button>
           <button
             type="button"
             onClick={() => onEdit(item.raw)}
@@ -439,20 +549,23 @@ function DocumentRow({ item, highlighted, onEdit, onDelete, deletingId }) {
   );
 }
 
-function DocumentGridCard({ item, highlighted, onEdit, onDelete, deletingId }) {
+function DocumentGridCard({ item, highlighted, onView, onEdit, onDelete, deletingId, previewLoadingId }) {
   const typeMeta = getTypeMeta(item.documentName);
   const fileMeta = getFileMeta(item.documentName);
+  const isPreviewLoading = previewLoadingId === item.id;
 
   return (
     <div id={`document-row-${item.id}`} className={`${cardClassName} p-5 ${fadingHighlightClass(highlighted)}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${fileMeta.iconWrap}`}>
-          <FileBadge2 className="h-5 w-5" />
+      <button type="button" onClick={() => onView(item.raw)} className="block w-full text-left">
+        <div className="flex items-start justify-between gap-3">
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${fileMeta.iconWrap}`}>
+            <FileBadge2 className="h-5 w-5" />
+          </div>
+          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusStyles(item.uiStatus)}`}>{item.uiStatus}</span>
         </div>
-        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusStyles(item.uiStatus)}`}>{item.uiStatus}</span>
-      </div>
-      <h3 className="mt-4 text-base font-semibold text-slate-900">{item.documentName}</h3>
-      <p className="mt-1 text-sm text-slate-400">{item.fileName}</p>
+        <h3 className="mt-4 text-base font-semibold text-slate-900 hover:underline">{item.documentName}</h3>
+        <p className="mt-1 text-sm text-slate-400">{item.fileName}</p>
+      </button>
       <div className="mt-4 flex flex-wrap gap-2">
         <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${typeMeta.className}`}>{typeMeta.label}</span>
         <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{item.caseLabel}</span>
@@ -462,6 +575,14 @@ function DocumentGridCard({ item, highlighted, onEdit, onDelete, deletingId }) {
         <p>{item.uploadedDate}</p>
       </div>
       <div className="mt-5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onView(item.raw)}
+          disabled={isPreviewLoading}
+          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isPreviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />} View
+        </button>
         <button
           type="button"
           onClick={() => onEdit(item.raw)}
@@ -499,8 +620,51 @@ export default function Documents() {
   const [activeTab, setActiveTab] = useState("All Documents");
   const [view, setView] = useState("table");
   const [page, setPage] = useState(1);
+  const [preview, setPreview] = useState(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState("");
 
   const isEditing = Boolean(editingDocument);
+
+  async function openPreview(documentItem) {
+    if (!documentItem.storageKey) {
+      setPreview({ kind: "no-file", name: documentItem.originalFilename || documentItem.documentName });
+      return;
+    }
+
+    try {
+      setPreviewLoadingId(documentItem.id);
+      const response = await api.get(`/client-documents/${documentItem.id}/file`, { responseType: "blob", timeout: 60000 });
+      const rendered = await buildDocumentPreview(response.data, documentItem);
+      setPreview({ ...rendered, documentId: documentItem.id, name: documentItem.originalFilename || documentItem.documentName });
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message || "Unable to preview this document.");
+    } finally {
+      setPreviewLoadingId("");
+    }
+  }
+
+  function closePreview() {
+    releaseDocumentPreview(preview);
+    setPreview(null);
+  }
+
+  async function downloadPreviewedDocument() {
+    if (!preview?.documentId) return;
+
+    try {
+      const response = await api.get(`/client-documents/${preview.documentId}/file?download=1`, { responseType: "blob", timeout: 60000 });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = preview.name || "document";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to download this document.");
+    }
+  }
 
   async function loadDocuments() {
     try {
@@ -905,9 +1069,11 @@ export default function Documents() {
                               key={item.id}
                               item={item}
                               highlighted={item.id === activeHighlightId}
+                              onView={openPreview}
                               onEdit={openEditForm}
                               onDelete={handleDelete}
                               deletingId={deletingId}
+                              previewLoadingId={previewLoadingId}
                             />
                           ))}
                         </tbody>
@@ -920,9 +1086,11 @@ export default function Documents() {
                           key={item.id}
                           item={item}
                           highlighted={item.id === activeHighlightId}
+                          onView={openPreview}
                           onEdit={openEditForm}
                           onDelete={handleDelete}
                           deletingId={deletingId}
+                          previewLoadingId={previewLoadingId}
                         />
                       ))}
                     </div>
@@ -1003,6 +1171,10 @@ export default function Documents() {
           cases={cases}
           isEditing={isEditing}
         />
+      ) : null}
+
+      {preview ? (
+        <DocumentPreviewOverlay preview={preview} onClose={closePreview} onDownload={downloadPreviewedDocument} />
       ) : null}
     </>
   );

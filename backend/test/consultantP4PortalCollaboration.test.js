@@ -280,3 +280,29 @@ test("private case chat migration restores scoped Supabase Realtime policies", a
   assert.match(migration, /SELECT auth\.jwt\(\) ->> 'case_id'/);
   assert.match(migration, /realtime\.topic\(\)/);
 });
+
+test("the global Documents tab can actually view a document's uploaded file, not just its metadata", async () => {
+  const page = await source("../../frontend/src/pages/Documents.jsx");
+
+  // The page previously only offered Edit (metadata) and Delete — there was
+  // no way to see the uploaded file itself, even though ClientDocument
+  // records carry a storageKey most of the time. Reused the same preview
+  // pipeline (buildDocumentPreview) and file endpoint the case-profile
+  // document workspace already relies on, rather than inventing a second one.
+  assert.match(page, /import \{ buildDocumentPreview, releaseDocumentPreview \} from "\.\.\/components\/case-profile\/documentPreview";/);
+  assert.match(page, /async function openPreview\(documentItem\) \{/);
+  assert.match(page, /if \(!documentItem\.storageKey\) \{\s*setPreview\(\{ kind: "no-file", name: documentItem\.originalFilename \|\| documentItem\.documentName \}\);/);
+  assert.match(page, /const response = await api\.get\(`\/client-documents\/\$\{documentItem\.id\}\/file`, \{ responseType: "blob", timeout: 60000 \}\);/);
+  assert.match(page, /const rendered = await buildDocumentPreview\(response\.data, documentItem\);/);
+
+  // Both the table row and grid card can trigger it — clicking the
+  // document name/icon, and an explicit View button for discoverability.
+  assert.match(page, /function DocumentRow\(\{ item, highlighted, onView, onEdit, onDelete, deletingId, previewLoadingId \}\)/);
+  assert.match(page, /function DocumentGridCard\(\{ item, highlighted, onView, onEdit, onDelete, deletingId, previewLoadingId \}\)/);
+  assert.match(page, /onClick=\{\(\) => onView\(item\.raw\)\}/);
+  assert.match(page, /aria-label=\{`View \$\{item\.documentName\}`\}/);
+
+  // Downloading pulls the same file the preview just rendered, via the
+  // existing ?download=1 disposition switch on the file endpoint.
+  assert.match(page, /const response = await api\.get\(`\/client-documents\/\$\{preview\.documentId\}\/file\?download=1`, \{ responseType: "blob", timeout: 60000 \}\);/);
+});
