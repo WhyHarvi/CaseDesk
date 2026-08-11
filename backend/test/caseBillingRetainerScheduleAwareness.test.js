@@ -139,3 +139,25 @@ test("the sync-schedule route is registered and the Billing tab exposes both ent
   assert.match(statusCard, /const canSync = canApprove && isEditable && Boolean\(schedule\)/);
   assert.match(statusCard, /syncCaseBillingRetainerWithSchedule/);
 });
+
+test("a voided installment invoice never fires again, and voided invoices drop out of the case's Billing tab", async () => {
+  const service = await source("../src/services/paymentScheduleService.js");
+  const workspace = await source("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx");
+
+  // voidInvoicedInstallment resets the installment to Scheduled so a real
+  // mistake can be corrected and re-fired — but a duplicate that should
+  // never be billed again needs voidRemainingInstallments run right after
+  // to permanently retire it, which is why both are used together for a
+  // duplicate rather than voidInvoicedInstallment alone.
+  assert.match(service, /export async function voidInvoicedInstallment\(agencyId, caseId, installmentId, \{ reason, actorUserId \}\)/);
+  assert.match(service, /export async function voidRemainingInstallments\(agencyId, caseId, \{ reason, actorUserId \}\)/);
+  assert.match(service, /data: \{ status: "Void", balance: 0 \}/);
+
+  // The agency-wide Payments page already excludes Void from its default
+  // view; the per-case Billing tab's invoice list didn't do the same until
+  // now — a voided duplicate invoice would otherwise still show there,
+  // just with a grey badge, instead of actually disappearing.
+  assert.match(workspace, /const visibleInvoices = invoices\?\.filter\(\(invoice\) => invoice\.status !== "Void"\) \?\? invoices;/);
+  assert.match(workspace, /visibleInvoices\.length === 0/);
+  assert.match(workspace, /visibleInvoices\.map\(\(invoice\)/);
+});

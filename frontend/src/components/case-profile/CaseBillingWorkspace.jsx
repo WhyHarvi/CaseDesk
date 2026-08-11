@@ -368,6 +368,11 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
   useEffect(() => { load(); }, [caseItem.id]);
 
   const activeHighlightId = useFadingHighlight(highlightId, { domIdPrefix: "case-invoice-", ready: Boolean(invoices) });
+  // A voided invoice (e.g. a duplicate charge caught after the fact) is
+  // real history, but not something staff need to see mixed into the case's
+  // active invoice list — matches how the agency-wide Payments page already
+  // excludes Void by default.
+  const visibleInvoices = invoices?.filter((invoice) => invoice.status !== "Void") ?? invoices;
 
   function patchInvoice(updated) {
     setInvoices((current) => {
@@ -400,7 +405,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
         <div className="mt-4 space-y-2.5">
           {[0, 1].map((key) => <div key={key} className="h-20 animate-pulse rounded-[1.4rem] bg-slate-100" />)}
         </div>
-      ) : invoices.length === 0 ? (
+      ) : visibleInvoices.length === 0 ? (
         <div className="mt-6 flex flex-col items-center rounded-[1.4rem] bg-slate-50/80 px-5 py-10 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm"><Receipt className="h-5 w-5" /></span>
           <p className="mt-3 text-sm font-semibold text-slate-700">No invoices yet</p>
@@ -409,7 +414,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
       ) : (
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
-            {invoices.map((invoice) => (
+            {visibleInvoices.map((invoice) => (
               <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === activeHighlightId} />
             ))}
           </AnimatePresence>
