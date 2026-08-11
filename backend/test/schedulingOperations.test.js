@@ -1022,3 +1022,21 @@ test("appointment pills label the round avatar with a first name, keeping the fu
   assert.match(calendar, /title=\{`\$\{displayName\} · /);
   assert.match(calendar, /<InitialsAvatar name=\{displayName\}/);
 });
+
+test("the default 30-minute appointment is tall enough to actually show the avatar, and even compact pills carry a small one", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  // At 88px/hour a 30-minute appointment is 41px tall. The old 52px compact
+  // threshold silently classified that as compact, so the avatar added
+  // earlier never actually rendered for the most common booking length —
+  // only for 45-minute-plus appointments. 40 is the fix: only genuinely
+  // tight 15-minute slots (32px, floored) stay compact.
+  assert.match(calendar, /const isCompact = height < 40;/);
+  assert.doesNotMatch(calendar, /const isCompact = height < 52;/);
+
+  // Compact pills no longer fall back to a plain mode icon — they get a
+  // small avatar too, so an avatar is visible on every appointment
+  // regardless of how short it is.
+  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className="h-4 w-4 text-\[7px\]" \/>/);
+  assert.doesNotMatch(calendar, /<ModeIcon className="h-3 w-3 shrink-0" \/>/);
+});

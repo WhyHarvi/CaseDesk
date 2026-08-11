@@ -399,14 +399,17 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
   const end = new Date(item.endsAt);
   const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
   const height = Math.max(32, ((end - start) / 3600000) * HOUR_PX - 3);
-  const isCompact = height < 52;
+  // 52 pushed even the default 30-minute appointment (41px at 88px/hour)
+  // into the icon-only compact layout, so the avatar never actually showed
+  // up for the most common booking length. 40 keeps only genuinely tight
+  // 15-minute slots compact.
+  const isCompact = height < 40;
   const isNarrowWeekPill = view === "week" && columns > 1;
   const isDone = item.status === "Completed";
   const isNoShow = item.status === "NoShow";
   const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
   const displayName = item.client?.fullName || item.guestName || item.subject;
   const firstName = firstNameFor(displayName);
-  const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
   const outerGutter = 5;
   const columnGap = 4;
   const horizontalStyle = columns === 1
@@ -430,8 +433,8 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
       style={{ top: Math.max(0, top), height, ...horizontalStyle }}
     >
       {isCompact ? (
-        <p className={`flex w-full items-center gap-1 overflow-hidden whitespace-nowrap text-ellipsis font-semibold leading-[1.15] text-[12px] ${tone.title}`}>
-          <ModeIcon className="h-3 w-3 shrink-0" />
+        <p className={`flex w-full items-center gap-1.5 overflow-hidden whitespace-nowrap text-ellipsis font-semibold leading-[1.15] text-[12px] ${tone.title}`}>
+          <InitialsAvatar name={displayName} tone={tone} className="h-4 w-4 text-[7px]" />
           {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
           {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
           <span className="min-w-0 overflow-hidden text-ellipsis">{firstName}</span>
