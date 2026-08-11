@@ -1662,11 +1662,25 @@ export default function CalendarPage() {
 
               <div className={view === "week" ? "grid grid-cols-[52px_repeat(7,1fr)]" : "grid grid-cols-[52px_1fr]"}>
                 <div className="relative" style={{ height: gridHours * HOUR_PX }}>
-                  {Array.from({ length: gridHours }, (_, index) => (
-                    <span key={index} className="absolute right-2.5 -translate-y-1/2 text-[10px] font-medium text-slate-400" style={{ top: (index + 1) * HOUR_PX }}>
-                      {((GRID_START_HOUR + index) % 12) + 1} {GRID_START_HOUR + index + 1 <= 11 || GRID_START_HOUR + index + 1 >= 24 ? "AM" : "PM"}
-                    </span>
-                  ))}
+                  {Array.from({ length: gridHours * 2 }, (_, index) => {
+                    // Position N sits at the boundary after the Nth half-hour
+                    // block, matching HOUR_PX = 60 (1px per minute) — index 1
+                    // is 7:30, index 2 is 8:00, and so on through the grid.
+                    const totalMinutes = (index + 1) * 30;
+                    const hour24 = GRID_START_HOUR + Math.floor(totalMinutes / 60);
+                    const isHourMark = totalMinutes % 60 === 0;
+                    const hour12 = ((hour24 - 1) % 12) + 1;
+                    const isAM = hour24 <= 11 || hour24 >= 24;
+                    return (
+                      <span
+                        key={index}
+                        className={`absolute right-2.5 -translate-y-1/2 font-medium ${isHourMark ? "text-[10px] text-slate-400" : "text-[9px] text-slate-300"}`}
+                        style={{ top: totalMinutes }}
+                      >
+                        {isHourMark ? `${hour12} ${isAM ? "AM" : "PM"}` : `${hour12}:30 ${isAM ? "AM" : "PM"}`}
+                      </span>
+                    );
+                  })}
                 </div>
                 {days.map((day) => {
                   const key = dateKey(day);

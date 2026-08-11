@@ -143,6 +143,35 @@ test("every internal staff role — not just frontdesk — sees today's already-
   assert.doesNotMatch(controller, /ignorePastCutoff: req\.auth\.role === "frontdesk"/);
 });
 
+test("the day/week calendar grid labels every half hour, not just each whole hour", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  assert.match(calendar, /Array\.from\(\{ length: gridHours \* 2 \}, \(_, index\) => \{/);
+  assert.match(calendar, /const totalMinutes = \(index \+ 1\) \* 30;/);
+  assert.match(calendar, /const isHourMark = totalMinutes % 60 === 0;/);
+  assert.match(calendar, /\{isHourMark \? `\$\{hour12\} \$\{isAM \? "AM" : "PM"\}` : `\$\{hour12\}:30 \$\{isAM \? "AM" : "PM"\}`\}/);
+
+  // Verify the actual math independently of the component (noon/midnight
+  // wraparound is the easy place for an off-by-one to hide) rather than
+  // just asserting the source text is present.
+  const GRID_START_HOUR = 7;
+  const gridHours = 13;
+  const labels = [];
+  for (let index = 0; index < gridHours * 2; index++) {
+    const totalMinutes = (index + 1) * 30;
+    const hour24 = GRID_START_HOUR + Math.floor(totalMinutes / 60);
+    const isHourMark = totalMinutes % 60 === 0;
+    const hour12 = ((hour24 - 1) % 12) + 1;
+    const isAM = hour24 <= 11 || hour24 >= 24;
+    labels.push(isHourMark ? `${hour12} ${isAM ? "AM" : "PM"}` : `${hour12}:30 ${isAM ? "AM" : "PM"}`);
+  }
+  assert.equal(labels[0], "7:30 AM");
+  assert.equal(labels[1], "8 AM");
+  assert.deepEqual(labels.slice(7, 11), ["11 AM", "11:30 AM", "12 PM", "12:30 PM"]);
+  assert.equal(labels.at(-1), "8 PM");
+  assert.equal(labels.length, 26);
+});
+
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
