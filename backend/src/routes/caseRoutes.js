@@ -126,16 +126,24 @@ router.post(
   rateLimit({ windowMs: 60_000, max: 30 }),
   asyncHandler(reviewQuestionnaireAssignment),
 );
+// Frontdesk's data scope now covers every case for lookup/view purposes
+// (see portalAccessService.js), which is why every mutation below —
+// applicants, assessment, workflow, ledger, and the case record itself —
+// is explicitly restricted to admin/consultant. None of these previously
+// needed a role guard because frontdesk had no case data access at all to
+// reach them with.
 router.get("/:id/applicants", asyncHandler(listCaseApplicants));
-router.post("/:id/applicants", asyncHandler(createCaseApplicant));
-router.patch("/:id/applicants/:applicantId", asyncHandler(updateCaseApplicant));
+router.post("/:id/applicants", requireRole("admin", "consultant"), asyncHandler(createCaseApplicant));
+router.patch("/:id/applicants/:applicantId", requireRole("admin", "consultant"), asyncHandler(updateCaseApplicant));
 router.delete(
   "/:id/applicants/:applicantId",
+  requireRole("admin", "consultant"),
   asyncHandler(removeCaseApplicant),
 );
 router.patch(
   "/:id/assessment",
   requirePortalCaseTab("profile"),
+  requireRole("admin", "consultant"),
   asyncHandler(saveCaseAssessment),
 );
 router.get("/:id/workflow", asyncHandler(getCaseWorkflow));
@@ -161,21 +169,22 @@ router.patch(
 );
 router.post(
   "/:id/workflow/apply-template",
+  requireRole("admin", "consultant"),
   asyncHandler(applyCaseWorkflowTemplate),
 );
-router.patch("/:id/workflow", asyncHandler(saveCaseWorkflow));
-router.patch("/:id/workflow/:stepId", asyncHandler(updateCaseWorkflowStep));
+router.patch("/:id/workflow", requireRole("admin", "consultant"), asyncHandler(saveCaseWorkflow));
+router.patch("/:id/workflow/:stepId", requireRole("admin", "consultant"), asyncHandler(updateCaseWorkflowStep));
 router.get("/:id/ledger", asyncHandler(listCaseLedgerEntries));
-router.post("/:id/ledger", asyncHandler(createCaseLedgerEntry));
-router.patch("/:id/ledger/:entryId", asyncHandler(updateLedgerEntry));
-router.delete("/:id/ledger/:entryId", asyncHandler(deleteLedgerEntry));
+router.post("/:id/ledger", requireRole("admin", "consultant"), asyncHandler(createCaseLedgerEntry));
+router.patch("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(updateLedgerEntry));
+router.delete("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(deleteLedgerEntry));
 router.get("/:id", asyncHandler(getCaseById));
-router.patch("/:id", asyncHandler(updateCase));
-router.patch("/:id/close", asyncHandler(closeCase));
-router.patch("/:id/archive", asyncHandler(archiveCase));
-router.patch("/:id/unarchive", asyncHandler(unarchiveCase));
-router.delete("/:id", asyncHandler(softDeleteCase));
-router.patch("/:id/restore", asyncHandler(restoreCase));
+router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateCase));
+router.patch("/:id/close", requireRole("admin", "consultant"), asyncHandler(closeCase));
+router.patch("/:id/archive", requireRole("admin", "consultant"), asyncHandler(archiveCase));
+router.patch("/:id/unarchive", requireRole("admin", "consultant"), asyncHandler(unarchiveCase));
+router.delete("/:id", requireRole("admin", "consultant"), asyncHandler(softDeleteCase));
+router.patch("/:id/restore", requireRole("admin", "consultant"), asyncHandler(restoreCase));
 router.get(
   "/:id/invoices",
   requirePortalCaseTab("billing"),

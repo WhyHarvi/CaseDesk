@@ -75,6 +75,10 @@ export default function CaseProfile() {
   const canAccessCaseCommunication = canAccessCaseTab(role, membership?.permissions, "communication");
   const canAccessCaseForms = canAccessCaseTab(role, membership?.permissions, "forms");
   const canAccessCaseDocuments = canAccessCaseTab(role, membership?.permissions, "documents");
+  // Frontdesk can view any case now, but managing applicants and
+  // archiving/closing/deleting the case itself stays admin/consultant only
+  // (enforced server-side in caseRoutes.js too).
+  const canManageCase = ["admin", "consultant"].includes(role);
   const [caseItem, setCaseItem] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
@@ -1727,28 +1731,30 @@ export default function CaseProfile() {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              disabled={restoringCase}
-              onClick={async () => {
-                setRestoringCase(true);
-                setRestoreError("");
-                try {
-                  const response = await api.patch(`/cases/${caseItem.id}/restore`);
-                  setCaseItem((current) => ({ ...current, ...response.data.data }));
-                } catch (requestError) {
-                  setRestoreError(requestError.response?.data?.message || "Unable to restore this case.");
-                } finally {
-                  setRestoringCase(false);
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60"
-            >
-              {restoringCase ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-              ) : null}
-              {restoringCase ? "Restoring…" : "Restore case"}
-            </button>
+            {canManageCase ? (
+              <button
+                type="button"
+                disabled={restoringCase}
+                onClick={async () => {
+                  setRestoringCase(true);
+                  setRestoreError("");
+                  try {
+                    const response = await api.patch(`/cases/${caseItem.id}/restore`);
+                    setCaseItem((current) => ({ ...current, ...response.data.data }));
+                  } catch (requestError) {
+                    setRestoreError(requestError.response?.data?.message || "Unable to restore this case.");
+                  } finally {
+                    setRestoringCase(false);
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60"
+              >
+                {restoringCase ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                ) : null}
+                {restoringCase ? "Restoring…" : "Restore case"}
+              </button>
+            ) : null}
           </article>
         ) : caseItem?.archivedAt ? (
           <article className="flex flex-wrap items-center justify-between gap-3 rounded-[1.9rem] border border-violet-200/80 bg-violet-50/90 px-5 py-4 shadow-[0_18px_55px_rgba(109,40,217,0.08)]">
@@ -1763,30 +1769,32 @@ export default function CaseProfile() {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              disabled={unarchivingCase}
-              onClick={async () => {
-                setUnarchivingCase(true);
-                setUnarchiveError("");
-                try {
-                  const response = await api.patch(`/cases/${caseItem.id}/unarchive`);
-                  setCaseItem((current) => ({ ...current, ...response.data.data }));
-                } catch (requestError) {
-                  setUnarchiveError(requestError.response?.data?.message || "Unable to restore this case from archive.");
-                } finally {
-                  setUnarchivingCase(false);
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-60"
-            >
-              {unarchivingCase ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-              ) : (
-                <ArchiveRestore className="h-4 w-4" />
-              )}
-              {unarchivingCase ? "Restoring…" : "Restore from archive"}
-            </button>
+            {canManageCase ? (
+              <button
+                type="button"
+                disabled={unarchivingCase}
+                onClick={async () => {
+                  setUnarchivingCase(true);
+                  setUnarchiveError("");
+                  try {
+                    const response = await api.patch(`/cases/${caseItem.id}/unarchive`);
+                    setCaseItem((current) => ({ ...current, ...response.data.data }));
+                  } catch (requestError) {
+                    setUnarchiveError(requestError.response?.data?.message || "Unable to restore this case from archive.");
+                  } finally {
+                    setUnarchivingCase(false);
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:opacity-60"
+              >
+                {unarchivingCase ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                ) : (
+                  <ArchiveRestore className="h-4 w-4" />
+                )}
+                {unarchivingCase ? "Restoring…" : "Restore from archive"}
+              </button>
+            ) : null}
           </article>
         ) : null}
         <CaseProfileTopSection
@@ -1795,6 +1803,7 @@ export default function CaseProfile() {
           showFinancials={canAccessFinancialData}
           showPortalAccess={canManageClientPortal}
           showCommunications={canAccessCaseCommunication}
+          showEditClient={canManageCase}
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
           onEditClient={() => setEditingClient(true)}
@@ -1804,6 +1813,7 @@ export default function CaseProfile() {
           activeToolbarTray={activeToolbarTray}
           setActiveToolbarTray={setActiveToolbarTray}
           canManagePermissions={role === "admin" && !caseItem.deletedAt}
+          canManageCase={canManageCase}
           canDownloadApplication={canAccessCaseForms || canAccessCaseDocuments}
           onOpenWorkflow={openWorkflowOverlay}
           onDownloadApplication={() => {

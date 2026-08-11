@@ -52,14 +52,29 @@ export function defaultPortalAccess(role) {
   if (role === "frontdesk") {
     return {
       version: 1,
+      // Frontdesk needs to look up any client or case while working the
+      // desk (walk-ins, phone calls, booking) — not just ones somehow
+      // already "assigned" to them, which they normally never are. This is
+      // view access, not edit: the write endpoints for existing clients and
+      // cases (update/close/archive/delete, applicants, ledger, workflow)
+      // stay role-gated to admin/consultant regardless of this data scope
+      // — see clientRoutes.js and caseRoutes.js. Creating a brand-new
+      // client or case (the front-desk intake flow) is unaffected, since
+      // those endpoints were never scoped by data access in the first
+      // place.
       pages: {
         ...allFalse(portalPageKeys),
         leads: true,
+        clients: true,
+        cases: true,
         calendar: true,
         caseEasyImport: true,
       },
-      caseTabs: allFalse(portalCaseTabKeys),
-      data: { leads: "all", clients: "none", cases: "none" },
+      caseTabs: {
+        ...allFalse(portalCaseTabKeys),
+        profile: true,
+      },
+      data: { leads: "all", clients: "all", cases: "all" },
       capabilities: allFalse(portalCapabilityKeys),
     };
   }

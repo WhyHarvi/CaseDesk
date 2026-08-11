@@ -140,6 +140,8 @@ function getStageStyles(stage) {
     Lead: "bg-slate-100 text-slate-600",
     Consultation: "bg-blue-100 text-blue-700",
     "Retainer Pending": "bg-amber-100 text-amber-700",
+    "Offer Letter Application Submitted": "bg-cyan-100 text-cyan-700",
+    "Offer Letter Received": "bg-teal-100 text-teal-700",
     "Documents Pending": "bg-orange-100 text-orange-700",
     "Reviewing Documents": "bg-violet-100 text-violet-700",
     "Application Preparing": "bg-teal-100 text-teal-700",
@@ -575,7 +577,7 @@ function StatCard({ icon: Icon, label, value, helper, accent, onClick, active })
   );
 }
 
-function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletingId }) {
+function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletingId, canManage }) {
   const buttonRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState(null);
   const menuWidth = 180;
@@ -616,6 +618,11 @@ function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletin
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
   }, [isOpen]);
+
+  // Edit and Archive are the only two actions this menu offers — with
+  // neither available (frontdesk has view-only access to clients), there's
+  // nothing left worth opening a menu for.
+  if (!canManage) return null;
 
   return (
     <div>
@@ -677,7 +684,7 @@ function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletin
   );
 }
 
-function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen, deletingId }) {
+function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen, deletingId, canManage }) {
   return (
     <div className={`${cardClassName} space-y-4 p-5`}>
       <div className="flex items-start justify-between gap-4">
@@ -732,6 +739,7 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
           onEdit={onEdit}
           onDelete={onDelete}
           deletingId={deletingId}
+          canManage={canManage}
         />
       </div>
     </div>
@@ -740,6 +748,11 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 
 export default function Clients() {
   const { role, membership } = useAuth();
+  // Frontdesk can look up and view any client now, but editing, archiving,
+  // or deleting an existing client's record is still admin/consultant only
+  // — the backend enforces this too (clientRoutes.js), this just keeps the
+  // UI from offering an action that would 403.
+  const canManageClients = ["admin", "consultant"].includes(role);
   const navigate = useNavigate();
   const canReassignClients = ["admin", "frontdesk"].includes(role);
   const portalAccess = getPortalAccess(role, membership?.permissions);
@@ -1507,6 +1520,7 @@ export default function Clients() {
                               onEdit={openEditForm}
                               onDelete={handleDelete}
                               deletingId={deletingId}
+                              canManage={canManageClients}
                             />
                           </div>
                         </td>
@@ -1526,6 +1540,7 @@ export default function Clients() {
                     onToggleMenu={setActiveActionMenuId}
                     isMenuOpen={activeActionMenuId === client.id}
                     deletingId={deletingId}
+                    canManage={canManageClients}
                   />
                 ))}
               </div>

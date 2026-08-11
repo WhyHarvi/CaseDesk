@@ -132,10 +132,10 @@ test("client case and follow-up removal paths preserve history", async () => {
     source("../../frontend/src/pages/FollowUps.jsx"),
   ]);
   assert.doesNotMatch(clientRoutes, /router\.delete/);
-  assert.match(caseRoutes, /router\.delete\("\/:id", asyncHandler\(softDeleteCase\)\)/);
-  assert.match(caseRoutes, /router\.patch\("\/:id\/restore", asyncHandler\(restoreCase\)\)/);
-  assert.match(caseRoutes, /router\.patch\("\/:id\/archive", asyncHandler\(archiveCase\)\)/);
-  assert.match(caseRoutes, /router\.patch\("\/:id\/unarchive", asyncHandler\(unarchiveCase\)\)/);
+  assert.match(caseRoutes, /router\.delete\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(softDeleteCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/restore", requireRole\("admin", "consultant"\), asyncHandler\(restoreCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant"\), asyncHandler\(archiveCase\)\)/);
+  assert.match(caseRoutes, /router\.patch\("\/:id\/unarchive", requireRole\("admin", "consultant"\), asyncHandler\(unarchiveCase\)\)/);
   assert.doesNotMatch(followUpRoutes, /router\.delete/);
   assert.match(caseController, /export async function softDeleteCase[\s\S]*?data: \{ deletedAt: new Date\(\) \}/);
   assert.match(caseController, /export async function restoreCase[\s\S]*?data: \{ deletedAt: null \}/);

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import CasesCommandBar from "../components/cases/CasesCommandBar";
+import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
 import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
@@ -567,6 +568,7 @@ function CaseActionsMenu({
   onDelete,
   deletingId,
   registerView,
+  canManage,
 }) {
   const buttonRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState(null);
@@ -616,6 +618,10 @@ function CaseActionsMenu({
       window.removeEventListener("scroll", updateMenuPosition, true);
     };
   }, [isOpen]);
+
+  // Edit, close/archive/restore, and delete are all admin/consultant-only
+  // now — nothing left in this menu for a view-only (frontdesk) visitor.
+  if (!canManage) return null;
 
   return (
     <div>
@@ -688,6 +694,7 @@ function CaseMobileCard({
   isMenuOpen,
   deletingId,
   registerView,
+  canManage,
 }) {
   return (
     <article className={`rounded-3xl border border-slate-200/80 bg-white p-5 shadow-[0_14px_35px_rgba(15,23,42,0.06)] ${item.isPending ? "pointer-events-none animate-pulse opacity-60" : ""}`}>
@@ -765,7 +772,7 @@ function CaseMobileCard({
           <select
             value={item.stage}
             onChange={(event) => onStageChange(item, event.target.value)}
-            disabled={registerView !== "active"}
+            disabled={!canManage || registerView !== "active"}
             className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
           >
             {STAGE_OPTIONS.map((stage) => (
@@ -776,17 +783,20 @@ function CaseMobileCard({
           </select>
         </label>
 
-        <div className="flex items-center gap-2">
-          <CaseActionsMenu
-            item={item}
-            isOpen={isMenuOpen}
-            onToggle={onToggleMenu}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            deletingId={deletingId}
-            registerView={registerView}
-          />
-        </div>
+        {canManage ? (
+          <div className="flex items-center gap-2">
+            <CaseActionsMenu
+              item={item}
+              isOpen={isMenuOpen}
+              onToggle={onToggleMenu}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              deletingId={deletingId}
+              registerView={registerView}
+              canManage={canManage}
+            />
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -1091,7 +1101,7 @@ function CaseFormDrawer({
   );
 }
 
-function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
+function CaseQuickViewDrawer({ item, onClose, onEdit, closing, canManage }) {
   if (!item) {
     return null;
   }
@@ -1112,14 +1122,16 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
           >
             Close
           </button>
-          <button
-            type="button"
-            onClick={() => onEdit(item)}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-6 text-sm font-semibold text-white"
-          >
-            <Pencil className="h-4 w-4" />
-            Edit Case
-          </button>
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => onEdit(item)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-6 text-sm font-semibold text-white"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit Case
+            </button>
+          ) : null}
         </div>
       }
     >
@@ -1200,6 +1212,11 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing }) {
 
 export default function Cases() {
   const navigate = useNavigate();
+  const { role } = useAuth();
+  // Frontdesk can now look up and view any case, but editing its stage,
+  // creating/removing applicants, and closing/archiving/deleting a case
+  // remain admin/consultant only — enforced server-side too (caseRoutes.js).
+  const canManageCases = ["admin", "consultant"].includes(role);
   const [searchParams, setSearchParams] = useSearchParams();
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
@@ -2036,7 +2053,7 @@ export default function Cases() {
                                 <div className="space-y-2">
                                   <select
                                     value={item.stage}
-                                    disabled={registerView !== "active"}
+                                    disabled={!canManageCases || registerView !== "active"}
                                     onChange={(event) =>
                                       handleStageChange(
                                         item,
@@ -2115,6 +2132,7 @@ export default function Cases() {
                                     onDelete={handleDelete}
                                     deletingId={deletingId}
                                     registerView={registerView}
+                                    canManage={canManageCases}
                                   />
                                 </div>
                               </td>
@@ -2136,6 +2154,7 @@ export default function Cases() {
                           isMenuOpen={activeActionMenuId === item.id}
                           deletingId={deletingId}
                           registerView={registerView}
+                          canManage={canManageCases}
                         />
                       ))}
                     </div>
@@ -2175,6 +2194,7 @@ export default function Cases() {
           onClose={closeDrawers}
           onEdit={openEditForm}
           closing={drawerClosing}
+          canManage={canManageCases}
         />
       ) : null}
     </>

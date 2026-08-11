@@ -27,8 +27,13 @@ test("role defaults preserve current consultant and front-desk workspace access"
   assert.equal(consultant.data.clients, "assigned");
   assert.equal(consultant.capabilities.internalNotes, true);
   assert.equal(frontdesk.pages.leads, true);
-  assert.equal(frontdesk.pages.clients, false);
+  assert.equal(frontdesk.pages.clients, true);
+  assert.equal(frontdesk.pages.cases, true);
   assert.equal(frontdesk.data.leads, "all");
+  assert.equal(frontdesk.data.clients, "all");
+  assert.equal(frontdesk.data.cases, "all");
+  assert.equal(frontdesk.caseTabs.profile, true);
+  assert.equal(frontdesk.caseTabs.billing, false);
   assert.equal(frontdesk.capabilities.financialData, false);
 });
 
@@ -43,7 +48,7 @@ test("saved portal access overrides role defaults without accepting unknown valu
   assert.equal(access.pages.madeUp, undefined);
   assert.equal(access.caseTabs.profile, true);
   assert.equal(access.data.clients, "assigned");
-  assert.equal(access.data.cases, "none");
+  assert.equal(access.data.cases, "all");
   assert.equal(access.capabilities.internalNotes, true);
 });
 

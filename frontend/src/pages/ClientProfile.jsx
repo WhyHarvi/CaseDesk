@@ -84,6 +84,8 @@ function getStatusStyles(status) {
     Closed: "bg-slate-200 text-slate-700",
     Consultation: "bg-blue-100 text-blue-700",
     "Retainer Pending": "bg-amber-100 text-amber-700",
+    "Offer Letter Application Submitted": "bg-cyan-100 text-cyan-700",
+    "Offer Letter Received": "bg-teal-100 text-teal-700",
     "Documents Pending": "bg-orange-100 text-orange-700",
     "Reviewing Documents": "bg-violet-100 text-violet-700",
     "Application Preparing": "bg-teal-100 text-teal-700",
@@ -585,22 +587,26 @@ export default function ClientProfile() {
       description="Person details, access, and connected cases."
       actions={
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={openCreateNoteForm}
-            className="inline-flex items-center gap-2 rounded-2xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700"
-          >
-            <Plus className="h-4 w-4" />
-            Add note
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditingClient(true)}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-          >
-            <Pencil className="h-4 w-4" />
-            Edit profile
-          </button>
+          {canAccessInternalNotes ? (
+            <button
+              type="button"
+              onClick={openCreateNoteForm}
+              className="inline-flex items-center gap-2 rounded-2xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700"
+            >
+              <Plus className="h-4 w-4" />
+              Add note
+            </button>
+          ) : null}
+          {["admin", "consultant"].includes(role) ? (
+            <button
+              type="button"
+              onClick={() => setEditingClient(true)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit profile
+            </button>
+          ) : null}
           {currentCase && canOpenCases ? (
             <Link
               to={`/app/cases/${currentCase.id}`}

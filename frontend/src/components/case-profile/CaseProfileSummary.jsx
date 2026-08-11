@@ -19,7 +19,7 @@ import { ExpandingPillMenu, QuickActionLink, SimpleActionPill } from "./CaseProf
 import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./caseProfileUtils";
 import { isStudyPermitCaseType } from "../../utils/studyIntake";
 
-export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, onContactClient, onEditClient }) {
+export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditClient = true, onContactClient, onEditClient }) {
   return (
     <section className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
       <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -73,7 +73,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
           </div>
 
           <div className="flex flex-wrap gap-2 lg:max-w-[42%] lg:justify-end">
-            {caseItem.client?.id ? (
+            {caseItem.client?.id && showEditClient ? (
               <QuickActionLink
                 icon={Pencil}
                 label="Edit client"
@@ -119,7 +119,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, canManageCase = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -127,7 +127,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems.filter((item) => (item !== "Manage Permissions" || canManagePermissions) && (item !== "Download application" || canDownloadApplication))}
+            items={caseOptionItems.filter((item) => (item !== "Manage Permissions" || canManagePermissions) && (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Archive", "Delete", "Close"].includes(item)))}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
@@ -142,7 +142,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
               if (item === "Delete") onDeleteCase?.();
             }}
           />
-          <SimpleActionPill icon={UserRound} label="Applicants" onClick={onOpenApplicants} />
+          {canManageCase ? <SimpleActionPill icon={UserRound} label="Applicants" onClick={onOpenApplicants} /> : null}
           {onOpenNotes ? <SimpleActionPill icon={Pencil} label="Notes" onClick={onOpenNotes} /> : null}
           <SimpleActionPill icon={History} label="Activities" onClick={onOpenActivities} />
           {onOpenStatement ? <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} /> : null}
