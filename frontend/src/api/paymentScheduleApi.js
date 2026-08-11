@@ -41,8 +41,8 @@ export async function createCaseSchedule(caseId, values) {
   return response.data.data;
 }
 
-export async function updateCaseSchedule(caseId, installments) {
-  const response = await api.patch(`/cases/${caseId}/payment-schedule`, { installments });
+export async function updateCaseSchedule(caseId, installments, discountAmount) {
+  const response = await api.patch(`/cases/${caseId}/payment-schedule`, { installments, discountAmount });
   return response.data.data;
 }
 

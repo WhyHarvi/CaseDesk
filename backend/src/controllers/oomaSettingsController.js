@@ -73,6 +73,8 @@ function publicSettings(settings, canManage, req) {
     lastSmsTestMessage: settings?.lastSmsTestMessage || null,
     updatedAt: settings?.updatedAt || null,
     lastWebhookAt: settings?.lastWebhookAt || null,
+    lastCallWebhookAt: settings?.lastCallWebhookAt || null,
+    lastSmsWebhookAt: settings?.lastSmsWebhookAt || null,
     ...webhookValues(settings, req, canManage),
   };
 }

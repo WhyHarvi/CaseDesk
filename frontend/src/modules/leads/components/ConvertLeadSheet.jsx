@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import CaseTypeCombobox from "../../../components/ui/CaseTypeCombobox";
 import StudyIntakeSelect from "../../../components/cases/StudyIntakeSelect";
 import api from "../../../services/api";
-import { CASE_STAGES } from "../../../constants/caseStages";
+import { caseStagesForType } from "../../../constants/caseStages";
 import { isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue } from "../../../utils/studyIntake";
 import { leadName } from "../leadPresentation";
 
@@ -43,11 +43,20 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
     return () => { active = false; };
   }, [initialCaseType]);
 
-  const update = (event) => setForm((current) => ({
-    ...current,
-    [event.target.name]: event.target.value,
-    ...(event.target.name === "caseType" && !isStudyPermitCaseType(event.target.value) ? { studyIntakeMonth: "" } : {}),
-  }));
+  const update = (event) => setForm((current) => {
+    const next = {
+      ...current,
+      [event.target.name]: event.target.value,
+      ...(event.target.name === "caseType" && !isStudyPermitCaseType(event.target.value) ? { studyIntakeMonth: "" } : {}),
+    };
+    if (
+      event.target.name === "caseType" &&
+      !caseStagesForType(event.target.value).includes(current.caseStage)
+    ) {
+      next.caseStage = "Retainer Pending";
+    }
+    return next;
+  });
   const submit = async (event) => {
     event.preventDefault();
     setSaving(true);
@@ -94,7 +103,7 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
                 />
               </div>
             </label>
-            <label className="text-sm font-medium text-slate-700">Starting stage<select required name="caseStage" value={form.caseStage} onChange={update} className={fieldClass}>{CASE_STAGES.filter((stage) => stage !== "Closed").map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
+            <label className="text-sm font-medium text-slate-700">Starting stage<select required name="caseStage" value={form.caseStage} onChange={update} className={fieldClass}>{caseStagesForType(form.caseType).filter((stage) => stage !== "Closed").map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
             {isStudyPermitCaseType(form.caseType) ? (
               <label className="sm:col-span-2 text-sm font-medium text-slate-700">
                 Academic intake

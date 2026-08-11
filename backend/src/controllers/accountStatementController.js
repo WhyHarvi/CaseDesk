@@ -14,6 +14,8 @@ import {
 import { recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "../services/bookingPaymentHoldService.js";
 import { normalizeContact } from "../services/contactDuplicateService.js";
 import { notifyInvoiceCreated } from "../services/paymentNotificationService.js";
+import { approvePaymentApproval, submitPaymentApproval } from "../services/paymentApprovalService.js";
+import { applyLocalCashToInvoice } from "../services/paymentApprovalLedgerService.js";
 
 async function getScopedClient(req) {
   const client = await prisma.client.findFirst({
@@ -112,7 +114,11 @@ export async function getClientManualBillingOptions(req, res) {
     }),
     prisma.caseInvoice.findMany({
       where: { agencyId: req.auth.agencyId, clientId: client.id, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] } },
-      select: { id: true, caseId: true, description: true, paymentType: true, qbInvoiceNumber: true, amount: true, balance: true, status: true, dueDate: true },
+      select: {
+        id: true, caseId: true, description: true, paymentType: true, qbInvoiceNumber: true,
+        amount: true, balance: true, status: true, dueDate: true,
+        paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+      },
       orderBy: { createdAt: "desc" },
     }),
     prisma.appointment.findMany({
@@ -151,12 +157,14 @@ export async function getClientManualBillingOptions(req, res) {
       client: { id: client.id, fullName: client.fullName },
       categories: categories.map((item) => ({ id: item.id, code: item.code, name: item.name, kind: item.kind, description: item.description, mapped: Boolean(item.qboItemId) })),
       cases,
-      invoices,
+      invoices: invoices.map(applyLocalCashToInvoice).filter((item) => Number(item.balance) > 0),
       appointments: visibleAppointments.map(({ guestEmail, guestEmailNormalized, guestPhone, ...item }) => ({
         ...item,
         identityMatched: !item.clientId && appointmentContactMatchesClient({ guestEmail, guestEmailNormalized, guestPhone }, client),
       })),
       consultationFee: Number(bookingSettings?.consultFeeAmount || 0),
+      approvalRequiredForEntries: req.auth.role === "frontdesk",
+      cashStoredInCaseDesk: true,
       today: new Date().toISOString().slice(0, 10),
     },
   });
@@ -173,6 +181,41 @@ export async function createClientManualBillingEntry(req, res) {
     actorUserId: req.auth.userId,
   };
 
+  // Frontdesk records what was received, but an administrator owns the
+  // accounting decision. Nothing is marked paid or sent to QuickBooks here.
+  if (req.auth.role === "frontdesk" || req.body?.method === "Cash") {
+    const approval = await submitPaymentApproval(req.auth.agencyId, {
+      entryType,
+      clientId: client.id,
+      appointmentId: req.body?.appointmentId,
+      invoiceId: req.body?.invoiceId,
+      caseId: req.body?.caseId,
+      paymentType: req.body?.paymentType,
+      description: req.body?.description,
+      chargeAmount: req.body?.chargeAmount,
+      amount: req.body?.amount,
+      method: req.body?.method,
+      transactionReference: req.body?.transactionReference,
+      paymentDate: req.body?.paymentDate,
+      note: req.body?.note,
+      idempotencyKey: req.body?.idempotencyKey,
+      overrideFreeConsultation: req.body?.overrideFreeConsultation === true,
+      actorUserId: req.auth.userId,
+      sourceRole: req.auth.role,
+    });
+    if (req.auth.role !== "frontdesk") {
+      const approved = await approvePaymentApproval(req.auth.agencyId, approval.id, req.auth.userId);
+      return res.json({ data: { entryType, paymentRecorded: true, approvalRequired: false, approval: approved } });
+    }
+    return res.status(202).json({ data: {
+      entryType,
+      paymentRecorded: false,
+      approvalRequired: true,
+      approval,
+      message: "Payment submitted for administrator approval.",
+    } });
+  }
+
   if (entryType === "invoice_payment") {
     const invoice = await prisma.caseInvoice.findFirst({
       where: { id: req.body?.invoiceId, agencyId: req.auth.agencyId, clientId: client.id },
@@ -185,6 +228,7 @@ export async function createClientManualBillingEntry(req, res) {
       invoiceId: invoice.id,
       amount: req.body?.amount,
       idempotencyKey: req.body?.idempotencyKey,
+      actorRole: req.auth.role,
     });
     return res.json({ data: { entryType, paymentRecorded: true, invoice: updated } });
   }
@@ -230,6 +274,7 @@ export async function createClientManualBillingEntry(req, res) {
           ...commonPayment,
           appointmentId: appointment.id,
           overrideFreeConsultation: req.body?.overrideFreeConsultation === true,
+          actorRole: req.auth.role,
         });
     return res.json({ data: { entryType, paymentRecorded: true, appointmentId: appointment.id, paymentHold: hold } });
   }
@@ -280,6 +325,7 @@ export async function createClientManualBillingEntry(req, res) {
         invoiceId: invoice.id,
         amount: receivedAmount,
         idempotencyKey: operationKey,
+        actorRole: req.auth.role,
       });
       if (!existingInvoice && Number(updated.balance) > 0) {
         await notifyInvoiceCreated({

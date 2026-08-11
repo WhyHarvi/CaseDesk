@@ -1,46 +1,25 @@
-import { ChevronLeft, CircleHelp, Loader2, MessagesSquare, SendHorizonal } from "lucide-react";
+import { ChevronLeft, CircleHelp, MessagesSquare } from "lucide-react";
 import NotificationBell from "../../components/notifications/NotificationBell";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getPortalChat, sendPortalChatMessage, portalErrorMessage } from "../../api/clientPortalApi";
+import {
+  fetchPortalChatAttachmentBlob,
+  getPortalChat,
+  getPortalChatRealtimeConfig,
+  markPortalChatRead,
+  portalErrorMessage,
+  sendPortalChatMessage,
+  uploadPortalChatAttachment,
+} from "../../api/clientPortalApi";
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
+import ChatThread from "../../components/chat/ChatThread";
+import ChatComposer from "../../components/chat/ChatComposer";
+import ChatImageLightbox from "../../components/chat/ChatImageLightbox";
+import { useCaseRealtimeChat } from "../../hooks/useCaseRealtimeChat";
+import { useChatAttachmentUrls } from "../../hooks/useChatAttachmentUrls";
 
-const dayLabel = (value) => {
-  const date = new Date(value);
-  const today = new Date();
-  const yesterday = new Date(Date.now() - 86_400_000);
-  const sameDay = (a, b) => a.toDateString() === b.toDateString();
-  if (sameDay(date, today)) return "Today";
-  if (sameDay(date, yesterday)) return "Yesterday";
-  return new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", year: date.getFullYear() === today.getFullYear() ? undefined : "numeric" }).format(date);
-};
-
-const timeLabel = (value) => new Intl.DateTimeFormat("en-CA", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
-
-function MessageBubble({ message }) {
-  const mine = message.direction === "Inbound";
-  return (
-    <div className={["flex", mine ? "justify-end" : "justify-start"].join(" ")}>
-      <div
-        className={[
-          "max-w-[80%] rounded-3xl px-4 py-2.5 shadow-sm",
-          mine
-            ? "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"
-            : "rounded-bl-lg border border-white/80 bg-white text-slate-800",
-          message.pending ? "opacity-70" : "",
-        ].join(" ")}
-      >
-        {!mine && message.senderUser?.fullName ? (
-          <p className="mb-0.5 text-[11px] font-semibold text-sky-700">{message.senderUser.fullName}</p>
-        ) : null}
-        <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
-        <p className={["mt-1 text-right text-[10px]", mine ? "text-sky-100/90" : "text-slate-400"].join(" ")}>
-          {message.pending ? "Sending…" : timeLabel(message.occurredAt)}
-        </p>
-      </div>
-    </div>
-  );
-}
+const RECONCILE_POLL_MS = 45_000; // realtime connected — this is just a safety net
+const FALLBACK_POLL_MS = 10_000; // realtime not configured for this conversation
 
 export default function ClientPortalChat() {
   const { overview } = usePortalData();
@@ -49,12 +28,12 @@ export default function ClientPortalChat() {
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [messages, setMessages] = useState([]);
   const [pending, setPending] = useState([]);
+  const [realtime, setRealtime] = useState(null);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const scrollRef = useRef(null);
-  const stickToBottomRef = useRef(true);
+  const [lightbox, setLightbox] = useState(null);
 
   const load = useCallback(async ({ silent = false, caseId = "" } = {}) => {
     if (!silent) setLoading(true);
@@ -74,43 +53,52 @@ export default function ClientPortalChat() {
 
   useEffect(() => { load(); }, [load]);
 
+  // General (pre-case) chat has no realtime topic — configured stays false
+  // there and this quietly falls back to polling, same as before realtime
+  // existed at all.
+  useEffect(() => {
+    if (!selectedCaseId) { setRealtime(null); return; }
+    getPortalChatRealtimeConfig(selectedCaseId).then(setRealtime).catch(() => setRealtime(null));
+  }, [selectedCaseId]);
+
+  const fetchRealtimeConfig = useCallback(() => getPortalChatRealtimeConfig(selectedCaseId), [selectedCaseId]);
+  useCaseRealtimeChat({
+    fetchConfig: fetchRealtimeConfig,
+    enabled: Boolean(realtime?.configured),
+    onMessage: () => load({ silent: true, caseId: selectedCaseId }),
+  });
+
   useEffect(() => {
     if (!selectedCaseId) return undefined;
+    const intervalMs = realtime?.configured ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load({ silent: true, caseId: selectedCaseId });
-    }, 10_000);
+    }, intervalMs);
     const onVisible = () => document.visibilityState === "visible" && load({ silent: true, caseId: selectedCaseId });
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [selectedCaseId, load]);
+  }, [selectedCaseId, realtime?.configured, load]);
+
+  // Tell the backend this thread was seen whenever it's open and focused —
+  // it's what lets staff see a "read" receipt on their side.
+  useEffect(() => {
+    if (!selectedCaseId || document.visibilityState !== "visible") return;
+    markPortalChatRead(selectedCaseId);
+  }, [selectedCaseId, messages.length]);
 
   const thread = useMemo(() => [...messages, ...pending], [messages, pending]);
 
-  useEffect(() => {
-    if (stickToBottomRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [thread.length]);
+  const fetchBlob = useCallback((messageId, attachmentId) => fetchPortalChatAttachmentBlob(messageId, attachmentId), []);
+  const attachmentFileUrl = useChatAttachmentUrls(thread, fetchBlob);
 
-  function onScroll() {
-    const node = scrollRef.current;
-    if (!node) return;
-    stickToBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 120;
-  }
-
-  async function send(event) {
-    event.preventDefault();
-    const bodyText = draft.trim();
-    if (!bodyText || !selectedCaseId || sending) return;
+  async function sendText(bodyText) {
     const clientMessageId = crypto.randomUUID();
     const optimistic = { id: `pending-${clientMessageId}`, direction: "Inbound", bodyText, occurredAt: new Date().toISOString(), pending: true };
     setPending((current) => [...current, optimistic]);
-    setDraft("");
     setSending(true);
-    stickToBottomRef.current = true;
     try {
       await sendPortalChatMessage({ caseId: selectedCaseId, bodyText, clientMessageId });
       await load({ silent: true, caseId: selectedCaseId });
@@ -121,6 +109,48 @@ export default function ClientPortalChat() {
     } finally {
       setSending(false);
     }
+  }
+
+  async function send() {
+    const bodyText = draft.trim();
+    if (!bodyText || !selectedCaseId || sending) return;
+    setDraft("");
+    await sendText(bodyText);
+  }
+
+  async function attachFile(file) {
+    if (!selectedCaseId || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const clientMessageId = crypto.randomUUID();
+      const created = await sendPortalChatMessage({ caseId: selectedCaseId, bodyText: "", clientMessageId, hasAttachment: true });
+      await uploadPortalChatAttachment(created.id, file);
+      await load({ silent: true, caseId: selectedCaseId });
+    } catch (reason) {
+      setError(portalErrorMessage(reason, "Your file could not be sent. Please try again."));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleAttachmentTap(attachment, message) {
+    const isImage = (attachment.mimeType || "").startsWith("image/");
+    if (isImage) {
+      const url = attachmentFileUrl(attachment) || URL.createObjectURL(await fetchPortalChatAttachmentBlob(message.id, attachment.id));
+      setLightbox({ attachment, url });
+      return;
+    }
+    const blob = await fetchPortalChatAttachmentBlob(message.id, attachment.id).catch(() => null);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = attachment.originalFilename || "document";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   useEffect(() => {
@@ -135,16 +165,6 @@ export default function ClientPortalChat() {
   }, []);
 
   const activeCase = cases.find((item) => item.id === selectedCaseId);
-  const groups = useMemo(() => {
-    const byDay = [];
-    thread.forEach((message) => {
-      const label = dayLabel(message.occurredAt);
-      const last = byDay[byDay.length - 1];
-      if (last && last.label === label) last.messages.push(message);
-      else byDay.push({ label, messages: [message] });
-    });
-    return byDay;
-  }, [thread]);
 
   return (
     <div className="fixed inset-0 z-40 mx-auto flex h-[100dvh] w-full max-w-[520px] flex-col overflow-hidden bg-[#eef3fa] lg:static lg:z-auto lg:h-[calc(100dvh-4rem)] lg:max-w-none lg:rounded-[1.75rem] lg:border lg:border-white/70 lg:shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
@@ -178,77 +198,55 @@ export default function ClientPortalChat() {
         </Link>
       </header>
 
-      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-5 pt-4">
-        {loading ? (
-          <div className="space-y-3 pt-4">
-            {[64, 44, 72, 52].map((width, index) => (
-              <div key={index} className={["h-12 animate-pulse rounded-3xl bg-white/70", index % 2 ? "ml-auto" : "", `w-[${width}%]`].join(" ")} style={{ width: `${width}%` }} />
-            ))}
-          </div>
-        ) : !cases.length ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><MessagesSquare className="h-6 w-6" /></div>
-            <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Chat isn't available yet</h2>
-            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your consultant opens your application file, you can message your consultant here.</p>
-          </div>
-        ) : !thread.length ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-600"><MessagesSquare className="h-6 w-6" /></div>
-            <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Say hello</h2>
-            <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">
-              {activeCase?.isGeneral
-                ? "Send a secure message to your agency — your team will reply right here."
-                : `Send a message about your ${activeCase?.caseType || "application"} — your consultant will reply right here.`}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {groups.map((group) => (
-              <div key={group.label} className="space-y-2.5">
-                <div className="flex justify-center">
-                  <span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-slate-500 shadow-sm backdrop-blur">{group.label}</span>
-                </div>
-                {group.messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ChatThread
+        messages={thread}
+        mineDirection="Inbound"
+        loading={loading}
+        className="min-h-0 flex-1 overscroll-contain px-4 pb-5 pt-4"
+        mineBubbleClassName="rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"
+        theirBubbleClassName="rounded-bl-lg border border-white/80 bg-white text-slate-800"
+        attachmentFileUrl={attachmentFileUrl}
+        onAttachmentTap={handleAttachmentTap}
+        onRetryMessage={() => {}}
+        senderLabelFor={(message) => message.senderUser?.fullName}
+        emptyState={
+          !cases.length ? (
+            <>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><MessagesSquare className="h-6 w-6" /></div>
+              <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Chat isn't available yet</h2>
+              <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your consultant opens your application file, you can message your consultant here.</p>
+            </>
+          ) : (
+            <>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-600"><MessagesSquare className="h-6 w-6" /></div>
+              <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Say hello</h2>
+              <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">
+                {activeCase?.isGeneral
+                  ? "Send a secure message to your agency — your team will reply right here."
+                  : `Send a message about your ${activeCase?.caseType || "application"} — your consultant will reply right here.`}
+              </p>
+            </>
+          )
+        }
+      />
 
       {error ? <p className="mx-4 mb-2 shrink-0 rounded-2xl bg-rose-50 px-4 py-2.5 text-[13px] text-rose-700">{error}</p> : null}
 
-      <form onSubmit={send} className="shrink-0 border-t border-white/70 bg-white/90 px-3 py-2.5 pb-[max(env(safe-area-inset-bottom),0.625rem)] backdrop-blur-xl">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send(event);
-              }
-            }}
-            rows={1}
-            maxLength={5000}
-            disabled={!cases.length}
-            placeholder={cases.length ? "Type a message" : "Chat unavailable"}
-            className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-5 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
-            style={{ height: "auto" }}
-            onInput={(event) => {
-              event.target.style.height = "auto";
-              event.target.style.height = `${Math.min(event.target.scrollHeight, 128)}px`;
-            }}
-          />
-          <button
-            type="submit"
-            disabled={!draft.trim() || !selectedCaseId || sending}
-            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-600 to-indigo-600 text-white shadow-[0_10px_24px_rgba(37,99,235,0.35)] transition-all duration-200 active:scale-90 disabled:opacity-40"
-            aria-label="Send message"
-          >
-            {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <SendHorizonal className="h-5 w-5" />}
-          </button>
-        </div>
-      </form>
+      <div className="shrink-0 border-t border-white/70 bg-white/90 px-3 py-2.5 pb-[max(env(safe-area-inset-bottom),0.625rem)] backdrop-blur-xl">
+        <ChatComposer
+          value={draft}
+          onChange={setDraft}
+          onSend={send}
+          onAttach={attachFile}
+          sending={sending}
+          disabled={!cases.length}
+          disabledReason="Chat unavailable"
+          placeholder="Type a message"
+          accentClassName="bg-gradient-to-br from-sky-600 to-indigo-600"
+        />
+      </div>
+
+      <ChatImageLightbox attachment={lightbox?.attachment} fileUrl={lightbox?.url} onClose={() => setLightbox(null)} />
     </div>
   );
 }

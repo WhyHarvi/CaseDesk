@@ -117,6 +117,7 @@ export async function createSchedule(req, res) {
     caseId: req.params.id,
     signingDate: req.body?.signingDate,
     installments: req.body?.installments,
+    discountAmount: req.body?.discountAmount,
     actorUserId: req.auth.userId,
   });
   res.status(201).json({ data });
@@ -125,6 +126,7 @@ export async function createSchedule(req, res) {
 export async function updateSchedule(req, res) {
   const data = await updateCaseInstallments(req.auth.agencyId, req.params.id, {
     installments: req.body?.installments,
+    discountAmount: req.body?.discountAmount,
     actorRole: req.auth.role,
     actorUserId: req.auth.userId,
   });

@@ -664,7 +664,13 @@ export async function createCommunicationMessage(req, res) {
   const bodyText = clean(req.body.bodyText, 20000);
   const bodyHtml = clean(req.body.bodyHtml, 100000) || null;
   const subject = clean(req.body.subject, 300) || null;
-  if (channel !== "Call" && !bodyText && !subject)
+  // A chat message that's just an image/document (no caption) is a normal
+  // WhatsApp/iMessage send — the attachment lands on this message right
+  // after creation (see uploadCommunicationAttachment's Chat grace-window
+  // branch), so an empty body here isn't the "forgot to write anything"
+  // case the validation below exists to catch.
+  const hasAttachment = channel === "Chat" && req.body.hasAttachment === true;
+  if (channel !== "Call" && !bodyText && !subject && !hasAttachment)
     throw createHttpError(400, "Message content is required");
   const recipients = jsonArray(req.body.recipients)
     .map((value) => clean(value, 320))
@@ -966,7 +972,11 @@ export async function createCommunicationMessage(req, res) {
       ],
     });
   }
-  if (channel === "Chat" && caseItem) {
+  // An attachment-only message broadcasts once the file finishes
+  // uploading/scanning (from uploadCommunicationAttachment), not here —
+  // otherwise every recipient sees an empty bubble flash before the image
+  // or file appears in it.
+  if (channel === "Chat" && caseItem && !hasAttachment) {
     await broadcastCaseCommunication({
       agencyId: req.user.agencyId,
       caseId: caseItem.id,

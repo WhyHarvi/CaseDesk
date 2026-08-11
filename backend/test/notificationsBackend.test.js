@@ -6,6 +6,11 @@ import {
   caseTabFromNotification,
   destinationFromNotification,
 } from "../src/services/notificationService.js";
+import {
+  NOTIFICATION_AUDIENCES,
+  notificationAllowedForMembership,
+  notificationAudienceKey,
+} from "../src/services/notificationAccessService.js";
 import { focusedNotificationActionUrl } from "../src/controllers/notificationController.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -84,9 +89,106 @@ test("notification policy groups incidents, separates actions, expires noise, an
   assert.match(scheduler, /sendDailyDigests/);
   assert.match(scheduler, /resolveCompletedAndExpiredNotifications/);
   assert.match(booking, /kind === "attended"/);
-  assert.match(booking, /frontDeskRecipientIds/);
+  assert.match(booking, /schedulingCoordinatorRecipientIds/);
   assert.match(inbound, /aggregate: true/);
   assert.match(inbound, /resolveNotifications/);
+});
+
+test("notification authorization separates financial work from scheduling work", () => {
+  const paymentAlert = {
+    type: "booking_payment.etransfer_pending",
+    category: "payments",
+    destinationKey: "calendar",
+    actionUrl: "/app/calendar?appointment=appointment-1",
+  };
+  assert.equal(
+    notificationAudienceKey(paymentAlert),
+    NOTIFICATION_AUDIENCES.FINANCE,
+  );
+  assert.equal(
+    notificationAllowedForMembership(
+      { role: "frontdesk", permissions: {} },
+      paymentAlert,
+    ),
+    false,
+  );
+  assert.equal(
+    notificationAllowedForMembership(
+      { role: "consultant", permissions: {} },
+      paymentAlert,
+    ),
+    false,
+  );
+  assert.equal(
+    notificationAllowedForMembership(
+      {
+        role: "frontdesk",
+        permissions: {
+          portalAccess: {
+            pages: { payments: true, calendar: true },
+            capabilities: { financialData: true },
+          },
+        },
+      },
+      paymentAlert,
+    ),
+    true,
+  );
+  assert.equal(
+    notificationAllowedForMembership(
+      { role: "admin", permissions: {} },
+      paymentAlert,
+    ),
+    true,
+  );
+
+  const appointmentAlert = {
+    type: "appointment.cancelled",
+    category: "appointments",
+    destinationKey: "calendar",
+    actionUrl: "/app/calendar?appointment=appointment-1",
+  };
+  assert.equal(
+    notificationAllowedForMembership(
+      { role: "frontdesk", permissions: {} },
+      appointmentAlert,
+    ),
+    true,
+  );
+  assert.equal(
+    notificationAudienceKey({
+      type: "appointment.cancelled",
+      category: "appointments",
+      destinationKey: "calendar",
+      metadata: { paidCancellationReview: true },
+    }),
+    NOTIFICATION_AUDIENCES.FINANCE,
+  );
+});
+
+test("payment producers use the financial audience and cancellation notices are split", async () => {
+  const [holds, quickbooks, booking, controller, delivery, provider] = await Promise.all([
+    source("../src/services/bookingPaymentHoldService.js"),
+    source("../src/services/quickbooksWebhookService.js"),
+    source("../src/services/bookingNotificationService.js"),
+    source("../src/controllers/notificationController.js"),
+    source("../src/services/notificationDeliveryService.js"),
+    source("../../frontend/src/components/notifications/NotificationProvider.jsx"),
+  ]);
+  assert.match(holds, /financialOperationsRecipientIds/);
+  assert.doesNotMatch(holds, /schedulingCoordinatorRecipientIds/);
+  assert.match(quickbooks, /financialOperationsRecipientIds/);
+  assert.doesNotMatch(quickbooks, /schedulingCoordinatorRecipientIds/);
+  assert.match(booking, /kind === "payment_requested"/);
+  assert.match(booking, /booking_payment\.refund_review_required/);
+  assert.match(booking, /audienceKey: "scheduling"/);
+  assert.match(booking, /audienceKey: "finance"/);
+  assert.match(controller, /reconcileNotificationAccessForUser/);
+  assert.match(controller, /Payments access is required to configure payment notifications/);
+  assert.match(delivery, /notificationAllowedForMembership/);
+  assert.match(delivery, /cancelUnauthorizedNotification/);
+  assert.match(provider, /isFinancialNotification/);
+  assert.match(provider, /Payments access is not enabled/);
 });
 
 test("document, reminder, and questionnaire notification gaps are normalized", async () => {

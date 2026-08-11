@@ -314,6 +314,14 @@ export default function CaseProfile() {
     }
   }, [canAccessFinancialData, canAccessInternalNotes, id]);
 
+  const refreshPaymentSummary = useCallback(async () => {
+    if (!canAccessFinancialData) return;
+    const response = await api.getFresh(`/cases/${id}/payment-summary`);
+    setPaymentSummary(
+      response.data.data || { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" },
+    );
+  }, [canAccessFinancialData, id]);
+
   useEffect(() => {
     mountedRef.current = true;
     recoveryAttemptRef.current = 0;
@@ -1961,6 +1969,7 @@ export default function CaseProfile() {
           activityLogs={activityLogs}
           workflowSteps={workflowSteps}
           paymentSummary={paymentSummary}
+          onBillingChanged={refreshPaymentSummary}
           outstandingDocuments={outstandingDocuments}
           assessment={assessment}
           onConductAssessment={() => {

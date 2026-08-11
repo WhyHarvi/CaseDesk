@@ -9,8 +9,25 @@ import { voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
 import { templateMatchesCase } from "./correspondenceTemplateService.js";
 import { ensureDefaultBillingTemplates } from "./billingTemplateDefaults.js";
+import { applyLocalCashToInvoice } from "./paymentApprovalLedgerService.js";
 
 const TRIGGER_TYPES = new Set(["Date", "Stage"]);
+
+function moneyCents(value) {
+  return Math.round(Number(value || 0) * 100);
+}
+
+function installmentNetAmount(item) {
+  return Math.max(0, (moneyCents(item.amount) - moneyCents(item.discountAmount)) / 100);
+}
+
+function validateDiscountAmount(value) {
+  const amount = value === undefined || value === null || value === "" ? 0 : Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000) {
+    throw createHttpError(400, "Enter a discount between $0 and $1,000,000.", "VALIDATION_ERROR");
+  }
+  return moneyCents(amount) / 100;
+}
 
 function validateInstallmentInput(item) {
   const label = String(item?.label || "").trim().slice(0, 200);
@@ -46,6 +63,40 @@ async function validateInstallmentsInput(agencyId, installments) {
   const validated = installments.map(validateInstallmentInput);
   await Promise.all([...new Set(validated.map((item) => item.paymentType))].map((code) => requireFeeCategory(agencyId, code)));
   return validated;
+}
+
+// A schedule discount is applied only to professional/consultation work,
+// never government fees or pass-through disbursements. Each installment
+// keeps its quoted (gross) amount and its own allocated discount so the
+// retainer can show the original fee while QuickBooks receives only the
+// agreed net installment amount. Allocation starts at the last professional
+// installment, preserving the initial deposit wherever possible.
+async function allocateScheduleDiscount(agencyId, installments, discountValue, preservedById = new Map()) {
+  const discountAmount = validateDiscountAmount(discountValue);
+  const kindByCode = await getFeeCategoryKindMap(agencyId);
+  const rows = installments.map((item) => ({ ...item, discountAmount: Number(preservedById.get(item.id) || 0) }));
+  const targetCents = moneyCents(discountAmount);
+  const preservedCents = rows.reduce((sum, item) => sum + moneyCents(item.discountAmount), 0);
+  if (preservedCents > targetCents) {
+    throw createHttpError(400, "The discount cannot be lower than the amount already applied to invoiced installments.", "VALIDATION_ERROR");
+  }
+
+  let remaining = targetCents - preservedCents;
+  const eligible = rows
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !preservedById.has(item.id) && TAXABLE_FEE_KINDS.has(kindByCode.get(item.paymentType) || "Other"))
+    .reverse();
+  const capacity = eligible.reduce((sum, { item }) => sum + Math.max(0, moneyCents(item.amount) - 1), 0);
+  if (remaining > capacity) {
+    throw createHttpError(400, "The discount must be less than the professional and consultation fees.", "VALIDATION_ERROR");
+  }
+  for (const { index, item } of eligible) {
+    if (!remaining) break;
+    const applied = Math.min(remaining, Math.max(0, moneyCents(item.amount) - 1));
+    rows[index].discountAmount = applied / 100;
+    remaining -= applied;
+  }
+  return { discountAmount, installments: rows };
 }
 
 // ---------- Templates ----------
@@ -143,16 +194,26 @@ function resolveTriggerDate(signingDate, days) {
 async function attachTaxBreakdown(schedule, agencyId) {
   if (!schedule) return schedule;
   const [kindByCode, taxRatePercent] = await Promise.all([getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
+  let professionalFeesBeforeDiscount = 0;
   let taxableSubtotal = 0;
   let nonTaxableSubtotal = 0;
   for (const installment of schedule.installments) {
     if (installment.status === "Void") continue;
     const kind = kindByCode.get(installment.paymentType) || "Other";
-    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(installment.amount);
+    if (TAXABLE_FEE_KINDS.has(kind)) {
+      professionalFeesBeforeDiscount += Number(installment.amount);
+      taxableSubtotal += installmentNetAmount(installment);
+    }
     else nonTaxableSubtotal += Number(installment.amount);
   }
   const tax = Math.round(taxableSubtotal * taxRatePercent) / 100;
-  return { ...schedule, taxSummary: { taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent, totalFee: taxableSubtotal + tax + nonTaxableSubtotal } };
+  const discountAmount = Math.max(0, professionalFeesBeforeDiscount - taxableSubtotal);
+  return {
+    ...schedule,
+    discountAmount,
+    installments: schedule.installments.map((item) => ({ ...item, netAmount: installmentNetAmount(item) })),
+    taxSummary: { professionalFeesBeforeDiscount, discountAmount, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent, totalFee: taxableSubtotal + tax + nonTaxableSubtotal },
+  };
 }
 
 export async function getCaseSchedule(agencyId, caseId) {
@@ -198,21 +259,24 @@ export async function getRetainerScheduleMergeContext(agencyId, caseId) {
   const activeInstallments = schedule.installments.filter((item) => item.status !== "Void");
   return {
     values: {
-      "agreement.professionalFees": formatMoney(schedule.taxSummary.taxableSubtotal),
+      "agreement.professionalFees": formatMoney(schedule.taxSummary.professionalFeesBeforeDiscount),
+      "agreement.discount": formatMoney(schedule.taxSummary.discountAmount),
       "agreement.governmentFees": formatMoney(schedule.taxSummary.nonTaxableSubtotal),
       "agreement.taxes": formatMoney(schedule.taxSummary.tax),
       "agreement.totalFees": formatMoney(schedule.taxSummary.totalFee),
     },
     installmentRows: activeInstallments.map((item) => ({
       label: item.label,
-      amount: formatMoney(item.amount),
+      amount: formatMoney(item.netAmount),
       due: installmentDueLabel(item),
     })),
     totalLabel: formatMoney(schedule.taxSummary.totalFee),
+    discountLabel: formatMoney(schedule.taxSummary.discountAmount),
+    hasDiscount: schedule.taxSummary.discountAmount > 0,
   };
 }
 
-export async function createCaseSchedule(agencyId, { caseId, signingDate, installments, actorUserId }) {
+export async function createCaseSchedule(agencyId, { caseId, signingDate, installments, discountAmount = 0, actorUserId }) {
   const existing = await prisma.casePaymentSchedule.findFirst({ where: { agencyId, caseId } });
   if (existing) throw createHttpError(409, "This case already has a payment schedule. Edit it instead.", "SCHEDULE_EXISTS");
 
@@ -223,6 +287,7 @@ export async function createCaseSchedule(agencyId, { caseId, signingDate, instal
   if (Number.isNaN(resolvedSigningDate.getTime())) throw createHttpError(400, "Enter a valid signing date.", "VALIDATION_ERROR");
   if (!Array.isArray(installments) || !installments.length) throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
   const validated = await validateInstallmentsInput(agencyId, installments);
+  const discounted = await allocateScheduleDiscount(agencyId, validated, discountAmount);
 
   const schedule = await prisma.casePaymentSchedule.create({
     data: {
@@ -230,9 +295,10 @@ export async function createCaseSchedule(agencyId, { caseId, signingDate, instal
       caseId,
       clientId: caseItem.clientId,
       signingDate: resolvedSigningDate,
+      discountAmount: discounted.discountAmount,
       createdById: actorUserId,
       installments: {
-        create: validated.map((item, index) => ({
+        create: discounted.installments.map((item, index) => ({
           agencyId,
           caseId,
           clientId: caseItem.clientId,
@@ -271,7 +337,7 @@ export async function createCaseSchedule(agencyId, { caseId, signingDate, instal
 
 const EDIT_REQUIRES_ADMIN_STATUSES = new Set(["Invoiced", "Void"]);
 
-export async function updateCaseInstallments(agencyId, caseId, { installments, actorRole, actorUserId }) {
+export async function updateCaseInstallments(agencyId, caseId, { installments, discountAmount, actorRole, actorUserId }) {
   const schedule = await prisma.casePaymentSchedule.findFirst({
     where: { agencyId, caseId },
     include: { installments: true },
@@ -285,6 +351,11 @@ export async function updateCaseInstallments(agencyId, caseId, { installments, a
 
   if (!Array.isArray(installments) || !installments.length) throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
 
+  const resolvedDiscount = discountAmount === undefined ? Number(schedule.discountAmount || 0) : validateDiscountAmount(discountAmount);
+  if (hasFiredInstallments && moneyCents(resolvedDiscount) !== moneyCents(schedule.discountAmount)) {
+    throw createHttpError(409, "The discount is locked after an installment has been invoiced or voided.", "DISCOUNT_LOCKED");
+  }
+
   const firedIds = new Set(schedule.installments.filter((item) => EDIT_REQUIRES_ADMIN_STATUSES.has(item.status)).map((item) => item.id));
   const incomingIds = new Set(installments.filter((item) => item.id).map((item) => item.id));
   for (const firedId of firedIds) {
@@ -292,10 +363,17 @@ export async function updateCaseInstallments(agencyId, caseId, { installments, a
   }
 
   const validated = (await validateInstallmentsInput(agencyId, installments)).map((item, index) => ({ id: installments[index].id || null, ...item }));
+  const preservedDiscounts = new Map(
+    schedule.installments
+      .filter((item) => firedIds.has(item.id))
+      .map((item) => [item.id, Number(item.discountAmount || 0)]),
+  );
+  const discounted = await allocateScheduleDiscount(agencyId, validated, resolvedDiscount, preservedDiscounts);
 
   await prisma.$transaction(async (tx) => {
+    await tx.casePaymentSchedule.update({ where: { id: schedule.id }, data: { discountAmount: discounted.discountAmount } });
     await tx.casePaymentInstallment.deleteMany({ where: { scheduleId: schedule.id, id: { notIn: [...incomingIds] }, status: "Scheduled" } });
-    for (const [index, item] of validated.entries()) {
+    for (const [index, item] of discounted.installments.entries()) {
       if (item.id && firedIds.has(item.id)) {
         await tx.casePaymentInstallment.update({ where: { id: item.id }, data: { sortOrder: index } });
         continue;
@@ -405,7 +483,7 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
   let nonTaxableSubtotal = 0;
   for (const installment of installments) {
     const kind = kindByCode.get(installment.paymentType) || "Other";
-    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(installment.amount);
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += installmentNetAmount(installment);
     else nonTaxableSubtotal += Number(installment.amount);
     if (installment.caseInvoiceId) {
       const invoice = invoiceById.get(installment.caseInvoiceId);
@@ -454,9 +532,15 @@ export async function getCasePaymentSummary(agencyId, caseId) {
   const [installments, invoices, legacyPayments, kindByCode, taxRatePercent] = await Promise.all([
     prisma.casePaymentInstallment.findMany({
       where: { agencyId, caseId, status: { not: "Void" } },
-      select: { amount: true, caseInvoiceId: true, paymentType: true },
+      select: { amount: true, discountAmount: true, caseInvoiceId: true, paymentType: true },
     }),
-    prisma.caseInvoice.findMany({ where: { agencyId, caseId }, select: { id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true } }),
+    prisma.caseInvoice.findMany({
+      where: { agencyId, caseId },
+      select: {
+        id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true,
+        paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
+      },
+    }).then((rows) => rows.map(applyLocalCashToInvoice)),
     prisma.payment.findMany({ where: { agencyId, caseId }, select: { totalFee: true, paidAmount: true } }),
     getFeeCategoryKindMap(agencyId),
     getAgencyTaxRatePercent(agencyId),
@@ -473,10 +557,14 @@ export async function getCasePaymentSummary(agencyId, caseId) {
 export async function getCasePaymentSummariesByCase(agencyId) {
   const [installments, invoices, legacyPayments, kindByCode, taxRatePercent] = await Promise.all([prisma.casePaymentInstallment.findMany({
     where: { agencyId, status: { not: "Void" } },
-    select: { caseId: true, amount: true, caseInvoiceId: true, paymentType: true },
+    select: { caseId: true, amount: true, discountAmount: true, caseInvoiceId: true, paymentType: true },
   }), prisma.caseInvoice.findMany({
-    where: { agencyId }, select: { id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true },
-  }), prisma.payment.findMany({
+    where: { agencyId },
+    select: {
+      id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true,
+      paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
+    },
+  }).then((rows) => rows.map(applyLocalCashToInvoice)), prisma.payment.findMany({
     where: { agencyId }, select: { caseId: true, totalFee: true, paidAmount: true },
   }), getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
 
@@ -534,12 +622,13 @@ async function fireInstallment(agencyId, installment, actorUserId) {
   if (!claimed) return null;
 
   try {
+    const invoiceAmount = installmentNetAmount(installment);
     const invoiceRow = await createInvoiceRecord(agencyId, {
       caseId: installment.caseId,
       clientId: installment.clientId,
       paymentType: installment.paymentType,
       description: installment.label,
-      amount: Number(installment.amount),
+      amount: invoiceAmount,
       dueDate: undefined,
       actorUserId,
     });
@@ -554,12 +643,12 @@ async function fireInstallment(agencyId, installment, actorUserId) {
       clientId: installment.clientId,
       caseId: installment.caseId,
       action: "payment_schedule.installment_invoiced",
-      details: `${installment.label} — $${Number(installment.amount).toFixed(2)} invoiced (${installment.triggerType === "Stage" ? `stage: ${installment.triggerStage}` : "scheduled date"})`,
+      details: `${installment.label} — $${invoiceAmount.toFixed(2)} invoiced${Number(installment.discountAmount || 0) > 0 ? ` after a $${Number(installment.discountAmount).toFixed(2)} discount` : ""} (${installment.triggerType === "Stage" ? `stage: ${installment.triggerStage}` : "scheduled date"})`,
       entityType: "casePaymentInstallment",
       entityId: installment.id,
     });
 
-    notifyInstallmentInvoiced({ agencyId, installment: { ...installment, caseInvoiceId: invoiceRow.id }, actorUserId }).catch(() => {});
+    notifyInstallmentInvoiced({ agencyId, installment: { ...installment, amount: invoiceAmount, caseInvoiceId: invoiceRow.id }, actorUserId }).catch(() => {});
     return updated;
   } catch (error) {
     // Release the claim so this installment is retried on the next trigger

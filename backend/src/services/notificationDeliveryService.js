@@ -5,6 +5,7 @@ import {
   notifyUsers,
   resolveNotifications,
 } from "./notificationService.js";
+import { notificationAllowedForMembership } from "./notificationAccessService.js";
 import prisma from "./prisma/client.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_DELIVERY_INTERVAL_MS) || 15_000, 5_000);
@@ -49,6 +50,31 @@ async function cancelDelivery(job, reason) {
     where: { id: job.id, status: { in: ["pending", "retry", "processing"] } },
     data: { status: "cancelled", lastError: reason },
   });
+}
+
+async function cancelUnauthorizedNotification(job) {
+  const resolvedAt = new Date();
+  await prisma.$transaction([
+    prisma.notification.updateMany({
+      where: {
+        id: job.notificationId,
+        recipientUserId: job.recipientUserId,
+        resolvedAt: null,
+      },
+      data: { resolvedAt, readAt: resolvedAt },
+    }),
+    prisma.notificationDelivery.updateMany({
+      where: {
+        notificationId: job.notificationId,
+        recipientUserId: job.recipientUserId,
+        status: { in: ["pending", "retry", "processing"] },
+      },
+      data: {
+        status: "cancelled",
+        lastError: "Cancelled because the recipient does not have access",
+      },
+    }),
+  ]);
 }
 
 async function deliver(job) {
@@ -111,10 +137,32 @@ export async function processNotificationDeliveries(now = new Date()) {
       take: 50,
       include: {
         notification: true,
-        recipient: { select: { id: true, email: true, phone: true, status: true, notificationPreferences: true } },
+        recipient: {
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            status: true,
+            notificationPreferences: true,
+            memberships: {
+              where: { isActive: true },
+              select: { agencyId: true, role: true, permissions: true },
+            },
+          },
+        },
       },
     });
     for (const job of jobs) {
+      const membership = job.recipient.memberships.find(
+        (item) => item.agencyId === job.agencyId,
+      );
+      if (
+        !membership ||
+        !notificationAllowedForMembership(membership, job.notification)
+      ) {
+        await cancelUnauthorizedNotification(job);
+        continue;
+      }
       if (job.notification.resolvedAt) {
         await cancelDelivery(job, "Cancelled because the notification was resolved");
         continue;

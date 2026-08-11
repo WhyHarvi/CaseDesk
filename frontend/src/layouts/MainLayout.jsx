@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation } from "react-router-dom";
 import Header from "../components/layout/Header";
 import Sidebar from "../components/layout/Sidebar";
+import IncomingOomaCallAlert from "../components/communications/IncomingOomaCallAlert";
 
 export default function MainLayout({ children, hideTopBar = false, lockContentScroll = false, flushContent = false }) {
   const location = useLocation();
@@ -9,10 +10,14 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const isSettings = location.pathname === "/app/settings";
   const isWriter = /\/documents\/(new|[^/]+\/edit)$/.test(location.pathname);
+  const isTeamChat = location.pathname === "/app/team-chat";
   const useFocusedWorkspace = isSettings || isWriter;
   const effectiveHideTopBar = hideTopBar || useFocusedWorkspace;
-  const effectiveLockContentScroll = lockContentScroll || useFocusedWorkspace;
-  const effectiveFlushContent = flushContent || useFocusedWorkspace;
+  // Team Chat wants the same flush, non-scrolling workspace shell as
+  // Settings/Writer, but keeps the top bar — unlike those two, people stay
+  // on this page for a while and still want notifications/search/account.
+  const effectiveLockContentScroll = lockContentScroll || useFocusedWorkspace || isTeamChat;
+  const effectiveFlushContent = flushContent || useFocusedWorkspace || isTeamChat;
 
   return (
     <div className="h-screen overflow-hidden bg-transparent text-slate-900">
@@ -52,6 +57,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
           </main>
         </div>
       </div>
+      <IncomingOomaCallAlert />
     </div>
   );
 }

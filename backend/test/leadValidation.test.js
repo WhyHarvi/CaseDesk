@@ -122,4 +122,21 @@ test("conversion rejects a case stage outside the real pipeline vocabulary", () 
   );
   const conversion = parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents", caseStage: "Retainer Pending" });
   assert.equal(conversion.caseStage, "Retainer Pending");
+  const studyMilestone = parseLeadConversion({
+    fullName: "Avery Singh",
+    caseType: "Study Permit",
+    caseNextAction: "Review the offer letter",
+    caseStage: "Offer Letter Received",
+  });
+  assert.equal(studyMilestone.caseStage, "Offer Letter Received");
+  assert.throws(
+    () =>
+      parseLeadConversion({
+        fullName: "Avery Singh",
+        caseType: "Work Permit",
+        caseNextAction: "Review the offer letter",
+        caseStage: "Offer Letter Received",
+      }),
+    /does not apply/,
+  );
 });

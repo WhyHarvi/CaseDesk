@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
+import { AlertTriangle, BadgePercent, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, updateCaseSchedule, voidCaseSchedule, voidInstallmentInvoice } from "../../api/paymentScheduleApi";
@@ -34,9 +34,19 @@ function TaxSummaryBar({ taxSummary }) {
   return (
     <div className="mt-3 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <span className="text-slate-500">Professional / consultation subtotal</span>
-        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.taxableSubtotal)}</span>
+        <span className="text-slate-500">Professional / consultation fees</span>
+        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.professionalFeesBeforeDiscount ?? taxSummary.taxableSubtotal)}</span>
       </div>
+      {Number(taxSummary.discountAmount) > 0 ? <>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5 text-emerald-700">
+          <span>Discount</span>
+          <span className="font-semibold">−{formatMoney(taxSummary.discountAmount)}</span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
+          <span className="text-slate-500">Professional fees after discount</span>
+          <span className="font-semibold text-slate-800">{formatMoney(taxSummary.taxableSubtotal)}</span>
+        </div>
+      </> : null}
       <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
         <span className="text-slate-500">HST ({Number(taxSummary.taxRatePercent)}%)</span>
         <span className="font-semibold text-slate-800">{formatMoney(taxSummary.tax)}</span>
@@ -50,6 +60,20 @@ function TaxSummaryBar({ taxSummary }) {
         <span className="text-sm font-bold text-slate-900">{formatMoney(taxSummary.totalFee)}</span>
       </div>
     </div>
+  );
+}
+
+export function DiscountField({ value, onChange, disabled = false }) {
+  return (
+    <label className="block text-xs font-medium text-slate-600">Discount on professional fees
+      <span className={`mt-1.5 flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5 ${disabled ? "border-slate-100 opacity-65" : "border-slate-200 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100"}`}>
+        <BadgePercent className="h-4 w-4 text-emerald-500" />
+        <span className="text-sm text-slate-400">$</span>
+        <input type="number" min="0" step="0.01" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
+        <span className="text-xs font-semibold text-slate-400">CAD</span>
+      </span>
+      <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Applied to the later professional installments first. Government fees are never discounted.</span>
+    </label>
   );
 }
 
@@ -86,7 +110,7 @@ function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
         <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${meta.tone}`}>{meta.label}</span>
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-50/80 px-3.5 py-2.5 text-sm">
-        <span className="text-slate-500">Amount <span className="font-semibold text-slate-900">{formatMoney(installment.amount)}</span></span>
+        <span className="text-slate-500">Amount {Number(installment.discountAmount) > 0 ? <><span className="text-xs line-through">{formatMoney(installment.amount)}</span> <span className="font-semibold text-emerald-700">{formatMoney(installment.netAmount)}</span></> : <span className="font-semibold text-slate-900">{formatMoney(installment.netAmount ?? installment.amount)}</span>}</span>
         {invoice ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
             <Receipt className="h-3.5 w-3.5" />
@@ -165,6 +189,7 @@ export function TemplatePicker({ caseType, onPick }) {
 function ScheduleBuilder({ caseItem, onCreated }) {
   const [signingDate, setSigningDate] = useState(new Date().toISOString().slice(0, 10));
   const [installments, setInstallments] = useState([blankInstallment()]);
+  const [discountAmount, setDiscountAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -187,7 +212,7 @@ function ScheduleBuilder({ caseItem, onCreated }) {
     setSaving(true);
     setError("");
     try {
-      const created = await createCaseSchedule(caseItem.id, { signingDate, installments });
+      const created = await createCaseSchedule(caseItem.id, { signingDate, installments, discountAmount });
       onCreated(created);
     } catch (reason) {
       setError(reason.response?.data?.message || "The payment schedule could not be created.");
@@ -205,6 +230,7 @@ function ScheduleBuilder({ caseItem, onCreated }) {
           <input type="date" required value={signingDate} onChange={(event) => setSigningDate(event.target.value)} className="w-full bg-transparent text-sm outline-none" />
         </span>
       </label>
+      <div className="mt-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} /></div>
       <div className="mt-3.5">
         <InstallmentListEditor installments={installments} onChange={setInstallments} />
       </div>
@@ -218,6 +244,7 @@ function ScheduleBuilder({ caseItem, onCreated }) {
 
 function ScheduleEditor({ caseId, schedule, onSaved, onCancel }) {
   const [installments, setInstallments] = useState(schedule.installments.map((row) => ({ ...row, amount: String(row.amount) })));
+  const [discountAmount, setDiscountAmount] = useState(String(schedule.discountAmount || ""));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const lockedIds = useMemo(() => new Set(schedule.installments.filter((row) => FIRED_STATUSES.has(row.status)).map((row) => row.id)), [schedule]);
@@ -226,7 +253,7 @@ function ScheduleEditor({ caseId, schedule, onSaved, onCancel }) {
     setSaving(true);
     setError("");
     try {
-      const updated = await updateCaseSchedule(caseId, installments);
+      const updated = await updateCaseSchedule(caseId, installments, discountAmount);
       onSaved(updated);
     } catch (reason) {
       setError(reason.response?.data?.message || "The schedule could not be saved.");
@@ -237,6 +264,7 @@ function ScheduleEditor({ caseId, schedule, onSaved, onCancel }) {
 
   return (
     <div className="rounded-[1.4rem] border border-sky-200/80 bg-sky-50/40 p-4">
+      <div className="mb-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} disabled={lockedIds.size > 0} /></div>
       <InstallmentListEditor installments={installments} onChange={setInstallments} lockedIds={lockedIds} />
       {error ? <p className="mt-2.5 text-xs text-rose-600">{error}</p> : null}
       <div className="mt-3.5 flex items-center gap-2">

@@ -47,6 +47,8 @@ export function getStageStyles(stage) {
     Lead: "bg-slate-100 text-slate-700",
     Consultation: "bg-sky-100 text-sky-700",
     "Retainer Pending": "bg-amber-100 text-amber-700",
+    "Offer Letter Application Submitted": "bg-cyan-100 text-cyan-700",
+    "Offer Letter Received": "bg-teal-100 text-teal-700",
     "Documents Pending": "bg-orange-100 text-orange-700",
     "Reviewing Documents": "bg-violet-100 text-violet-700",
     "Application Preparing": "bg-indigo-100 text-indigo-700",

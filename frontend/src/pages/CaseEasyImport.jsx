@@ -11,7 +11,7 @@ import {
 import Select from "../components/ui/Select";
 import CaseEasyReportsBrowser from "../components/case-easy/CaseEasyReportsBrowser";
 import CaseEasyImportSettingsPanel from "../components/settings/CaseEasyImportSettingsPanel";
-import { CASE_STAGES } from "../constants/caseStages";
+import { caseStagesForType } from "../constants/caseStages";
 
 const RECORD_TYPE_FILTERS = [
   { value: "", label: "All" },
@@ -285,7 +285,17 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
   }, [contact.id]);
 
   function updateCaseForm(index, patch) {
-    setCaseForms((current) => current.map((form, i) => (i === index ? { ...form, ...patch } : form)));
+    setCaseForms((current) => current.map((form, i) => {
+      if (i !== index) return form;
+      const next = { ...form, ...patch };
+      if (
+        Object.hasOwn(patch, "caseType") &&
+        !caseStagesForType(next.caseType).includes(next.stage)
+      ) {
+        next.stage = "Retainer Pending";
+      }
+      return next;
+    }));
   }
 
   async function submit(event) {
@@ -411,7 +421,7 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
                           <label className="text-xs font-medium text-slate-600">
                             Stage
                             <Select value={form.stage} onChange={(event) => updateCaseForm(index, { stage: event.target.value })} className="mt-1 w-full">
-                              {CASE_STAGES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                              {caseStagesForType(form.caseType).map((stage) => <option key={stage} value={stage}>{stage}</option>)}
                             </Select>
                           </label>
                           <label className="text-xs font-medium text-slate-600">

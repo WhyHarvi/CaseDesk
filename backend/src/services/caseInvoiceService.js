@@ -12,6 +12,7 @@ import {
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
+import { applyLocalCashToInvoice, createApprovedCashLedgerRecord } from "./paymentApprovalLedgerService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
@@ -221,8 +222,11 @@ export async function listCaseInvoices(agencyId, caseId) {
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
   const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, orderBy: { createdAt: "desc" } });
   const [refreshed, categories] = await Promise.all([refreshInvoiceRows(agencyId, rows), listFeeCategories(agencyId, { includeInactive: true })]);
+  const cashRows = await prisma.paymentApproval.findMany({ where: { agencyId, caseInvoiceId: { in: refreshed.map((row) => row.id) }, status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } });
+  const cashByInvoice = new Map();
+  for (const payment of cashRows) cashByInvoice.set(payment.caseInvoiceId, [...(cashByInvoice.get(payment.caseInvoiceId) || []), payment]);
   const names = new Map(categories.map((category) => [category.code, category.name]));
-  return refreshed.map((row) => ({ ...row, paymentTypeLabel: names.get(row.paymentType) || PAYMENT_TYPES[row.paymentType] || row.paymentType }));
+  return refreshed.map((row) => ({ ...applyLocalCashToInvoice({ ...row, paymentApprovals: cashByInvoice.get(row.id) || [] }), paymentTypeLabel: names.get(row.paymentType) || PAYMENT_TYPES[row.paymentType] || row.paymentType }));
 }
 
 // Client-portal reader: scoped by clientId (resolved server-side from the
@@ -230,7 +234,11 @@ export async function listCaseInvoices(agencyId, caseId) {
 // every case that client has, not just one.
 export async function listClientInvoices(agencyId, clientId) {
   const rows = await prisma.caseInvoice.findMany({ where: { agencyId, clientId }, orderBy: { createdAt: "desc" } });
-  return refreshInvoiceRows(agencyId, rows);
+  const refreshed = await refreshInvoiceRows(agencyId, rows);
+  const cashRows = await prisma.paymentApproval.findMany({ where: { agencyId, clientId, caseInvoiceId: { in: refreshed.map((row) => row.id) }, status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } });
+  const cashByInvoice = new Map();
+  for (const payment of cashRows) cashByInvoice.set(payment.caseInvoiceId, [...(cashByInvoice.get(payment.caseInvoiceId) || []), payment]);
+  return refreshed.map((row) => applyLocalCashToInvoice({ ...row, paymentApprovals: cashByInvoice.get(row.id) || [] }));
 }
 
 export async function getCaseInvoicePdf(agencyId, { caseId, invoiceId }) {
@@ -275,7 +283,7 @@ export async function assertManualPaymentReferenceAvailable(agencyId, paymentRef
   }
 }
 
-export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId }) {
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
@@ -287,10 +295,53 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     transactionReference,
     paymentDate,
   });
-  if (numericAmount > Number(row.balance) + 0.01) {
-    throw createHttpError(400, `That's more than the outstanding balance of $${Number(row.balance).toFixed(2)}.`, "VALIDATION_ERROR");
+  const priorCash = await prisma.paymentApproval.aggregate({
+    where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
+    _sum: { amount: true },
+  });
+  const effectiveBalance = Math.max(0, Number(row.balance) - Number(priorCash._sum.amount || 0));
+  if (numericAmount > effectiveBalance + 0.01) {
+    throw createHttpError(400, `That's more than the outstanding balance of $${effectiveBalance.toFixed(2)}.`, "VALIDATION_ERROR");
   }
   await assertManualPaymentReferenceAvailable(agencyId, paymentReference);
+
+  if (method === "Cash") {
+    if (!approvalId) {
+      await createApprovedCashLedgerRecord({
+        agencyId,
+        clientId: row.clientId,
+        caseId,
+        caseInvoiceId: row.id,
+        entryType: "invoice_payment",
+        amount: numericAmount,
+        description: row.description,
+        transactionReference: paymentReference,
+        paymentDate: paymentDate || new Date().toISOString().slice(0, 10),
+        note,
+        actorUserId,
+        sourceRole: actorRole,
+        idempotencyKey: operationKey || `invoice-cash:${row.id}:${Date.now()}`,
+      });
+    }
+    const cashRows = await prisma.paymentApproval.findMany({
+      where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
+      orderBy: { paymentDate: "desc" },
+    });
+    const updated = applyLocalCashToInvoice({ ...row, paymentApprovals: cashRows });
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: row.clientId,
+      caseId,
+      action: "invoice.manual_payment_recorded",
+      details: `Cash payment of $${numericAmount.toFixed(2)} recorded in CaseDesk only against ${row.description}${note ? ` — ${note}` : ""}`,
+      entityType: "caseInvoice",
+      entityId: row.id,
+      metadata: { method: "Cash", quickBooksStored: false, approvalId, note: note || null },
+    });
+    return updated;
+  }
+
   const client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { qbCustomerId: true } });
   if (!client?.qbCustomerId) throw createHttpError(409, "This client is not linked to QuickBooks.", "QBO_CLIENT_NOT_LINKED");
 

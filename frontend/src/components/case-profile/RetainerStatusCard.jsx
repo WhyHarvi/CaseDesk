@@ -5,7 +5,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../../api/caseBillingRetainerApi";
 import { getCaseSchedule } from "../../api/paymentScheduleApi";
 import InstallmentListEditor, { blankInstallment } from "../payments/InstallmentListEditor";
-import { TemplatePicker } from "./CasePaymentScheduleWorkspace";
+import { DiscountField, TemplatePicker } from "./CasePaymentScheduleWorkspace";
 
 const STATUS_META = {
   Draft: { label: "Draft — not yet sent", tone: "bg-slate-100 text-slate-600" },
@@ -33,6 +33,7 @@ function formatDateTime(value) {
 function ScheduleReviewStep({ caseItem, busy, error, onApprove, onSkip }) {
   const [signingDate, setSigningDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [installments, setInstallments] = useState([blankInstallment()]);
+  const [discountAmount, setDiscountAmount] = useState("");
 
   function applyTemplate(template) {
     setInstallments(
@@ -60,13 +61,14 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onSkip }) {
             <input type="date" required value={signingDate} onChange={(event) => setSigningDate(event.target.value)} className="w-full bg-transparent text-sm outline-none" />
           </span>
         </label>
+        <div className="mt-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} /></div>
         <div className="mt-3.5">
           <InstallmentListEditor installments={installments} onChange={setInstallments} />
         </div>
       </div>
       {error ? <p className="mt-2.5 text-xs text-rose-600">{error}</p> : null}
       <div className="mt-3.5 flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => onApprove(installments, signingDate)} disabled={busy} className="flex h-10 items-center gap-1.5 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white disabled:opacity-50">
+        <button type="button" onClick={() => onApprove(installments, signingDate, discountAmount)} disabled={busy} className="flex h-10 items-center gap-1.5 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white disabled:opacity-50">
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSignature className="h-3.5 w-3.5" />} Approve schedule &amp; create retainer
         </button>
         <button type="button" onClick={onSkip} disabled={busy} className="h-10 rounded-full px-3 text-xs font-semibold text-slate-500 hover:bg-slate-100">Skip for now — start without a schedule</button>
@@ -108,11 +110,11 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
 
   useEffect(() => { load(); }, [caseItem.id]);
 
-  async function startDraft(installments, signingDate) {
+  async function startDraft(installments, signingDate, discountAmount) {
     setBusy(true);
     setError("");
     try {
-      const data = await createCaseBillingRetainerDraft(caseItem.id, installments ? { installments, signingDate } : undefined);
+      const data = await createCaseBillingRetainerDraft(caseItem.id, installments ? { installments, signingDate, discountAmount } : undefined);
       setState(data);
       onStatusChange?.(data);
       const scheduleData = await getCaseSchedule(caseItem.id).catch(() => schedule);

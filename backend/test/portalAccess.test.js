@@ -9,6 +9,7 @@ import {
   portalDataScope,
   requirePortalPage,
 } from "../src/services/portalAccessService.js";
+import { defaultPortalAccess as frontendDefaultPortalAccess } from "../../frontend/src/auth/portalAccess.js";
 import {
   caseAccessWhere,
   clientAccessWhere,
@@ -35,6 +36,7 @@ test("role defaults preserve current consultant and front-desk workspace access"
   assert.equal(frontdesk.caseTabs.profile, true);
   assert.equal(frontdesk.caseTabs.billing, false);
   assert.equal(frontdesk.capabilities.financialData, false);
+  assert.deepEqual(frontendDefaultPortalAccess("frontdesk"), frontdesk);
 });
 
 test("saved portal access overrides role defaults without accepting unknown values", () => {

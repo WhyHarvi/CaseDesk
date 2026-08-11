@@ -43,6 +43,7 @@ import {
 import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import { submitPaymentApproval } from "../services/paymentApprovalService.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import { estimateRefundAfterFees, refundFeeRateForAgency } from "../services/refundFeeEstimateService.js";
 import {
@@ -581,6 +582,12 @@ const calendarInclude = {
       paymentError: true,
     },
   },
+  paymentApprovals: {
+    where: { status: { in: ["Pending", "Processing", "Failed"] } },
+    select: { id: true, status: true, method: true, amount: true, transactionReference: true, processingError: true },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+  },
 };
 
 export async function listCalendarAppointments(req, res) {
@@ -950,6 +957,7 @@ export async function createBookingAppointment(req, res) {
   // future occurrence in the series.
   let manualPaymentWarning = null;
   let manualPaymentHold = data.paymentHold?.status === "Paid" ? data.paymentHold : null;
+  let manualPaymentApproval = null;
   if (createdNewCount && feeApplies && !paymentMethod) {
     manualPaymentWarning = "The appointment was booked without payment and will remain flagged until its consultation payment is recorded.";
     await notifyMissingAppointmentPayment(req.auth.agencyId, data, req.auth.userId).catch((error) => {
@@ -965,6 +973,19 @@ export async function createBookingAppointment(req, res) {
       if (manualPaymentHold) {
         // A transport retry after the original request succeeded must return
         // the paid appointment, not attempt to charge it a second time.
+      } else if (req.auth.role === "frontdesk") {
+        manualPaymentApproval = await submitPaymentApproval(req.auth.agencyId, {
+          entryType: "appointment_payment",
+          appointmentId: data.id,
+          method: paymentMethod,
+          amount: Number(settings.consultFeeAmount),
+          transactionReference: paymentReference,
+          paymentDate: new Date().toISOString().slice(0, 10),
+          actorUserId: req.auth.userId,
+          sourceRole: req.auth.role,
+          idempotencyKey: `booking-create:${data.id}`,
+        });
+        manualPaymentWarning = "The appointment is booked. The payment is waiting for administrator approval before it is finalized.";
       } else {
       manualPaymentHold = paymentMethod === "ETransfer" && !paymentReference
         ? await createPendingWalkInETransfer(req.auth.agencyId, {
@@ -977,9 +998,10 @@ export async function createBookingAppointment(req, res) {
             transactionReference: paymentReference,
             note: null,
             actorUserId: req.auth.userId,
+            actorRole: req.auth.role,
           });
       }
-      if (manualPaymentHold.status === "PaymentFailed") {
+      if (manualPaymentHold?.status === "PaymentFailed") {
         manualPaymentWarning = "The appointment was booked and the e-transfer is still flagged as pending, but its QuickBooks invoice needs attention.";
       }
     } catch (error) {
@@ -1007,7 +1029,16 @@ export async function createBookingAppointment(req, res) {
           paymentError: manualPaymentHold.paymentError,
         },
       } : {}),
+      ...(manualPaymentApproval ? { paymentApprovals: [{
+        id: manualPaymentApproval.id,
+        status: manualPaymentApproval.status,
+        method: manualPaymentApproval.method,
+        amount: manualPaymentApproval.amount,
+        transactionReference: manualPaymentApproval.transactionReference,
+        processingError: manualPaymentApproval.processingError,
+      }] } : {}),
       manualPaymentWarning,
+      manualPaymentApproval: manualPaymentApproval ? { id: manualPaymentApproval.id, status: manualPaymentApproval.status, method: manualPaymentApproval.method, amount: manualPaymentApproval.amount } : null,
       series: seriesKey ? { key: seriesKey, count: createdAppointments.length, appointments: createdAppointments.map((item) => ({ id: item.id, startsAt: item.startsAt, referenceCode: item.referenceCode })) } : null,
     },
   });
@@ -1151,6 +1182,29 @@ export async function recordWalkInManualPayment(req, res) {
   const method = String(req.body?.method || "");
   const transactionReference = String(req.body?.transactionReference || "").trim().slice(0, 100) || null;
   const note = String(req.body?.note || "").trim().slice(0, 500) || null;
+  if (req.auth.role === "frontdesk") {
+    const approval = await submitPaymentApproval(req.auth.agencyId, {
+      entryType: "appointment_payment",
+      appointmentId: req.params.id,
+      method,
+      transactionReference,
+      paymentDate: req.body?.paymentDate,
+      note,
+      actorUserId: req.auth.userId,
+      sourceRole: req.auth.role,
+      idempotencyKey: req.body?.idempotencyKey || `appointment-payment:${req.params.id}:${method}:${transactionReference || req.body?.paymentDate || "pending"}`,
+    });
+    return res.status(202).json({ data: {
+      id: approval.id,
+      appointmentId: approval.appointmentId,
+      status: "PendingApproval",
+      amount: approval.amount,
+      paymentMethod: approval.method,
+      paymentReference: approval.transactionReference,
+      approvalRequired: true,
+      approval,
+    } });
+  }
   const hold = await recordWalkInManualPaymentService(req.auth.agencyId, {
     appointmentId: req.params.id,
     method,
@@ -1158,6 +1212,7 @@ export async function recordWalkInManualPayment(req, res) {
     paymentDate: req.body?.paymentDate,
     note,
     actorUserId: req.auth.userId,
+    actorRole: req.auth.role,
   });
   res.status(201).json({
     data: {
@@ -1175,12 +1230,26 @@ export async function recordWalkInManualPayment(req, res) {
 }
 
 export async function updatePaidAppointmentPaymentDetails(req, res) {
+  if (req.auth.role === "frontdesk") {
+    const approval = await submitPaymentApproval(req.auth.agencyId, {
+      entryType: "appointment_payment_details",
+      appointmentId: req.params.id,
+      method: req.body?.method,
+      transactionReference: req.body?.transactionReference,
+      paymentDate: req.body?.paymentDate,
+      actorUserId: req.auth.userId,
+      sourceRole: req.auth.role,
+      idempotencyKey: req.body?.idempotencyKey || `appointment-payment-details:${req.params.id}:${req.body?.method}:${req.body?.transactionReference || req.body?.paymentDate || "pending"}`,
+    });
+    return res.status(202).json({ data: { id: approval.id, appointmentId: approval.appointmentId, status: "PendingApproval", amount: approval.amount, paymentMethod: approval.method, paymentReference: approval.transactionReference, approvalRequired: true, approval } });
+  }
   const hold = await updatePaidAppointmentPaymentDetailsService(req.auth.agencyId, {
     appointmentId: req.params.id,
     method: req.body?.method,
     transactionReference: req.body?.transactionReference,
     paymentDate: req.body?.paymentDate,
     actorUserId: req.auth.userId,
+    actorRole: req.auth.role,
   });
   res.json({
     data: {

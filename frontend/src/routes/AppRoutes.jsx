@@ -108,6 +108,14 @@ const LeadsPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadsPage"),
   "leads",
 );
+const OomaCallsPage = lazyWithRetry(
+  () => import("../pages/OomaCallsPage"),
+  "ooma-calls",
+);
+const TeamChatPage = lazyWithRetry(
+  () => import("../pages/TeamChatPage"),
+  "team-chat",
+);
 const LeadDashboardPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadDashboardPage"),
   "lead-dashboard",
@@ -387,6 +395,15 @@ export default function AppRoutes() {
             </Access>
           }
         />
+        <Route
+          path="/calls"
+          element={
+            <Access page="leads">
+              <OomaCallsPage />
+            </Access>
+          }
+        />
+        <Route path="/app/team-chat" element={<TeamChatPage />} />
         <Route
           path="/lead-dashboard"
           element={

@@ -2,7 +2,7 @@ import { createHttpError } from "../../utils/http.js";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { localDateTimeToUtc } from "../../services/bookingAvailabilityService.js";
 import { LEAD_CONSULTATION_OUTCOMES, LEAD_CONSULTATION_STATUSES, LEAD_INITIAL_PAYMENT_STATUSES, LEAD_PRIORITIES, LEAD_QUALIFICATION_OUTCOMES, LEAD_RETAINER_STATUSES, LEAD_STAGES, LEAD_STATUSES, LEAD_TEMPERATURES } from "./lead.constants.js";
-import { CASE_STAGES } from "../../constants/caseStages.js";
+import { CASE_STAGES, isCaseStageAllowedForType } from "../../constants/caseStages.js";
 import { canonicalCaseType } from "../../services/workflowService.js";
 import { isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake } from "../../utils/studyIntake.js";
 
@@ -253,6 +253,13 @@ export function parseLeadConversion(body = {}) {
     actualValue: optionalNumber(body.actualValue, "actualValue", { min: 0, max: 100000000 }),
     notes: text(body.notes, "notes", { max: 5000 }),
   };
+  if (!isCaseStageAllowedForType(conversion.caseType, conversion.caseStage)) {
+    throw createHttpError(
+      400,
+      "caseStage does not apply to the selected case type.",
+      "VALIDATION_ERROR",
+    );
+  }
   if (!isStudyPermitCaseType(conversion.caseType)) conversion.studyIntakeMonth = null;
   if (isStudyPermitCaseType(conversion.caseType) && stageRequiresStudyIntake(conversion.caseStage) && !conversion.studyIntakeMonth) {
     throw createHttpError(400, "studyIntakeMonth is required for a Study Permit case at Documents Pending or later.", "STUDY_INTAKE_REQUIRED");

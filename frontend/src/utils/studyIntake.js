@@ -2,6 +2,8 @@ const CASE_STAGE_ORDER = [
   "Lead",
   "Consultation",
   "Retainer Pending",
+  "Offer Letter Application Submitted",
+  "Offer Letter Received",
   "Documents Pending",
   "Reviewing Documents",
   "Application Preparing",

@@ -3310,7 +3310,7 @@ function ProfileDetailsGrid({
 // (useState) doesn't have to live inside CaseWorkspacePanel, which already
 // returns early for every other tab before this one would ever be reached
 // and can't call hooks conditionally.
-function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreementsTab }) {
+function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreementsTab, onBillingChanged }) {
   const [retainerStatus, setRetainerStatus] = useState(null);
   const [showPaymentsAnyway, setShowPaymentsAnyway] = useState(false);
   const retainerFinalized = retainerStatus?.source === "existing" && retainerStatus.document?.correspondenceStatus === "Finalized";
@@ -3336,7 +3336,7 @@ function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreemen
         <>
           <CasePaymentScheduleWorkspace caseItem={caseItem} />
           <div className="border-t border-slate-100 pt-6">
-            <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} />
+            <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} onBillingChanged={onBillingChanged} />
           </div>
         </>
       ) : (
@@ -3429,6 +3429,7 @@ function CaseWorkspacePanel({
   savingSpouseDetails,
   spouseDetailsError,
   onOpenAgreementsTab,
+  onBillingChanged,
 }) {
   const activeWorkflowSteps = workflowSteps.filter(
     (step) => step.isActive !== false,
@@ -3612,6 +3613,7 @@ function CaseWorkspacePanel({
         paymentSummary={paymentSummary}
         highlightId={highlightId}
         onOpenAgreementsTab={onOpenAgreementsTab}
+        onBillingChanged={onBillingChanged}
       />
     );
   }
@@ -3718,6 +3720,7 @@ export default function CaseWorkspaceTabs({
   onSaveApplicantProfile,
   savingApplicantProfile,
   applicantProfileError,
+  onBillingChanged,
 }) {
   const { role, membership } = useAuth();
   const { acknowledgeDestination } = useNotifications();
@@ -3934,6 +3937,7 @@ export default function CaseWorkspaceTabs({
               savingSpouseDetails={savingSpouseDetails}
               spouseDetailsError={spouseDetailsError}
               onOpenAgreementsTab={() => setActiveTab("AGREEMENTS & LETTERS")}
+              onBillingChanged={onBillingChanged}
             />
           </motion.div>
         </AnimatePresence>

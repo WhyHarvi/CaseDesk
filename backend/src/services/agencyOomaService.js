@@ -106,6 +106,7 @@ export async function agencyOomaConnectionStatus(agencyId) {
   const zapier = storedZapierConfig(settings);
   if (zapier) {
     const smsReady = Boolean(zapier.enabled && zapier.lastTestStatus === "Connected");
+    const callActivityReady = Boolean(settings?.webhookTokenHash && settings?.lastCallWebhookAt);
     return {
       Sms: {
         configured: smsReady,
@@ -114,7 +115,29 @@ export async function agencyOomaConnectionStatus(agencyId) {
       },
       Call: {
         configured: false,
-        detail: "Outbound calling is not configured through Zapier",
+        activityConfigured: Boolean(settings?.webhookTokenHash),
+        activityConnected: callActivityReady,
+        detail: callActivityReady
+          ? `Ooma call activity is syncing through Zapier${zapier.fromNumber ? ` · ${zapier.fromNumber}` : ""}. Calls open in the Windows dialer.`
+          : settings?.webhookTokenHash
+            ? "Call webhook saved; waiting for the first Ooma call event from Zapier"
+            : "Create the inbound Zapier connection to sync calls",
+        source: "Zapier",
+      },
+      secureStorageReady: secretEncryptionReady(),
+    };
+  }
+  if (settings?.webhookTokenHash && !settings?.apiBaseUrl) {
+    const callActivityReady = Boolean(settings.lastCallWebhookAt);
+    return {
+      Sms: { configured: false, detail: "Add the outbound Zapier Catch Hook to send SMS", source: "Zapier" },
+      Call: {
+        configured: false,
+        activityConfigured: true,
+        activityConnected: callActivityReady,
+        detail: callActivityReady
+          ? "Ooma call activity is syncing through Zapier. Calls open in the Windows dialer."
+          : "Call webhook saved; waiting for the first Ooma call event from Zapier",
         source: "Zapier",
       },
       secureStorageReady: secretEncryptionReady(),

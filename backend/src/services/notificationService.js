@@ -1,4 +1,9 @@
 import prisma from "./prisma/client.js";
+import {
+  eligibleNotificationRecipientIds,
+  notificationAudienceKey,
+  NOTIFICATION_AUDIENCES,
+} from "./notificationAccessService.js";
 
 const INTERNAL_CASE_ACTIONS = [
   "case.created",
@@ -85,6 +90,7 @@ function categoryFromAction(action) {
 
 export const SIDEBAR_DESTINATIONS = new Set([
   "leads",
+  "calls",
   "leadIntake",
   "clients",
   "cases",
@@ -100,6 +106,7 @@ export const SIDEBAR_DESTINATIONS = new Set([
   "portalAppointments",
   "portalPayments",
   "portalChat",
+  "teamChat",
 ]);
 
 function notificationPath(actionUrl) {
@@ -126,8 +133,10 @@ export function destinationFromNotification({ destinationKey, actionUrl, categor
     ["/client-portal/appointments", "portalAppointments"],
     ["/client-portal/payments", "portalPayments"],
     ["/client-portal/chat", "portalChat"],
+    ["/team-chat", "teamChat"],
     ["/lead-intake", "leadIntake"],
     ["/leads", "leads"],
+    ["/calls", "calls"],
     ["/app/clients", "clients"],
     ["/app/follow-ups", "followUps"],
     ["/app/calendar", "calendar"],
@@ -259,6 +268,27 @@ export async function schedulingCoordinatorRecipientIds(agencyId) {
   return users.map((item) => item.id);
 }
 
+export async function financialOperationsRecipientIds(agencyId) {
+  const users = await prisma.user.findMany({
+    where: {
+      agencyId,
+      status: "active",
+      memberships: { some: { agencyId, isActive: true } },
+    },
+    select: { id: true },
+  });
+  return eligibleNotificationRecipientIds({
+    agencyId,
+    recipientIds: users.map((item) => item.id),
+    notification: {
+      audienceKey: NOTIFICATION_AUDIENCES.FINANCE,
+      category: "payments",
+      destinationKey: "payments",
+      actionUrl: "/app/payments",
+    },
+  });
+}
+
 export async function frontDeskRecipientIds(agencyId) {
   const users = await prisma.user.findMany({
     where: {
@@ -307,21 +337,44 @@ export async function notifyUsers({
   attentionLevel = null,
   aggregate = false,
   expiresAt = undefined,
+  audienceKey = null,
 }) {
   const uniqueRecipients = [...new Set((recipientIds || []).filter(Boolean))]
     .filter((id) => includeActor || id !== actorUserId);
   if (!uniqueRecipients.length) return [];
 
-  const validUsers = await prisma.user.findMany({
-    where: {
-      id: { in: uniqueRecipients },
-      agencyId,
-      status: "active",
-      memberships: { some: { agencyId, isActive: true } },
-    },
-    select: { id: true },
+  const resolvedDestinationKey = destinationFromNotification({
+    destinationKey,
+    actionUrl,
+    category,
+    type,
   });
-  const validIds = validUsers.map((item) => item.id);
+  const resolvedAudienceKey = notificationAudienceKey({
+    audienceKey,
+    type,
+    category,
+    actionUrl,
+    destinationKey: resolvedDestinationKey,
+    metadata,
+  });
+  const validIds = await eligibleNotificationRecipientIds({
+    agencyId,
+    recipientIds: uniqueRecipients,
+    notification: {
+      audienceKey: resolvedAudienceKey,
+      type,
+      category,
+      actionUrl,
+      destinationKey: resolvedDestinationKey,
+      metadata,
+    },
+  });
+  const storedMetadata = {
+    ...(metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? metadata
+      : {}),
+    notificationAudience: resolvedAudienceKey,
+  };
   const preferences = await preferencesFor(agencyId, validIds, category);
   const created = [];
 
@@ -375,8 +428,8 @@ export async function notifyUsers({
       entityType: clean(entityType, 80) || null,
       entityId: clean(entityId, 120) || null,
       actionUrl: clean(actionUrl, 500) || null,
-      destinationKey: destinationFromNotification({ destinationKey, actionUrl, category, type }),
-      metadata,
+      destinationKey: resolvedDestinationKey,
+      metadata: storedMetadata,
       dedupeKey: clean(dedupeKey, 300),
       attentionLevel: resolvedAttentionLevel,
       lastOccurredAt: occurredAt,
@@ -407,7 +460,7 @@ export async function notifyUsers({
             severity: createData.severity,
             actionUrl: createData.actionUrl,
             destinationKey: createData.destinationKey,
-            metadata,
+            metadata: storedMetadata,
             attentionLevel: resolvedAttentionLevel,
             occurrenceCount: { increment: 1 },
             lastOccurredAt: occurredAt,

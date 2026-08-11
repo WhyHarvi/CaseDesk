@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  ClipboardCheck,
   Copy,
   Loader2,
   Mail,
@@ -118,19 +119,27 @@ const APPOINTMENT_STATUS_TONE = {
 };
 
 function appointmentRequiresPaymentRecord(appointment, settings) {
-  return appointment?.status === "Scheduled"
+  // Attendance and payment are independent states. Completing a consultation
+  // must not make an unpaid fee disappear from the calendar.
+  return ["Scheduled", "Completed"].includes(appointment?.status)
     && !appointment.isFreeConsultation
     && Number(settings?.consultFeeAmount || 0) > 0
     && (!appointment.seriesKey || !appointment.recurrenceIndex || appointment.recurrenceIndex === 1);
 }
 
 function appointmentPaymentAttention(appointment, hold = appointment?.paymentHold, settings = null) {
+  const approval = appointment?.paymentApprovals?.[0];
+  if (["PendingApproval", "ApprovalFailed"].includes(hold?.status)) return hold.status === "ApprovalFailed" ? "Approval processing failed" : "Payment approval pending";
+  if (!hold && approval) return approval.status === "Failed" ? "Approval processing failed" : "Payment approval pending";
   if (!hold) return appointmentRequiresPaymentRecord(appointment, settings) ? "Payment not recorded" : null;
-  if (hold.paymentMethod !== "ETransfer") return null;
+  if (["Voided", "Refunded", "Expired", "Cancelled", "Failed"].includes(hold.status)) return null;
   if (hold.status === "PaymentFailed") return "Payment record failed";
   const reference = hold.manualPaymentReference || hold.paymentReference;
-  if (reference || ["Voided", "Refunded", "Expired", "Cancelled", "Failed"].includes(hold.status)) return null;
-  return hold.status === "Paid" ? "Transaction # missing" : "E-transfer pending";
+  if (hold.status === "Paid") return hold.paymentMethod === "ETransfer" && !reference ? "Transaction # missing" : null;
+  if (hold.status === "Confirming") return "Payment confirmation pending";
+  if (hold.status === "RecordingPayment") return "Payment recording pending";
+  if (hold.status === "AwaitingPayment") return hold.paymentMethod === "ETransfer" ? "E-transfer pending" : "Payment pending";
+  return null;
 }
 
 function startOfWeek(date) {
@@ -473,6 +482,13 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     paymentReference: appointment.paymentHold.manualPaymentReference,
     paymentError: appointment.paymentHold.paymentError,
     invoiceNumber: appointment.paymentHold.qbInvoiceNumber,
+  } : appointment.paymentApprovals?.[0] ? {
+    id: appointment.paymentApprovals[0].id,
+    status: appointment.paymentApprovals[0].status === "Failed" ? "ApprovalFailed" : "PendingApproval",
+    amount: appointment.paymentApprovals[0].amount,
+    paymentMethod: appointment.paymentApprovals[0].method,
+    paymentReference: appointment.paymentApprovals[0].transactionReference,
+    paymentError: appointment.paymentApprovals[0].processingError,
   } : null);
   const [payNowBusy, setPayNowBusy] = useState(false);
   const [payNowError, setPayNowError] = useState("");
@@ -588,7 +604,15 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   useEffect(() => {
     const paymentHold = appointment.paymentHold;
     if (!paymentHold?.id) {
-      setPayNow(null);
+      const approval = appointment.paymentApprovals?.[0];
+      setPayNow(approval ? {
+        id: approval.id,
+        status: approval.status === "Failed" ? "ApprovalFailed" : "PendingApproval",
+        amount: approval.amount,
+        paymentMethod: approval.method,
+        paymentReference: approval.transactionReference,
+        paymentError: approval.processingError,
+      } : null);
       return;
     }
 
@@ -607,7 +631,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     setManualPaymentDate(paymentHold.paidAt ? dateKey(new Date(paymentHold.paidAt)) : dateKey(new Date()));
     setPaidDetailsMethod(paymentHold.paymentMethod || "ETransfer");
     setPaidDetailsOpen(false);
-  }, [appointment.id, appointment.paymentHold]);
+  }, [appointment.id, appointment.paymentHold, appointment.paymentApprovals]);
 
   useEffect(() => {
     if (!payNow?.id || !["AwaitingPayment", "Confirming", "Expired"].includes(payNow.status)) return undefined;
@@ -825,39 +849,44 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
               </div>
             ) : payNow.status === "Confirming" ? (
               <p className="flex items-center gap-2 text-sm font-semibold text-sky-700"><Loader2 className="h-4 w-4 animate-spin" /> Confirming card payment…</p>
+            ) : payNow.status === "RecordingPayment" ? (
+              <p className="flex items-center gap-2 text-sm font-semibold text-sky-700"><Loader2 className="h-4 w-4 animate-spin" /> Recording payment…</p>
+            ) : payNow.status === "PendingApproval" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><ClipboardCheck className="h-3.5 w-3.5" /> Waiting for administrator approval</p><p className="mt-1 text-xs leading-5 text-amber-700">The frontdesk entry has not been marked paid or sent to QuickBooks.</p></div>
+            ) : payNow.status === "ApprovalFailed" ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5"><p className="text-xs font-semibold text-rose-700">Administrator review needs attention</p><p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "The approved payment could not be processed. An administrator can retry it from Payment approvals."}</p></div>
             ) : payNow.status === "PaymentFailed" ? (
               <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
                 <p className="text-xs font-semibold text-rose-700">Payment record needs attention</p>
                 <p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "QuickBooks could not record this payment. Correct the issue and retry below."} The appointment remains scheduled.</p>
               </div>
-            ) : payNow.paymentMethod === "ETransfer" && !payNow.paymentReference ? (
+            ) : payNow.status === "AwaitingPayment" && payNow.paymentMethod === "ETransfer" && !payNow.paymentReference ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> E-transfer payment pending</p>
                 <p className="mt-1 text-xs leading-5 text-amber-700">The appointment is confirmed. Enter the transaction number below after the payment is received; this warning stays active until then.</p>
                 {payNow.invoiceNumber ? <p className="mt-1 text-[11px] text-amber-600">QuickBooks invoice #{payNow.invoiceNumber}</p> : null}
               </div>
-            ) : payNow.status === "AwaitingPayment" && payNow.payNowUrl ? (
-              <>
+            ) : payNow.status === "AwaitingPayment" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                 <p className="text-xs font-semibold text-slate-700">Consultation fee — {Number(payNow.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
-                <p className="mt-1 text-xs text-slate-400">Share this link so the client can pay by card on the spot.</p>
-                <button type="button" onClick={copyPayNowLink} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800">
+                <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-700"><Wallet className="h-3.5 w-3.5" /> Payment pending</p>
+                <p className="mt-1 text-xs text-amber-700">This stays outstanding even after the consultation is marked attended.</p>
+                {payNow.payNowUrl ? <button type="button" onClick={copyPayNowLink} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800">
                   {payNowCopied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />} {payNowCopied ? "Link copied" : "Copy pay-now link"}
-                </button>
-              </>
+                </button> : null}
+              </div>
             ) : ["Expired", "Voided", "Failed"].includes(payNow.status) ? (
               <p className="text-xs leading-5 text-amber-700">The previous payment request is no longer active. The client will not be asked to use that checkout again.</p>
             ) : (
               <p className="text-xs leading-5 text-amber-700">Invoice created in QuickBooks, but online card payment isn't available on this company yet. Collect payment via cash or e-transfer instead.</p>
             )
-          ) : appointment.status === "Scheduled" ? (
+          ) : appointmentRequiresPaymentRecord(appointment, settings) ? (
             <div>
-              {appointmentRequiresPaymentRecord(appointment, settings) ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-                  <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> Payment not recorded</p>
-                  <p className="mt-1 text-xs leading-5 text-amber-700">This appointment is scheduled, but no consultation payment or payment method is recorded. The warning remains until payment is recorded.</p>
-                </div>
-              ) : null}
-              <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className={`${appointmentRequiresPaymentRecord(appointment, settings) ? "mt-3 " : ""}flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50`}>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> Payment not recorded</p>
+                <p className="mt-1 text-xs leading-5 text-amber-700">This consultation {appointment.status === "Completed" ? "was attended" : "is scheduled"}, but no payment or payment method is recorded. The warning remains until payment is recorded.</p>
+              </div>
+              <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className="mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
                 {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
               </button>
             </div>
@@ -865,7 +894,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             <p className="text-xs leading-5 text-slate-500">No consultation payment is recorded. If payment was received previously, record it below to restore the billing history.</p>
           )}
           {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
-          {!["Paid", "Confirming"].includes(payNow?.status) ? (
+          {!["Paid", "Confirming", "PendingApproval", "ApprovalFailed"].includes(payNow?.status) ? (
             <div className="mt-3 border-t border-slate-200/70 pt-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Already paid another way?</p>
               <input
@@ -1731,6 +1760,19 @@ export default function CalendarPage() {
   const handlePaymentUpdated = useCallback((result) => {
     const mergePayment = (item) => {
       if (!item) return item;
+      if (result.approvalRequired || result.status === "PendingApproval") {
+        return {
+          ...item,
+          paymentApprovals: [{
+            id: result.approval?.id || result.id,
+            status: "Pending",
+            method: result.paymentMethod,
+            amount: result.amount,
+            transactionReference: result.paymentReference || null,
+            processingError: null,
+          }],
+        };
+      }
       return {
         ...item,
         paymentHold: {

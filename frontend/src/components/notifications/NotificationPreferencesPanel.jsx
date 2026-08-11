@@ -2,6 +2,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getNotificationPreferences, updateNotificationPreference } from "../../api/notificationApi";
+import { useAuth } from "../../auth/AuthContext";
+import { canAccessPage, hasCapability } from "../../auth/portalAccess";
 import { CATEGORY_META, categoryMeta } from "./notificationMeta";
 
 const CATEGORIES = ["all", "clients", "cases", "leads", "documents", "appointments", "payments", "communications", "work", "questionnaires", "security"];
@@ -60,6 +62,7 @@ function Toggle({ checked, onChange, label }) {
 }
 
 export default function NotificationPreferencesPanel({ compact = false, isClient = false }) {
+  const { role, membership } = useAuth();
   const [preferences, setPreferences] = useState(null);
   const [category, setCategory] = useState("all");
   const [form, setForm] = useState(DEFAULT_PREFERENCE);
@@ -67,6 +70,15 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const permissions = membership?.permissions || {};
+  const canConfigurePayments =
+    isClient ||
+    role === "client" ||
+    (canAccessPage(role, permissions, "payments") &&
+      hasCapability(role, permissions, "financialData"));
+  const availableCategories = canConfigurePayments
+    ? CATEGORIES
+    : CATEGORIES.filter((key) => key !== "payments");
 
   const stored = useMemo(() => {
     const map = new Map((preferences || []).map((preference) => [preference.category, preference]));
@@ -103,6 +115,10 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
     setSaved(false);
     setError("");
   }, [category, stored]);
+
+  useEffect(() => {
+    if (!canConfigurePayments && category === "payments") setCategory("all");
+  }, [canConfigurePayments, category]);
 
   async function save() {
     setSaving(true);
@@ -149,7 +165,7 @@ export default function NotificationPreferencesPanel({ compact = false, isClient
   return (
     <div className={compact ? "space-y-4" : "space-y-5"}>
       <div className="flex flex-wrap gap-1.5">
-        {CATEGORIES.map((key) => {
+        {availableCategories.map((key) => {
           const active = key === category;
           const label = key === "all" ? "All" : CATEGORY_META[key]?.label || key;
           const hasOverride = key !== "all" && stored.has(key);

@@ -21,7 +21,9 @@ import {
 } from "../services/communicationSlaService.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
 import { applyCommunicationAutomations } from "../services/communicationAutomationService.js";
-import { broadcastCaseCommunication } from "../services/supabaseRealtimeService.js";
+import { broadcastCaseCommunication, getRealtimeClientConfig } from "../services/supabaseRealtimeService.js";
+import { DOCUMENT_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
+import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/communicationAttachmentStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 
@@ -712,6 +714,9 @@ export async function portalMessages(req, res) {
       bodyText: true,
       occurredAt: true,
       senderUser: { select: { fullName: true } },
+      attachmentRecords: {
+        select: { id: true, originalFilename: true, mimeType: true, fileSize: true, scanStatus: true, createdAt: true },
+      },
     },
     orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
     take: 200,
@@ -735,6 +740,48 @@ export async function portalMessages(req, res) {
   });
 }
 
+export async function markPortalChatRead(req, res) {
+  const link = await linkedClient(req);
+  const requestedCaseId = clean(req.body.caseId, 80);
+  const generalChat = !requestedCaseId || requestedCaseId === GENERAL_CHAT_ID;
+  const caseItem = generalChat ? null : await linkedCase(req, link.clientId, requestedCaseId);
+  await prisma.communicationConversation.updateMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      clientId: link.clientId,
+      caseId: caseItem?.id || null,
+      channel: "Chat",
+      deletedAt: null,
+    },
+    data: { clientLastReadAt: new Date() },
+  });
+  res.json({ success: true });
+}
+
+// General (pre-case) chat has no case id and therefore no realtime topic —
+// the broadcast/RLS scheme in supabaseRealtimeService.js is case-scoped
+// only (case:{agencyId}:{caseId}), so that surface stays polling-only until
+// a client-scoped topic namespace is worth adding.
+export async function getPortalRealtimeConfig(req, res) {
+  const link = await linkedClient(req);
+  const requestedCaseId = clean(req.query.caseId, 80);
+  const caseItem =
+    requestedCaseId && requestedCaseId !== GENERAL_CHAT_ID
+      ? await linkedCase(req, link.clientId, requestedCaseId)
+      : null;
+  res.json({
+    success: true,
+    data: caseItem
+      ? getRealtimeClientConfig({
+          userId: req.auth.userId,
+          agencyId: req.auth.agencyId,
+          caseId: caseItem.id,
+          role: "client",
+        })
+      : { configured: false },
+  });
+}
+
 export async function createPortalMessage(req, res) {
   const link = await linkedClient(req);
   const requestedCaseId = clean(req.body.caseId, 80);
@@ -743,7 +790,8 @@ export async function createPortalMessage(req, res) {
       ? await linkedCase(req, link.clientId, requestedCaseId)
       : null;
   const bodyText = clean(req.body.bodyText, 5000);
-  if (!bodyText)
+  const hasAttachment = req.body.hasAttachment === true;
+  if (!bodyText && !hasAttachment)
     throw createHttpError(
       400,
       "Write a message before sending.",
@@ -888,7 +936,10 @@ export async function createPortalMessage(req, res) {
     caseItem,
     client: link.client,
   }).catch(() => {});
-  if (caseItem)
+  // An attachment-only message broadcasts once the file finishes
+  // uploading/scanning, not here — otherwise staff see an empty bubble
+  // flash before the image or file appears in it.
+  if (caseItem && !hasAttachment)
     await broadcastCaseCommunication({
       agencyId: req.auth.agencyId,
       caseId: caseItem.id,
@@ -908,6 +959,69 @@ export async function createPortalMessage(req, res) {
     details: `Portal message received from ${link.client.fullName}`,
   });
   res.status(201).json({ success: true, data: result.message });
+}
+
+export async function uploadPortalMessageAttachment(req, res) {
+  if (!req.file)
+    throw createHttpError(400, "Choose a file to attach.", "VALIDATION_ERROR");
+  const link = await linkedClient(req);
+  const message = await prisma.communicationMessage.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.auth.agencyId,
+      clientId: link.clientId,
+      channel: "Chat",
+      deletedAt: null,
+    },
+  });
+  if (!message) throw createHttpError(404, "Message not found.", "NOT_FOUND");
+  // A client can only attach a file to their own just-sent message, within
+  // a short grace window — the normal "pick an image, it uploads a moment
+  // after the message shell is created" flow, not an open-ended edit.
+  const attachAllowed =
+    message.senderUserId === req.auth.userId &&
+    Date.now() - message.createdAt.getTime() < CHAT_ATTACH_GRACE_MS;
+  if (!attachAllowed)
+    throw createHttpError(
+      409,
+      "This message can no longer accept an attachment.",
+      "ATTACHMENT_WINDOW_CLOSED",
+    );
+  const data = await storeCommunicationAttachment({
+    agencyId: req.auth.agencyId,
+    message,
+    file: req.file,
+    uploadedById: req.auth.userId,
+    auditUserId: req.auth.userId,
+  });
+  res.status(201).json({ success: true, data });
+}
+
+export async function servePortalMessageAttachment(req, res) {
+  const link = await linkedClient(req);
+  const data = await prisma.communicationAttachment.findFirst({
+    where: {
+      id: req.params.attachmentId,
+      agencyId: req.auth.agencyId,
+      message: { id: req.params.id, clientId: link.clientId, channel: "Chat", deletedAt: null },
+    },
+  });
+  if (!data) throw createHttpError(404, "Attachment not found.", "NOT_FOUND");
+  if (data.scanStatus === "Rejected")
+    throw createHttpError(
+      409,
+      "This attachment was rejected by the security scanner.",
+      "ATTACHMENT_REJECTED",
+    );
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "Stored attachment file was not found.", "NOT_FOUND");
+  const disposition = req.query.download === "1" ? "attachment" : "inline";
+  res.setHeader(
+    "Content-Disposition",
+    `${disposition}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "attachment")}`,
+  );
+  res.type(data.mimeType || "application/octet-stream");
+  res.send(buffer);
 }
 
 export async function portalProfile(req, res) {

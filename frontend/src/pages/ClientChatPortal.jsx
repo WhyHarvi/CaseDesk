@@ -1,22 +1,23 @@
-import {
-  AlertCircle,
-  CheckCheck,
-  Loader2,
-  LockKeyhole,
-  MessageSquareText,
-  Send,
-} from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { AlertCircle, LockKeyhole, MessageSquareText } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../services/api";
+import ChatThread from "../components/chat/ChatThread";
+import ChatComposer from "../components/chat/ChatComposer";
+import ChatImageLightbox from "../components/chat/ChatImageLightbox";
+import { useCaseRealtimeChat } from "../hooks/useCaseRealtimeChat";
 
-const when = (value) =>
-  new Date(value).toLocaleString("en-CA", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+const RECONCILE_POLL_MS = 45_000;
+const FALLBACK_POLL_MS = 10_000;
+
+function attachmentFileUrl(token, messageId, attachmentId) {
+  // No Authorization header needed here — the token in the path is the
+  // whole auth story for this anonymous, no-login surface, so a plain URL
+  // works directly as an <img src> (unlike the authenticated portal and
+  // staff surfaces, which need a fetched blob to carry a Bearer header).
+  const base = api.defaults.baseURL?.replace(/\/$/, "") || "/api";
+  return `${base}/client-communication/${token}/messages/${messageId}/attachments/${attachmentId}/file`;
+}
 
 export default function ClientChatPortal() {
   const { token } = useParams();
@@ -25,64 +26,52 @@ export default function ClientChatPortal() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const endRef = useRef(null);
+  const [lightbox, setLightbox] = useState(null);
 
-  const load = async ({ silent = false } = {}) => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
       const response = await api.get(`/client-communication/${token}`);
       setData(response.data.data);
       setError("");
     } catch (requestError) {
-      setError(
-        requestError.response?.data?.message ||
-          "Secure chat could not be opened.",
-      );
+      setError(requestError.response?.data?.message || "Secure chat could not be opened.");
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    void load();
   }, [token]);
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [data?.messages?.length]);
-  useEffect(() => {
-    if (!data?.realtime?.configured) {
-      const timer = setInterval(() => void load({ silent: true }), 10_000);
-      return () => clearInterval(timer);
-    }
-    let client;
-    let live;
-    let active = true;
-    import("@supabase/supabase-js")
-      .then(({ createClient }) => {
-        if (!active) return;
-        const config = data.realtime;
-        client = createClient(config.url, config.anonKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
-        });
-        client.realtime.setAuth(config.token);
-        live = client
-          .channel(config.topic, { config: { private: true } })
-          .on(
-            "broadcast",
-            { event: "message" },
-            () => void load({ silent: true }),
-          )
-          .subscribe();
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-      if (client && live) void client.removeChannel(live);
-    };
-  }, [data?.realtime?.token, token]);
 
-  const submit = async (event) => {
-    event.preventDefault();
+  useEffect(() => { void load(); }, [load]);
+
+  const fetchRealtimeConfig = useCallback(
+    () => api.get(`/client-communication/${token}`).then((response) => response.data.data.realtime),
+    [token],
+  );
+  useCaseRealtimeChat({
+    fetchConfig: fetchRealtimeConfig,
+    enabled: Boolean(data?.realtime?.configured),
+    onMessage: () => load({ silent: true }),
+  });
+
+  useEffect(() => {
+    const intervalMs = data?.realtime?.configured ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
+    const timer = setInterval(() => void load({ silent: true }), intervalMs);
+    return () => clearInterval(timer);
+  }, [data?.realtime?.configured, load]);
+
+  useEffect(() => {
+    if (!data || document.visibilityState !== "visible") return;
+    api.post(`/client-communication/${token}/messages/read`).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, data?.messages?.length]);
+
+  const resolveFileUrl = useCallback(
+    (attachment, message) => attachmentFileUrl(token, message.id, attachment.id),
+    [token],
+  );
+
+  async function submit(event) {
+    event?.preventDefault();
     const bodyText = message.trim();
     if (!bodyText) return;
     try {
@@ -95,19 +84,54 @@ export default function ClientChatPortal() {
       setMessage("");
       await load({ silent: true });
     } catch (requestError) {
-      setError(
-        requestError.response?.data?.message ||
-          "Your message could not be sent.",
-      );
+      setError(requestError.response?.data?.message || "Your message could not be sent.");
     } finally {
       setSending(false);
     }
-  };
+  }
+
+  async function attachFile(file) {
+    try {
+      setSending(true);
+      setError("");
+      const created = await api
+        .post(`/client-communication/${token}/messages`, {
+          bodyText: "",
+          hasAttachment: true,
+          clientMessageId: crypto.randomUUID(),
+        })
+        .then((response) => response.data.data);
+      const form = new FormData();
+      form.append("file", file);
+      await api.post(`/client-communication/${token}/messages/${created.id}/attachments`, form, { timeout: 60_000 });
+      await load({ silent: true });
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Your file could not be sent.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function handleAttachmentTap(attachment, message) {
+    const url = attachmentFileUrl(token, message.id, attachment.id);
+    if ((attachment.mimeType || "").startsWith("image/")) {
+      setLightbox({ attachment, url });
+      return;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = `${url}?download=1`;
+    anchor.rel = "noopener noreferrer";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  const messages = useMemo(() => data?.messages || [], [data?.messages]);
 
   if (loading)
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f3f5f8]">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
       </div>
     );
   if (!data)
@@ -131,12 +155,8 @@ export default function ClientChatPortal() {
               <MessageSquareText className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <p className="truncate text-base font-semibold">
-                {data.agency.name}
-              </p>
-              <p className="mt-0.5 truncate text-xs text-slate-500">
-                Secure case chat · {data.case.caseType}
-              </p>
+              <p className="truncate text-base font-semibold">{data.agency.name}</p>
+              <p className="mt-0.5 truncate text-xs text-slate-500">Secure case chat · {data.case.caseType}</p>
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-semibold text-emerald-700">
@@ -149,96 +169,49 @@ export default function ClientChatPortal() {
           record. For emergencies or filing deadlines, call your consultant directly.
         </div>
         {error ? (
-          <p className="mx-4 mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-xs text-rose-700">
-            {error}
-          </p>
+          <p className="mx-4 mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</p>
         ) : null}
-        <div className="scrollbar-hidden min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-4 sm:p-6">
-          {data.messages.length ? (
-            data.messages.map((item) => {
-              const client = item.direction === "Inbound";
-              return (
-                <article
-                  key={item.id}
-                  className={`flex ${client ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[86%] rounded-[1.35rem] px-4 py-3 shadow-sm ${client ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-800"}`}
-                  >
-                    <p className="whitespace-pre-wrap text-sm leading-6">
-                      {item.bodyText}
-                    </p>
-                    <p
-                      className={`mt-2 flex items-center gap-1 text-[9px] ${client ? "text-slate-400" : "text-slate-400"}`}
-                    >
-                      {client
-                        ? "You"
-                        : item.senderUser?.fullName || data.agency.name}{" "}
-                      · {when(item.occurredAt)}
-                      {!client ? <CheckCheck className="h-3 w-3" /> : null}
-                    </p>
-                  </div>
-                </article>
-              );
-            })
-          ) : (
-            <div className="flex h-full min-h-52 flex-col items-center justify-center text-center">
+
+        <ChatThread
+          messages={messages}
+          mineDirection="Inbound"
+          loading={false}
+          className="min-h-0 flex-1 bg-slate-50/60 p-4 sm:p-6"
+          mineBubbleClassName="rounded-br-lg bg-slate-950 text-white"
+          theirBubbleClassName="rounded-bl-lg border border-slate-200 bg-white text-slate-800"
+          attachmentFileUrl={resolveFileUrl}
+          onAttachmentTap={handleAttachmentTap}
+          senderLabelFor={(item) => item.senderUser?.fullName || data.agency.name}
+          emptyState={
+            <>
               <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">
                 <MessageSquareText className="h-5 w-5" />
               </span>
-              <h2 className="mt-4 text-sm font-semibold">
-                Start a secure conversation
-              </h2>
+              <h2 className="mt-4 text-sm font-semibold">Start a secure conversation</h2>
               <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">
-                Ask a case-related question or send an update to your
-                consultant.
+                Ask a case-related question or send an update to your consultant.
               </p>
-            </div>
-          )}
-          <div ref={endRef} />
-        </div>
-        <form
-          onSubmit={submit}
-          className="border-t border-slate-100 bg-white p-4 sm:p-5"
-        >
-          <div className="flex items-end gap-2 rounded-[1.4rem] border border-slate-200 bg-slate-50 p-2 focus-within:border-sky-300 focus-within:ring-4 focus-within:ring-sky-50">
-            <textarea
-              required
-              rows={2}
-              maxLength={5000}
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              className="max-h-36 min-h-12 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 outline-none"
-              placeholder="Write a message…"
-            />
-            <button
-              type="submit"
-              disabled={sending || !message.trim()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white disabled:opacity-40"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </button>
-          </div>
+            </>
+          }
+        />
+
+        <div className="border-t border-slate-100 bg-white p-4 sm:p-5">
+          <ChatComposer
+            value={message}
+            onChange={setMessage}
+            onSend={submit}
+            onAttach={attachFile}
+            sending={sending}
+            placeholder="Write a message…"
+            accentClassName="bg-slate-950"
+          />
           <p className="mt-2 text-center text-[9px] text-slate-400">
             Access expires{" "}
-            {new Date(data.expiresAt).toLocaleDateString("en-CA", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            {new Date(data.expiresAt).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" })}
           </p>
-        </form>
+        </div>
       </section>
+      <ChatImageLightbox attachment={lightbox?.attachment} fileUrl={lightbox?.url} onClose={() => setLightbox(null)} />
     </main>
   );
 }

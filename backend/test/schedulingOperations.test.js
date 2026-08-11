@@ -622,6 +622,9 @@ test("scheduled paid consultations without a payment row remain visible and acti
   assert.match(overview, /description: "Consultation fee · payment not recorded"/);
   assert.match(calendarPage, /function appointmentPaymentAttention/);
   assert.match(calendarPage, /Payment not recorded/);
+  assert.match(calendarPage, /\["Scheduled", "Completed"\]\.includes\(appointment\?\.status\)/);
+  assert.match(calendarPage, /hold\.status === "AwaitingPayment"[\s\S]*"Payment pending"/);
+  assert.match(calendarPage, /isDone && !paymentAttention/);
   assert.match(calendarPage, /item\?\.id === result\.appointmentId/);
   assert.match(paymentsPage, /row\.missingAppointmentPayment/);
   assert.match(paymentsPage, /Payment not recorded/);

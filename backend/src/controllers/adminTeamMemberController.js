@@ -18,6 +18,7 @@ import {
   portalDataKeys,
   portalPageKeys,
 } from "../services/portalAccessService.js";
+import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
 
 const managedRoles = new Set(["consultant", "frontdesk"]);
 const teamMemberSelect = {
@@ -391,6 +392,19 @@ export async function updateTeamMemberPortalAccess(req, res) {
   await prisma.agencyMember.update({
     where: { id: membership.id },
     data: { permissions },
+  });
+  await reconcileNotificationAccessForUser({
+    agencyId: req.auth.agencyId,
+    userId: existing.id,
+    role: membership.role,
+    permissions,
+    force: true,
+  }).catch((error) => {
+    logger.warn("team_member.notification_access_reconcile_failed", {
+      agencyId: req.auth.agencyId,
+      userId: existing.id,
+      reason: error.message,
+    });
   });
   await recordActivity({
     agencyId: req.auth.agencyId,

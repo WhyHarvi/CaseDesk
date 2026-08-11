@@ -17,6 +17,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
 import ManualLedgerPanel from "../ledger/ManualLedgerPanel";
+import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
 const PAYMENT_TYPE_META = {
@@ -346,13 +347,15 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
   );
 }
 
-export default function CaseBillingWorkspace({ caseItem, highlightId }) {
+export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingChanged }) {
   const { role } = useAuth();
   const [invoices, setInvoices] = useState(null);
   const [categories, setCategories] = useState([]);
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [cashSheetOpen, setCashSheetOpen] = useState(false);
   const canManage = ["admin", "consultant"].includes(role);
+  const canRecordCash = ["admin", "consultant", "frontdesk"].includes(role);
 
   async function load() {
     setError("");
@@ -382,6 +385,16 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
     });
   }
 
+  async function handleInvoiceChanged(updated) {
+    patchInvoice(updated);
+    await onBillingChanged?.();
+  }
+
+  async function handleCashSaved() {
+    await load();
+    await onBillingChanged?.();
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
@@ -389,11 +402,10 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
           <h3 className="text-sm font-semibold text-slate-900">Invoices</h3>
           <p className="text-xs text-slate-400">One billing trail across CaseDesk and QuickBooks, including cash and e-transfer receipts.</p>
         </div>
-        {canManage ? (
-          <button type="button" onClick={() => setSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800">
-            <Plus className="h-3.5 w-3.5" /> New invoice
-          </button>
-        ) : null}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {canRecordCash ? <button type="button" onClick={() => setCashSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"><Banknote className="h-3.5 w-3.5" /> Record cash</button> : null}
+          {canManage ? <button type="button" onClick={() => setSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"><Plus className="h-3.5 w-3.5" /> New invoice</button> : null}
+        </div>
       </div>
 
       {error ? (
@@ -415,13 +427,14 @@ export default function CaseBillingWorkspace({ caseItem, highlightId }) {
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {visibleInvoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={patchInvoice} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === activeHighlightId} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === activeHighlightId} />
             ))}
           </AnimatePresence>
         </div>
       )}
 
-      {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={patchInvoice} categories={categories} /> : null}
+      {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={handleInvoiceChanged} categories={categories} /> : null}
+      {canRecordCash && (caseItem.clientId || caseItem.client?.id) ? <ClientManualBillingEntrySheet open={cashSheetOpen} clientId={caseItem.clientId || caseItem.client.id} clientName={caseItem.client?.fullName || "Client"} initialCaseId={caseItem.id} restrictCaseId={caseItem.id} includeAppointments={false} fixedMethod="Cash" onClose={() => setCashSheetOpen(false)} onSaved={handleCashSaved} /> : null}
 
       <div className="mt-8 border-t border-slate-100 pt-6">
         <ManualLedgerPanel caseId={caseItem.id} />

@@ -15,6 +15,8 @@ import {
   Waypoints,
   DatabaseZap,
   Inbox,
+  PhoneCall,
+  MessagesSquare,
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import logo from "../../assets/logo.png";
@@ -69,6 +71,22 @@ const adminNavigation = [
     description: "Inquiry pipeline",
     disabled: false,
     badgeKey: "leads",
+  },
+  {
+    label: "Calls",
+    to: "/calls",
+    icon: PhoneCall,
+    description: "Ooma call inbox",
+    disabled: false,
+    badgeKey: "calls",
+  },
+  {
+    label: "Team Chat",
+    to: "/app/team-chat",
+    icon: MessagesSquare,
+    description: "Message your colleagues",
+    disabled: false,
+    badgeKey: "teamChat",
   },
   {
     label: "Import Review",
@@ -150,6 +168,8 @@ const memberNavigation = [
     accessKey: "dashboard",
   },
   { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads" },
+  { label: "Calls", to: "/calls", icon: PhoneCall, accessKey: "leads", badgeKey: "calls" },
+  { label: "Team Chat", to: "/app/team-chat", icon: MessagesSquare, badgeKey: "teamChat" },
   { label: "Import Review", to: "/leads/review", icon: Inbox, accessKey: "leads", badgeKey: "importReview" },
   {
     label: "Lead Intake",

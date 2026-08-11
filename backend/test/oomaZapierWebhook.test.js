@@ -94,3 +94,40 @@ test("outbound CaseDesk SMS is sent to a separately configured Zapier Catch Hook
   assert.doesNotMatch(panel, /Keep existing|Create new/);
   assert.doesNotMatch(panel, /API key from Ooma|API address from Ooma/);
 });
+
+test("Ooma calls have a durable event ledger, secured staff API, and working call inbox", async () => {
+  const [schema, migration, webhook, service, server, routes, appRoutes, sidebar, page, settings] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260811120000_ooma_call_sessions/migration.sql"),
+    source("../src/controllers/communicationWebhookController.js"),
+    source("../src/services/oomaCallService.js"),
+    source("../src/server.js"),
+    source("../src/routes/oomaCallRoutes.js"),
+    source("../../frontend/src/routes/AppRoutes.jsx"),
+    source("../../frontend/src/components/layout/Sidebar.jsx"),
+    source("../../frontend/src/pages/OomaCallsPage.jsx"),
+    source("../../frontend/src/components/settings/AgencyOomaSettingsPanel.jsx"),
+  ]);
+
+  assert.match(schema, /model OomaCallSession/);
+  assert.match(schema, /model OomaCallEvent/);
+  assert.match(migration, /UNIQUE INDEX "ooma_call_sessions_agency_id_provider_call_id_key"/);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+  assert.match(webhook, /isOomaCallPayload/);
+  assert.match(webhook, /ingestOomaCallEvent/);
+  assert.match(service, /providerEventId/);
+  assert.match(service, /ensureOomaCallbackFollowUp/);
+  assert.match(server, /"\/api\/ooma-calls"/);
+  assert.match(server, /requirePortalPage\("leads"\)/);
+  assert.match(routes, /\/create-lead/);
+  assert.match(routes, /\/link-client/);
+  assert.match(routes, /\/outcome/);
+  assert.match(appRoutes, /path="\/calls"/);
+  assert.match(sidebar, /label: "Calls"/);
+  assert.match(page, /Create a lead from this caller/);
+  assert.match(page, /href={`tel:/);
+  assert.match(settings, /New Incoming Call/);
+  assert.match(settings, /call_started/);
+  assert.match(settings, /Call Ended/);
+  assert.match(settings, /call_ended/);
+});

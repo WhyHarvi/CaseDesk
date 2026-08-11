@@ -18,12 +18,13 @@ import {
 } from "./quickbooksService.js";
 import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
 import { captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
-import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import { financialOperationsRecipientIds, notifyUsers, resolveNotifications } from "./notificationService.js";
 import { paymentHoldMeetingFields } from "./bookingMeetingModeService.js";
 import { paymentHoldDeliverySummary, queuePaymentHoldMessages, sendBookingMessages } from "./bookingNotificationService.js";
 import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import { requireFeeCategory } from "./feeCategoryService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
+import { createApprovedCashLedgerRecord } from "./paymentApprovalLedgerService.js";
 
 // Standalone resolver, deliberately not layered onto caseInvoiceService.js's
 // requireMappedItem/PAYMENT_TYPES — those are also consumed by payment
@@ -545,7 +546,7 @@ function missingAppointmentPaymentWhere(agencyIds = null) {
 
 export async function notifyMissingAppointmentPayment(agencyId, appointment, actorUserId = null) {
   if (!appointment?.id) return [];
-  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
   if (!recipientIds.length) return [];
   const clientName = appointment.client?.fullName || appointment.guestName || "A client";
   const updatedAt = new Date(appointment.updatedAt || appointment.createdAt || Date.now()).toISOString();
@@ -556,6 +557,7 @@ export async function notifyMissingAppointmentPayment(agencyId, appointment, act
     includeActor: true,
     type: MISSING_APPOINTMENT_PAYMENT_NOTIFICATION_TYPE,
     category: "payments",
+    audienceKey: "finance",
     title: "Consultation payment not recorded",
     body: `${clientName}'s appointment is scheduled, but no consultation payment or payment method is recorded. Open the appointment and record the payment.`,
     severity: "warning",
@@ -647,7 +649,7 @@ export async function reconcileMissingAppointmentPaymentAlerts() {
 }
 
 async function notifyPendingETransfer(agencyId, appointment, hold, actorUserId) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
   if (!recipientIds.length) return;
   const hasReference = Boolean(hold.manualPaymentReference);
   await notifyUsers({
@@ -657,6 +659,7 @@ async function notifyPendingETransfer(agencyId, appointment, hold, actorUserId) 
     includeActor: true,
     type: PENDING_ETRANSFER_NOTIFICATION_TYPE,
     category: "payments",
+    audienceKey: "finance",
     title: hasReference ? "E-transfer could not be recorded" : "E-transfer needs attention",
     body: hasReference
       ? `${hold.guestName}'s appointment is booked, but the ${Number(hold.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} e-transfer could not be recorded in QuickBooks. Open the appointment, correct the issue, and retry.`
@@ -843,7 +846,9 @@ export async function recordWalkInManualPayment(agencyId, {
   paymentDate,
   note,
   actorUserId,
+  actorRole = "admin",
   overrideFreeConsultation = false,
+  approvalId = null,
 }) {
   if (!["Cash", "ETransfer"].includes(method)) {
     throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
@@ -980,6 +985,55 @@ export async function recordWalkInManualPayment(agencyId, {
     logger.warn("booking_payment_hold.missing_payment_resolution_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
   });
   invalidateDashboardCache(agencyId);
+
+  // Cash is intentionally a CaseDesk-only payment. It never creates a
+  // QuickBooks Payment or payment method. The booking hold remains the
+  // appointment's paid snapshot, while PaymentApproval is the audit ledger.
+  if (method === "Cash") {
+    hold = await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: {
+        status: "Paid",
+        paidAt: transactionDate?.paidAt || new Date(),
+        paymentMethod: "Cash",
+        manualPaymentReference: paymentReference,
+        manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
+        paymentError: null,
+        qbPaymentId: null,
+        clientId: appointment.clientId || hold.clientId,
+      },
+    });
+    if (!approvalId) {
+      await createApprovedCashLedgerRecord({
+        agencyId,
+        clientId: appointment.clientId,
+        caseId: appointment.caseId,
+        appointmentId: appointment.id,
+        entryType: "appointment_payment",
+        amount,
+        description: appointment.subject || "Consultation payment",
+        transactionReference: paymentReference,
+        paymentDate: paymentDate || new Date().toISOString().slice(0, 10),
+        note,
+        actorUserId,
+        sourceRole: actorRole,
+        idempotencyKey: `appointment-cash:${appointment.id}`,
+      });
+    }
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: appointment.clientId,
+      caseId: appointment.caseId,
+      action: "invoice.manual_payment_recorded",
+      details: `Consultation cash payment ($${Number(amount).toFixed(2)}) recorded in CaseDesk only for ${hold.guestName}${note ? ` — ${note}` : ""}`,
+      entityType: "bookingPaymentHold",
+      entityId: hold.id,
+      metadata: { method: "Cash", quickBooksStored: false, approvalId },
+    }).catch(() => {});
+    invalidateDashboardCache(agencyId);
+    return hold;
+  }
 
   try {
     const itemId = await requireConsultFeeItem(agencyId);
@@ -1124,6 +1178,8 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
   transactionReference,
   paymentDate,
   actorUserId,
+  actorRole = "admin",
+  approvalId = null,
 }) {
   if (!["Cash", "ETransfer"].includes(method)) {
     throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
@@ -1155,6 +1211,48 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
     if (bookingDuplicate || invoiceDuplicate) {
       throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
     }
+  }
+
+  if (method === "Cash") {
+    if (hold.qbPaymentId) {
+      throw createHttpError(409, "This payment already exists in QuickBooks and cannot be reclassified as CaseDesk-only cash.", "QBO_PAYMENT_ALREADY_EXISTS");
+    }
+    const updated = await prisma.bookingPaymentHold.update({
+      where: { id: hold.id },
+      data: {
+        paymentMethod: "Cash",
+        manualPaymentReference: paymentReference,
+        ...(transactionDate ? { paidAt: transactionDate.paidAt } : {}),
+      },
+    });
+    if (!approvalId) {
+      await createApprovedCashLedgerRecord({
+        agencyId,
+        clientId: appointment.clientId,
+        caseId: appointment.caseId,
+        appointmentId,
+        entryType: "appointment_payment_details",
+        amount: Number(hold.amount),
+        description: appointment.subject || "Consultation payment",
+        transactionReference: paymentReference,
+        paymentDate: paymentDate || new Date().toISOString().slice(0, 10),
+        actorUserId,
+        sourceRole: actorRole,
+        idempotencyKey: `appointment-cash:${appointmentId}`,
+      });
+    }
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: appointment.clientId,
+      caseId: appointment.caseId,
+      action: "invoice.manual_payment_details_updated",
+      details: `CaseDesk-only cash details updated for ${appointment.subject}`,
+      entityType: "bookingPaymentHold",
+      entityId: hold.id,
+      metadata: { method: "Cash", quickBooksStored: false, approvalId },
+    });
+    return updated;
   }
 
   const qbPaymentId = hold.qbPaymentId || await findQuickBooksPaymentIdForInvoice(agencyId, hold.qbCustomerId, hold.qbInvoiceId);
@@ -1404,13 +1502,14 @@ export async function recoverStuckConfirmingHolds() {
 }
 
 async function notifyExpiredHold(hold) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  const recipientIds = await financialOperationsRecipientIds(hold.agencyId);
   if (!recipientIds.length) return;
   await notifyUsers({
     agencyId: hold.agencyId,
     recipientIds,
     type: "booking_payment.expired",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: "Consultation payment not completed",
     body: `${hold.guestName} did not finish paying for their ${new Date(hold.startsAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })} consultation ($${Number(hold.amount).toFixed(2)}) — the hold expired and the slot has been released.`,
     severity: "warning",
@@ -1528,13 +1627,14 @@ const BALANCE_MISMATCH_WINDOW_DAYS = 30;
 let balanceMismatchTimer = null;
 
 async function notifyBalanceMismatch(hold, invoice) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  const recipientIds = await financialOperationsRecipientIds(hold.agencyId);
   if (!recipientIds.length) return;
   await notifyUsers({
     agencyId: hold.agencyId,
     recipientIds,
     type: "booking_payment.balance_mismatch",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: "A paid consultation no longer shows as paid in QuickBooks",
     body: `${hold.guestName}'s $${Number(hold.amount).toFixed(2)} consultation payment shows as collected in CaseDesk, but ${invoice ? `the QuickBooks invoice now has a balance of $${Number(invoice.balance).toFixed(2)}` : "its QuickBooks invoice no longer exists"}. This usually means the payment was deleted in QuickBooks rather than refunded — check and refund or re-collect as appropriate.`,
     severity: "critical",
@@ -1552,6 +1652,10 @@ export async function detectPaidHoldBalanceMismatches() {
     where: {
       status: "Paid",
       qbInvoiceId: { not: null },
+      // Approved cash is deliberately local-only. An older checkout invoice
+      // may still exist, but its balance is not evidence that the CaseDesk
+      // cash record was reversed.
+      OR: [{ paymentMethod: { not: "Cash" } }, { qbPaymentId: { not: null } }],
       paidAt: { gte: new Date(Date.now() - BALANCE_MISMATCH_WINDOW_DAYS * 86_400_000) },
     },
     take: 100,

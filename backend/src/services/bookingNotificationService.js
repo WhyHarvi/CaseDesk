@@ -5,9 +5,10 @@ import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailServic
 import { sendAgencyOomaSms } from "./agencyOomaService.js";
 import {
   adminRecipientIds,
-  frontDeskRecipientIds,
+  financialOperationsRecipientIds,
   notifyUsers,
   resolveNotifications,
+  schedulingCoordinatorRecipientIds,
 } from "./notificationService.js";
 import { releaseExpiredWaitlistHolds } from "./bookingWaitlistService.js";
 import { publicBookingManageUrl, publicBookingPageUrl } from "./bookingPublicLinkService.js";
@@ -464,6 +465,10 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
   if (!channel || channel === "staff") try {
     // Attendance is recorded in the appointment history. It is not an alert.
     if (kind === "attended") return { suppressed: true };
+    // The payment-request email/SMS goes to the client. It is not useful as
+    // an internal alert, and previously exposed payment activity to every
+    // front-desk user through the generic scheduling recipient group.
+    if (kind === "payment_requested") return { suppressed: true };
     if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
     const paidHold = kind === "cancelled"
       ? await prisma.bookingPaymentHold.findFirst({
@@ -471,12 +476,9 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
         select: { id: true, amount: true, qbInvoiceId: true },
       })
       : null;
-    const operationalIds = await frontDeskRecipientIds(agencyId);
+    const operationalIds = await schedulingCoordinatorRecipientIds(agencyId);
     const recipients = new Set(operationalIds);
     if (appointment.assignedToId) recipients.add(appointment.assignedToId);
-    if (!recipients.size) {
-      (await adminRecipientIds(agencyId)).forEach((id) => recipients.add(id));
-    }
     if (actorUserId) recipients.delete(actorUserId);
     if (recipients.size) {
       await notifyUsers({
@@ -485,10 +487,11 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
         actorUserId,
         type: `appointment.${kind}`,
         category: "appointments",
-        title: paidHold ? `Paid appointment cancelled — review refund: ${appointment.subject}` : `${copy.title}: ${appointment.subject}`,
-        body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when} · ${meetingModeLabel(appointmentMeetingMode(appointment))}${appointment.location && appointmentMeetingMode(appointment) === MEETING_MODES.IN_PERSON ? ` · ${appointment.location}` : ""}${paidHold ? ` · $${Number(paidHold.amount).toFixed(2)} was paid${paidHold.qbInvoiceId ? ` on QuickBooks invoice ${paidHold.qbInvoiceId}` : ""}. Review the cancellation terms and issue a QuickBooks refund when required.` : ""}`,
+        audienceKey: "scheduling",
+        title: `${copy.title}: ${appointment.subject}`,
+        body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when} · ${meetingModeLabel(appointmentMeetingMode(appointment))}${appointment.location && appointmentMeetingMode(appointment) === MEETING_MODES.IN_PERSON ? ` · ${appointment.location}` : ""}`,
         severity: ["cancelled", "no_show"].includes(kind) ? "warning" : "info",
-        attentionLevel: paidHold || kind === "no_show" ? "action_required" : "update",
+        attentionLevel: kind === "no_show" ? "action_required" : "update",
         entityType: "appointment",
         entityId: appointment.id,
         actionUrl: `/app/calendar?appointment=${encodeURIComponent(appointment.id)}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}`,
@@ -497,11 +500,36 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
           startsAt: new Date(appointment.startsAt).toISOString(),
           assignedToId: appointment.assignedToId || null,
           kind,
-          paidCancellationReview: Boolean(paidHold),
-          paymentHoldId: paidHold?.id || null,
-          qbInvoiceId: paidHold?.qbInvoiceId || null,
         },
         dedupeKey: `appointment:${appointment.id}:${kind}:${deliveryId || `${new Date(appointment.startsAt).toISOString()}:${dedupeSuffix || "base"}`}:staff`,
+        includeActor: false,
+      });
+    }
+    if (paidHold) {
+      await notifyUsers({
+        agencyId,
+        recipientIds: await financialOperationsRecipientIds(agencyId),
+        actorUserId,
+        type: "booking_payment.refund_review_required",
+        category: "payments",
+        audienceKey: "finance",
+        title: `Paid appointment cancelled — review refund: ${appointment.subject}`,
+        body: `${contact.name === "there" ? "A visitor" : contact.name} · ${when} · $${Number(paidHold.amount).toFixed(2)} was paid${paidHold.qbInvoiceId ? ` on QuickBooks invoice ${paidHold.qbInvoiceId}` : ""}. Review the cancellation terms and issue a QuickBooks refund when required.`,
+        severity: "warning",
+        attentionLevel: "action_required",
+        entityType: "bookingPaymentHold",
+        entityId: paidHold.id,
+        actionUrl: `/app/payments?source=booking_payment&hold=${encodeURIComponent(paidHold.id)}`,
+        metadata: {
+          appointmentId: appointment.id,
+          startsAt: new Date(appointment.startsAt).toISOString(),
+          assignedToId: appointment.assignedToId || null,
+          kind,
+          paidCancellationReview: true,
+          paymentHoldId: paidHold.id,
+          qbInvoiceId: paidHold.qbInvoiceId || null,
+        },
+        dedupeKey: `appointment:${appointment.id}:cancelled:${deliveryId || `${new Date(appointment.startsAt).toISOString()}:${dedupeSuffix || "base"}`}:refund-review`,
         includeActor: false,
       });
     }

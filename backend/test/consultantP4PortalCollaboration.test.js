@@ -79,7 +79,7 @@ test("staff can answer portal chats from the client-profile side curtain", async
   assert.match(controller, /if \(!conversation && channel === "Chat"\)/);
   assert.match(drawer, /New portal message/);
   assert.match(drawer, /Start a portal conversation/);
-  assert.match(drawer, /Send first portal message/);
+  assert.match(drawer, /onSend=\{sendFirstMessage\}/);
   assert.match(drawer, /clientId,/);
   assert.match(drawer, /caseId: targetCaseId \|\| undefined/);
   assert.match(drawer, /portalAudience: true/);
@@ -145,18 +145,24 @@ test("portal UI provides file exchange and messaging through the current modular
 });
 
 test("mobile portal chat controls use an input-safe font size", async () => {
-  const [chat, legacyChat] = await Promise.all([
+  // The textarea used to be duplicated per chat surface; it's now the one
+  // shared ChatComposer, so checking it once covers all three surfaces —
+  // confirmed below by checking each page actually renders it.
+  const [composerSource, chat, legacyChat, drawer] = await Promise.all([
+    source("../../frontend/src/components/chat/ChatComposer.jsx"),
     source("../../frontend/src/pages/client-portal/ClientPortalChat.jsx"),
     source("../../frontend/src/pages/ClientChatPortal.jsx"),
+    source("../../frontend/src/components/clients/ClientCommunicationCard.jsx"),
   ]);
-  const composer = chat.slice(chat.indexOf("<textarea"), chat.indexOf("/>", chat.indexOf("<textarea")));
+  const composer = composerSource.slice(composerSource.indexOf("<textarea"), composerSource.indexOf("/>", composerSource.indexOf("<textarea")));
   const caseSelector = chat.slice(chat.indexOf("<select"), chat.indexOf("</select>"));
-  const legacyComposer = legacyChat.slice(legacyChat.indexOf("<textarea"), legacyChat.indexOf("/>", legacyChat.indexOf("<textarea")));
 
   assert.match(composer, /text-base/);
   assert.match(caseSelector, /text-base/);
-  assert.match(legacyComposer, /text-base/);
-  assert.doesNotMatch(`${composer}${caseSelector}${legacyComposer}`, /text-xs|text-sm|text-\[(?:1[0-5])px\]/);
+  assert.doesNotMatch(`${composer}${caseSelector}`, /text-xs|text-sm|text-\[(?:1[0-5])px\]/);
+  assert.match(chat, /<ChatComposer/);
+  assert.match(legacyChat, /<ChatComposer/);
+  assert.match(drawer, /<ChatComposer/);
 });
 
 test("case E-Sign centre reuses the portal agreement lifecycle without manual signing bypasses", async () => {

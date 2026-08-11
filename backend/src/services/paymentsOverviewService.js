@@ -1,4 +1,5 @@
 import prisma from "./prisma/client.js";
+import { applyLocalCashToInvoice } from "./paymentApprovalLedgerService.js";
 import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 import { listFeeCategories } from "./feeCategoryService.js";
@@ -215,12 +216,17 @@ export function netCollectedAmount(row) {
 async function fetchCaseInvoiceRows(agencyId, { from, to }) {
   const [rows, categories] = await Promise.all([prisma.caseInvoice.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
-    include: { client: { select: { fullName: true, email: true } }, case: { select: { caseType: true } } },
+    include: {
+      client: { select: { fullName: true, email: true } },
+      case: { select: { caseType: true } },
+      paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+    },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
   }), listFeeCategories(agencyId, { includeInactive: true })]);
   const labels = new Map(categories.map((category) => [category.code, category.name]));
-  return rows.map((row) => {
+  return rows.map((rawRow) => {
+    const row = applyLocalCashToInvoice(rawRow);
     const status = normalizeCaseInvoiceStatus(row.status);
     return {
       id: `case_invoice:${row.id}`,

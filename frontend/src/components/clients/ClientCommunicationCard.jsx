@@ -1,19 +1,25 @@
 import {
   ArrowLeft,
-  CheckCheck,
   Loader2,
   MessageCircle,
   MessagesSquare,
   Search,
-  SendHorizonal,
   ShieldCheck,
   SquarePen,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
+import ChatThread from "../chat/ChatThread";
+import ChatComposer from "../chat/ChatComposer";
+import ChatImageLightbox from "../chat/ChatImageLightbox";
+import { useCaseRealtimeChat } from "../../hooks/useCaseRealtimeChat";
+import { useChatAttachmentUrls } from "../../hooks/useChatAttachmentUrls";
+
+const RECONCILE_POLL_MS = 45_000; // realtime connected — this is just a safety net
+const FALLBACK_POLL_MS = 10_000; // realtime not configured (e.g. general chat)
 
 const formatTime = (value) =>
   new Intl.DateTimeFormat("en-CA", {
@@ -29,19 +35,6 @@ const formatThreadTime = (value) => {
   return new Intl.DateTimeFormat("en-CA", {
     month: "short",
     day: "numeric",
-  }).format(date);
-};
-
-const dayLabel = (value) => {
-  const date = new Date(value);
-  const today = new Date();
-  const yesterday = new Date(Date.now() - 86_400_000);
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return new Intl.DateTimeFormat("en-CA", {
-    month: "short",
-    day: "numeric",
-    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
   }).format(date);
 };
 
@@ -90,34 +83,6 @@ function ConversationRow({ conversation, active, onClick }) {
   );
 }
 
-function MessageBubble({ message }) {
-  const inbound = message.direction === "Inbound";
-  return (
-    <div className={`flex ${inbound ? "justify-start" : "justify-end"}`}>
-      <article
-        className={`relative max-w-[84%] rounded-2xl px-3.5 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.12)] ${
-          inbound
-            ? "rounded-tl-md bg-white text-slate-800"
-            : "rounded-tr-md bg-[#d9fdd3] text-slate-900"
-        }`}
-      >
-        {!inbound && message.senderUser?.fullName ? (
-          <p className="mb-0.5 text-[10px] font-semibold text-emerald-700">
-            {message.senderUser.fullName}
-          </p>
-        ) : null}
-        <p className="whitespace-pre-wrap break-words pr-12 text-[14px] leading-5">
-          {message.bodyText}
-        </p>
-        <span className="absolute bottom-1.5 right-2.5 inline-flex items-center gap-0.5 text-[9px] text-slate-400">
-          {formatTime(message.occurredAt)}
-          {!inbound ? <CheckCheck className="h-3 w-3 text-sky-500" /> : null}
-        </span>
-      </article>
-    </div>
-  );
-}
-
 export default function ClientCommunicationCard({
   clientId,
   clientName,
@@ -141,7 +106,8 @@ export default function ClientCommunicationCard({
   const [threadLoading, setThreadLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const scrollRef = useRef(null);
+  const [realtime, setRealtime] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
 
   const loadConversations = useCallback(async ({ silent = false } = {}) => {
     if (!open) return;
@@ -200,30 +166,45 @@ export default function ClientCommunicationCard({
     if (selectedId && open) void loadConversation(selectedId);
   }, [selectedId, open, loadConversation]);
 
+  // General (pre-case) chat has no realtime topic — configured stays false
+  // there and this quietly falls back to polling.
+  useEffect(() => {
+    if (!conversation?.caseId) { setRealtime(null); return; }
+    api
+      .get(`/communications/realtime/case/${conversation.caseId}`)
+      .then((response) => setRealtime(response.data.data))
+      .catch(() => setRealtime(null));
+  }, [conversation?.caseId]);
+
+  const fetchRealtimeConfig = useCallback(() => {
+    if (!conversation?.caseId) return Promise.resolve({ configured: false });
+    return api.get(`/communications/realtime/case/${conversation.caseId}`).then((response) => response.data.data);
+  }, [conversation?.caseId]);
+
+  useCaseRealtimeChat({
+    fetchConfig: fetchRealtimeConfig,
+    enabled: Boolean(realtime?.configured),
+    onMessage: () => {
+      if (selectedId) void loadConversation(selectedId, { silent: true });
+      void loadConversations({ silent: true });
+    },
+  });
+
   useEffect(() => {
     if (!open) return undefined;
+    const intervalMs = realtime?.configured ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
     const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void loadConversations({ silent: true });
       if (selectedId) void loadConversation(selectedId, { silent: true });
-    }, 10_000);
+    }, intervalMs);
     return () => clearInterval(timer);
-  }, [open, selectedId, loadConversations, loadConversation]);
+  }, [open, selectedId, realtime?.configured, loadConversations, loadConversation]);
 
-  const messages = useMemo(
+  const thread = useMemo(
     () => [...(conversation?.messages || [])].reverse(),
     [conversation],
   );
-  const groups = useMemo(() => {
-    const result = [];
-    messages.forEach((message) => {
-      const label = dayLabel(message.occurredAt);
-      const last = result[result.length - 1];
-      if (last?.label === label) last.messages.push(message);
-      else result.push({ label, messages: [message] });
-    });
-    return result;
-  }, [messages]);
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return conversations;
@@ -244,14 +225,17 @@ export default function ClientCommunicationCard({
           ? "The client's portal account is not ready for chat."
           : "";
 
+  const fetchAttachmentBlob = useCallback(
+    (messageId, attachmentId) =>
+      api.get(`/communications/messages/${messageId}/attachments/${attachmentId}/file`, { responseType: "blob" }).then((response) => response.data),
+    [],
+  );
+  const attachmentFileUrl = useChatAttachmentUrls(thread, fetchAttachmentBlob);
+
   function managePortal() {
     onClose?.();
     onManagePortalAccess?.();
   }
-
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, selectedId]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -265,8 +249,7 @@ export default function ClientCommunicationCard({
     };
   }, [open, onClose]);
 
-  async function send(event) {
-    event.preventDefault();
+  async function send() {
     const bodyText = draft.trim();
     if (!bodyText || !conversation || sending || permissions.canUseChat === false || !portalReady) return;
     setSending(true);
@@ -277,7 +260,7 @@ export default function ClientCommunicationCard({
         {
           conversationId: conversation.id,
           caseId: conversation.caseId || undefined,
-          parentMessageId: messages[messages.length - 1]?.id || undefined,
+          parentMessageId: thread[thread.length - 1]?.id || undefined,
           channel: "Chat",
           direction: "Outbound",
           recipients: [],
@@ -301,8 +284,7 @@ export default function ClientCommunicationCard({
     }
   }
 
-  async function sendFirstMessage(event) {
-    event.preventDefault();
+  async function sendFirstMessage() {
     const bodyText = draft.trim();
     if (!bodyText || sending || permissions.canUseChat === false || !portalReady) return;
     setSending(true);
@@ -335,6 +317,102 @@ export default function ClientCommunicationCard({
     } finally {
       setSending(false);
     }
+  }
+
+  async function attachFile(file) {
+    if (!conversation || sending || permissions.canUseChat === false || !portalReady) return;
+    setSending(true);
+    setError("");
+    try {
+      const created = await api
+        .post(
+          "/communications/messages",
+          {
+            conversationId: conversation.id,
+            caseId: conversation.caseId || undefined,
+            parentMessageId: thread[thread.length - 1]?.id || undefined,
+            channel: "Chat",
+            direction: "Outbound",
+            recipients: [],
+            bodyText: "",
+            hasAttachment: true,
+            occurredAt: new Date().toISOString(),
+            sendNow: true,
+            idempotencyKey: crypto.randomUUID(),
+            portalAudience: true,
+          },
+          { timeout: 30_000 },
+        )
+        .then((response) => response.data.data);
+      const form = new FormData();
+      form.append("file", file);
+      await api.post(`/communications/messages/${created.id}/attachments`, form, { timeout: 60_000 });
+      await Promise.all([
+        loadConversation(conversation.id, { silent: true }),
+        loadConversations({ silent: true }),
+      ]);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Your file could not be sent.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function attachFirstFile(file) {
+    if (sending || permissions.canUseChat === false || !portalReady) return;
+    setSending(true);
+    setError("");
+    try {
+      const created = await api
+        .post(
+          "/communications/messages",
+          {
+            clientId,
+            caseId: targetCaseId || undefined,
+            channel: "Chat",
+            direction: "Outbound",
+            recipients: [],
+            subject: targetCaseId ? "Client portal messages" : "General client inquiry",
+            bodyText: "",
+            hasAttachment: true,
+            occurredAt: new Date().toISOString(),
+            sendNow: true,
+            idempotencyKey: crypto.randomUUID(),
+            portalAudience: true,
+          },
+          { timeout: 30_000 },
+        )
+        .then((response) => response.data.data);
+      const form = new FormData();
+      form.append("file", file);
+      await api.post(`/communications/messages/${created.id}/attachments`, form, { timeout: 60_000 });
+      setComposing(false);
+      await loadConversations({ silent: true });
+      setSelectedId(created.conversationId);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Your file could not be sent.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleAttachmentTap(attachment, message) {
+    const isImage = (attachment.mimeType || "").startsWith("image/");
+    if (isImage) {
+      const url = attachmentFileUrl(attachment) || URL.createObjectURL(await fetchAttachmentBlob(message.id, attachment.id));
+      setLightbox({ attachment, url });
+      return;
+    }
+    const blob = await fetchAttachmentBlob(message.id, attachment.id).catch(() => null);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = attachment.originalFilename || "document";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   if (!open || typeof document === "undefined") return null;
@@ -389,30 +467,15 @@ export default function ClientCommunicationCard({
                 ) : permissions.canUseChat === false ? (
                   <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">Your administrator has disabled chat replies for your account.</p>
                 ) : (
-                  <form onSubmit={sendFirstMessage} className="flex items-end gap-2">
-                    <textarea
-                      autoFocus
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          sendFirstMessage(event);
-                        }
-                      }}
-                      onInput={(event) => {
-                        event.currentTarget.style.height = "auto";
-                        event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 128)}px`;
-                      }}
-                      rows={1}
-                      maxLength={5000}
-                      placeholder="Type a message"
-                      className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-5 text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
-                    />
-                    <button type="submit" disabled={!draft.trim() || sending} className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-[0_10px_24px_rgba(5,150,105,0.28)] transition hover:bg-emerald-700 active:scale-90 disabled:opacity-40" aria-label="Send first portal message">
-                      {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <SendHorizonal className="h-5 w-5" />}
-                    </button>
-                  </form>
+                  <ChatComposer
+                    value={draft}
+                    onChange={setDraft}
+                    onSend={sendFirstMessage}
+                    onAttach={attachFirstFile}
+                    sending={sending}
+                    placeholder="Type a message"
+                    accentClassName="bg-emerald-600"
+                  />
                 )}
               </footer>
             </>
@@ -434,25 +497,24 @@ export default function ClientCommunicationCard({
                 </button>
               </header>
 
-              <main ref={scrollRef} className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.38)_0_1px,transparent_1.5px)] bg-[length:18px_18px] px-4 py-5">
-                {threadLoading ? (
-                  <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
-                ) : !messages.length ? (
-                  <div className="flex h-full flex-col items-center justify-center text-center">
+              <ChatThread
+                messages={thread}
+                mineDirection="Outbound"
+                loading={threadLoading}
+                className="min-h-0 flex-1 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.38)_0_1px,transparent_1.5px)] bg-[length:18px_18px] px-4 py-5"
+                mineBubbleClassName="rounded-br-lg bg-[#d9fdd3] text-slate-900"
+                theirBubbleClassName="rounded-bl-lg bg-white text-slate-800"
+                attachmentFileUrl={attachmentFileUrl}
+                onAttachmentTap={handleAttachmentTap}
+                clientLastReadAt={conversation?.clientLastReadAt}
+                mineSenderLabelFor={(message) => message.senderUser?.fullName}
+                emptyState={
+                  <>
                     <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/80 text-emerald-600 shadow-sm"><MessageCircle className="h-6 w-6" /></span>
                     <h3 className="mt-4 text-sm font-semibold text-slate-800">No messages in this chat</h3>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {groups.map((group) => (
-                      <section key={group.label} className="space-y-2">
-                        <div className="flex justify-center"><span className="rounded-lg bg-white/80 px-3 py-1 text-[10px] font-semibold text-slate-500 shadow-sm">{group.label}</span></div>
-                        {group.messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-                      </section>
-                    ))}
-                  </div>
-                )}
-              </main>
+                  </>
+                }
+              />
 
               <footer className="shrink-0 border-t border-white/60 bg-white/90 px-3 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur-xl">
                 {error ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
@@ -464,29 +526,15 @@ export default function ClientCommunicationCard({
                 ) : permissions.canUseChat === false ? (
                   <p className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">Your administrator has disabled chat replies for your account.</p>
                 ) : (
-                  <form onSubmit={send} className="flex items-end gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          send(event);
-                        }
-                      }}
-                      onInput={(event) => {
-                        event.currentTarget.style.height = "auto";
-                        event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 128)}px`;
-                      }}
-                      rows={1}
-                      maxLength={5000}
-                      placeholder="Type a reply"
-                      className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-5 text-slate-900 outline-none transition focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
-                    />
-                    <button type="submit" disabled={!draft.trim() || sending} className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-[0_10px_24px_rgba(5,150,105,0.28)] transition hover:bg-emerald-700 active:scale-90 disabled:opacity-40" aria-label="Send reply">
-                      {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <SendHorizonal className="h-5 w-5" />}
-                    </button>
-                  </form>
+                  <ChatComposer
+                    value={draft}
+                    onChange={setDraft}
+                    onSend={send}
+                    onAttach={attachFile}
+                    sending={sending}
+                    placeholder="Type a reply"
+                    accentClassName="bg-emerald-600"
+                  />
                 )}
               </footer>
             </>

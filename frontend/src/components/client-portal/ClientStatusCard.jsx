@@ -5,6 +5,8 @@ const STAGE_LABELS = {
   Lead: "Getting started",
   Consultation: "Consultation",
   "Retainer Pending": "Agreement pending",
+  "Offer Letter Application Submitted": "School application submitted",
+  "Offer Letter Received": "Offer letter received",
   "Documents Pending": "Documents needed",
   "Reviewing Documents": "Reviewing documents",
   "Application Preparing": "Preparing application",

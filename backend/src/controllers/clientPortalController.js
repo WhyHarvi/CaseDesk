@@ -5,7 +5,7 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
-import { getClientInvoicePdf } from "../services/caseInvoiceService.js";
+import { getClientInvoicePdf, listClientInvoices } from "../services/caseInvoiceService.js";
 import { getCaseSchedule, releaseInstallmentsHeldByRetainer } from "../services/paymentScheduleService.js";
 import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
@@ -28,6 +28,8 @@ const STAGE_PROGRESS = {
   Lead: 5,
   Consultation: 15,
   "Retainer Pending": 25,
+  "Offer Letter Application Submitted": 30,
+  "Offer Letter Received": 35,
   "Documents Pending": 40,
   "Reviewing Documents": 60,
   "Application Preparing": 75,
@@ -533,10 +535,7 @@ export async function getPortalPayments(req, res) {
   ]);
   const currency = agency?.defaultCurrency || "CAD";
   const [invoices, schedule, ledger] = await Promise.all([
-    prisma.caseInvoice.findMany({
-      where: { agencyId: req.auth.agencyId, clientId: link.clientId },
-      orderBy: { createdAt: "desc" },
-    }),
+    listClientInvoices(req.auth.agencyId, link.clientId),
     caseItem ? getCaseSchedule(req.auth.agencyId, caseItem.id).catch(() => null) : null,
     buildClientBillingLedger({
       agencyId: req.auth.agencyId,

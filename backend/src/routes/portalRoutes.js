@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createPortalMessage, portalActions, portalApplications, portalAppointments, portalDocuments, portalMe, portalMessages, portalProfile, servePortalDocument, uploadPortalDocument } from "../controllers/portalController.js";
+import { createPortalMessage, getPortalRealtimeConfig, markPortalChatRead, portalActions, portalApplications, portalAppointments, portalDocuments, portalMe, portalMessages, portalProfile, servePortalDocument, servePortalMessageAttachment, uploadPortalDocument, uploadPortalMessageAttachment } from "../controllers/portalController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
@@ -14,6 +14,10 @@ router.get("/documents/:id/file", asyncHandler(servePortalDocument));
 router.get("/appointments", asyncHandler(portalAppointments));
 router.get("/actions", asyncHandler(portalActions));
 router.get("/messages", asyncHandler(portalMessages));
+router.get("/messages/realtime", asyncHandler(getPortalRealtimeConfig));
 router.post("/messages", rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createPortalMessage));
+router.post("/messages/:id/attachments", rateLimit({ windowMs: 60_000, max: 10 }), receiveDocumentFile, asyncHandler(uploadPortalMessageAttachment));
+router.get("/messages/:id/attachments/:attachmentId/file", asyncHandler(servePortalMessageAttachment));
+router.post("/messages/read", asyncHandler(markPortalChatRead));
 router.get("/profile", asyncHandler(portalProfile));
 export default router;

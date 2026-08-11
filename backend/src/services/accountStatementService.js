@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import prisma from "./prisma/client.js";
+import { applyLocalCashToInvoice } from "./paymentApprovalLedgerService.js";
 import { logger } from "./logger.js";
 import {
   listQuickBooksInvoicesForCustomer,
@@ -379,7 +380,10 @@ export async function buildClientBillingLedger({
     }),
     includeModernSources ? prisma.caseInvoice.findMany({
       where: { agencyId, clientId: client.id, ...(caseId ? { caseId } : {}), ...(to ? { createdAt: { lte: to } } : {}) },
-      include: { case: { select: { caseType: true } } },
+      include: {
+        case: { select: { caseType: true } },
+        paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+      },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }) : [],
     includeModernSources ? prisma.bookingPaymentHold.findMany({
@@ -418,7 +422,7 @@ export async function buildClientBillingLedger({
   }
 
   const ledger = buildUnifiedClientLedger(
-    { legacyPayments, caseInvoices, bookingPayments, quickBooksInvoices, quickBooksPayments, quickBooksRefunds },
+    { legacyPayments, caseInvoices: caseInvoices.map(applyLocalCashToInvoice), bookingPayments, quickBooksInvoices, quickBooksPayments, quickBooksRefunds },
     { from, to, caseReferences, includeUnmatchedQuickBooks: !caseId && refreshQuickBooks },
   );
   return {

@@ -43,6 +43,44 @@ function replaceInstallmentScheduleRows(html, installmentRows, totalLabel) {
   return `${html.slice(0, tbodyContentStart)}${rowsHtml}${totalRowHtml}${html.slice(tbodyCloseIndex)}`;
 }
 
+function replaceRetainerFeeRowValue(html, labelPattern, value) {
+  const pattern = new RegExp(`(<tr><td>${labelPattern}<\\/td><td>).*?(<\\/td><\\/tr>)`, "i");
+  return html.replace(pattern, (_match, prefix, suffix) => `${prefix}${escapeHtml(value)}${suffix}`);
+}
+
+// When a draft that already contained schedule-generated numbers is synced
+// after a discount changes, placeholder-only merging is not enough: the
+// former tax and total are no longer placeholders. Refresh only the known
+// schedule-owned rows in the fee table. Administrative and courier rows
+// remain untouched because they are consultant-entered values.
+function syncRetainerFeeBreakdown(html, scheduleContext) {
+  const headingIndex = html.indexOf("Payment Schedule</h2>");
+  const splitAt = headingIndex === -1 ? html.length : headingIndex;
+  let feeSection = html.slice(0, splitAt);
+  const suffix = html.slice(splitAt);
+  feeSection = replaceRetainerFeeRowValue(feeSection, "Professional Fees", scheduleContext.values["agreement.professionalFees"]);
+  feeSection = replaceRetainerFeeRowValue(feeSection, "Government Fees \\(Biometrics, Permits, etc\\.\\)", scheduleContext.values["agreement.governmentFees"]);
+  feeSection = replaceRetainerFeeRowValue(feeSection, "Applicable Taxes \\(professional fees\\)", scheduleContext.values["agreement.taxes"]);
+  feeSection = feeSection.replace(
+    /(<tr><td><strong>Total<\/strong><\/td><td><strong>).*?(<\/strong><\/td><\/tr>)/i,
+    (_match, prefix, suffix) => `${prefix}${escapeHtml(scheduleContext.values["agreement.totalFees"])}${suffix}`,
+  );
+
+  const discountRowPattern = /<tr><td>Discount<\/td><td>.*?<\/td><\/tr>/i;
+  if (scheduleContext.hasDiscount) {
+    const discountRow = `<tr><td>Discount</td><td>-${escapeHtml(scheduleContext.discountLabel)}</td></tr>`;
+    if (discountRowPattern.test(feeSection)) feeSection = feeSection.replace(discountRowPattern, discountRow);
+    else {
+      const professionalRow = /(<tr><td>Professional Fees<\/td><td>.*?<\/td><\/tr>)/i;
+      if (professionalRow.test(feeSection)) feeSection = feeSection.replace(professionalRow, (_match, row) => `${row}${discountRow}`);
+      else feeSection += `<p><strong>Discount:</strong> -${escapeHtml(scheduleContext.discountLabel)}</p>`;
+    }
+  } else {
+    feeSection = feeSection.replace(discountRowPattern, "");
+  }
+  return `${feeSection}${suffix}`;
+}
+
 // Applies a case's payment schedule to a retainer's content: fills in
 // whichever fee-breakdown fields (professional/government fees, tax,
 // total) are still showing their blank placeholder, and rebuilds the
@@ -52,10 +90,11 @@ function replaceInstallmentScheduleRows(html, installmentRows, totalLabel) {
 // X]"; the installment table is the one part that's always rebuilt
 // wholesale, since representing a different number of installments means
 // the row count itself has to change.
-function applyScheduleToRetainerHtml(html, scheduleContext) {
+export function applyScheduleToRetainerHtml(html, scheduleContext) {
   if (!scheduleContext) return html;
   const { html: withFees } = applyResolvedMergeValues(html, scheduleContext.values);
-  return replaceInstallmentScheduleRows(withFees, scheduleContext.installmentRows, scheduleContext.totalLabel);
+  const withDiscount = syncRetainerFeeBreakdown(withFees, scheduleContext);
+  return replaceInstallmentScheduleRows(withDiscount, scheduleContext.installmentRows, scheduleContext.totalLabel);
 }
 
 async function scopedCase(req, caseId) {
@@ -163,6 +202,7 @@ export async function createCaseBillingRetainerDraft(req, res) {
         caseId: caseItem.id,
         signingDate: req.body.signingDate,
         installments: req.body.installments,
+        discountAmount: req.body.discountAmount,
         actorUserId: req.user.id,
       });
     } catch (error) {

@@ -18,6 +18,7 @@ import {
   Wallet,
   X,
   Trash2,
+  ClipboardCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -26,9 +27,13 @@ import {
   getConsultationRefundReview,
   getPaymentsOverview,
   getPaymentsOverviewSummary,
+  getPaymentApprovals,
+  approvePaymentApproval,
+  rejectPaymentApproval,
 } from "../api/paymentsOverviewApi";
 import api from "../services/api";
 import { leadName } from "../modules/leads/leadPresentation";
+import { useAuth } from "../auth/AuthContext";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
 const moneyWhole = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
@@ -829,16 +834,99 @@ function ImportReviewLedgerSection() {
   );
 }
 
+function approvalTarget(item) {
+  if (item.appointment) return `${item.appointment.subject || "Consultation"} · ${new Date(item.appointment.startsAt).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+  if (item.caseInvoice) return `${item.caseInvoice.qbInvoiceNumber ? `Invoice #${item.caseInvoice.qbInvoiceNumber} · ` : ""}${item.caseInvoice.description}`;
+  if (item.case) return `${item.case.caseType} · ${item.description || "New charge"}`;
+  return item.description || "Payment";
+}
+
+function PaymentApprovalDrawer({ item, busy, error, onClose, onApprove, onReject }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  if (!item) return null;
+  const canReview = ["Pending", "Failed"].includes(item.status);
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[500] flex justify-end bg-slate-950/25 backdrop-blur-[3px]" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      <motion.aside initial={{ x: 70, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 70, opacity: 0 }} transition={spring} className="flex h-full w-full max-w-[520px] flex-col overflow-hidden border-l border-white/70 bg-[#f8fafc]/95 shadow-[-30px_0_90px_rgba(15,23,42,0.22)] backdrop-blur-2xl">
+        <header className="flex items-center justify-between border-b border-white bg-white/80 px-6 py-4">
+          <div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white"><ClipboardCheck className="h-4 w-4" /></span><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Payment review</p><h2 className="truncate text-lg font-semibold text-slate-950">{item.client?.fullName || item.appointment?.guestName || "Unlinked client"}</h2></div></div>
+          <button type="button" onClick={onClose} disabled={busy} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"><X className="h-5 w-5" /></button>
+        </header>
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold text-slate-500">Amount reported</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{money.format(Number(item.amount))}</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" ? "bg-rose-50 text-rose-700" : item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></div>
+            <div className="mt-5 grid grid-cols-2 gap-3 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Method</p><p className="mt-1 font-semibold text-slate-800">{item.method === "ETransfer" ? "E-transfer" : "Cash"}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Payment date</p><p className="mt-1 font-semibold text-slate-800">{formatDate(item.paymentDate)}</p></div></div>
+            <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Apply to</p><p className="mt-1 text-sm font-semibold text-slate-800">{approvalTarget(item)}</p></div>
+            {item.transactionReference ? <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Transaction / receipt</p><p className="mt-1 text-sm font-semibold text-slate-800">{item.transactionReference}</p></div> : null}
+            {item.note ? <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Frontdesk note</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.note}</p></div> : null}
+          </section>
+          <section className={`rounded-[1.5rem] border p-4 ${item.method === "Cash" ? "border-violet-200 bg-violet-50" : "border-sky-200 bg-sky-50"}`}>
+            <p className={`text-sm font-semibold ${item.method === "Cash" ? "text-violet-900" : "text-sky-900"}`}>{item.method === "Cash" ? "CaseDesk-only cash record" : "QuickBooks posting after approval"}</p>
+            <p className={`mt-1 text-xs leading-5 ${item.method === "Cash" ? "text-violet-700" : "text-sky-700"}`}>{item.method === "Cash" ? "Approving marks this payment received in CaseDesk. No cash payment is created in QuickBooks." : "Approving validates the entry, then creates the linked QuickBooks payment. A provider failure leaves it in Failed so it can be retried safely."}</p>
+          </section>
+          <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs text-slate-400">Submitted by</p><p className="mt-1 text-sm font-semibold text-slate-800">{item.submittedBy?.fullName || "Staff member"} · {item.sourceRole}</p><p className="mt-1 text-xs text-slate-400">{new Date(item.createdAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}</p>{item.processingError ? <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-xs leading-5 text-rose-700">{item.processingError}</p> : null}{item.rejectionReason ? <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-xs leading-5 text-rose-700"><strong>Rejected:</strong> {item.rejectionReason}</p> : null}</section>
+          {rejecting && canReview ? <section className="rounded-[1.5rem] border border-rose-200 bg-rose-50 p-4"><label className="text-xs font-semibold text-rose-900">Why is this being returned?<textarea autoFocus value={reason} onChange={(event) => setReason(event.target.value)} rows="4" maxLength="500" className="mt-2 w-full resize-none rounded-2xl border border-rose-200 bg-white px-3.5 py-3 text-sm text-slate-800 outline-none focus:ring-4 focus:ring-rose-100" placeholder="Explain what the frontdesk should correct" /></label><div className="mt-3 flex gap-2"><button type="button" onClick={() => setRejecting(false)} className="h-10 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Keep reviewing</button><button type="button" disabled={busy || !reason.trim()} onClick={() => onReject(reason)} className="h-10 flex-1 rounded-full bg-rose-600 text-xs font-semibold text-white disabled:opacity-40">Reject payment</button></div></section> : null}
+          {error ? <p className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700">{error}</p> : null}
+        </div>
+        {canReview && !rejecting ? <footer className="grid grid-cols-2 gap-2 border-t border-white bg-white/85 p-4"><button type="button" disabled={busy} onClick={() => setRejecting(true)} className="h-12 rounded-full border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-40">Reject</button><button type="button" disabled={busy} onClick={onApprove} className="flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Approve</button></footer> : null}
+      </motion.aside>
+    </motion.div>
+  );
+}
+
+function PaymentApprovalsSection({ selectedId, onSelected, onChanged }) {
+  const [status, setStatus] = useState("Pending");
+  const [data, setData] = useState({ rows: [], total: 0, pendingCount: 0 });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await getPaymentApprovals({ status, pageSize: 100 });
+      if (selectedId && !result.rows.some((item) => item.id === selectedId)) {
+        const all = await getPaymentApprovals({ status: "all", pageSize: 100 });
+        const selected = all.rows.find((item) => item.id === selectedId);
+        setData(selected ? { ...result, rows: [selected, ...result.rows] } : result);
+      } else setData(result);
+    } catch (reason) { setError(reason.response?.data?.message || "Payment approvals could not be loaded."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [status, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const selected = data.rows.find((item) => item.id === selectedId) || null;
+  async function act(kind, reason) {
+    setBusy(true); setError("");
+    try { kind === "approve" ? await approvePaymentApproval(selected.id) : await rejectPaymentApproval(selected.id, reason); onSelected(""); await load(); onChanged?.(); }
+    catch (failure) { setError(failure.response?.data?.message || `Payment could not be ${kind === "approve" ? "approved" : "rejected"}.`); }
+    finally { setBusy(false); }
+  }
+  return <>
+    <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className={cx(glass, "overflow-hidden p-5 sm:p-6")}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-violet-600" /><h2 className="text-xl font-semibold text-slate-950">Payment approvals</h2>{data.pendingCount ? <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold text-white">{data.pendingCount}</span> : null}</div><p className="mt-1 text-sm text-slate-500">Review money reported by frontdesk before it changes financial records.</p></div><div className="flex rounded-2xl bg-slate-100 p-1">{["Pending", "Approved", "Rejected", "Failed"].map((value) => <button key={value} type="button" onClick={() => setStatus(value)} className={`h-9 rounded-xl px-3 text-xs font-semibold transition ${status === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{value}</button>)}</div></div>
+      <div className="mt-5 overflow-hidden rounded-[1.3rem] border border-slate-200/70 bg-white/65">
+        {loading ? <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : error && !data.rows.length ? <p className="p-8 text-center text-sm text-rose-600">{error}</p> : data.rows.length ? <div className="divide-y divide-slate-100">{data.rows.map((item) => <button key={item.id} type="button" onClick={() => onSelected(item.id)} className="grid w-full gap-3 px-4 py-4 text-left transition hover:bg-sky-50/50 sm:grid-cols-[1.1fr_1.4fr_auto_auto] sm:items-center"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client?.fullName || item.appointment?.guestName || "Unlinked client"}</p><p className="mt-0.5 truncate text-xs text-slate-400">{item.submittedBy?.fullName || "Frontdesk"}</p></div><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{approvalTarget(item)}</p><p className="mt-0.5 text-xs text-slate-400">{formatDate(item.paymentDate)}</p></div><div><p className="text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(item.amount))}</p><p className={`mt-0.5 text-[10px] font-semibold ${item.method === "Cash" ? "text-violet-600" : "text-sky-600"}`}>{item.method === "Cash" ? "Cash · CaseDesk only" : "E-transfer · QuickBooks"}</p></div><span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" || item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></button>)}</div> : <div className="px-6 py-14 text-center"><ClipboardCheck className="mx-auto h-6 w-6 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-700">No {status.toLowerCase()} payments</p><p className="mt-1 text-xs text-slate-400">Frontdesk submissions will appear here.</p></div>}
+      </div>
+    </motion.section>
+    <AnimatePresence>{selected ? <PaymentApprovalDrawer item={selected} busy={busy} error={error} onClose={() => onSelected("")} onApprove={() => act("approve")} onReject={(reason) => act("reject", reason)} /> : null}</AnimatePresence>
+  </>;
+}
+
 export default function Payments() {
+  const { role } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedHoldId = searchParams.get("hold") || "";
   const selectedRefundId = searchParams.get("refund") || "";
-  const view = searchParams.get("view") === "import-review" ? "import-review" : "payments";
+  const selectedApprovalId = searchParams.get("approval") || "";
+  const requestedView = searchParams.get("view");
+  const view = requestedView === "import-review" ? "import-review" : requestedView === "approvals" && role === "admin" ? "approvals" : "payments";
   const setView = (nextView) => {
     const next = new URLSearchParams(searchParams);
-    if (nextView === "import-review") next.set("view", "import-review");
+    if (["import-review", "approvals"].includes(nextView)) next.set("view", nextView);
     else next.delete("view");
+    if (nextView !== "approvals") next.delete("approval");
     setSearchParams(next);
   };
   const [summary, setSummary] = useState(null);
@@ -890,6 +978,14 @@ export default function Payments() {
     setSearchParams(next, { replace: true });
   }
 
+  function selectApproval(id) {
+    const next = new URLSearchParams(searchParams);
+    next.set("view", "approvals");
+    if (id) next.set("approval", id);
+    else next.delete("approval");
+    setSearchParams(next, { replace: true });
+  }
+
   const monthDelta = useMemo(() => {
     if (!summary) return null;
     if (!summary.paidLastMonth) return summary.paidThisMonth > 0 ? "First collections this month" : null;
@@ -900,7 +996,7 @@ export default function Payments() {
   return (
     <main className="min-w-0 bg-[radial-gradient(circle_at_12%_-4%,rgba(56,130,246,0.10),transparent_36%),radial-gradient(circle_at_92%_16%,rgba(139,92,246,0.08),transparent_38%)] px-3 py-4 sm:px-5 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1680px] min-w-0 flex-col gap-5">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "overflow-hidden p-5 sm:p-7 lg:p-8")}>
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "relative z-30 overflow-visible p-5 sm:p-7 lg:p-8")}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Payments</h1>
@@ -911,7 +1007,11 @@ export default function Payments() {
             <FilterDropdown
               value={view}
               onChange={setView}
-              options={[{ value: "payments", label: "Payments" }, { value: "import-review", label: "Import review ledger" }]}
+              options={[
+                { value: "payments", label: "Payments" },
+                ...(role === "admin" ? [{ value: "approvals", label: "Payment approvals" }] : []),
+                { value: "import-review", label: "Import review ledger" },
+              ]}
               placeholder="Payments"
             />
           </div>
@@ -1160,6 +1260,8 @@ export default function Payments() {
           ) : null}
         </motion.section>
         </>
+        ) : view === "approvals" ? (
+          <PaymentApprovalsSection selectedId={selectedApprovalId} onSelected={selectApproval} onChanged={() => setRefreshKey((value) => value + 1)} />
         ) : (
           <ImportReviewLedgerSection />
         )}

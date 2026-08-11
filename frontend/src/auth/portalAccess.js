@@ -48,11 +48,16 @@ export function defaultPortalAccess(role) {
       pages: {
         ...all(portalPageKeys, false),
         leads: true,
+        clients: true,
+        cases: true,
         calendar: true,
         caseEasyImport: true,
       },
-      caseTabs: all(portalCaseTabKeys, false),
-      data: { leads: "all", clients: "none", cases: "none" },
+      caseTabs: {
+        ...all(portalCaseTabKeys, false),
+        profile: true,
+      },
+      data: { leads: "all", clients: "all", cases: "all" },
       capabilities: all(portalCapabilityKeys, false),
     };
   return {

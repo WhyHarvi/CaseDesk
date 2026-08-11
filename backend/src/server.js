@@ -68,6 +68,8 @@ import {
 } from "./services/appointmentNoShowService.js";
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
+import internalChatRoutes from "./routes/internalChatRoutes.js";
+import oomaCallRoutes from "./routes/oomaCallRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import accountSettingsRoutes from "./routes/accountSettingsRoutes.js";
@@ -228,6 +230,13 @@ app.use(
   leadUser,
   requireAnyPortalPage("leads", "leadIntake"),
   leadRoutes,
+);
+app.use(
+  "/api/ooma-calls",
+  requireAuth,
+  leadUser,
+  requirePortalPage("leads"),
+  oomaCallRoutes,
 );
 app.use(
   "/api/clients",
@@ -406,6 +415,7 @@ app.use(
   requirePortalArea({ caseTabs: ["communication"] }),
   communicationRoutes,
 );
+app.use("/api/internal-chat", requireAuth, staffUser, internalChatRoutes);
 app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);
 
 app.use(notFoundHandler);

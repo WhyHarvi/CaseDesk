@@ -18,3 +18,19 @@ export async function getConsultationRefundReview(refundReceiptId) {
   );
   return response.data.data;
 }
+
+export async function getPaymentApprovals(params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  const response = await api.get(`/payments-overview/approvals${query.size ? `?${query.toString()}` : ""}`, { cache: false });
+  return response.data.data;
+}
+
+export async function approvePaymentApproval(id) {
+  const response = await api.post(`/payments-overview/approvals/${encodeURIComponent(id)}/approve`);
+  return response.data.data;
+}
+
+export async function rejectPaymentApproval(id, reason) {
+  const response = await api.post(`/payments-overview/approvals/${encodeURIComponent(id)}/reject`, { reason });
+  return response.data.data;
+}

@@ -34,6 +34,8 @@ const NO_CACHE_PATHS = [
   "/public/",
   "/client-communication/",
   "/communications/",
+  "/internal-chat/",
+  "/ooma-calls",
 ];
 
 function pathOnly(url) {
@@ -76,6 +78,7 @@ const RELATED_PATHS = {
   "written-documents": ["documents", "client-documents", "written-documents", "cases", "clients", "dashboard", "workload"],
   payments: ["payments", "cases", "clients", "dashboard"],
   leads: ["leads", "dashboard", "workload", "clients", "cases"],
+  "ooma-calls": ["ooma-calls", "leads", "clients", "communications", "follow-ups", "dashboard", "workload"],
   settings: ["settings", "booking", "staff", "team"],
 };
 

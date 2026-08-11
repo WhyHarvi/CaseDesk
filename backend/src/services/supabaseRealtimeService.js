@@ -11,31 +11,38 @@ export function communicationTopic(agencyId, caseId) {
   return `case:${agencyId}:${caseId}`;
 }
 
-export function createRealtimeToken({ userId, agencyId, caseId, role }) {
+// Internal (staff-to-staff) chat threads use a separate "thread:" topic
+// namespace and JWT claim from case chat's "case:" one — see the
+// casedesk_internal_chat_read/write RLS policies — so an internal-chat
+// token can never be replayed against a case topic or vice versa.
+export function internalThreadTopic(agencyId, threadId) {
+  return `thread:${agencyId}:${threadId}`;
+}
+
+export function createRealtimeToken({ userId, agencyId, caseId, threadId, role }) {
   const secret = value("SUPABASE_REALTIME_JWT_SECRET");
   if (!secret) return null;
   const now = Math.floor(Date.now() / 1000);
   const header = base64url({ alg: "HS256", typ: "JWT" });
-  const payload = base64url({ sub: userId, role: "authenticated", app_role: role, agency_id: agencyId, case_id: caseId, aud: "authenticated", iat: now, exp: now + 15 * 60 });
+  const payload = base64url({ sub: userId, role: "authenticated", app_role: role, agency_id: agencyId, case_id: caseId, thread_id: threadId, aud: "authenticated", iat: now, exp: now + 15 * 60 });
   const unsigned = `${header}.${payload}`;
   const signature = createHmac("sha256", secret).update(unsigned).digest("base64url");
   return `${unsigned}.${signature}`;
 }
 
-export function getRealtimeClientConfig({ userId, agencyId, caseId, role }) {
+export function getRealtimeClientConfig({ userId, agencyId, caseId, threadId, role }) {
   if (!supabaseRealtimeReady()) return { configured: false };
   return {
     configured: true,
     url: value("SUPABASE_URL"),
     anonKey: value("SUPABASE_ANON_KEY"),
-    token: createRealtimeToken({ userId, agencyId, caseId, role }),
-    topic: communicationTopic(agencyId, caseId),
+    token: createRealtimeToken({ userId, agencyId, caseId, threadId, role }),
+    topic: threadId ? internalThreadTopic(agencyId, threadId) : communicationTopic(agencyId, caseId),
   };
 }
 
-export async function broadcastCaseCommunication({ agencyId, caseId, event = "message", payload }) {
+async function broadcast(topic, event, payload) {
   if (!supabaseRealtimeReady()) return { delivered: false, reason: "Realtime is not configured" };
-  const topic = communicationTopic(agencyId, caseId);
   const url = new URL(`/realtime/v1/api/broadcast/${encodeURIComponent(topic)}/events/${encodeURIComponent(event)}`, value("SUPABASE_URL"));
   url.searchParams.set("private", "true");
   const key = value("SUPABASE_SERVICE_ROLE_KEY");
@@ -47,5 +54,13 @@ export async function broadcastCaseCommunication({ agencyId, caseId, event = "me
   });
   if (!response.ok) throw new Error(`Supabase Realtime broadcast failed (${response.status})`);
   return { delivered: true };
+}
+
+export async function broadcastCaseCommunication({ agencyId, caseId, event = "message", payload }) {
+  return broadcast(communicationTopic(agencyId, caseId), event, payload);
+}
+
+export async function broadcastInternalChatMessage({ agencyId, threadId, event = "message", payload }) {
+  return broadcast(internalThreadTopic(agencyId, threadId), event, payload);
 }
 

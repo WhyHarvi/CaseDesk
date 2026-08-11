@@ -32,6 +32,7 @@ export async function createCashPayment(req, res) {
     amount: req.body?.amount,
     note: req.body?.note,
     actorUserId: req.auth.userId,
+    actorRole: req.auth.role,
   });
   res.json({ data });
 }
@@ -47,6 +48,7 @@ export async function createManualPayment(req, res) {
     note: req.body?.note,
     idempotencyKey: req.body?.idempotencyKey,
     actorUserId: req.auth.userId,
+    actorRole: req.auth.role,
   });
   res.json({ data });
 }

@@ -26,20 +26,10 @@ import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
 import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
 import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
 import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
+import { CASE_STAGES, caseStagesForType } from "../constants/caseStages";
 
 const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
-const STAGE_OPTIONS = [
-  "Lead",
-  "Consultation",
-  "Retainer Pending",
-  "Documents Pending",
-  "Reviewing Documents",
-  "Application Preparing",
-  "Submitted",
-  "Decision Received",
-  "Closed",
-];
 const STATUS_OPTIONS = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 const PRIORITY_OPTIONS = ["Low", "Normal", "High", "Urgent"];
 const REGISTER_VIEWS = [
@@ -118,6 +108,8 @@ function getDefaultNextAction(stage) {
     Lead: "Call client",
     Consultation: "Prepare application",
     "Retainer Pending": "Send payment reminder",
+    "Offer Letter Application Submitted": "Track the school application",
+    "Offer Letter Received": "Review the offer letter and confirm the intake",
     "Documents Pending": "Review documents",
     "Reviewing Documents": "Review documents",
     "Application Preparing": "Submit application",
@@ -134,6 +126,10 @@ function getStageStyles(stage) {
     Lead: "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
     Consultation: "bg-sky-100 text-sky-700 ring-1 ring-sky-200",
     "Retainer Pending": "bg-amber-100 text-amber-700 ring-1 ring-amber-200",
+    "Offer Letter Application Submitted":
+      "bg-cyan-100 text-cyan-700 ring-1 ring-cyan-200",
+    "Offer Letter Received":
+      "bg-teal-100 text-teal-700 ring-1 ring-teal-200",
     "Documents Pending": "bg-orange-100 text-orange-700 ring-1 ring-orange-200",
     "Reviewing Documents":
       "bg-violet-100 text-violet-700 ring-1 ring-violet-200",
@@ -775,7 +771,7 @@ function CaseMobileCard({
             disabled={!canManage || registerView !== "active"}
             className="h-10 w-full rounded-xl border border-slate-200 bg-white/90 px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
           >
-            {STAGE_OPTIONS.map((stage) => (
+            {caseStagesForType(item.caseType).map((stage) => (
               <option key={stage} value={stage}>
                 {stage}
               </option>
@@ -1001,7 +997,7 @@ function CaseFormDrawer({
                 onChange={onChange}
                 className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
               >
-                {STAGE_OPTIONS.map((stage) => (
+                {caseStagesForType(formState.caseType).map((stage) => (
                   <option key={stage} value={stage}>
                     {stage}
                   </option>
@@ -1242,7 +1238,7 @@ export default function Cases() {
     const stageFromUrl = searchParams.get("stage");
     return {
       caseType: "all",
-      stage: stageFromUrl && STAGE_OPTIONS.includes(stageFromUrl) ? stageFromUrl : "all",
+      stage: stageFromUrl && CASE_STAGES.includes(stageFromUrl) ? stageFromUrl : "all",
       status: "all",
       staff: "all",
       priority: "all",
@@ -1604,6 +1600,10 @@ export default function Cases() {
 
       if (name === "caseType" && !isStudyPermitCaseType(value)) {
         nextState.studyIntakeMonth = "";
+        if (!caseStagesForType(value).includes(current.stage)) {
+          nextState.stage = "Retainer Pending";
+          nextState.nextAction = getDefaultNextAction("Retainer Pending");
+        }
       }
 
       if (name === "stage" && !current.nextAction) {
@@ -2062,7 +2062,7 @@ export default function Cases() {
                                     }
                                     className="h-10 w-[190px] rounded-xl border border-slate-200 bg-white/80 px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                                   >
-                                    {STAGE_OPTIONS.map((stage) => (
+                                    {caseStagesForType(item.caseType).map((stage) => (
                                       <option key={stage} value={stage}>
                                         {stage}
                                       </option>

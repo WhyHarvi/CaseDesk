@@ -4,82 +4,14 @@ import prisma from "../services/prisma/client.js";
 import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
 import { requireCommunicationPermission } from "../services/communicationPermissions.js";
+import {
+  CHAT_ATTACH_GRACE_MS,
+  extensionOf,
+  inboundAllowedMimeTypes,
+  scanFile,
+  storeCommunicationAttachment,
+} from "../services/communicationAttachmentStorage.js";
 import { createHttpError } from "../utils/http.js";
-
-const inboundAllowedMimeTypes = new Set([
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-powerpoint",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "text/plain",
-  "text/rtf",
-  "application/rtf",
-  "text/csv",
-]);
-
-function extensionOf(filename) {
-  return path
-    .extname(String(filename || ""))
-    .toLowerCase()
-    .replace(/[^.a-z0-9]/g, "")
-    .slice(0, 12);
-}
-
-async function scanFile(file) {
-  const scannerUrl = String(
-    process.env.COMMUNICATION_FILE_SCAN_URL || "",
-  ).trim();
-  if (!scannerUrl) {
-    return process.env.NODE_ENV === "production"
-      ? {
-          status: "Pending",
-          details: "External malware scanning is not configured",
-        }
-      : {
-          status: "Clean",
-          details: "Development mode: validated file type and size",
-        };
-  }
-  try {
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([file.buffer], { type: file.mimetype }),
-      file.originalname,
-    );
-    const response = await fetch(scannerUrl, {
-      method: "POST",
-      body: form,
-      signal: AbortSignal.timeout(30000),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || result.clean !== true)
-      return {
-        status: "Rejected",
-        details: String(
-          result.message || "Security scanner rejected this file",
-        ).slice(0, 500),
-      };
-    return {
-      status: "Clean",
-      details: String(result.message || "Malware scan passed").slice(0, 500),
-    };
-  } catch (error) {
-    return {
-      status: "Pending",
-      details: `Malware scan unavailable: ${String(error.message || error).slice(0, 400)}`,
-    };
-  }
-}
 
 export async function storeInboundCommunicationAttachments({
   agencyId,
@@ -188,48 +120,24 @@ export async function uploadCommunicationAttachment(req, res) {
         ? "canSendSms"
         : "canUseChat",
   );
-  if (!["Draft", "Failed"].includes(message.status))
+  const chatAttachAllowed =
+    message.channel === "Chat" &&
+    message.status === "Sent" &&
+    message.senderUserId === req.user.id &&
+    Date.now() - message.createdAt.getTime() < CHAT_ATTACH_GRACE_MS;
+  if (!["Draft", "Failed"].includes(message.status) && !chatAttachAllowed)
     throw createHttpError(
       409,
       "Attachments can only be changed while a communication is a draft",
     );
-  const storageKey = path.posix.join(
-    req.user.agencyId,
-    message.caseId,
-    "communication",
-    `${randomUUID()}${extensionOf(req.file.originalname)}`,
-  );
-  await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
-  try {
-    const scan = await scanFile(req.file);
-    const data = await prisma.communicationAttachment.create({
-      data: {
-        agencyId: req.user.agencyId,
-        messageId: message.id,
-        storageKey,
-        originalFilename: req.file.originalname,
-        mimeType: req.file.mimetype,
-        fileSize: req.file.size,
-        fileHash: createHash("sha256").update(req.file.buffer).digest("hex"),
-        scanStatus: scan.status,
-        scanDetails: scan.details,
-        uploadedById: req.user.id,
-      },
-    });
-    await recordCommunicationAudit({
-      agencyId: req.user.agencyId,
-      userId: req.user.id,
-      conversationId: message.conversationId,
-      messageId: message.id,
-      action: "communication.attachment_uploaded",
-      details: `${req.file.originalname} attached`,
-      metadata: { attachmentId: data.id, scanStatus: data.scanStatus },
-    });
-    res.status(201).json({ data });
-  } catch (error) {
-    await removeStorageFile(DOCUMENT_BUCKET, storageKey).catch(() => {});
-    throw error;
-  }
+  const data = await storeCommunicationAttachment({
+    agencyId: req.user.agencyId,
+    message,
+    file: req.file,
+    uploadedById: req.user.id,
+    auditUserId: req.user.id,
+  });
+  res.status(201).json({ data });
 }
 
 export async function serveCommunicationAttachment(req, res) {

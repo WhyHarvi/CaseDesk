@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { applyScheduleToRetainerHtml } from "../src/controllers/caseBillingRetainerController.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
@@ -100,7 +101,8 @@ test("schedule-to-retainer merge fills only what has real schedule data and neve
 
   const paymentScheduleService = await source("../src/services/paymentScheduleService.js");
   assert.match(paymentScheduleService, /export async function getRetainerScheduleMergeContext\(agencyId, caseId\)/);
-  assert.match(paymentScheduleService, /"agreement\.professionalFees": formatMoney\(schedule\.taxSummary\.taxableSubtotal\)/);
+  assert.match(paymentScheduleService, /"agreement\.professionalFees": formatMoney\(schedule\.taxSummary\.professionalFeesBeforeDiscount\)/);
+  assert.match(paymentScheduleService, /"agreement\.discount": formatMoney\(schedule\.taxSummary\.discountAmount\)/);
   assert.match(paymentScheduleService, /"agreement\.governmentFees": formatMoney\(schedule\.taxSummary\.nonTaxableSubtotal\)/);
   // No fee category in this agency's schedule maps to administrative/
   // courier fees — those stay manual placeholders the consultant fills in
@@ -115,6 +117,68 @@ test("schedule-to-retainer merge fills only what has real schedule data and neve
   assert.match(retainerController, /function replaceInstallmentScheduleRows\(html, installmentRows, totalLabel\)/);
   assert.match(retainerController, /html\.indexOf\("Payment Schedule<\/h2>"\)/);
   assert.match(retainerController, /html\.indexOf\("<tbody", headingIndex\)/);
+  assert.match(retainerController, /<tr><td>Discount<\/td><td>-\$\{escapeHtml\(scheduleContext\.discountLabel\)\}<\/td><\/tr>/);
+});
+
+test("case discounts reduce only professional installments and flow through invoices, tax, and UI", async () => {
+  const [service, controller, workspace, retainerCard, migration] = await Promise.all([
+    source("../src/services/paymentScheduleService.js"),
+    source("../src/controllers/paymentScheduleController.js"),
+    source("../../frontend/src/components/case-profile/CasePaymentScheduleWorkspace.jsx"),
+    source("../../frontend/src/components/case-profile/RetainerStatusCard.jsx"),
+    source("../prisma/migrations/20260811203000_case_payment_schedule_discounts/migration.sql"),
+  ]);
+
+  assert.match(migration, /case_payment_schedules[\s\S]*discount_amount/);
+  assert.match(migration, /case_payment_installments[\s\S]*discount_amount/);
+  assert.match(service, /TAXABLE_FEE_KINDS\.has\(kindByCode\.get\(item\.paymentType\)/);
+  assert.match(service, /\.reverse\(\)/);
+  assert.match(service, /const invoiceAmount = installmentNetAmount\(installment\)/);
+  assert.match(service, /amount: invoiceAmount/);
+  assert.match(service, /taxableSubtotal \+= installmentNetAmount\(installment\)/);
+  assert.match(controller, /discountAmount: req\.body\?\.discountAmount/);
+  assert.match(workspace, /function DiscountField/);
+  assert.match(workspace, /Government fees are never discounted/);
+  assert.match(retainerCard, /DiscountField value=\{discountAmount\}/);
+  assert.match(retainerCard, /discountAmount \} : undefined/);
+});
+
+test("retainer sync renders and removes a real dollar discount without corrupting currency", () => {
+  const html = `<h2>5. Payment Terms and Conditions</h2><table><tbody><tr><td>Professional Fees</td><td>$1,500.00</td></tr><tr><td>Government Fees (Biometrics, Permits, etc.)</td><td>$235.00</td></tr><tr><td>Applicable Taxes (professional fees)</td><td>$195.00</td></tr><tr><td><strong>Total</strong></td><td><strong>$1,930.00</strong></td></tr></tbody></table><h2>6. Payment Schedule</h2><table><tbody><tr><td>Old</td><td>$1.00</td><td>Old date</td></tr></tbody></table>`;
+  const discounted = applyScheduleToRetainerHtml(html, {
+    values: {
+      "agreement.professionalFees": "$1,500.00",
+      "agreement.discount": "$200.00",
+      "agreement.governmentFees": "$235.00",
+      "agreement.taxes": "$169.00",
+      "agreement.totalFees": "$1,704.00",
+    },
+    installmentRows: [{ label: "On submission", amount: "$1,300.00", due: "September 1, 2026" }],
+    totalLabel: "$1,704.00",
+    discountLabel: "$200.00",
+    hasDiscount: true,
+  });
+  assert.match(discounted, /<tr><td>Discount<\/td><td>-\$200\.00<\/td><\/tr>/);
+  assert.match(discounted, /Applicable Taxes \(professional fees\)<\/td><td>\$169\.00/);
+  assert.match(discounted, /<strong>\$1,704\.00<\/strong>/);
+  assert.match(discounted, /On submission<\/td><td>\$1,300\.00/);
+  assert.doesNotMatch(discounted, /\$1<tr>/);
+
+  const withoutDiscount = applyScheduleToRetainerHtml(discounted, {
+    values: {
+      "agreement.professionalFees": "$1,500.00",
+      "agreement.discount": "$0.00",
+      "agreement.governmentFees": "$235.00",
+      "agreement.taxes": "$195.00",
+      "agreement.totalFees": "$1,930.00",
+    },
+    installmentRows: [{ label: "On submission", amount: "$1,500.00", due: "September 1, 2026" }],
+    totalLabel: "$1,930.00",
+    discountLabel: "$0.00",
+    hasDiscount: false,
+  });
+  assert.doesNotMatch(withoutDiscount, /<td>Discount<\/td>/);
+  assert.match(withoutDiscount, /<strong>\$1,930\.00<\/strong>/);
 });
 
 test("the sync-schedule route is registered and the Billing tab exposes both entry points", async () => {

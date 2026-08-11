@@ -4,6 +4,11 @@ import {
   listAgencyPayments,
 } from "../services/paymentsOverviewService.js";
 import { createHttpError } from "../utils/http.js";
+import { approvePaymentApproval, listPaymentApprovals, rejectPaymentApproval } from "../services/paymentApprovalService.js";
+
+function requireAdmin(req) {
+  if (req.auth.role !== "admin") throw createHttpError(403, "Only an administrator can review staff-entered payments.", "FORBIDDEN");
+}
 
 export async function getPaymentsList(req, res) {
   const { status, source, query, from, to, page, pageSize } = req.query;
@@ -33,5 +38,23 @@ export async function getRefundReview(req, res) {
     req.auth.agencyId,
     refundReceiptId,
   );
+  res.json({ data });
+}
+
+export async function getPaymentApprovals(req, res) {
+  requireAdmin(req);
+  const data = await listPaymentApprovals(req.auth.agencyId, req.query);
+  res.json({ data });
+}
+
+export async function approvePayment(req, res) {
+  requireAdmin(req);
+  const data = await approvePaymentApproval(req.auth.agencyId, req.params.id, req.auth.userId);
+  res.json({ data });
+}
+
+export async function rejectPayment(req, res) {
+  requireAdmin(req);
+  const data = await rejectPaymentApproval(req.auth.agencyId, req.params.id, req.auth.userId, req.body?.reason);
   res.json({ data });
 }

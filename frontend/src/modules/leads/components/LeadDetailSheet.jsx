@@ -260,7 +260,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                 <p className="mt-1 text-sm text-slate-500">{lead.leadNumber} · {lead.phone}</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
+            <div className="flex shrink-0 items-center gap-2">
+              {lead.phone ? <a href={`tel:${lead.phone}`} title="Open this number in the Windows phone app (set Ooma Desktop as the default)" className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500"><Phone className="h-3.5 w-3.5" />Call</a> : null}
+              <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
+            </div>
           </div>
 
           <nav className="mt-5 flex gap-1" aria-label="Lead details">

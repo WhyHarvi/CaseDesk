@@ -103,7 +103,7 @@ export default function PaymentsSettingsPanel() {
               ) : status?.status === "error" ? (
                 <p className="mt-0.5 text-sm text-rose-600">Connection needs attention — {status.lastError || "reconnect to continue"}.</p>
               ) : (
-                <p className="mt-0.5 text-sm text-slate-500">QuickBooks is your ledger — CaseDesk sends customers, invoices, and payments there, and reads statuses back. Nothing is bookkept in CaseDesk itself.</p>
+                <p className="mt-0.5 text-sm text-slate-500">QuickBooks handles invoices and approved electronic payments. CaseDesk keeps cash records and the staff payment-approval trail.</p>
               )}
             </div>
           </div>
@@ -147,7 +147,7 @@ export default function PaymentsSettingsPanel() {
         <h3 className="text-sm font-semibold text-slate-900">How payments flow once connected</h3>
         <div className="mt-3 space-y-3 text-sm leading-6 text-slate-600">
           <p className="flex items-start gap-2.5"><Banknote className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Interac e-transfers</span> should be recorded against the matching CaseDesk invoice using the bank transaction number. CaseDesk then records the payment in QuickBooks and keeps the reference in the client billing trail.</span></p>
-          <p className="flex items-start gap-2.5"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cash</span> gets recorded from the case billing tab — CaseDesk posts a Receive Payment to QuickBooks so the books stay current.</span></p>
+          <p className="flex items-start gap-2.5"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cash</span> stays in CaseDesk and is never posted to QuickBooks. Frontdesk submissions require administrator approval before they count as received.</span></p>
           <p className="flex items-start gap-2.5"><CreditCard className="mt-1 h-4 w-4 shrink-0 text-slate-400" /><span><span className="font-medium text-slate-800">Cards</span> — if your QuickBooks company has QuickBooks Payments turned on, every invoice automatically gets a "Pay now" link shown to the client. Nothing to configure here.</span></p>
         </div>
       </section>

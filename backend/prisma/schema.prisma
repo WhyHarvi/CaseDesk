@@ -595,8 +595,11 @@ model Agency {
   quickBooksSettings             AgencyQuickBooksSettings?
   billingSettings                AgencyBillingSettings?
   bookingPaymentHolds            BookingPaymentHold[]
+  paymentApprovals               PaymentApproval[]
   quickBooksWebhookEvents        QuickBooksWebhookEvent[]
   oomaSettings                   AgencyOomaSettings?
+  oomaCallSessions               OomaCallSession[]
+  oomaCallEvents                 OomaCallEvent[]
   accountStatements              AccountStatementGeneration[]
   leadSequence                   AgencyLeadSequence?
   clientSequence                 AgencyClientSequence?
@@ -633,6 +636,10 @@ model Agency {
   automatedReminderDeliveries    AutomatedReminderDelivery[]
   expiringDocumentPolicies       ExpiringDocumentReminderPolicy[]
   expiringDocumentDeliveries     ExpiringDocumentReminderDelivery[]
+  internalChatThreads            InternalChatThread[]
+  internalChatParticipants       InternalChatParticipant[]
+  internalChatMessages           InternalChatMessage[]
+  internalChatAttachments        InternalChatAttachment[]
 
   @@map("agencies")
 }
@@ -741,36 +748,37 @@ model ExpiringDocumentReminderDelivery {
 }
 
 model CaseInvoice {
-  id                   String                   @id @default(uuid())
-  agencyId             String                   @map("agency_id")
-  caseId               String                   @map("case_id")
-  clientId             String                   @map("client_id")
-  paymentType          String                   @map("payment_type")
-  description          String
-  qbInvoiceId          String                   @map("qb_invoice_id")
-  qbInvoiceNumber      String?                  @map("qb_invoice_number")
-  qbInvoiceLink        String?                  @map("qb_invoice_link")
-  qbSyncToken          String                   @map("qb_sync_token")
-  amount               Decimal                  @db.Decimal(10, 2)
-  balance              Decimal                  @db.Decimal(10, 2)
-  status               String                   @default("Open")
-  dueDate              DateTime?                @map("due_date")
-  lastPaymentMethod    String?                  @map("last_payment_method")
-  lastPaymentReference String?                  @map("last_payment_reference")
-  lastPaymentAt        DateTime?                @map("last_payment_at")
-  lastQbPaymentId      String?                  @map("last_qb_payment_id")
-  creationIdempotencyKey String?                @map("creation_idempotency_key")
-  lastPaymentIdempotencyKey String?             @map("last_payment_idempotency_key")
-  createdById          String?                  @map("created_by_id")
-  createdAt            DateTime                 @default(now()) @map("created_at")
-  updatedAt            DateTime                 @updatedAt @map("updated_at")
-  lastSyncedAt         DateTime                 @map("last_synced_at")
-  agency               Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                 Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client               Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy            User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  installments         CasePaymentInstallment[]
-  followUps            FollowUp[]
+  id                        String                   @id @default(uuid())
+  agencyId                  String                   @map("agency_id")
+  caseId                    String                   @map("case_id")
+  clientId                  String                   @map("client_id")
+  paymentType               String                   @map("payment_type")
+  description               String
+  qbInvoiceId               String                   @map("qb_invoice_id")
+  qbInvoiceNumber           String?                  @map("qb_invoice_number")
+  qbInvoiceLink             String?                  @map("qb_invoice_link")
+  qbSyncToken               String                   @map("qb_sync_token")
+  amount                    Decimal                  @db.Decimal(10, 2)
+  balance                   Decimal                  @db.Decimal(10, 2)
+  status                    String                   @default("Open")
+  dueDate                   DateTime?                @map("due_date")
+  lastPaymentMethod         String?                  @map("last_payment_method")
+  lastPaymentReference      String?                  @map("last_payment_reference")
+  lastPaymentAt             DateTime?                @map("last_payment_at")
+  lastQbPaymentId           String?                  @map("last_qb_payment_id")
+  creationIdempotencyKey    String?                  @map("creation_idempotency_key")
+  lastPaymentIdempotencyKey String?                  @map("last_payment_idempotency_key")
+  createdById               String?                  @map("created_by_id")
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
+  lastSyncedAt              DateTime                 @map("last_synced_at")
+  agency                    Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                      Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client                    Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy                 User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  installments              CasePaymentInstallment[]
+  followUps                 FollowUp[]
+  paymentApprovals          PaymentApproval[]
 
   @@unique([agencyId, qbInvoiceId])
   @@unique([agencyId, creationIdempotencyKey])
@@ -851,19 +859,20 @@ model PaymentScheduleTemplateInstallment {
 }
 
 model CasePaymentSchedule {
-  id           String                   @id @default(uuid())
-  agencyId     String                   @map("agency_id")
-  caseId       String                   @unique @map("case_id")
-  clientId     String                   @map("client_id")
-  signingDate  DateTime                 @map("signing_date")
-  createdById  String?                  @map("created_by_id")
-  createdAt    DateTime                 @default(now()) @map("created_at")
-  updatedAt    DateTime                 @updatedAt @map("updated_at")
-  agency       Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case         Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client       Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy    User?                    @relation("PaymentScheduleCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  installments CasePaymentInstallment[]
+  id             String                   @id @default(uuid())
+  agencyId       String                   @map("agency_id")
+  caseId         String                   @unique @map("case_id")
+  clientId       String                   @map("client_id")
+  signingDate    DateTime                 @map("signing_date")
+  discountAmount Decimal                  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  createdById    String?                  @map("created_by_id")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
+  agency         Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case           Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client         Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy      User?                    @relation("PaymentScheduleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  installments   CasePaymentInstallment[]
 
   @@index([agencyId])
   @@map("case_payment_schedules")
@@ -878,6 +887,7 @@ model CasePaymentInstallment {
   label                   String
   paymentType             String              @map("payment_type")
   amount                  Decimal             @db.Decimal(10, 2)
+  discountAmount          Decimal             @default(0) @map("discount_amount") @db.Decimal(10, 2)
   triggerType             String              @map("trigger_type")
   triggerStage            String?             @map("trigger_stage")
   triggerDaysAfterSigning Int?                @map("trigger_days_after_signing")
@@ -953,18 +963,18 @@ model AgencyQuickBooksSettings {
 }
 
 model AgencyBillingSettings {
-  id                          String    @id @default(uuid())
-  agencyId                    String    @unique @map("agency_id")
+  id                           String    @id @default(uuid())
+  agencyId                     String    @unique @map("agency_id")
   taxRatePercent               Decimal   @default(13.0) @map("tax_rate_percent") @db.Decimal(5, 2)
-  taxRegisteredName           String?   @map("tax_registered_name")
-  taxNumber                   String?   @map("tax_number")
-  retainerSignatureImage      String?   @map("retainer_signature_image")
-  retainerSignatureUpdatedAt  DateTime? @map("retainer_signature_updated_at")
-  retainerSignatureUpdatedById String?  @map("retainer_signature_updated_by_id")
-  createdAt                   DateTime  @default(now()) @map("created_at")
-  updatedAt                   DateTime  @updatedAt @map("updated_at")
-  agency                      Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  retainerSignatureUpdatedBy  User?     @relation("RetainerSignatureUpdatedByUser", fields: [retainerSignatureUpdatedById], references: [id], onDelete: SetNull)
+  taxRegisteredName            String?   @map("tax_registered_name")
+  taxNumber                    String?   @map("tax_number")
+  retainerSignatureImage       String?   @map("retainer_signature_image")
+  retainerSignatureUpdatedAt   DateTime? @map("retainer_signature_updated_at")
+  retainerSignatureUpdatedById String?   @map("retainer_signature_updated_by_id")
+  createdAt                    DateTime  @default(now()) @map("created_at")
+  updatedAt                    DateTime  @updatedAt @map("updated_at")
+  agency                       Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  retainerSignatureUpdatedBy   User?     @relation("RetainerSignatureUpdatedByUser", fields: [retainerSignatureUpdatedById], references: [id], onDelete: SetNull)
 
   @@map("agency_billing_settings")
 }
@@ -1098,6 +1108,8 @@ model AgencyOomaSettings {
   webhookTokenEncrypted          String?   @map("webhook_token_encrypted")
   webhookTokenHash               String?   @unique @map("webhook_token_hash")
   lastWebhookAt                  DateTime? @map("last_webhook_at")
+  lastCallWebhookAt              DateTime? @map("last_call_webhook_at")
+  lastSmsWebhookAt               DateTime? @map("last_sms_webhook_at")
   zapierOutboundWebhookEncrypted String?   @map("zapier_outbound_webhook_encrypted")
   lastZapierOutboundTestedAt     DateTime? @map("last_zapier_outbound_tested_at")
   lastZapierOutboundTestStatus   String?   @map("last_zapier_outbound_test_status")
@@ -1114,6 +1126,73 @@ model AgencyOomaSettings {
 
   @@index([agencyId])
   @@map("agency_ooma_settings")
+}
+
+model OomaCallSession {
+  id                     String          @id @default(uuid())
+  agencyId               String          @map("agency_id")
+  providerCallId         String          @map("provider_call_id")
+  direction              String
+  status                 String
+  remoteNumber           String?         @map("remote_number")
+  remoteNumberNormalized String?         @map("remote_number_normalized")
+  businessNumber         String?         @map("business_number")
+  extensionLabel         String?         @map("extension_label")
+  handledByUserId        String?         @map("handled_by_user_id")
+  clientId               String?         @map("client_id")
+  caseId                 String?         @map("case_id")
+  leadId                 String?         @map("lead_id")
+  followUpId             String?         @map("follow_up_id")
+  resolution             String          @default("UNRESOLVED")
+  disposition            String?
+  outcomeNotes           String?         @map("outcome_notes")
+  startedAt              DateTime        @map("started_at")
+  answeredAt             DateTime?       @map("answered_at")
+  endedAt                DateTime?       @map("ended_at")
+  durationSeconds        Int?            @map("duration_seconds")
+  recordingUrl           String?         @map("recording_url")
+  transcript             String?
+  lastEventAt            DateTime        @map("last_event_at")
+  resolvedAt             DateTime?       @map("resolved_at")
+  resolvedById           String?         @map("resolved_by_id")
+  rawPayload             Json            @default("{}") @map("raw_payload")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  agency                 Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  handledBy              User?           @relation("OomaCallHandledByUser", fields: [handledByUserId], references: [id], onDelete: SetNull)
+  resolvedBy             User?           @relation("OomaCallResolvedByUser", fields: [resolvedById], references: [id], onDelete: SetNull)
+  client                 Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                   Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  lead                   Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  followUp               LeadFollowUp?   @relation(fields: [followUpId], references: [id], onDelete: SetNull)
+  events                 OomaCallEvent[]
+
+  @@unique([agencyId, providerCallId])
+  @@index([agencyId, resolution, lastEventAt])
+  @@index([agencyId, status, lastEventAt])
+  @@index([agencyId, remoteNumberNormalized])
+  @@index([followUpId])
+  @@index([leadId, startedAt])
+  @@index([clientId, startedAt])
+  @@map("ooma_call_sessions")
+}
+
+model OomaCallEvent {
+  id              String          @id @default(uuid())
+  agencyId        String          @map("agency_id")
+  callSessionId   String          @map("call_session_id")
+  providerEventId String          @map("provider_event_id")
+  eventType       String          @map("event_type")
+  occurredAt      DateTime        @map("occurred_at")
+  payload         Json            @default("{}")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  agency          Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  callSession     OomaCallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, providerEventId])
+  @@index([callSessionId, occurredAt])
+  @@index([agencyId, eventType, occurredAt])
+  @@map("ooma_call_events")
 }
 
 model User {
@@ -1174,6 +1253,8 @@ model User {
   cancelledAppointments                Appointment[]                   @relation("CancelledAppointmentUser")
   assignedBookingPaymentHolds          BookingPaymentHold[]            @relation("AssignedBookingPaymentHoldUser")
   createdBookingPaymentHolds           BookingPaymentHold[]            @relation("CreatedBookingPaymentHoldUser")
+  submittedPaymentApprovals            PaymentApproval[]               @relation("SubmittedPaymentApprovalUser")
+  reviewedPaymentApprovals             PaymentApproval[]               @relation("ReviewedPaymentApprovalUser")
   schedulingPreference                 SchedulingStaffPreference?
   zoomHostMapping                      ZoomHostMapping?
   eligibleBookingSessionTypes          BookingSessionTypeStaff[]
@@ -1228,6 +1309,12 @@ model User {
   schedulingBlocks                     SchedulingBlock[]
   appointmentEvents                    AppointmentEvent[]              @relation("AppointmentEventActor")
   mailboxConnection                    UserMailboxConnection?
+  handledOomaCalls                     OomaCallSession[]               @relation("OomaCallHandledByUser")
+  resolvedOomaCalls                    OomaCallSession[]               @relation("OomaCallResolvedByUser")
+  createdInternalChatThreads           InternalChatThread[]            @relation("InternalChatThreadCreator")
+  internalChatParticipations           InternalChatParticipant[]
+  sentInternalChatMessages             InternalChatMessage[]           @relation("InternalChatMessageSender")
+  uploadedInternalChatAttachments      InternalChatAttachment[]        @relation("UploadedInternalChatAttachmentUser")
 
   @@index([agencyId])
   @@index([authUserId])
@@ -1397,8 +1484,10 @@ model Client {
   caseManualLedgerEntries    CaseManualLedgerEntry[]
   paymentSchedules           CasePaymentSchedule[]
   paymentInstallments        CasePaymentInstallment[]
+  paymentApprovals           PaymentApproval[]
   caseEasyImportContacts     CaseEasyImportContact[]
   caseEasyImportReportRows   CaseEasyImportReportRow[]
+  oomaCallSessions           OomaCallSession[]
 
   @@unique([agencyId, clientNumber])
   @@unique([agencyId, creationIdempotencyKey])
@@ -1459,11 +1548,13 @@ model Case {
   caseManualLedgerEntries      CaseManualLedgerEntry[]
   paymentSchedule              CasePaymentSchedule?
   paymentInstallments          CasePaymentInstallment[]
+  paymentApprovals             PaymentApproval[]
   caseEasyImportCases          CaseEasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportReportRow[]
+  oomaCallSessions             OomaCallSession[]
 
-  @@index([agencyId])
   @@unique([agencyId, creationIdempotencyKey])
+  @@index([agencyId])
   @@index([agencyId, studyIntakeMonth])
   @@index([clientId])
   @@index([assignedUserId])
@@ -1584,6 +1675,7 @@ model Appointment {
   notes                  Note[]
   followUps              FollowUp[]
   paymentHold            BookingPaymentHold?
+  paymentApprovals       PaymentApproval[]
   meetingJobs            AppointmentMeetingJob[]
 
   @@unique([agencyId, idempotencyKey])
@@ -1894,6 +1986,56 @@ model BookingPaymentHold {
   @@map("booking_payment_holds")
 }
 
+// Durable staff-entered payment record and approval trail. Frontdesk entries
+// remain Pending until an administrator decides them. Approved cash stays in
+// CaseDesk; approved non-cash entries retain their QuickBooks payment result.
+model PaymentApproval {
+  id                   String       @id @default(uuid())
+  agencyId             String       @map("agency_id")
+  clientId             String?      @map("client_id")
+  caseId               String?      @map("case_id")
+  appointmentId        String?      @map("appointment_id")
+  caseInvoiceId        String?      @map("case_invoice_id")
+  paymentId            String?      @map("payment_id")
+  entryType            String       @map("entry_type")
+  method               String
+  amount               Decimal      @db.Decimal(10, 2)
+  chargeAmount         Decimal?     @map("charge_amount") @db.Decimal(10, 2)
+  paymentType          String?      @map("payment_type")
+  description          String?
+  transactionReference String?      @map("transaction_reference")
+  paymentDate          DateTime     @map("payment_date") @db.Date
+  note                 String?
+  status               String       @default("Pending")
+  sourceRole           String       @map("source_role")
+  idempotencyKey       String       @map("idempotency_key")
+  submittedById        String       @map("submitted_by_id")
+  reviewedById         String?      @map("reviewed_by_id")
+  reviewedAt           DateTime?    @map("reviewed_at")
+  rejectionReason      String?      @map("rejection_reason")
+  qbPaymentId          String?      @map("qb_payment_id")
+  processingError      String?      @map("processing_error")
+  result               Json?
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  agency               Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                 Case?        @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment          Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  caseInvoice          CaseInvoice? @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
+  payment              Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  submittedBy          User         @relation("SubmittedPaymentApprovalUser", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy           User?        @relation("ReviewedPaymentApprovalUser", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, idempotencyKey])
+  @@index([agencyId, status, createdAt])
+  @@index([clientId, createdAt])
+  @@index([caseId, createdAt])
+  @@index([appointmentId, createdAt])
+  @@index([caseInvoiceId, createdAt])
+  @@map("payment_approvals")
+}
+
 model AgencyZoomConnection {
   id                    String   @id @default(uuid())
   agencyId              String   @unique @map("agency_id")
@@ -2039,6 +2181,11 @@ model CommunicationConversation {
   resolutionDueAt  DateTime?                      @map("resolution_due_at")
   firstRespondedAt DateTime?                      @map("first_responded_at")
   lastMessageAt    DateTime                       @default(now()) @map("last_message_at")
+  // When the client last had this chat thread open/focused — distinct from
+  // isRead (which just means "not from the client") and unreadCount (staff
+  // side). Nullable/never-set means "never confirmed read"; used only to
+  // render a staff-side read receipt, not for SLA or notification logic.
+  clientLastReadAt DateTime?                      @map("client_last_read_at")
   isArchived       Boolean                        @default(false) @map("is_archived")
   legalHold        Boolean                        @default(false) @map("legal_hold")
   deletedAt        DateTime?                      @map("deleted_at")
@@ -2267,6 +2414,88 @@ model CommunicationAttachment {
   @@index([messageId])
   @@index([agencyId, scanStatus])
   @@map("communication_attachments")
+}
+
+// Staff-to-staff internal messaging (DMs and group threads), kept as its
+// own model rather than reusing CommunicationConversation/Message — that
+// model is client-centric (single clientId, one unreadCount int, one
+// clientLastReadAt) and doesn't fit arbitrary N-party staff membership or
+// per-participant read state, which group threads genuinely need.
+model InternalChatThread {
+  id            String                    @id @default(uuid())
+  agencyId      String                    @map("agency_id")
+  isGroup       Boolean                   @default(false) @map("is_group")
+  name          String?
+  createdById   String                    @map("created_by_id")
+  lastMessageAt DateTime                  @default(now()) @map("last_message_at")
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  updatedAt     DateTime                  @updatedAt @map("updated_at")
+  agency        Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy     User                      @relation("InternalChatThreadCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants  InternalChatParticipant[]
+  messages      InternalChatMessage[]
+
+  @@index([agencyId, lastMessageAt])
+  @@map("internal_chat_threads")
+}
+
+model InternalChatParticipant {
+  id         String             @id @default(uuid())
+  agencyId   String             @map("agency_id")
+  threadId   String             @map("thread_id")
+  userId     String             @map("user_id")
+  lastReadAt DateTime?          @map("last_read_at")
+  joinedAt   DateTime           @default(now()) @map("joined_at")
+  agency     Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  thread     InternalChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, userId])
+  @@index([userId])
+  @@map("internal_chat_participants")
+}
+
+model InternalChatMessage {
+  id                String                   @id @default(uuid())
+  agencyId          String                   @map("agency_id")
+  threadId          String                   @map("thread_id")
+  senderId          String                   @map("sender_id")
+  bodyText          String?                  @map("body_text")
+  hasAttachment     Boolean                  @default(false) @map("has_attachment")
+  clientMessageId   String?                  @map("client_message_id")
+  occurredAt        DateTime                 @default(now()) @map("occurred_at")
+  deletedAt         DateTime?                @map("deleted_at")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  agency            Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  thread            InternalChatThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender            User                     @relation("InternalChatMessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  attachmentRecords InternalChatAttachment[]
+
+  @@index([threadId, occurredAt])
+  @@index([agencyId, threadId, clientMessageId])
+  @@map("internal_chat_messages")
+}
+
+model InternalChatAttachment {
+  id               String                        @id @default(uuid())
+  agencyId         String                        @map("agency_id")
+  messageId        String                        @map("message_id")
+  storageKey       String                        @map("storage_key")
+  originalFilename String                        @map("original_filename")
+  mimeType         String                        @map("mime_type")
+  fileSize         Int                           @map("file_size")
+  fileHash         String                        @map("file_hash")
+  scanStatus       CommunicationAttachmentStatus @default(Pending) @map("scan_status")
+  scanDetails      String?                       @map("scan_details")
+  uploadedById     String                        @map("uploaded_by_id")
+  createdAt        DateTime                      @default(now()) @map("created_at")
+  agency           Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message          InternalChatMessage           @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploadedBy       User                          @relation("UploadedInternalChatAttachmentUser", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([messageId])
+  @@index([agencyId, scanStatus])
+  @@map("internal_chat_attachments")
 }
 
 model UnmatchedCommunication {
@@ -2571,16 +2800,16 @@ model ClientDocument {
 }
 
 model DocumentFolder {
-  id          String          @id @default(uuid())
-  agencyId    String          @map("agency_id")
-  caseId      String          @map("case_id")
+  id          String           @id @default(uuid())
+  agencyId    String           @map("agency_id")
+  caseId      String           @map("case_id")
   name        String
-  createdById String?         @map("created_by_id")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @updatedAt @map("updated_at")
-  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case        Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?          @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case        Case             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy   User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
   documents   ClientDocument[]
 
   @@unique([caseId, name])
@@ -2837,18 +3066,18 @@ model WrittenDocument {
 }
 
 model CorrespondenceTemplate {
-  id               String                          @id @default(uuid())
-  agencyId         String                          @map("agency_id")
-  slug             String
-  title            String
-  kind             CorrespondenceKind
-  category         String
-  description      String?
-  contentHtml      String                          @map("content_html")
-  caseTags         String[]                        @default([]) @map("case_tags")
-  sourceName       String?                         @map("source_name")
-  sourceUrl        String?                         @map("source_url")
-  isSystemDefault  Boolean                         @default(false) @map("is_system_default")
+  id                 String                          @id @default(uuid())
+  agencyId           String                          @map("agency_id")
+  slug               String
+  title              String
+  kind               CorrespondenceKind
+  category           String
+  description        String?
+  contentHtml        String                          @map("content_html")
+  caseTags           String[]                        @default([]) @map("case_tags")
+  sourceName         String?                         @map("source_name")
+  sourceUrl          String?                         @map("source_url")
+  isSystemDefault    Boolean                         @default(false) @map("is_system_default")
   // Distinguishes the one Agreement template that stands in for "the
   // retainer" (what CaseWorkspaceTabs' Billing tab / caseBillingRetainer*
   // resolve and show) from every other Agreement-kind template (amendments,
@@ -2856,18 +3085,18 @@ model CorrespondenceTemplate {
   // to be a system default tagged "general". Without this flag, resolution
   // picked whichever general-tagged Agreement template sorted first
   // alphabetically, which was wrong as soon as more than one existed.
-  isRetainerTemplate Boolean                       @default(false) @map("is_retainer_template")
-  isActive         Boolean                         @default(true) @map("is_active")
-  versionNumber    Int                             @default(1) @map("version_number")
-  createdById      String?                         @map("created_by_id")
-  updatedById      String?                         @map("updated_by_id")
-  createdAt        DateTime                        @default(now()) @map("created_at")
-  updatedAt        DateTime                        @updatedAt @map("updated_at")
-  agency           Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  createdBy        User?                           @relation("CreatedCorrespondenceTemplateUser", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy        User?                           @relation("UpdatedCorrespondenceTemplateUser", fields: [updatedById], references: [id], onDelete: SetNull)
-  versions         CorrespondenceTemplateVersion[]
-  writtenDocuments WrittenDocument[]
+  isRetainerTemplate Boolean                         @default(false) @map("is_retainer_template")
+  isActive           Boolean                         @default(true) @map("is_active")
+  versionNumber      Int                             @default(1) @map("version_number")
+  createdById        String?                         @map("created_by_id")
+  updatedById        String?                         @map("updated_by_id")
+  createdAt          DateTime                        @default(now()) @map("created_at")
+  updatedAt          DateTime                        @updatedAt @map("updated_at")
+  agency             Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy          User?                           @relation("CreatedCorrespondenceTemplateUser", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy          User?                           @relation("UpdatedCorrespondenceTemplateUser", fields: [updatedById], references: [id], onDelete: SetNull)
+  versions           CorrespondenceTemplateVersion[]
+  writtenDocuments   WrittenDocument[]
 
   @@unique([agencyId, slug])
   @@index([agencyId, kind])
@@ -3027,21 +3256,22 @@ model FollowUp {
 }
 
 model Payment {
-  id         String        @id @default(uuid())
-  agencyId   String        @map("agency_id")
-  clientId   String?       @map("client_id")
-  caseId     String?       @map("case_id")
-  totalFee   Decimal       @map("total_fee") @db.Decimal(10, 2)
-  paidAmount Decimal       @map("paid_amount") @db.Decimal(10, 2)
-  balance    Decimal       @db.Decimal(10, 2)
-  status     PaymentStatus
-  currency   String        @default("CAD")
-  notes      String?
-  createdAt  DateTime      @default(now()) @map("created_at")
-  updatedAt  DateTime      @updatedAt @map("updated_at")
-  agency     Agency        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client     Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case       Case?         @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  id               String            @id @default(uuid())
+  agencyId         String            @map("agency_id")
+  clientId         String?           @map("client_id")
+  caseId           String?           @map("case_id")
+  totalFee         Decimal           @map("total_fee") @db.Decimal(10, 2)
+  paidAmount       Decimal           @map("paid_amount") @db.Decimal(10, 2)
+  balance          Decimal           @db.Decimal(10, 2)
+  status           PaymentStatus
+  currency         String            @default("CAD")
+  notes            String?
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  agency           Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client           Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case             Case?             @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  paymentApprovals PaymentApproval[]
 
   @@index([agencyId])
   @@index([clientId])
@@ -3253,6 +3483,7 @@ model Lead {
   importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
   bookingPaymentHolds      BookingPaymentHold[]
   manualLedgerEntries      CaseManualLedgerEntry[]
+  oomaCallSessions         OomaCallSession[]
 
   @@unique([agencyId, leadNumber])
   @@index([agencyId, status])
@@ -3379,6 +3610,7 @@ model LeadFollowUp {
   lead              Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
   assignedUser      User               @relation("LeadFollowUpAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
   completedBy       User?              @relation("LeadFollowUpCompleterUser", fields: [completedById], references: [id], onDelete: SetNull)
+  oomaCallSessions  OomaCallSession[]
 
   @@index([agencyId, assignedUserId, status, dueAt])
   @@index([agencyId, leadId, dueAt])

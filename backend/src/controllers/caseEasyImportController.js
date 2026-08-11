@@ -5,7 +5,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { lockAgencyContactIntake } from "../services/contactDuplicateService.js";
 import { normalizeEmail, normalizePhone } from "../modules/leads/lead.validation.js";
 import { parseCsv } from "../modules/leads/lead.csv.js";
-import { CASE_STAGES } from "../constants/caseStages.js";
+import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { mapCaseEasyStatus } from "../services/caseEasyStatusMapping.js";
 import { classifyWorkbookHeaders, importCaseEasyExports, readSheetRowsFromWorkbook } from "../services/caseEasyImportService.js";
@@ -467,7 +467,10 @@ export async function convertCaseEasyImportContact(req, res) {
     const stagingCase = linkedCaseById.get(caseInput.caseEasyImportCaseId);
     if (!stagingCase || stagingCase.importStatus === "converted") continue;
     const suggested = mapCaseEasyStatus(stagingCase.status);
-    if (!String(caseInput.caseType || stagingCase.caseType || "").trim()) {
+    const caseType = String(
+      caseInput.caseType || stagingCase.caseType || "",
+    ).trim();
+    if (!caseType) {
       throw createHttpError(
         400,
         "Case type is required for every selected imported case.",
@@ -478,6 +481,13 @@ export async function convertCaseEasyImportContact(req, res) {
     const status = caseInput.status || suggested.status;
     if (!CASE_STAGES.includes(stage)) {
       throw createHttpError(400, "A selected case stage is invalid.", "VALIDATION_ERROR");
+    }
+    if (!isCaseStageAllowedForType(caseType, stage)) {
+      throw createHttpError(
+        400,
+        "A selected case stage does not apply to that case type.",
+        "VALIDATION_ERROR",
+      );
     }
     if (!CASE_STATUSES.has(status)) {
       throw createHttpError(400, "A selected case status is invalid.", "VALIDATION_ERROR");

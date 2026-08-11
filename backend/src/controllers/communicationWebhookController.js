@@ -12,6 +12,10 @@ import {
   normalizeCommunicationPhone,
   oomaSenderCandidates,
 } from "../services/communicationAddressService.js";
+import {
+  ingestOomaCallEvent,
+  isOomaCallPayload,
+} from "../services/oomaCallService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const stopWords = new Set(["stop", "unsubscribe", "cancel", "end", "quit"]);
@@ -601,6 +605,19 @@ export async function receiveOomaCommunicationWebhook(req, res) {
   if (!settings || !settings.enabled)
     throw createHttpError(404, "Ooma webhook endpoint not found");
   const payload = object(req.body);
+  if (isOomaCallPayload(payload)) {
+    const result = await ingestOomaCallEvent({
+      agencyId: settings.agencyId,
+      settings,
+      payload,
+    });
+    await prisma.agencyOomaSettings.update({
+      where: { id: settings.id },
+      data: { lastWebhookAt: new Date(), lastCallWebhookAt: new Date() },
+    });
+    res.status(result.duplicate ? 200 : 201).json(result);
+    return;
+  }
   const eventName = clean(
     payload.event || payload.type || payload.status,
     80,
@@ -684,7 +701,7 @@ export async function receiveOomaCommunicationWebhook(req, res) {
   }
   await prisma.agencyOomaSettings.update({
     where: { id: settings.id },
-    data: { lastWebhookAt: new Date() },
+    data: { lastWebhookAt: new Date(), lastSmsWebhookAt: new Date() },
   });
   if (result.unmatched) {
     const senderAddress = result.data?.senderAddress || null;

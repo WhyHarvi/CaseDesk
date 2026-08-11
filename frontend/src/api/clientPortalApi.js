@@ -103,10 +103,34 @@ export function getPortalChat(caseId = "") {
     .then((response) => response.data.data);
 }
 
-export function sendPortalChatMessage({ caseId, bodyText, clientMessageId }) {
+export function getPortalChatRealtimeConfig(caseId) {
   return api
-    .post("/portal/messages", { caseId, bodyText, clientMessageId }, { timeout: 20_000 })
+    .get(`/portal/messages/realtime${caseId ? `?caseId=${encodeURIComponent(caseId)}` : ""}`)
     .then((response) => response.data.data);
+}
+
+export function sendPortalChatMessage({ caseId, bodyText, clientMessageId, hasAttachment }) {
+  return api
+    .post("/portal/messages", { caseId, bodyText, clientMessageId, hasAttachment }, { timeout: 20_000 })
+    .then((response) => response.data.data);
+}
+
+export function uploadPortalChatAttachment(messageId, file, { onUploadProgress } = {}) {
+  const data = new FormData();
+  data.append("file", file);
+  return api
+    .post(`/portal/messages/${messageId}/attachments`, data, { timeout: 60_000, onUploadProgress })
+    .then((response) => response.data.data);
+}
+
+export function fetchPortalChatAttachmentBlob(messageId, attachmentId) {
+  return api
+    .get(`/portal/messages/${messageId}/attachments/${attachmentId}/file`, { responseType: "blob" })
+    .then((response) => response.data);
+}
+
+export function markPortalChatRead(caseId) {
+  return api.post("/portal/messages/read", { caseId }).catch(() => {});
 }
 
 export function portalErrorMessage(reason, fallback) {

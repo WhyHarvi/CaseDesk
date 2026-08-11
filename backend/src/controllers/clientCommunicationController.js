@@ -11,6 +11,8 @@ import {
   broadcastCaseCommunication,
   getRealtimeClientConfig,
 } from "../services/supabaseRealtimeService.js";
+import { DOCUMENT_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
+import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/communicationAttachmentStorage.js";
 import { createHttpError } from "../utils/http.js";
 
 const clean = (value, max = 500) =>
@@ -192,6 +194,9 @@ export async function getClientChat(req, res) {
       bodyText: true,
       occurredAt: true,
       senderUser: { select: { fullName: true } },
+      attachmentRecords: {
+        select: { id: true, originalFilename: true, mimeType: true, fileSize: true, scanStatus: true, createdAt: true },
+      },
     },
   });
   res.json({
@@ -216,11 +221,21 @@ export async function getClientChat(req, res) {
   });
 }
 
+export async function markClientChatRead(req, res) {
+  const access = await validAccess(req.params.token);
+  await prisma.communicationConversation.updateMany({
+    where: { agencyId: access.agencyId, caseId: access.caseId, channel: "Chat", deletedAt: null },
+    data: { clientLastReadAt: new Date() },
+  });
+  res.json({ success: true });
+}
+
 export async function createClientChatMessage(req, res) {
   const access = await validAccess(req.params.token);
   enforceRateLimit(access.tokenHash);
   const bodyText = clean(req.body.bodyText, 5000);
-  if (!bodyText) throw createHttpError(400, "Write a message before sending");
+  const hasAttachment = req.body.hasAttachment === true;
+  if (!bodyText && !hasAttachment) throw createHttpError(400, "Write a message before sending");
   const clientMessageId = clean(req.body.clientMessageId, 200) || null;
   if (clientMessageId) {
     const duplicate = await prisma.communicationMessage.findFirst({
@@ -350,15 +365,77 @@ export async function createClientChatMessage(req, res) {
     caseItem: access.case,
     client: access.client,
   });
-  await broadcastCaseCommunication({
-    agencyId: access.agencyId,
-    caseId: access.caseId,
-    event: "message",
-    payload: {
-      messageId: result.message.id,
-      conversationId: result.conversation.id,
-      occurredAt,
-    },
-  }).catch(() => {});
+  // An attachment-only message broadcasts once the file finishes
+  // uploading/scanning, not here — otherwise staff see an empty bubble
+  // flash before the image or file appears in it.
+  if (!hasAttachment)
+    await broadcastCaseCommunication({
+      agencyId: access.agencyId,
+      caseId: access.caseId,
+      event: "message",
+      payload: {
+        messageId: result.message.id,
+        conversationId: result.conversation.id,
+        occurredAt,
+      },
+    }).catch(() => {});
   res.status(201).json({ data: result.message });
+}
+
+export async function uploadClientChatAttachment(req, res) {
+  if (!req.file) throw createHttpError(400, "Choose a file to attach");
+  const access = await validAccess(req.params.token);
+  enforceRateLimit(access.tokenHash);
+  const message = await prisma.communicationMessage.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: access.agencyId,
+      caseId: access.caseId,
+      channel: "Chat",
+      direction: "Inbound",
+      provider: "ClientPortal",
+      deletedAt: null,
+    },
+  });
+  if (!message) throw createHttpError(404, "Message not found");
+  // There's no authenticated user on this anonymous token-link flow to
+  // check "own message" against — scoping to this exact case + this
+  // provider + a short grace window is what stands in for it here.
+  if (Date.now() - message.createdAt.getTime() >= CHAT_ATTACH_GRACE_MS)
+    throw createHttpError(409, "This message can no longer accept an attachment");
+  // uploadedById is a required FK to a real staff User — there's no
+  // anonymous-uploader concept in that table, so this attributes the file
+  // to the case's assigned consultant, same as how senderUserId is already
+  // null (not the client) for this surface's inbound messages.
+  const uploadedById = access.case.assignedUserId || access.client.assignedUserId;
+  if (!uploadedById) throw createHttpError(409, "No consultant is assigned to receive this file");
+  const data = await storeCommunicationAttachment({
+    agencyId: access.agencyId,
+    message,
+    file: req.file,
+    uploadedById,
+  });
+  res.status(201).json({ data });
+}
+
+export async function serveClientChatAttachment(req, res) {
+  const access = await validAccess(req.params.token);
+  const data = await prisma.communicationAttachment.findFirst({
+    where: {
+      id: req.params.attachmentId,
+      agencyId: access.agencyId,
+      message: { id: req.params.id, caseId: access.caseId, channel: "Chat", deletedAt: null },
+    },
+  });
+  if (!data) throw createHttpError(404, "Attachment not found");
+  if (data.scanStatus === "Rejected")
+    throw createHttpError(409, "This attachment was rejected by the security scanner");
+  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "Stored attachment file was not found");
+  res.setHeader("content-type", data.mimeType || "application/octet-stream");
+  res.setHeader(
+    "content-disposition",
+    `inline; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "attachment")}`,
+  );
+  res.send(buffer);
 }

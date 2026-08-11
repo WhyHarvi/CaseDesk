@@ -16,7 +16,7 @@ import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
-import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
+import { financialOperationsRecipientIds, notifyUsers, resolveNotifications } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
 
@@ -44,7 +44,7 @@ const refundReconciliationInFlight = new Map();
 // API access isn't part of this app's OAuth scope) — this needs a human,
 // immediately, not buried in the payments list.
 async function notifyOrphanedPayment(hold) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(hold.agencyId);
+  const recipientIds = await financialOperationsRecipientIds(hold.agencyId);
   if (!recipientIds.length) return;
   const runbook = [
     "Acknowledge this alert within 10 minutes.",
@@ -58,7 +58,8 @@ async function notifyOrphanedPayment(hold) {
     agencyId: hold.agencyId,
     recipientIds,
     type: "booking_payment.orphaned",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: "Paid consultation has no appointment",
     body: `${hold.guestName} paid $${Number(hold.amount).toFixed(2)}, but no appointment was created. Acknowledge within 10 minutes, confirm the payment in QuickBooks, then arrange a new slot or refund the client.`,
     severity: "critical",
@@ -136,14 +137,15 @@ async function resolveInvoiceIdsForEvent(event) {
 }
 
 async function notifyAmbiguousRefund(agencyId, refund, candidates) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
   if (!recipientIds.length) return;
   const names = [...new Set(candidates.map((item) => item.guestName))].join(", ");
   await notifyUsers({
     agencyId,
     recipientIds,
     type: "booking_payment.refund_ambiguous",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: "A refund could not be auto-matched to a booking",
     body: `A $${Number(refund.totalAmount).toFixed(2)} refund in QuickBooks matches ${candidates.length} paid consultations with the same amount and customer (${names}) — pick the right one manually and mark it refunded.`,
     severity: "warning",
@@ -157,13 +159,14 @@ async function notifyAmbiguousRefund(agencyId, refund, candidates) {
 }
 
 async function notifyUnmatchedRefund(agencyId, refund) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
   if (!recipientIds.length) return;
   await notifyUsers({
     agencyId,
     recipientIds,
     type: "booking_payment.refund_unmatched",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: "A consultation refund needs review",
     body: `A $${Number(refund.totalAmount).toFixed(2)} consultation-item refund in QuickBooks could not be matched exactly to a paid booking. It may be partial, older than the automatic matching window, or already resolved; review it in QuickBooks and CaseDesk.`,
     severity: "warning",
@@ -181,7 +184,7 @@ async function notifyUnmatchedRefund(agencyId, refund) {
 }
 
 async function notifyMatchedRefund(agencyId, refund, hold) {
-  const recipientIds = await schedulingCoordinatorRecipientIds(agencyId);
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
   if (!recipientIds.length) return;
   const appointment = hold.appointmentId
     ? await prisma.appointment.findFirst({
@@ -199,7 +202,8 @@ async function notifyMatchedRefund(agencyId, refund, hold) {
     type: stillScheduled
       ? "booking_payment.refunded_appointment_scheduled"
       : "booking_payment.refunded",
-    category: "appointments",
+    category: "payments",
+    audienceKey: "finance",
     title: stillScheduled
       ? "Refunded consultation is still scheduled"
       : "Consultation refund recorded",

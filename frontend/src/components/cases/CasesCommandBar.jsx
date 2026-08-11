@@ -5,6 +5,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { formatStudyIntake, isStudyPermitCaseType, studyIntakeValue } from "../../utils/studyIntake";
+import { CASE_STAGES } from "../../constants/caseStages";
 
 const CASE_TYPES = [
   "Canadian Citizenship",
@@ -17,17 +18,7 @@ const CASE_TYPES = [
   "Work permit / Open Work permit",
 ];
 
-const STAGES = [
-  "Lead",
-  "Consultation",
-  "Retainer Pending",
-  "Documents Pending",
-  "Reviewing Documents",
-  "Application Preparing",
-  "Submitted",
-  "Decision Received",
-  "Closed",
-];
+const STAGES = CASE_STAGES;
 
 const STATUSES = ["Active", "Ready", "Submitted", "Closed", "On Hold"];
 const PRIORITIES = ["Normal", "High", "Urgent"];

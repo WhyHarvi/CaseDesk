@@ -4,6 +4,7 @@ import {
   Copy,
   Loader2,
   MessageSquareText,
+  PhoneCall,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -25,6 +26,8 @@ const blank = {
   webhookUrl: "",
   hasWebhook: false,
   lastWebhookAt: null,
+  lastCallWebhookAt: null,
+  lastSmsWebhookAt: null,
   hasZapierOutboundWebhook: false,
   lastZapierOutboundTestedAt: null,
   lastZapierOutboundTestStatus: null,
@@ -295,6 +298,46 @@ export default function AgencyOomaSettingsPanel() {
               <p className="font-semibold text-violet-950">Required mapping for incoming SMS</p>
               <p className="mt-1">
                 In the Zapier POST payload, map the Ooma client or remote number to <code className="font-semibold text-slate-900">from</code>, your Ooma number to <code className="font-semibold text-slate-900">to</code>, the message to <code className="font-semibold text-slate-900">body</code>, and the Ooma message ID to <code className="font-semibold text-slate-900">providerMessageId</code>. Set <code className="font-semibold text-slate-900">event</code> to <code className="font-semibold text-slate-900">sms_received</code>.
+              </p>
+            </div>
+            <div className="rounded-3xl border border-sky-100/90 bg-sky-50/65 p-4 backdrop-blur-xl sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-sky-600 shadow-sm"><PhoneCall className="h-4 w-4" /></span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">Automate Ooma calls</p>
+                    <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">Use the same CaseDesk URL for each Zap. The call ID is mandatory and lets CaseDesk join ringing, ended, missed, and recording events without duplicates.</p>
+                  </div>
+                </div>
+                <ConnectionBadge connected={Boolean(form.lastCallWebhookAt)} pendingLabel={form.hasWebhook ? "Waiting for call" : "Not configured"} />
+              </div>
+
+              <div className="mt-4 grid gap-2 lg:grid-cols-2">
+                {[
+                  ["New Incoming Call", "call_started", "INBOUND", "callId, from, to, staffEmail, occurredAt"],
+                  ["New Outgoing Call", "call_started", "OUTBOUND", "callId, from, to, staffEmail, occurredAt"],
+                  ["Call Ended", "call_ended", "Map Ooma direction", "callId, remoteNumber, durationSeconds, disposition, staffEmail, occurredAt"],
+                  ["New Missed Call", "call_missed", "INBOUND", "callId, from, to, staffEmail, occurredAt"],
+                  ["New Call Recording (optional)", "call_recording", "Map Ooma direction", "callId, recordingUrl, occurredAt"],
+                ].map(([trigger, eventValue, direction, fields]) => (
+                  <div key={trigger} className="rounded-2xl border border-white/90 bg-white/75 px-4 py-3 shadow-sm">
+                    <p className="text-xs font-semibold text-slate-900">Ooma: {trigger}</p>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-500">POST with <code className="font-semibold text-slate-800">event={eventValue}</code> and <code className="font-semibold text-slate-800">direction={direction}</code></p>
+                    <p className="text-[11px] leading-5 text-slate-500">Map: {fields}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-white/90 bg-white/70 px-4 py-3 text-xs leading-5 text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-semibold text-slate-900">Zapier webhook action</p>
+                  <p>Choose Webhooks by Zapier → POST, use JSON, and map a unique Ooma event ID to <code>providerEventId</code> when available.</p>
+                  <p className="mt-1">For staff attribution, map the Ooma user’s email to <code>staffEmail</code>; it must match their CaseDesk login email.</p>
+                </div>
+                <a href="/calls" className="inline-flex shrink-0 items-center justify-center rounded-xl bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-sky-500">Open call inbox</a>
+              </div>
+              <p className="mt-3 text-[11px] leading-5 text-slate-500">
+                A paid Zapier plan with Webhooks is required. Calls are placed and answered in Ooma Desktop or your Ooma phone. CaseDesk’s Call buttons use the Windows <code>tel:</code> handler; Zapier then returns the call activity for automatic logging.
               </p>
             </div>
           </div>

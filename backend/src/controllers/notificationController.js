@@ -1,5 +1,7 @@
 import prisma from "../services/prisma/client.js";
 import { caseTabFromNotification, SIDEBAR_DESTINATIONS } from "../services/notificationService.js";
+import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
+import { hasPortalCapability, hasPortalPageAccess } from "../services/portalAccessService.js";
 import { createHttpError } from "../utils/http.js";
 
 const categories = new Set([
@@ -115,7 +117,17 @@ async function ownNotification(req) {
   return notification;
 }
 
+async function reconcileCurrentNotificationAccess(req) {
+  await reconcileNotificationAccessForUser({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    role: req.auth.role,
+    permissions: req.auth.permissions || {},
+  });
+}
+
 export async function listNotifications(req, res) {
+  await reconcileCurrentNotificationAccess(req);
   const page = positiveInteger(req.query.page, 1, 100000);
   const limit = positiveInteger(req.query.limit, 25, 100);
   const unreadOnly = req.query.unread === "1" || req.query.unread === "true";
@@ -179,6 +191,7 @@ export async function listNotifications(req, res) {
 }
 
 export async function getUnreadNotificationCount(req, res) {
+  await reconcileCurrentNotificationAccess(req);
   const now = new Date();
   const unread = await prisma.notification.count({
     where: {
@@ -195,6 +208,7 @@ export async function getUnreadNotificationCount(req, res) {
 }
 
 export async function getSidebarNotificationCounts(req, res) {
+  await reconcileCurrentNotificationAccess(req);
   const where = activeNotificationWhere(req);
   const [actionGroups, updateGroups, unreadActions, focusRows] = await Promise.all([
     prisma.notification.groupBy({
@@ -371,6 +385,18 @@ export async function getNotificationPreferences(req, res) {
 export async function updateNotificationPreferences(req, res) {
   const category = String(req.params.category || "all").trim().toLowerCase();
   if (!categories.has(category)) throw createHttpError(400, "Notification category is invalid.", "VALIDATION_ERROR");
+  if (
+    category === "payments" &&
+    req.auth.role !== "client" &&
+    (!hasPortalPageAccess(req, "payments") ||
+      !hasPortalCapability(req, "financialData"))
+  ) {
+    throw createHttpError(
+      403,
+      "Payments access is required to configure payment notifications.",
+      "PORTAL_ACCESS_DENIED",
+    );
+  }
   const dueSoonMinutes = req.body?.dueSoonMinutes === undefined ? undefined : Number(req.body.dueSoonMinutes);
   if (dueSoonMinutes !== undefined && (!Number.isInteger(dueSoonMinutes) || dueSoonMinutes < 5 || dueSoonMinutes > 10080)) {
     throw createHttpError(400, "dueSoonMinutes must be between 5 and 10080.", "VALIDATION_ERROR");

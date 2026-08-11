@@ -10,6 +10,7 @@ import {
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { homePathForRole } from "../../auth/AuthRoutes";
+import { canAccessPage, hasCapability } from "../../auth/portalAccess";
 import {
   dismissNotification,
   getNotifications,
@@ -71,6 +72,20 @@ export function actionPathForNotification(notification) {
     return `/leads?lead=${encodeURIComponent(notification.entityId)}`;
   }
   return String(notification?.actionUrl || "");
+}
+
+function isFinancialNotification(notification) {
+  const type = String(notification?.type || "").toLowerCase();
+  return (
+    notification?.metadata?.notificationAudience === "finance" ||
+    notification?.category === "payments" ||
+    type === "appointment.payment_requested" ||
+    type.startsWith("booking_payment.") ||
+    type.startsWith("quickbooks.") ||
+    type.startsWith("payment.") ||
+    type.startsWith("invoice.") ||
+    type.startsWith("installment.")
+  );
 }
 
 export function NotificationProvider({ children }) {
@@ -358,6 +373,22 @@ export function NotificationProvider({ children }) {
 
   const openNotification = useCallback(
     (notification) => {
+      const permissions = membership?.permissions || {};
+      const canOpenFinancialNotification =
+        role === "client" ||
+        (canAccessPage(role, permissions, "payments") &&
+          hasCapability(role, permissions, "financialData"));
+      if (
+        role !== "client" &&
+        isFinancialNotification(notification) &&
+        !canOpenFinancialNotification
+      ) {
+        void dismiss(notification.id);
+        setError(
+          "This notification was cleared because Payments access is not enabled for your account.",
+        );
+        return;
+      }
       if (!notification.readAt) markRead(notification.id, true);
       setPanelOpen(false);
       const raw = actionPathForNotification(notification);
@@ -371,7 +402,7 @@ export function NotificationProvider({ children }) {
           : path;
       navigate(clientSafe);
     },
-    [markRead, membership?.permissions, navigate, role],
+    [dismiss, markRead, membership?.permissions, navigate, role],
   );
 
   // Close the panel on route changes triggered elsewhere

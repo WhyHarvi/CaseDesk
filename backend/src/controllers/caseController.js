@@ -50,7 +50,7 @@ const fields = {
   studyIntakeMonth: fieldParsers.dateField,
 };
 
-import { CASE_STAGES } from "../constants/caseStages.js";
+import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
 export { CASE_STAGES };
 export const CASE_STATUSES = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 export const CASE_PRIORITIES = ["Low", "Normal", "High", "Urgent"];
@@ -103,6 +103,13 @@ function validateCasePayload(payload, existing = null) {
   }
   const finalCaseType = resolved.caseType ?? existing?.caseType;
   const finalStage = resolved.stage ?? existing?.stage;
+  if (!isCaseStageAllowedForType(finalCaseType, finalStage)) {
+    throw createHttpError(
+      400,
+      "Choose a case stage that applies to this case type.",
+      "VALIDATION_ERROR",
+    );
+  }
   if (!isStudyPermitCaseType(finalCaseType)) {
     if (Object.hasOwn(resolved, "caseType") || Object.hasOwn(resolved, "studyIntakeMonth")) resolved.studyIntakeMonth = null;
   } else {
