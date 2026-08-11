@@ -1005,3 +1005,20 @@ test("the calendar grid marks the half-hour boundary as well as the hour, and sh
   assert.match(calendar, /const email = item\.client\?\.email \|\| item\.guestEmail \|\| "";/);
   assert.match(calendar, /const phone = item\.client\?\.phone \|\| item\.guestPhone \|\| "";/);
 });
+
+test("appointment pills label the round avatar with a first name, keeping the full name in the tooltip", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  // Only the visible label shrinks to a first name — the avatar's initials,
+  // the hover card, and the title/aria-label all keep working off the full
+  // name so nothing else on the calendar loses information.
+  assert.match(calendar, /function firstNameFor\(name\) \{/);
+  assert.match(calendar, /return String\(name \|\| ""\)\.trim\(\)\.split\(\/\\s\+\/\)\[0\] \|\| "\?";/);
+  assert.match(calendar, /const firstName = firstNameFor\(displayName\);/);
+  assert.match(calendar, /<span className="min-w-0 overflow-hidden text-ellipsis">\{firstName\}<\/span>/);
+  assert.match(calendar, /<span className="min-w-0 truncate">\{firstName\}<\/span>/);
+
+  // Title/aria-label and the avatar itself still use the full name.
+  assert.match(calendar, /title=\{`\$\{displayName\} · /);
+  assert.match(calendar, /<InitialsAvatar name=\{displayName\}/);
+});

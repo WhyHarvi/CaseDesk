@@ -292,6 +292,13 @@ function initialsFor(name) {
   return String(name || "").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "?";
 }
 
+// The pill only has room for a first name next to the avatar — the full
+// name is still available in the title/aria-label and everywhere else
+// (hover card, detail panel) for anyone who needs the rest of it.
+function firstNameFor(name) {
+  return String(name || "").trim().split(/\s+/)[0] || "?";
+}
+
 // A solid-fill circle in the appointment's existing per-staff tone color —
 // there's no client photo field in the data model, so this stands in for
 // the avatar a reference design would use, while keeping the same color
@@ -398,6 +405,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
   const isNoShow = item.status === "NoShow";
   const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
   const displayName = item.client?.fullName || item.guestName || item.subject;
+  const firstName = firstNameFor(displayName);
   const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
   const outerGutter = 5;
   const columnGap = 4;
@@ -426,7 +434,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
           <ModeIcon className="h-3 w-3 shrink-0" />
           {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
           {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
-          <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
+          <span className="min-w-0 overflow-hidden text-ellipsis">{firstName}</span>
         </p>
       ) : (
         <div className="flex min-w-0 items-center gap-2.5">
@@ -435,7 +443,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
             <p className={`flex items-center gap-1 overflow-hidden font-semibold leading-[1.2] ${isNarrowWeekPill ? "text-[12px] line-clamp-2" : "text-[13px] line-clamp-1"} ${tone.title}`}>
               {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
               {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
-              <span className="min-w-0 truncate">{displayName}</span>
+              <span className="min-w-0 truncate">{firstName}</span>
             </p>
             {!isNarrowWeekPill ? (
               <p className={`mt-1 truncate text-[12px] leading-tight ${tone.meta}`}>
