@@ -65,6 +65,13 @@ import { resolveNotifications } from "../services/notificationService.js";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+// Staff booking internally already knows what actually happened today —
+// unlike a client picking a slot on the public page, there's no reason to
+// hide today's already-passed times from them. Useful for logging a
+// walk-in, an earlier call, or otherwise adjusting the day's schedule to
+// match reality after the fact. Was previously frontdesk-only; every
+// internal role hits this same need when managing the calendar directly.
+const STAFF_ROLES_SEEING_PAST_SLOTS = new Set(["admin", "consultant", "frontdesk"]);
 
 function requireAdmin(req) {
   if (req.auth.role !== "admin") {
@@ -550,9 +557,7 @@ export async function getAvailability(req, res) {
     minNoticeOverrideMinutes: 0,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || null : null,
     meetingMode,
-    // Frontdesk sees the whole day's grid, including slots already passed —
-    // useful for logging a walk-in or an earlier booking after the fact.
-    ignorePastCutoff: req.auth.role === "frontdesk",
+    ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -743,7 +748,7 @@ export async function createBookingAppointment(req, res) {
       minNoticeOverrideMinutes: 0,
       locationId: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null,
       meetingMode: requestedMeetingMode,
-      ignorePastCutoff: req.auth.role === "frontdesk",
+      ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
@@ -1354,7 +1359,7 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null, meetingMode });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
@@ -1395,7 +1400,7 @@ export async function rescheduleBookingAppointment(req, res) {
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null, meetingMode });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {

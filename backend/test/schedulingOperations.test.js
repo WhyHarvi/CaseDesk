@@ -128,6 +128,21 @@ test("frontdesk's ignorePastCutoff reveals today's already-passed slots too", ()
   assert.equal(frontdeskSlots[0].startsAt, "2026-08-03T13:00:00.000Z", "the day's grid should start at the office's opening time, not now");
 });
 
+test("every internal staff role — not just frontdesk — sees today's already-passed slots when booking or rescheduling", async () => {
+  const controller = await readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8");
+
+  // Any staff member managing the calendar directly (logging a walk-in, an
+  // earlier call, or adjusting the day's schedule to match what actually
+  // happened) needs this, not just frontdesk — a client picking a slot on
+  // the public page is the one flow that should never see the past.
+  assert.match(controller, /const STAFF_ROLES_SEEING_PAST_SLOTS = new Set\(\["admin", "consultant", "frontdesk"\]\);/);
+  const usages = controller.match(/ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS\.has\(req\.auth\.role\)/g) || [];
+  // getAvailability, createBookingAppointment's per-occurrence check, and
+  // both reschedule paths (series + single) — four call sites total.
+  assert.equal(usages.length, 4);
+  assert.doesNotMatch(controller, /ignorePastCutoff: req\.auth\.role === "frontdesk"/);
+});
+
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
