@@ -682,8 +682,33 @@ test("free follow-up consultations require a prior settled booking and a 15-minu
   assert.match(portalController, /durationMinutes: 15/);
   assert.doesNotMatch(portalOffer, /getPublicBookingInfo/);
   assert.match(portalOffer, /booking\.freeFollowUpOffer/);
-  assert.match(calendar, /previous paid consultation/);
+  assert.match(calendar, /no prior paid consultation on file/);
   assert.match(calendar, /only with a 15-minute appointment type/);
+});
+
+test("staff can't pick a free-named session type for a contact who hasn't earned it yet", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  // A brand-new client booked straight into "Free Follow-up Consultation"
+  // as their very first appointment isn't actually free — the fee is still
+  // charged underneath, just silently, because nothing stopped the option
+  // from being picked in the first place. Locking the option itself (not
+  // just warning after the fact) is what actually prevents a repeat.
+  assert.match(calendar, /const contactVerifiedFreeEligible = Boolean\(freeEligibility\?\.contactEligible\);/);
+  assert.match(calendar, /const isFreeNamedType = \(type\) => \/free\/i\.test\(type\.name\);/);
+  assert.match(calendar, /const locked = isFreeNamedType\(type\) && !contactVerifiedFreeEligible;/);
+  assert.match(calendar, /<option key=\{type\.id\} value=\{type\.id\} disabled=\{locked\}>/);
+  // Switching to a contact who hasn't earned it clears a stale selection
+  // rather than silently keeping a now-invalid free type selected.
+  assert.match(calendar, /if \(current && isFreeNamedType\(current\) && !contactVerifiedFreeEligible\) \{/);
+  assert.match(calendar, /setForm\(\(c\) => \(\{ \.\.\.c, sessionTypeId: "" \}\)\);/);
+
+  // The "not eligible" banners are now impossible to miss and say plainly
+  // that the fee still applies, instead of a neutral note easy to skim
+  // past next to a "Skip" button.
+  assert.match(calendar, /bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle/);
+  assert.match(calendar, /Not eligible for a free follow-up — this contact has no prior paid consultation on file/);
+  assert.match(calendar, /Free follow-up limit reached .* — the .*consultation fee applies/);
 });
 
 test("the public widget hides the free 15-minute follow-up from visitors who haven't verified through the portal", async () => {

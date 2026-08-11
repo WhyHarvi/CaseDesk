@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertTriangle,
   Bell,
   CalendarDays,
   Check,
@@ -985,7 +986,24 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   }
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
-  const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes[0] || null;
+  // A session type named "free" is only ever actually free for a contact
+  // who's already had a prior paid, completed consultation and is still
+  // within their free-follow-up limit (contactEligible) — that's a
+  // property of the contact, not of the type, so it can't be baked into
+  // the type itself. Until that's verified for whoever's currently
+  // selected, offering the option at all just invites exactly what
+  // happened here: a brand-new client booked straight into a "free"
+  // session that was never actually free, with the fee silently skipped.
+  const contactVerifiedFreeEligible = Boolean(freeEligibility?.contactEligible);
+  const isFreeNamedType = (type) => /free/i.test(type.name);
+  useEffect(() => {
+    const current = activeTypes.find((type) => type.id === form.sessionTypeId);
+    if (current && isFreeNamedType(current) && !contactVerifiedFreeEligible) {
+      setForm((c) => ({ ...c, sessionTypeId: "" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactVerifiedFreeEligible, form.sessionTypeId]);
+  const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes.find((type) => !isFreeNamedType(type)) || activeTypes[0] || null;
   const consultFeeAmount = Number(settings?.consultFeeAmount) || 0;
   const intakePaymentRequested = initialIntake?.action === "appointment-payment";
   const showsPaymentStep = intakePaymentRequested || (consultFeeAmount > 0 && freeEligibility?.eligible !== true);
@@ -1231,11 +1249,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 freeEligibility.eligible ? (
                   <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free 15-minute follow-up available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
                 ) : freeEligibility.reason === "PAID_BOOKING_REQUIRED" ? (
-                  <p className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600">A free follow-up becomes available only after a previous paid consultation.</p>
+                  <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Not eligible for a free follow-up — this contact has no prior paid consultation on file. The {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })} consultation fee applies.</p>
                 ) : freeEligibility.reason === "FIFTEEN_MINUTE_SESSION_REQUIRED" && freeEligibility.contactEligible ? (
                   <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700">Eligible for a free follow-up, but only with a 15-minute appointment type. This appointment remains paid.</p>
                 ) : (
-                  <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Free consultation limit reached — this will be booked as a paid consultation.</p>
+                  <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Free follow-up limit reached ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used) — the {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })} consultation fee applies.</p>
                 )
               ) : null}
 
@@ -1296,7 +1314,14 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-medium text-slate-600">Session type
                   <Select value={selectedType?.id || ""} onChange={(event) => setForm((c) => ({ ...c, sessionTypeId: event.target.value, startsAt: "" }))} className="mt-1.5 w-full" ariaLabel="Session type">
-                    {activeTypes.map((type) => <option key={type.id} value={type.id}>{type.name} · {type.durationMinutes}m</option>)}
+                    {activeTypes.map((type) => {
+                      const locked = isFreeNamedType(type) && !contactVerifiedFreeEligible;
+                      return (
+                        <option key={type.id} value={type.id} disabled={locked}>
+                          {type.name} · {type.durationMinutes}m{locked ? " (requires a prior paid consultation)" : ""}
+                        </option>
+                      );
+                    })}
                     {!activeTypes.length ? <option value="">No session types yet</option> : null}
                   </Select>
                 </label>
