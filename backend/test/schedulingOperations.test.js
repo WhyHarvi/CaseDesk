@@ -968,3 +968,37 @@ test("staff appointment notifications use the durable delivery queue", async () 
   assert.match(service, /Paid appointment cancelled — review refund/);
   assert.match(service, /if \(channel === "staff"\) throw error/);
 });
+
+test("the calendar grid marks the half-hour boundary as well as the hour, and shows an avatar-led hover preview", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  // A second, visually quieter gridline layer at the half-hour mark — the
+  // existing hour lines stay solid, this one is dashed and lighter so it
+  // reads as a reference line rather than competing with them.
+  assert.match(calendar, /className="absolute inset-x-0 border-t border-slate-100\/90" style=\{\{ top: index \* HOUR_PX \}\}/);
+  assert.match(calendar, /className="absolute inset-x-0 border-t border-dashed border-slate-100" style=\{\{ top: \(index \+ 0\.5\) \* HOUR_PX \}\}/);
+
+  // The appointment pill is its own component now (was inlined in the day
+  // loop) so the same avatar-led layout renders for every occurrence of an
+  // appointment, and non-compact pills show an initials avatar instead of
+  // just a mode icon in the name row — the compact (very short) layout is
+  // untouched since there isn't room for an avatar there.
+  assert.match(calendar, /function AppointmentPill\(\{ item, column, columns, view, tone, isSelected, isFocused, bookingSettings, onSelect, onHoverStart, onHoverEnd \}\)/);
+  assert.match(calendar, /<InitialsAvatar name=\{displayName\} tone=\{tone\} className=\{isNarrowWeekPill \? "h-5 w-5 text-\[9px\]" : "h-6 w-6 text-\[10px\]"\}/);
+  assert.match(calendar, /\{positionedDayItems\.map\(\(\{ item, column, columns \}\) => \(\s*<AppointmentPill/);
+
+  // Hover is additive to the existing click-opens-panel behaviour — it
+  // never replaces `setSelected`, it only offers a lightweight preview
+  // first, on a delay so a stray pass of the mouse doesn't pop it open.
+  assert.match(calendar, /function AppointmentHoverCard\(\{ item, tone, rect, onViewDetails, onMouseEnter, onMouseLeave \}\)/);
+  assert.match(calendar, /hoverShowTimer\.current = window\.setTimeout\(\(\) => setHoverPreview\(\{ item, tone, rect \}\), 300\);/);
+  assert.match(calendar, /hoverHideTimer\.current = window\.setTimeout\(\(\) => setHoverPreview\(null\), 150\);/);
+  assert.match(calendar, /onSelect=\{\(\) => \{ setSelected\(item\); closeHoverPreview\(\); \}\}/);
+  assert.match(calendar, /onViewDetails=\{\(\) => \{ setSelected\(hoverPreview\.item\); closeHoverPreview\(\); \}\}/);
+
+  // The preview surfaces contact info the click-through panel doesn't put
+  // right up front, using the same client/guest fallback pattern already
+  // used for the pill's display name.
+  assert.match(calendar, /const email = item\.client\?\.email \|\| item\.guestEmail \|\| "";/);
+  assert.match(calendar, /const phone = item\.client\?\.phone \|\| item\.guestPhone \|\| "";/);
+});

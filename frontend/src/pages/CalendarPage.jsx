@@ -109,6 +109,7 @@ const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-5
 const WALK_IN_TONE = { chip: "bg-fuchsia-500", block: "border-fuchsia-400 bg-fuchsia-50/90 hover:bg-fuchsia-100/90", title: "text-fuchsia-900", meta: "text-fuchsia-600" };
 const NO_SHOW_TONE = { chip: "bg-amber-500", block: "border-amber-400 bg-amber-50/95 hover:bg-amber-100/95", title: "text-amber-950", meta: "text-amber-700" };
 const MEETING_MODE_ICON = { InPerson: MapPin, Phone: Phone, Online: Video, Zoom: Video };
+const MEETING_MODE_LABEL = { InPerson: "In person", Phone: "Phone call", Online: "Jitsi video call", Zoom: "Zoom video call" };
 const APPOINTMENT_STATUS_TONE = {
   Scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
   Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200",
@@ -284,6 +285,170 @@ function DetailRow({ icon: Icon, children }) {
       <Icon className="h-4 w-4 shrink-0 text-slate-400" />
       <span className="min-w-0">{children}</span>
     </p>
+  );
+}
+
+function initialsFor(name) {
+  return String(name || "").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "?";
+}
+
+// A solid-fill circle in the appointment's existing per-staff tone color —
+// there's no client photo field in the data model, so this stands in for
+// the avatar a reference design would use, while keeping the same color
+// meaning (who it's with) the rest of the calendar already relies on.
+function InitialsAvatar({ name, tone, className = "h-6 w-6 text-[10px]" }) {
+  return (
+    <span className={`flex shrink-0 items-center justify-center rounded-full font-bold text-white ${tone.chip} ${className}`}>
+      {initialsFor(name)}
+    </span>
+  );
+}
+
+const HOVER_CARD_WIDTH = 296;
+const HOVER_CARD_MARGIN = 10;
+
+// A lightweight preview on hover, additive to the existing click-to-open
+// side panel (EventDetails) — this never replaces it, it just answers "who
+// is this / are they reachable" without committing to opening the full
+// panel and losing whatever was already selected there.
+function AppointmentHoverCard({ item, tone, rect, onViewDetails, onMouseEnter, onMouseLeave }) {
+  const style = useMemo(() => {
+    const estimatedHeight = 260;
+    let left = rect.right + HOVER_CARD_MARGIN;
+    if (left + HOVER_CARD_WIDTH > window.innerWidth - HOVER_CARD_MARGIN) {
+      left = rect.left - HOVER_CARD_WIDTH - HOVER_CARD_MARGIN;
+    }
+    left = Math.max(HOVER_CARD_MARGIN, Math.min(left, window.innerWidth - HOVER_CARD_WIDTH - HOVER_CARD_MARGIN));
+
+    let top = rect.top;
+    if (top + estimatedHeight > window.innerHeight - HOVER_CARD_MARGIN) {
+      top = window.innerHeight - estimatedHeight - HOVER_CARD_MARGIN;
+    }
+    top = Math.max(HOVER_CARD_MARGIN, top);
+
+    return { left, top, width: HOVER_CARD_WIDTH };
+  }, [rect]);
+
+  const start = new Date(item.startsAt);
+  const displayName = item.client?.fullName || item.guestName || item.subject;
+  const email = item.client?.email || item.guestEmail || "";
+  const phone = item.client?.phone || item.guestPhone || "";
+  const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
+  const modeLabel = MEETING_MODE_LABEL[item.meetingMode] || item.meetingMode;
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.12 }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className="fixed z-[500] overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]"
+      style={style}
+    >
+      <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3.5">
+        <InitialsAvatar name={displayName} tone={tone} className="h-9 w-9 text-xs" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
+          <span className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset ${APPOINTMENT_STATUS_TONE[item.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+            {item.status === "NoShow" ? "No-show" : item.status}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-2 px-4 py-3.5 text-sm text-slate-600">
+        {phone ? <p className="flex items-center gap-2 truncate"><Phone className="h-3.5 w-3.5 shrink-0 text-slate-400" />{phone}</p> : null}
+        {email ? <p className="flex items-center gap-2 truncate"><Mail className="h-3.5 w-3.5 shrink-0 text-slate-400" />{email}</p> : null}
+        {!phone && !email ? <p className="text-slate-400">No contact details on file.</p> : null}
+
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Visit type</p>
+            <p className="truncate text-xs font-medium text-slate-700">{item.sessionType?.name || "—"}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">With</p>
+            <p className="truncate text-xs font-medium text-slate-700">{item.assignedTo?.fullName || "—"}</p>
+          </div>
+        </div>
+
+        <p className="flex items-center gap-2 pt-1"><Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-400" />{start.toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric" })} · {formatTime(item.startsAt)}–{formatTime(item.endsAt)}</p>
+        <p className="flex items-center gap-2 truncate"><ModeIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />{item.location || modeLabel}</p>
+      </div>
+
+      <div className="border-t border-slate-100 px-4 py-3">
+        <button type="button" onClick={onViewDetails} className="flex h-9 w-full items-center justify-center rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800">
+          View details
+        </button>
+      </div>
+    </motion.div>,
+    document.body,
+  );
+}
+
+function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocused, bookingSettings, onSelect, onHoverStart, onHoverEnd }) {
+  const start = new Date(item.startsAt);
+  const end = new Date(item.endsAt);
+  const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
+  const height = Math.max(26, ((end - start) / 3600000) * HOUR_PX - 3);
+  const isCompact = height < 44;
+  const isNarrowWeekPill = view === "week" && columns > 1;
+  const isDone = item.status === "Completed";
+  const isNoShow = item.status === "NoShow";
+  const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
+  const displayName = item.client?.fullName || item.guestName || item.subject;
+  const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
+  const outerGutter = 5;
+  const columnGap = 4;
+  const horizontalStyle = columns === 1
+    ? { left: 6, right: 6 }
+    : {
+        left: `calc(${(column * 100) / columns}% + ${outerGutter + columnGap * column - (column * (outerGutter * 2 + columnGap * (columns - 1))) / columns}px)`,
+        width: `calc(${100 / columns}% - ${(outerGutter * 2 + columnGap * (columns - 1)) / columns}px)`,
+      };
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      onMouseEnter={(event) => onHoverStart(item, tone, event.currentTarget.getBoundingClientRect())}
+      onMouseLeave={onHoverEnd}
+      onFocus={(event) => onHoverStart(item, tone, event.currentTarget.getBoundingClientRect())}
+      onBlur={onHoverEnd}
+      title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
+      aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
+      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
+      style={{ top: Math.max(0, top), height, ...horizontalStyle }}
+    >
+      {isCompact ? (
+        <p className={`flex w-full items-center gap-1 overflow-hidden whitespace-nowrap text-ellipsis font-semibold leading-[1.15] text-[12px] ${tone.title}`}>
+          <ModeIcon className="h-3 w-3 shrink-0" />
+          {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
+          {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
+          <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
+        </p>
+      ) : (
+        <div className="flex min-w-0 items-center gap-2">
+          <InitialsAvatar name={displayName} tone={tone} className={isNarrowWeekPill ? "h-5 w-5 text-[9px]" : "h-6 w-6 text-[10px]"} />
+          <div className="min-w-0 flex-1">
+            <p className={`flex items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px] line-clamp-2" : "text-[12px] line-clamp-1"} ${tone.title}`}>
+              {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
+              {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
+              <span className="min-w-0 truncate">{displayName}</span>
+            </p>
+            {!isNarrowWeekPill ? (
+              <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
+                {formatTime(item.startsAt)}
+                {item.sessionType ? ` · ${item.sessionType.name}` : ""}
+                {isNoShow ? " · No-show" : ""}
+                {paymentAttention ? ` · ${paymentAttention}` : ""}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </button>
   );
 }
 
@@ -1502,6 +1667,48 @@ export default function CalendarPage() {
     [staffTone, role],
   );
 
+  // Hover preview is purely additive to the click-opens-panel flow below —
+  // a short show-delay avoids flashing a card on every pass of the mouse,
+  // and a short hide-delay gives the pointer time to travel from the pill
+  // into the card itself (e.g. to use the "View details" button) without
+  // it flicker-closing first.
+  const [hoverPreview, setHoverPreview] = useState(null);
+  const hoverShowTimer = useRef(null);
+  const hoverHideTimer = useRef(null);
+
+  const scheduleHoverPreview = useCallback((item, tone, rect) => {
+    window.clearTimeout(hoverHideTimer.current);
+    window.clearTimeout(hoverShowTimer.current);
+    hoverShowTimer.current = window.setTimeout(() => setHoverPreview({ item, tone, rect }), 300);
+  }, []);
+
+  const cancelHoverPreview = useCallback(() => {
+    window.clearTimeout(hoverShowTimer.current);
+    hoverHideTimer.current = window.setTimeout(() => setHoverPreview(null), 150);
+  }, []);
+
+  const closeHoverPreview = useCallback(() => {
+    window.clearTimeout(hoverShowTimer.current);
+    window.clearTimeout(hoverHideTimer.current);
+    setHoverPreview(null);
+  }, []);
+
+  const keepHoverPreview = useCallback(() => {
+    window.clearTimeout(hoverHideTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!hoverPreview) return undefined;
+    const close = () => setHoverPreview(null);
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [hoverPreview]);
+
+  useEffect(() => () => {
+    window.clearTimeout(hoverShowTimer.current);
+    window.clearTimeout(hoverHideTimer.current);
+  }, []);
+
   const visible = useMemo(
     // Attendance changes the visual state, not the historical calendar.
     // Keep no-shows in their original time slot so consultants can still
@@ -1666,9 +1873,10 @@ export default function CalendarPage() {
                   {days.map((day) => {
                     const isToday = dateKey(day) === todayKey;
                     return (
-                      <button key={day.toISOString()} type="button" onClick={() => { setSelectedDate(startOfDayLocal(day)); setView("day"); }} className="group px-2 py-2.5 text-center">
-                        <p className={`text-[11px] font-semibold uppercase tracking-wide ${isToday ? "text-sky-600" : "text-slate-400"}`}>{day.toLocaleDateString("en-CA", { weekday: "short" })}</p>
-                        <p className={`mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold transition ${isToday ? "bg-sky-600 text-white" : "text-slate-700 group-hover:bg-slate-100"}`}>{day.getDate()}</p>
+                      <button key={day.toISOString()} type="button" onClick={() => { setSelectedDate(startOfDayLocal(day)); setView("day"); }} className="px-2.5 py-3 text-left transition hover:bg-slate-50">
+                        <p className={`text-sm font-bold ${isToday ? "text-sky-600" : "text-slate-900"}`}>
+                          {day.toLocaleDateString("en-CA", { weekday: "short" })} {String(day.getDate()).padStart(2, "0")}
+                        </p>
                       </button>
                     );
                   })}
@@ -1706,7 +1914,13 @@ export default function CalendarPage() {
                   return (
                     <div key={key} className={`relative border-l border-slate-100 ${isToday ? "bg-sky-50/30" : ""}`} style={{ height: gridHours * HOUR_PX }}>
                       {Array.from({ length: gridHours }, (_, index) => (
-                        <div key={index} className="absolute inset-x-0 border-t border-slate-100/90" style={{ top: index * HOUR_PX }} />
+                        <div key={`hour-${index}`} className="absolute inset-x-0 border-t border-slate-100/90" style={{ top: index * HOUR_PX }} />
+                      ))}
+                      {/* Half-hour marks — a faint, dashed second layer so
+                          11:30 reads as a real reference line without
+                          competing with the hour lines. */}
+                      {Array.from({ length: gridHours }, (_, index) => (
+                        <div key={`half-${index}`} className="absolute inset-x-0 border-t border-dashed border-slate-100" style={{ top: (index + 0.5) * HOUR_PX }} />
                       ))}
                       {isToday && showNowLine ? (
                         <div className="pointer-events-none absolute inset-x-0 z-10" style={{ top: nowOffset }}>
@@ -1715,55 +1929,22 @@ export default function CalendarPage() {
                           </div>
                         </div>
                       ) : null}
-                      {positionedDayItems.map(({ item, column, columns }) => {
-                        const start = new Date(item.startsAt);
-                        const end = new Date(item.endsAt);
-                        const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
-                        const height = Math.max(26, ((end - start) / 3600000) * HOUR_PX - 3);
-                        const isCompact = height < 44;
-                        const isNarrowWeekPill = view === "week" && columns > 1;
-                        const tone = toneFor(item);
-                        const isSelected = selected?.id === item.id;
-                        const isFocused = focusedAppointmentId === item.id;
-                        const isDone = item.status === "Completed";
-                        const isNoShow = item.status === "NoShow";
-                        const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
-                        const displayName = item.client?.fullName || item.guestName || item.subject;
-                        const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
-                        const outerGutter = 5;
-                        const columnGap = 4;
-                        const horizontalStyle = columns === 1
-                          ? { left: 6, right: 6 }
-                          : {
-                              left: `calc(${(column * 100) / columns}% + ${outerGutter + columnGap * column - (column * (outerGutter * 2 + columnGap * (columns - 1))) / columns}px)`,
-                              width: `calc(${100 / columns}% - ${(outerGutter * 2 + columnGap * (columns - 1)) / columns}px)`,
-                            };
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => setSelected(item)}
-                            title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
-                            aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
-                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
-                            style={{ top: Math.max(0, top), height, ...horizontalStyle }}
-                          >
-                            <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
-                              <ModeIcon className="h-3 w-3 shrink-0" />
-                              {isDone ? <Check className="h-3 w-3 shrink-0" /> : null}
-                              {paymentAttention ? <Wallet className="h-3 w-3 shrink-0 text-amber-600" aria-label={paymentAttention} /> : null}
-                              <span className="min-w-0 overflow-hidden text-ellipsis">{displayName}</span>
-                            </p>
-                            {!isCompact && !isNarrowWeekPill ? (
-                              <p className={`mt-0.5 truncate text-[11px] leading-tight ${tone.meta}`}>
-                                {formatTime(item.startsAt)}
-                                {item.sessionType ? ` · ${item.sessionType.name}` : ""}
-                                {isNoShow ? " · No-show" : ""}
-                              </p>
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                      {positionedDayItems.map(({ item, column, columns }) => (
+                        <AppointmentPill
+                          key={item.id}
+                          item={item}
+                          column={column}
+                          columns={columns}
+                          view={view}
+                          tone={toneFor(item)}
+                          isSelected={selected?.id === item.id}
+                          isFocused={focusedAppointmentId === item.id}
+                          bookingSettings={bookingSettings}
+                          onSelect={() => { setSelected(item); closeHoverPreview(); }}
+                          onHoverStart={scheduleHoverPreview}
+                          onHoverEnd={cancelHoverPreview}
+                        />
+                      ))}
                     </div>
                   );
                 })}
@@ -1900,6 +2081,18 @@ export default function CalendarPage() {
           onChanged={() => load({ fresh: true, background: true })}
         />
       ) : null}
+      <AnimatePresence>
+        {hoverPreview ? (
+          <AppointmentHoverCard
+            item={hoverPreview.item}
+            tone={hoverPreview.tone}
+            rect={hoverPreview.rect}
+            onMouseEnter={keepHoverPreview}
+            onMouseLeave={cancelHoverPreview}
+            onViewDetails={() => { setSelected(hoverPreview.item); closeHoverPreview(); }}
+          />
+        ) : null}
+      </AnimatePresence>
     </PageContainer>
   );
 }
