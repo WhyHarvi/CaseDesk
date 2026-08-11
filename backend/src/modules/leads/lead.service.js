@@ -27,6 +27,7 @@ import { offerWaitlistOpening } from "../../services/bookingWaitlistService.js";
 import { assertZoomOperational } from "../../services/zoomService.js";
 import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
 import { triggerRetainerFlow } from "./lead.retainer.service.js";
+import { listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -295,6 +296,10 @@ export async function listLeadStaff(req) {
     // be assignable. Booking-specific UI (the calendar) filters on it itself.
     select: { id: true, fullName: true, email: true, role: true, zoomHostMapping: { select: { status: true } }, schedulingPreference: { select: { acceptsAppointments: true } } },
   });
+}
+
+export async function listLeadImmigrationInterests(req) {
+  return listAgencyCaseTypeOptions(req.auth.agencyId);
 }
 
 export async function getLeadSettings(req) {

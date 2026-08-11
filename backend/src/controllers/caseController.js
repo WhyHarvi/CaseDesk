@@ -1,5 +1,6 @@
 import prisma from "../services/prisma/client.js";
-import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels, normalizeCaseType } from "../services/workflowService.js";
+import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels } from "../services/workflowService.js";
+import { listAgencyCaseTypeOptions } from "../services/caseTypeOptionsService.js";
 import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNames.js";
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
@@ -114,15 +115,22 @@ function validateCasePayload(payload, existing = null) {
   return resolved;
 }
 
+function studyPermitCaseTypeWhere() {
+  return {
+    OR: [
+      { caseType: { equals: "Study", mode: "insensitive" } },
+      { caseType: { contains: "Study Permit", mode: "insensitive" } },
+      { caseType: { contains: "Study-Permit", mode: "insensitive" } },
+      { caseType: { contains: "Study_Permit", mode: "insensitive" } },
+      { caseType: { contains: "Study/Permit", mode: "insensitive" } },
+    ],
+  };
+}
+
 function studyIntakeFilterWhere(value) {
   const filter = String(value || "").trim();
   if (!filter || filter === "all") return [];
-  const studyPermitCase = {
-    OR: [
-      { caseType: { equals: "Study Permit", mode: "insensitive" } },
-      { caseType: { equals: "Study", mode: "insensitive" } },
-    ],
-  };
+  const studyPermitCase = studyPermitCaseTypeWhere();
   if (filter === "missing") return [{ AND: [studyPermitCase, { studyIntakeMonth: null }] }];
   const now = new Date();
   const currentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -347,12 +355,21 @@ export async function updateCase(req, res) {
   }
 
   const payload = validateCasePayload(parsePayload(req.body, fields), existing);
+  if (
+    Object.hasOwn(payload, "clientId") &&
+    payload.clientId !== existing.clientId
+  ) {
+    throw createHttpError(
+      400,
+      "A case cannot be moved to another client.",
+      "CASE_CLIENT_IMMUTABLE",
+    );
+  }
+  // Client selection is a creation-only field. Dropping an unchanged legacy
+  // value also prevents accidental relationship writes from older clients.
+  delete payload.clientId;
   if (req.auth.role === "consultant" && payload.assignedUserId !== undefined) payload.assignedUserId = req.auth.userId;
   await validateCaseAssignee(req, payload.assignedUserId);
-  if (payload.clientId) {
-    const targetClient = await prisma.client.findFirst({ where: { id: payload.clientId, agencyId: req.auth.agencyId, ...clientAccessWhere(req) }, select: { id: true } });
-    if (!targetClient) throw createHttpError(400, "Client was not found.", "VALIDATION_ERROR");
-  }
 
   const result = await prisma.$transaction(async (tx) => {
     const data = await tx.case.update({
@@ -769,37 +786,7 @@ export async function updateCaseDocumentAssignment(req, res) {
 // template — so the case form can suggest exact matches instead of
 // letting free text drift.
 export async function listCaseTypes(req, res) {
-  const agencyId = req.user.agencyId;
-  const [cases, documentTemplates, workflowTemplates] = await Promise.all([
-    prisma.case.findMany({ where: { agencyId }, select: { caseType: true } }),
-    prisma.documentTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
-    prisma.workflowTemplate.findMany({ where: { agencyId }, select: { caseType: true }, distinct: ["caseType"] }),
-  ]);
-
-  // Real case data can accumulate casing variants of the same case type
-  // ("Study Permit" / "study permit" / "STUDY PERMIT") from manual entry or
-  // import — a case-sensitive Set previously let those show up as separate
-  // dropdown options instead of collapsing to one. Group case-insensitively
-  // and pick one display casing per group: template case types are
-  // curated, so they always win a collision (huge weight); otherwise
-  // whichever casing is used most often across real cases wins.
-  const countsByNormalized = new Map();
-  const bump = (caseType, weight) => {
-    if (!caseType) return;
-    const canonical = canonicalCaseType(caseType);
-    const normalized = normalizeCaseType(canonical);
-    const counts = countsByNormalized.get(normalized) || new Map();
-    counts.set(canonical, (counts.get(canonical) || 0) + weight);
-    countsByNormalized.set(normalized, counts);
-  };
-  for (const { caseType } of cases) bump(caseType, 1);
-  for (const { caseType } of [...documentTemplates, ...workflowTemplates]) bump(caseType, 1000);
-
-  const caseTypes = [...countsByNormalized.values()]
-    .map((counts) => [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0])
-    .sort((a, b) => a.localeCompare(b));
-
-  res.json({ data: caseTypes });
+  res.json({ data: await listAgencyCaseTypeOptions(req.user.agencyId) });
 }
 
 export async function listStudyIntakes(req, res) {
@@ -809,12 +796,7 @@ export async function listStudyIntakes(req, res) {
       AND: [
         caseAccessWhere(req),
         caseRegisterWhere(req),
-        {
-          OR: [
-            { caseType: { equals: "Study Permit", mode: "insensitive" } },
-            { caseType: { equals: "Study", mode: "insensitive" } },
-          ],
-        },
+        studyPermitCaseTypeWhere(),
         { studyIntakeMonth: { not: null } },
       ],
     },

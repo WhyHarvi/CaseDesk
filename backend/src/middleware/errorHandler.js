@@ -11,7 +11,15 @@ export function notFoundHandler(req, res) {
 export function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || (err.name === "MulterError" ? 400 : 500);
   const isProduction = process.env.NODE_ENV === "production";
-  const hideInternalMessage = statusCode >= 500 && err.expose !== true && isProduction;
+  const isPrismaError =
+    String(err.name || "").startsWith("PrismaClient") ||
+    /^P\d{4}$/.test(String(err.code || ""));
+  // Database/ORM messages contain schema and query details and must never be
+  // returned to a browser, including while the local frontend uses a
+  // development backend. Explicitly exposed operational errors are already
+  // curated by createHttpError and remain safe to show.
+  const hideInternalMessage =
+    (statusCode >= 500 || isPrismaError) && err.expose !== true;
 
   if (process.env.NODE_ENV !== "test") {
     // Keep logging simple for the MVP scaffold.
@@ -21,7 +29,7 @@ export function errorHandler(err, req, res, next) {
   res.status(statusCode).json({
     success: false,
     message: hideInternalMessage ? "An unexpected error occurred." : err.message || "Request failed.",
-    code: err.code || (statusCode === 401 ? "UNAUTHENTICATED" : statusCode === 403 ? "FORBIDDEN" : statusCode === 404 ? "NOT_FOUND" : statusCode === 400 ? "VALIDATION_ERROR" : "INTERNAL_ERROR"),
+    code: hideInternalMessage ? "INTERNAL_ERROR" : err.code || (statusCode === 401 ? "UNAUTHENTICATED" : statusCode === 403 ? "FORBIDDEN" : statusCode === 404 ? "NOT_FOUND" : statusCode === 400 ? "VALIDATION_ERROR" : "INTERNAL_ERROR"),
     ...(!isProduction && statusCode >= 500 ? { requestId: req.requestId } : {}),
   });
 }

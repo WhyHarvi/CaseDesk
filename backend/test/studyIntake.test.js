@@ -2,12 +2,27 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../src/utils/studyIntake.js";
+import { isStudyPermitCaseType as isFrontendStudyPermitCaseType } from "../../frontend/src/utils/studyIntake.js";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("academic intake helpers normalize month values without timezone drift", () => {
-  assert.equal(isStudyPermitCaseType(" Study   Permit "), true);
-  assert.equal(isStudyPermitCaseType("Work Permit"), false);
+  const supportedStudyCaseTypes = [
+    " Study   Permit ",
+    "Study Permit with Spouse",
+    "Spouse + Study Permit",
+    "Study Permit Extension",
+    "Study-Permit / Spouse OWP",
+    "Study",
+  ];
+  for (const caseType of supportedStudyCaseTypes) {
+    assert.equal(isStudyPermitCaseType(caseType), true, `backend should include ${caseType}`);
+    assert.equal(isFrontendStudyPermitCaseType(caseType), true, `frontend should include ${caseType}`);
+  }
+  for (const caseType of ["Work Permit", "Study Abroad Consultation", "Spousal Sponsorship"]) {
+    assert.equal(isStudyPermitCaseType(caseType), false, `backend should exclude ${caseType}`);
+    assert.equal(isFrontendStudyPermitCaseType(caseType), false, `frontend should exclude ${caseType}`);
+  }
   assert.equal(studyIntakeKey(normalizeStudyIntakeMonth("2027-09-28")), "2027-09");
   assert.equal(formatStudyIntakeMonth("2027-09-01"), "September 2027");
   assert.equal(stageRequiresStudyIntake("Retainer Pending"), false);
@@ -30,6 +45,8 @@ test("case storage, filtering, audit history, and routes include academic intake
   assert.match(controller, /STUDY_INTAKE_REQUIRED/);
   assert.match(controller, /Intake changed from/);
   assert.match(controller, /studyIntakeFilterWhere\(req\.query\.studyIntake\)/);
+  assert.match(controller, /caseType: \{ contains: "Study Permit", mode: "insensitive" \}/);
+  assert.match(controller, /caseType: \{ contains: "Study-Permit", mode: "insensitive" \}/);
   assert.match(controller, /export async function listStudyIntakes[\s\S]*AND: \[[\s\S]*caseAccessWhere\(req\)/);
   assert.match(routes, /router\.get\("\/study-intakes", asyncHandler\(listStudyIntakes\)\)/);
 });
@@ -48,6 +65,8 @@ test("case and lead user interfaces expose the selector, badges, search, and fil
   assert.match(commandBar, /label="Academic Intake"/);
   assert.match(commandBar, /Intake Not Set/);
   assert.match(commandBar, /Past Intakes/);
+  assert.match(commandBar, /isStudyPermitCaseType\(value\)/);
+  assert.match(commandBar, /\.\.\.cases\.map\(\(item\) => String\(item\.caseType/);
   assert.match(profileSummary, /<StudyIntakeBadge value=\{caseItem\.studyIntakeMonth\}/);
   assert.match(conversionSheet, /studyIntakeMonth/);
   assert.match(conversionSheet, /<StudyIntakeSelect/);

@@ -936,7 +936,10 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
       setWrittenDeleteError("");
       await api.delete(`/written-documents/${writer.id}`);
       setWrittenDocuments((current) => current.filter((item) => item.id !== writer.id));
-      if (target?.writtenDocument) await onRefreshDocuments?.();
+      // Refresh the ClientDocument-backed row as well as the local draft
+      // list. Saved Writer files appear in both data sources, and leaving
+      // either snapshot stale can make an already-deleted file reappear.
+      await onRefreshDocuments?.();
       if (preview?.documentItem?.id === target?.id) closePreview();
       setWrittenDeleteTarget(null);
     } catch (requestError) {

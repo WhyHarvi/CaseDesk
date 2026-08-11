@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
+import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, forceCreateFromEvent, getDuplicateReview, getImport, getOperations, listEvents, listForms, listImports, previewImport, resolveDuplicate, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
@@ -11,6 +11,10 @@ const router = Router();
 
 router.get("/sources", asyncHandler(listLeadSources));
 router.get("/staff", asyncHandler(listLeadStaff));
+router.get(
+  "/immigration-interests",
+  asyncHandler(listLeadImmigrationInterests),
+);
 router.get("/settings", asyncHandler(getLeadSettings));
 router.patch("/settings", requireRole("admin"), asyncHandler(updateLeadSettings));
 router.get("/dashboard", requireRole("admin"), asyncHandler(getLeadDashboard));

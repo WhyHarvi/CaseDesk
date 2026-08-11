@@ -860,6 +860,7 @@ function CaseFormDrawer({
   users,
   caseTypeOptions,
   isEditing,
+  editingClientName,
   closing,
 }) {
   const submitLabel = saving
@@ -905,20 +906,26 @@ function CaseFormDrawer({
               <span className="mb-2 block text-sm font-medium text-slate-700">
                 Client
               </span>
-              <select
-                required
-                name="clientId"
-                value={formState.clientId}
-                onChange={onChange}
-                className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-              >
-                <option value="">Select client</option>
-                {clients.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.fullName}
-                  </option>
-                ))}
-              </select>
+              {isEditing ? (
+                <div className="flex h-12 w-full items-center rounded-2xl border border-slate-200/90 bg-slate-50 px-4 text-sm font-semibold text-slate-900">
+                  {editingClientName || "Unknown client"}
+                </div>
+              ) : (
+                <select
+                  required
+                  name="clientId"
+                  value={formState.clientId}
+                  onChange={onChange}
+                  className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                >
+                  <option value="">Select client</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.fullName}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -1634,6 +1641,9 @@ export default function Cases() {
       }
 
       if (isEditing) {
+        // A case belongs to the client it was created for. Client selection is
+        // available only in the new-case flow and is never submitted on edit.
+        delete payload.clientId;
         const response = await api.patch(`/cases/${editingCase.id}`, payload);
         const savedCase = response.data.data || response.data;
         setCases((current) =>
@@ -2149,6 +2159,12 @@ export default function Cases() {
           users={users}
           caseTypeOptions={caseTypeOptions}
           isEditing={isEditing}
+          editingClientName={
+            editingCase?.client?.fullName ||
+            editingCase?.clientName ||
+            clients.find((client) => client.id === formState.clientId)?.fullName ||
+            "Unknown client"
+          }
           closing={drawerClosing}
         />
       ) : null}

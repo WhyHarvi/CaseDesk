@@ -111,6 +111,37 @@ test("lead conversion uses the agency case-type dropdown", async () => {
   assert.doesNotMatch(sheet, /Case type<input/);
 });
 
+test("quick add uses the lead-safe immigration interest catalogue and supports Other", async () => {
+  const [sheet, page, routes] = await Promise.all([
+    readFile(
+      new URL(
+        "../../frontend/src/modules/leads/components/QuickAddLeadSheet.jsx",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../frontend/src/modules/leads/pages/LeadsPage.jsx",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../src/modules/leads/lead.routes.js", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(page, /api[\s\S]*?get\("\/leads\/immigration-interests"\)/);
+  assert.match(page, /immigrationInterests=\{immigrationInterests\}/);
+  assert.match(sheet, /<select name="immigrationInterest"/);
+  assert.match(sheet, /<option value="__other__">Other<\/option>/);
+  assert.match(sheet, /name="customImmigrationInterest"/);
+  assert.match(sheet, /customImmigrationInterest\.trim\(\)/);
+  assert.match(routes, /"\/immigration-interests"/);
+});
+
 test("lead RLS is agency scoped and no client policy is granted", async () => {
   const sql = await readFile(new URL("../prisma/migrations/20260714150000_add_lead_foundation/migration.sql", import.meta.url), "utf8");
   assert.match(sql, /ALTER TABLE "leads" ENABLE ROW LEVEL SECURITY/);

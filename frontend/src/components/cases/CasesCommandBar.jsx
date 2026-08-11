@@ -4,7 +4,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
-import { formatStudyIntake, studyIntakeValue } from "../../utils/studyIntake";
+import { formatStudyIntake, isStudyPermitCaseType, studyIntakeValue } from "../../utils/studyIntake";
 
 const CASE_TYPES = [
   "Canadian Citizenship",
@@ -77,6 +77,10 @@ export default function CasesCommandBar({
     ...studyIntakeOptions,
     ...cases.map((item) => studyIntakeValue(item.studyIntakeMonth)).filter(Boolean),
   ])].sort(), [cases, studyIntakeOptions]);
+  const visibleCaseTypes = useMemo(() => [...new Set([
+    ...CASE_TYPES,
+    ...cases.map((item) => String(item.caseType || "").trim()).filter(Boolean),
+  ])].sort((left, right) => left.localeCompare(right)), [cases]);
 
   const activeFilters = Object.entries(filters || {}).filter(
     ([, value]) => value && value !== "all"
@@ -86,8 +90,8 @@ export default function CasesCommandBar({
     setFilters((prev) => ({
       ...prev,
       [key]: value,
-      ...(key === "intake" && value !== "all" ? { caseType: "Study Permit" } : {}),
-      ...(key === "caseType" && value !== "Study Permit" ? { intake: "all" } : {}),
+      ...(key === "intake" && value !== "all" ? { caseType: "all" } : {}),
+      ...(key === "caseType" && value !== "all" && !isStudyPermitCaseType(value) ? { intake: "all" } : {}),
     }));
   };
 
@@ -163,7 +167,7 @@ export default function CasesCommandBar({
               onChange={(value) => updateFilter("caseType", value)}
             >
               <option value="all">All Case Types</option>
-              {CASE_TYPES.map((type) => (
+              {visibleCaseTypes.map((type) => (
                 <option key={type} value={type}>
                   {type}
                 </option>

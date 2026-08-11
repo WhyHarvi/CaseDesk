@@ -62,6 +62,18 @@ test("record searches retain agency, assignment, and deleted-record scopes", asy
   assert.match(controller, /hasPortalPageAccess\(req, "clients"\)/);
   assert.match(controller, /hasPortalPageAccess\(req, "cases"\)/);
   assert.match(controller, /hasPortalCapability\(req, "internalNotes"\)/);
+  assert.match(controller, /searchWhenAllowed\(access\.clients/);
+  assert.match(controller, /searchWhenAllowed\(access\.cases/);
+  assert.match(controller, /searchWhenAllowed\(access\.documents/);
+  assert.match(controller, /searchWhenAllowed\(access\.notes/);
+  assert.match(controller, /global_search\.source_failed/);
+  assert.match(controller, /SEARCH_UNAVAILABLE/);
+
+  const clientSearch = controller.slice(
+    controller.indexOf('searchWhenAllowed(access.clients, req, "clients"'),
+    controller.indexOf('searchWhenAllowed(access.cases, req, "cases"'),
+  );
+  assert.doesNotMatch(clientSearch, /deletedAt/);
 
   for (const model of [
     "lead",
@@ -92,6 +104,7 @@ test("global search UI uses an unclipped portal and opens every result", async (
   assert.match(search, /event\.key === "ArrowDown"/);
   assert.match(search, /event\.key === "Enter"/);
   assert.match(search, /280/);
+  assert.match(search, /response\.data\.data\?\.warning/);
   assert.match(caseProfile, /overlay"\) === "notes"/);
   assert.match(caseProfile, /highlightNoteId=\{highlightedNoteId\}/);
   assert.match(clientProfile, /useFadingHighlight\(highlightedNoteId/);

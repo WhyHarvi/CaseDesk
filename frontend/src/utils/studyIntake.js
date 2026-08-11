@@ -11,8 +11,12 @@ const CASE_STAGE_ORDER = [
 ];
 
 export function isStudyPermitCaseType(value) {
-  const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-  return normalized === "study" || normalized === "study permit";
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[-_/]+/g, " ")
+    .replace(/\s+/g, " ");
+  return normalized === "study" || /\bstudy permit\b/.test(normalized);
 }
 
 export function studyIntakeValue(value) {

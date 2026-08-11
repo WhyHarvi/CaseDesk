@@ -67,6 +67,10 @@ export async function listLeadStaff(req, res) {
   res.json({ data: await service.listLeadStaff(req) });
 }
 
+export async function listLeadImmigrationInterests(req, res) {
+  res.json({ data: await service.listLeadImmigrationInterests(req) });
+}
+
 export async function getLeadSettings(req, res) {
   res.json({ data: await service.getLeadSettings(req) });
 }

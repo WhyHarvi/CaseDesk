@@ -12,11 +12,11 @@ function defaultDueDate() {
 const fieldClass = "mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white/95 px-3.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-300 focus:ring-4 focus:ring-brand-100";
 const initialForm = (ownerUserId = "") => ({
   firstName: "", lastName: "", phone: "", email: "", originalSourceId: "",
-  immigrationInterest: "", ownerUserId, nextActionType: "CALL", nextActionDescription: "Make the first contact call",
+  immigrationInterest: "", customImmigrationInterest: "", ownerUserId, nextActionType: "CALL", nextActionDescription: "Make the first contact call",
   nextActionAt: defaultDueDate(), priority: "NORMAL", temperature: "COLD", initialMessage: "",
 });
 
-export default function QuickAddLeadSheet({ open, sources, staff, onClose, onCreated }) {
+export default function QuickAddLeadSheet({ open, sources, staff, immigrationInterests = [], onClose, onCreated }) {
   const { appUser } = useAuth();
   const [form, setForm] = useState(initialForm(appUser?.id));
   const [saving, setSaving] = useState(false);
@@ -44,9 +44,14 @@ export default function QuickAddLeadSheet({ open, sources, staff, onClose, onCre
     try {
       setSaving(true);
       setError("");
+      const { customImmigrationInterest, ...formValues } = form;
+      const immigrationInterest =
+        form.immigrationInterest === "__other__"
+          ? customImmigrationInterest.trim()
+          : form.immigrationInterest;
       const response = await api.post(
         "/leads",
-        { ...form, nextActionOwnerId: form.ownerUserId },
+        { ...formValues, immigrationInterest, nextActionOwnerId: form.ownerUserId },
         { timeout: 25_000 },
       );
       onCreated(response.data.data);
@@ -88,7 +93,31 @@ export default function QuickAddLeadSheet({ open, sources, staff, onClose, onCre
               <h3 className="text-sm font-semibold text-slate-900">Intake</h3>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="text-sm font-medium text-slate-700"><span>Source <b className="text-rose-500">*</b></span><select required name="originalSourceId" value={form.originalSourceId} onChange={update} className={fieldClass}><option value="">Select source</option>{sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
-                <label className="text-sm font-medium text-slate-700">Immigration interest<input name="immigrationInterest" value={form.immigrationInterest} onChange={update} className={fieldClass} placeholder="Study permit" /></label>
+                <label className="text-sm font-medium text-slate-700">
+                  Immigration interest
+                  <select name="immigrationInterest" value={form.immigrationInterest} onChange={update} className={fieldClass}>
+                    <option value="">Select interest</option>
+                    {immigrationInterests.map((interest) => (
+                      <option key={interest} value={interest}>{interest}</option>
+                    ))}
+                    <option value="__other__">Other</option>
+                  </select>
+                </label>
+                {form.immigrationInterest === "__other__" ? (
+                  <label className="text-sm font-medium text-slate-700 sm:col-span-2">
+                    Other immigration interest <b className="text-rose-500">*</b>
+                    <input
+                      required
+                      autoFocus
+                      maxLength={150}
+                      name="customImmigrationInterest"
+                      value={form.customImmigrationInterest}
+                      onChange={update}
+                      className={fieldClass}
+                      placeholder="Enter the service or immigration matter"
+                    />
+                  </label>
+                ) : null}
                 <label className="text-sm font-medium text-slate-700"><span>Assigned employee <b className="text-rose-500">*</b></span><select required name="ownerUserId" value={form.ownerUserId} onChange={update} className={fieldClass}><option value="">Select employee</option>{staff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select></label>
                 <label className="text-sm font-medium text-slate-700">Priority<select name="priority" value={form.priority} onChange={update} className={fieldClass}><option>NORMAL</option><option>HIGH</option><option>URGENT</option><option>LOW</option></select></label>
                 <label className="text-sm font-medium text-slate-700 sm:col-span-2">Initial message<textarea name="initialMessage" value={form.initialMessage} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="What does the person need help with?" /></label>

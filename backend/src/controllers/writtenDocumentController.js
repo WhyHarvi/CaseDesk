@@ -93,14 +93,28 @@ export async function getWrittenDocument(req, res) {
 
 export async function deleteWrittenDocument(req, res) {
   const existing = await prisma.writtenDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      agencyId: req.user.agencyId,
+      // My Documents can render a saved Writer file from its ClientDocument
+      // row, while an unsaved draft comes directly from WrittenDocument.
+      // Accept either identifier so both representations delete the same
+      // aggregate instead of treating the saved-file id as a missing draft.
+      OR: [
+        { id: req.params.id },
+        { clientDocumentId: req.params.id },
+        { issuedClientDocumentId: req.params.id },
+      ],
+    },
     include: {
       clientDocument: { select: { id: true, storageKey: true } },
       issuedClientDocument: { select: { id: true, storageKey: true } },
       case: { select: { archivedAt: true, deletedAt: true } },
     },
   });
-  if (!existing) throw createHttpError(404, "Written document not found");
+  // DELETE is intentionally idempotent. A second click, a transport retry,
+  // or a stale cached row means the requested aggregate is already gone;
+  // that is a successful final state, not an error the user must resolve.
+  if (!existing) return res.status(204).send();
   if (existing.case?.archivedAt || existing.case?.deletedAt) {
     throw createHttpError(409, "Restore this case before deleting the written document");
   }

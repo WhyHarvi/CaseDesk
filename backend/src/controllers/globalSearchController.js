@@ -4,12 +4,14 @@ import {
   relatedRecordAccessWhere,
 } from "../middleware/authorization.js";
 import { leadAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
+import { logger } from "../services/logger.js";
 import prisma from "../services/prisma/client.js";
 import {
   hasPortalCapability,
   hasPortalCaseTabAccess,
   hasPortalPageAccess,
 } from "../services/portalAccessService.js";
+import { createHttpError } from "../utils/http.js";
 
 const RESULT_LIMIT = 6;
 
@@ -27,6 +29,47 @@ const excerpt = (value, max = 150) => {
 };
 
 const join = (...values) => values.filter(Boolean).join(" · ");
+
+const skippedSearch = () => ({
+  items: [],
+  attempted: false,
+  failed: false,
+  source: null,
+});
+
+async function guardedSearch(req, source, operation) {
+  try {
+    return {
+      items: await operation(),
+      attempted: true,
+      failed: false,
+      source,
+    };
+  } catch (error) {
+    // A single model being unavailable must not take down every other search
+    // group. Keep the diagnostic server-side without including the query or
+    // Prisma's detailed validation message in the API response.
+    logger.warn("global_search.source_failed", {
+      requestId: req.requestId,
+      agencyId: req.auth.agencyId,
+      userId: req.auth.userId,
+      source,
+      code: clean(error?.code, 80) || undefined,
+      errorType: clean(error?.name, 80) || undefined,
+    });
+    return {
+      items: [],
+      attempted: true,
+      failed: true,
+      source,
+    };
+  }
+}
+
+const searchWhenAllowed = (allowed, req, source, operation) =>
+  allowed
+    ? guardedSearch(req, source, operation)
+    : Promise.resolve(skippedSearch());
 
 async function searchLeads(req, query, digits) {
   const leads = await prisma.lead.findMany({
@@ -73,7 +116,7 @@ async function searchLeads(req, query, digits) {
   }));
 }
 
-async function searchInternalRecords(req, query, digits) {
+async function searchInternalRecords(req, query, digits, access) {
   const agencyId = req.auth.agencyId;
   const clientSearch = {
     OR: [
@@ -121,12 +164,11 @@ async function searchInternalRecords(req, query, digits) {
     ],
   };
 
-  const [clients, cases, clientDocuments, writtenDocuments, notes] =
-    await Promise.all([
+  const searchResults = await Promise.all([
+    searchWhenAllowed(access.clients, req, "clients", () =>
       prisma.client.findMany({
         where: {
           agencyId,
-          deletedAt: null,
           AND: [clientAccessWhere(req), clientSearch],
         },
         select: {
@@ -141,6 +183,8 @@ async function searchInternalRecords(req, query, digits) {
         orderBy: { updatedAt: "desc" },
         take: RESULT_LIMIT,
       }),
+    ),
+    searchWhenAllowed(access.cases, req, "cases", () =>
       prisma.case.findMany({
         where: {
           agencyId,
@@ -160,6 +204,8 @@ async function searchInternalRecords(req, query, digits) {
         orderBy: { updatedAt: "desc" },
         take: RESULT_LIMIT,
       }),
+    ),
+    searchWhenAllowed(access.documents, req, "clientDocuments", () =>
       prisma.clientDocument.findMany({
         where: {
           agencyId,
@@ -184,6 +230,8 @@ async function searchInternalRecords(req, query, digits) {
         orderBy: { updatedAt: "desc" },
         take: RESULT_LIMIT,
       }),
+    ),
+    searchWhenAllowed(access.documents, req, "writtenDocuments", () =>
       prisma.writtenDocument.findMany({
         where: {
           agencyId,
@@ -205,6 +253,8 @@ async function searchInternalRecords(req, query, digits) {
         orderBy: { updatedAt: "desc" },
         take: RESULT_LIMIT,
       }),
+    ),
+    searchWhenAllowed(access.notes, req, "notes", () =>
       prisma.note.findMany({
         where: {
           agencyId,
@@ -229,7 +279,21 @@ async function searchInternalRecords(req, query, digits) {
         orderBy: { updatedAt: "desc" },
         take: RESULT_LIMIT,
       }),
-    ]);
+    ),
+  ]);
+
+  const [
+    clientsResult,
+    casesResult,
+    clientDocumentsResult,
+    writtenDocumentsResult,
+    notesResult,
+  ] = searchResults;
+  const clients = clientsResult.items;
+  const cases = casesResult.items;
+  const clientDocuments = clientDocumentsResult.items;
+  const writtenDocuments = writtenDocumentsResult.items;
+  const notes = notesResult.items;
 
   const documents = [
     ...clientDocuments.map((document) => ({
@@ -288,6 +352,10 @@ async function searchInternalRecords(req, query, digits) {
         ? `/app/cases/${note.caseId}?overlay=notes&note=${note.id}`
         : `/app/clients/${note.clientId}?note=${note.id}`,
     })),
+    attemptedSources: searchResults.filter((result) => result.attempted).length,
+    failedSources: searchResults
+      .filter((result) => result.failed)
+      .map((result) => result.source),
   };
 }
 
@@ -314,13 +382,40 @@ export async function globalSearch(req, res) {
   const canSearchNotes =
     hasPortalCapability(req, "internalNotes") &&
     (canSearchClients || canSearchCases);
-  const leadResults = canSearchLeads
-    ? await searchLeads(req, query, digits)
-    : [];
-  const internal =
+  const [leadSearch, internal] = await Promise.all([
+    searchWhenAllowed(canSearchLeads, req, "leads", () =>
+      searchLeads(req, query, digits),
+    ),
     canSearchClients || canSearchCases || canSearchDocuments || canSearchNotes
-      ? await searchInternalRecords(req, query, digits)
-      : { clients: [], cases: [], documents: [], notes: [] };
+      ? searchInternalRecords(req, query, digits, {
+          clients: canSearchClients,
+          cases: canSearchCases,
+          documents: canSearchDocuments,
+          notes: canSearchNotes,
+        })
+      : Promise.resolve({
+          clients: [],
+          cases: [],
+          documents: [],
+          notes: [],
+          attemptedSources: 0,
+          failedSources: [],
+        }),
+  ]);
+  const leadResults = leadSearch.items;
+  const attemptedSources =
+    internal.attemptedSources + (leadSearch.attempted ? 1 : 0);
+  const failedSources = [
+    ...internal.failedSources,
+    ...(leadSearch.failed ? [leadSearch.source] : []),
+  ];
+  if (attemptedSources > 0 && failedSources.length === attemptedSources) {
+    throw createHttpError(
+      503,
+      "Search is temporarily unavailable. Please try again.",
+      "SEARCH_UNAVAILABLE",
+    );
+  }
   const groups = [
     ...(canSearchClients
       ? [{ id: "clients", label: "Clients", items: internal.clients }]
@@ -345,6 +440,11 @@ export async function globalSearch(req, res) {
       groups,
       total: groups.reduce((total, group) => total + group.items.length, 0),
       minimumCharacters: 2,
+      partial: failedSources.length > 0,
+      warning:
+        failedSources.length > 0
+          ? "Some permitted record types could not be searched. Other available results are shown."
+          : null,
     },
   });
 }

@@ -56,6 +56,7 @@ export default function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [position, setPosition] = useState(null);
 
@@ -108,6 +109,7 @@ export default function GlobalSearch() {
       setQuery("");
       setGroups([]);
       setError("");
+      setWarning("");
     }
   }
 
@@ -168,6 +170,7 @@ export default function GlobalSearch() {
     if (normalized.length < 2) {
       setGroups([]);
       setError("");
+      setWarning("");
       setLoading(false);
       setActiveIndex(-1);
       return undefined;
@@ -178,6 +181,7 @@ export default function GlobalSearch() {
       try {
         setLoading(true);
         setError("");
+        setWarning("");
         const response = await api.request({
           method: "get",
           url: "/search",
@@ -186,6 +190,7 @@ export default function GlobalSearch() {
         });
         const nextGroups = response.data.data?.groups || [];
         setGroups(nextGroups);
+        setWarning(response.data.data?.warning || "");
         setActiveIndex(nextGroups.some((group) => group.items.length) ? 0 : -1);
       } catch (requestError) {
         if (
@@ -195,6 +200,7 @@ export default function GlobalSearch() {
           return;
         }
         setGroups([]);
+        setWarning("");
         setActiveIndex(-1);
         setError(
           requestError.response?.data?.message ||
@@ -270,6 +276,11 @@ export default function GlobalSearch() {
               className="overflow-y-auto overscroll-contain p-2"
               style={{ maxHeight: Math.max(190, position.maxHeight - 42) }}
             >
+              {warning ? (
+                <div className="m-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {warning}
+                </div>
+              ) : null}
               {loading && !flatResults.length ? (
                 <div className="flex min-h-40 flex-col items-center justify-center text-slate-400">
                   <LoaderCircle className="h-6 w-6 animate-spin" />
@@ -427,6 +438,7 @@ export default function GlobalSearch() {
               setQuery("");
               setGroups([]);
               setError("");
+              setWarning("");
               inputRef.current?.focus();
             }}
             aria-label="Clear search"

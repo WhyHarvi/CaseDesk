@@ -196,6 +196,9 @@ test("My Documents can safely delete editable Writer documents and their saved f
   );
   assert.match(routes, /router\.delete\("\/:id", asyncHandler\(deleteWrittenDocument\)\)/);
   assert.match(deletion, /agencyId: req\.user\.agencyId/);
+  assert.match(deletion, /clientDocumentId: req\.params\.id/);
+  assert.match(deletion, /issuedClientDocumentId: req\.params\.id/);
+  assert.match(deletion, /if \(!existing\) return res\.status\(204\)\.send\(\)/);
   assert.match(deletion, /requireEditableDocument\(existing\)/);
   assert.match(deletion, /tx\.writtenDocument\.deleteMany/);
   assert.match(deletion, /correspondenceStatus: \{ notIn: \["Issued", "Signed", "Finalized"\] \}/);
@@ -205,6 +208,7 @@ test("My Documents can safely delete editable Writer documents and their saved f
   assert.match(clientDocuments, /writtenDocument:[\s\S]*correspondenceStatus: true/);
   assert.match(workspace, /title="Delete written document"/);
   assert.match(workspace, /api\.delete\(`\/written-documents\/\$\{writer\.id\}`\)/);
+  assert.match(workspace, /await onRefreshDocuments\?\.\(\)/);
   assert.match(workspace, /Writer draft, its version history, and the stored Word file/);
   assert.match(workspace, /lockedWrittenDocumentStatuses/);
 });

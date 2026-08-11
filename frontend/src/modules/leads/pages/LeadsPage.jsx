@@ -41,6 +41,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   const [meta, setMeta] = useState({ page: 1, limit: 25, total: 0 });
   const [sources, setSources] = useState([]);
   const [staff, setStaff] = useState([]);
+  const [immigrationInterests, setImmigrationInterests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchDraft, setSearchDraft] = useState(params.get("search") || "");
@@ -116,6 +117,12 @@ export default function LeadsPage({ segment = "STANDARD" }) {
         setSupportingDataError("");
       })
       .catch((requestError) => setSupportingDataError(requestError.response?.data?.message || "Lead sources and employees could not be loaded."));
+  }, []);
+  useEffect(() => {
+    api
+      .get("/leads/immigration-interests")
+      .then((response) => setImmigrationInterests(response.data.data || []))
+      .catch(() => setImmigrationInterests([]));
   }, []);
 
   const pageCount = Math.max(Math.ceil(meta.total / meta.limit), 1);
@@ -277,7 +284,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
         </footer>
       </div>
 
-      <QuickAddLeadSheet open={quickAddOpen} sources={sources} staff={staff} onClose={() => setQuickAddOpen(false)} onCreated={() => { setQuickAddOpen(false); setParams({}); loadLeads(); }} />
+      <QuickAddLeadSheet open={quickAddOpen} sources={sources} staff={staff} immigrationInterests={immigrationInterests} onClose={() => setQuickAddOpen(false)} onCreated={() => { setQuickAddOpen(false); setParams({}); loadLeads(); }} />
       {selectedLead ? <LeadDetailSheet lead={selectedLead} staff={staff} onClose={() => {
         setSelectedLead(null);
         if (requestedLeadId) {

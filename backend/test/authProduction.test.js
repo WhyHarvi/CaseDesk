@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { errorHandler } from "../src/middleware/errorHandler.js";
 
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -53,6 +54,35 @@ test("safe operational auth errors are not replaced with a generic 500 message",
   ]);
   assert.match(http, /error\.expose = true/);
   assert.match(handler, /err\.expose !== true/);
+});
+
+test("internal Prisma errors never expose query details to the UI", () => {
+  let statusCode;
+  let payload;
+  errorHandler(
+    {
+      name: "PrismaClientValidationError",
+      code: "P2022",
+      message: "Invalid prisma.client.findMany invocation with secret schema details",
+    },
+    { requestId: "request-1" },
+    {
+      status(value) {
+        statusCode = value;
+        return this;
+      },
+      json(value) {
+        payload = value;
+        return value;
+      },
+    },
+    () => {},
+  );
+
+  assert.equal(statusCode, 500);
+  assert.equal(payload.message, "An unexpected error occurred.");
+  assert.equal(payload.code, "INTERNAL_ERROR");
+  assert.doesNotMatch(JSON.stringify(payload), /prisma|findMany|P2022/i);
 });
 
 test("client portal members use the same secure invitation activation", async () => {
