@@ -88,7 +88,11 @@ function clearAppointmentDraft() {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GRID_START_HOUR = 7;
 const GRID_END_HOUR = 20;
-const HOUR_PX = 60;
+// 72px/hour (was 60) — a 15-minute appointment used to get ~15px, barely
+// enough for one line of tiny text before the next block visually crowded
+// it. More room per hour is the single biggest lever for making the grid
+// legible instead of cramped.
+const HOUR_PX = 72;
 
 const EVENT_TONES = [
   { chip: "bg-sky-500", block: "border-sky-400 bg-sky-50/90 hover:bg-sky-100/90", title: "text-sky-900", meta: "text-sky-600" },
@@ -1600,9 +1604,9 @@ export default function CalendarPage() {
     >
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-3xl border border-white/70 bg-white/80 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-6 py-5">
             <div className="flex items-center gap-3.5">
-              <div className="flex h-12 w-12 flex-col items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex h-12 w-12 flex-col items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <span className="w-full bg-slate-950 text-center text-[8px] font-bold uppercase tracking-wider text-white">
                   {selectedDate.toLocaleDateString("en-CA", { month: "short" })}
                 </span>
@@ -1614,22 +1618,33 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2.5">
               {role !== "consultant" && staff.length ? (
-                <Select value={staffFilter} onChange={(event) => setStaffFilter(event.target.value)} ariaLabel="Filter by staff">
-                  <option value="">All staff</option>
-                  {staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}
-                </Select>
+                <>
+                  <Select value={staffFilter} onChange={(event) => setStaffFilter(event.target.value)} ariaLabel="Filter by staff">
+                    <option value="">All staff</option>
+                    {staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}
+                  </Select>
+                  <div className="hidden h-7 w-px bg-slate-200 sm:block" />
+                </>
               ) : null}
               <div className="flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 <button type="button" aria-label="Previous" onClick={() => shift(-1)} className="flex h-[42px] w-10 items-center justify-center text-slate-500 transition hover:bg-slate-50"><ChevronLeft className="h-4 w-4" /></button>
                 <button type="button" onClick={() => setSelectedDate(startOfDayLocal(new Date()))} className="h-[42px] border-x border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Today</button>
                 <button type="button" aria-label="Next" onClick={() => shift(1)} className="flex h-[42px] w-10 items-center justify-center text-slate-500 transition hover:bg-slate-50"><ChevronRight className="h-4 w-4" /></button>
               </div>
-              <Select value={view} onChange={(event) => setView(event.target.value)} ariaLabel="Calendar view">
-                <option value="day">Day view</option>
-                <option value="week">Week view</option>
-              </Select>
+              <div className="flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                {[["day", "Day"], ["week", "Week"]].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setView(value)}
+                    className={`h-[42px] px-4 text-sm font-semibold transition ${view === value ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button type="button" onClick={() => load({ fresh: true })} aria-label="Refresh calendar" className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50">
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </button>
@@ -1646,7 +1661,7 @@ export default function CalendarPage() {
           <div className="overflow-x-auto">
             <div className={view === "week" ? "min-w-[820px]" : "min-w-[420px]"}>
               {view === "week" ? (
-                <div className="grid grid-cols-[52px_repeat(7,1fr)] border-b border-slate-100">
+                <div className="grid grid-cols-[58px_repeat(7,1fr)] border-b border-slate-100">
                   <div />
                   {days.map((day) => {
                     const isToday = dateKey(day) === todayKey;
@@ -1660,12 +1675,13 @@ export default function CalendarPage() {
                 </div>
               ) : null}
 
-              <div className={view === "week" ? "grid grid-cols-[52px_repeat(7,1fr)]" : "grid grid-cols-[52px_1fr]"}>
+              <div className={view === "week" ? "grid grid-cols-[58px_repeat(7,1fr)]" : "grid grid-cols-[58px_1fr]"}>
                 <div className="relative" style={{ height: gridHours * HOUR_PX }}>
                   {Array.from({ length: gridHours * 2 }, (_, index) => {
-                    // Position N sits at the boundary after the Nth half-hour
-                    // block, matching HOUR_PX = 60 (1px per minute) — index 1
-                    // is 7:30, index 2 is 8:00, and so on through the grid.
+                    // Position N (in px) sits at the boundary after the Nth
+                    // half-hour block, scaled by HOUR_PX/60 px per minute —
+                    // index 0 is 7:30, index 1 is 8:00, and so on through
+                    // the grid.
                     const totalMinutes = (index + 1) * 30;
                     const hour24 = GRID_START_HOUR + Math.floor(totalMinutes / 60);
                     const isHourMark = totalMinutes % 60 === 0;
@@ -1675,7 +1691,7 @@ export default function CalendarPage() {
                       <span
                         key={index}
                         className={`absolute right-2.5 -translate-y-1/2 font-medium ${isHourMark ? "text-[10px] text-slate-400" : "text-[9px] text-slate-300"}`}
-                        style={{ top: totalMinutes }}
+                        style={{ top: (totalMinutes / 60) * HOUR_PX }}
                       >
                         {isHourMark ? `${hour12} ${isAM ? "AM" : "PM"}` : `${hour12}:30 ${isAM ? "AM" : "PM"}`}
                       </span>
@@ -1703,7 +1719,7 @@ export default function CalendarPage() {
                         const start = new Date(item.startsAt);
                         const end = new Date(item.endsAt);
                         const top = (start.getHours() + start.getMinutes() / 60 - GRID_START_HOUR) * HOUR_PX;
-                        const height = Math.max(30, ((end - start) / 3600000) * HOUR_PX - 3);
+                        const height = Math.max(26, ((end - start) / 3600000) * HOUR_PX - 3);
                         const isCompact = height < 44;
                         const isNarrowWeekPill = view === "week" && columns > 1;
                         const tone = toneFor(item);
@@ -1729,7 +1745,7 @@ export default function CalendarPage() {
                             onClick={() => setSelected(item)}
                             title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
                             aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
-                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-[3px] px-2 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
+                            className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone ? "opacity-60" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
                             style={{ top: Math.max(0, top), height, ...horizontalStyle }}
                           >
                             <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
@@ -1755,21 +1771,21 @@ export default function CalendarPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-slate-100 px-5 py-3.5 text-xs text-slate-500">
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-b-3xl border-t border-slate-100 bg-slate-50/60 px-6 py-2.5 text-[11px] text-slate-500">
+            <div className="flex flex-wrap items-center gap-2.5">
               {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Video"], ["Zoom", "Zoom"]].map(([modeId, label]) => {
                 const Icon = MEETING_MODE_ICON[modeId];
-                return <span key={modeId} className="flex items-center gap-1.5"><Icon className="h-3.5 w-3.5 text-slate-400" />{label}</span>;
+                return <span key={modeId} className="flex items-center gap-1"><Icon className="h-3 w-3 text-slate-400" />{label}</span>;
               })}
             </div>
-            <div className="h-3.5 w-px bg-slate-200" />
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="hidden h-3 w-px bg-slate-200 sm:block" />
+            <div className="flex flex-wrap items-center gap-2.5">
               {staff.length ? staff.map((member, index) => (
-                <span key={member.id} className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${EVENT_TONES[index % EVENT_TONES.length].chip}`} />{member.fullName}</span>
+                <span key={member.id} className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${EVENT_TONES[index % EVENT_TONES.length].chip}`} />{member.fullName}</span>
               )) : role === "consultant" ? (
-                <span className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${EVENT_TONES[0].chip}`} />Your appointments</span>
+                <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${EVENT_TONES[0].chip}`} />Your appointments</span>
               ) : null}
-              <span className="flex items-center gap-1.5"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${WALK_IN_TONE.chip}`} />Frontdesk booked (walk-in)</span>
+              <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${WALK_IN_TONE.chip}`} />Frontdesk (walk-in)</span>
             </div>
           </div>
         </div>

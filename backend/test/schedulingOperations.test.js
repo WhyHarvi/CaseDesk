@@ -172,6 +172,28 @@ test("the day/week calendar grid labels every half hour, not just each whole hou
   assert.equal(labels.length, 26);
 });
 
+test("the calendar grid gives appointments real room instead of cramming them into 60px/hour", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  // At 60px/hour a 15-minute appointment (e.g. the free follow-up type)
+  // rendered at ~15px tall — barely one line of tiny text before crowding
+  // the next block. 72px/hour is the single biggest lever for legibility.
+  assert.match(calendar, /const HOUR_PX = 72;/);
+  // The half-hour label positions must scale with HOUR_PX, not assume the
+  // old 60px/hour (1px-per-minute) relationship — a real bug this same
+  // redesign introduced and then caught: changing HOUR_PX alone would have
+  // silently left every half-hour label mispositioned.
+  assert.match(calendar, /style=\{\{ top: \(totalMinutes \/ 60\) \* HOUR_PX \}\}/);
+  assert.doesNotMatch(calendar, /style=\{\{ top: totalMinutes \}\}/);
+
+  // The view switcher is a same-purpose segmented control next to the
+  // day/today/next navigation instead of a separate dropdown, and the
+  // bottom legend is visually de-emphasized (smaller, tinted) rather than
+  // competing at the same weight as real appointment data.
+  assert.match(calendar, /\[\["day", "Day"\], \["week", "Week"\]\]\.map\(\(\[value, label\]\) => \(/);
+  assert.match(calendar, /rounded-b-3xl border-t border-slate-100 bg-slate-50\/60/);
+});
+
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
