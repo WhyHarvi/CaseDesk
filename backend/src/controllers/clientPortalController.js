@@ -6,7 +6,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { updateNormalizedQuestionnaireAssignment } from "../services/questionnaireAssignmentService.js";
 import { getClientInvoicePdf } from "../services/caseInvoiceService.js";
-import { getCaseSchedule } from "../services/paymentScheduleService.js";
+import { getCaseSchedule, releaseInstallmentsHeldByRetainer } from "../services/paymentScheduleService.js";
 import { buildClientBillingLedger } from "../services/accountStatementService.js";
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
@@ -1038,6 +1038,11 @@ export async function applyAgreementSignature({ agreement, agencyId, clientId, s
             entityId: agreement.id,
             metadata: { writtenDocumentId: agreement.id, agencySignerName, countersignedAt: countersignedAt.toISOString() },
           });
+          if (agreement.caseId) {
+            releaseInstallmentsHeldByRetainer(agencyId, agreement.caseId, userId).catch((error) => {
+              logger.warn("client_portal.release_installments_failed", { agencyId, caseId: agreement.caseId, reason: error.message });
+            });
+          }
         }
       }
     } catch (error) {

@@ -130,7 +130,7 @@ function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
   );
 }
 
-function TemplatePicker({ caseType, onPick }) {
+export function TemplatePicker({ caseType, onPick }) {
   const [templates, setTemplates] = useState(null);
 
   useEffect(() => {

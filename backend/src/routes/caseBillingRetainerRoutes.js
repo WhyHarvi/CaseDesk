@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer } from "../controllers/caseBillingRetainerController.js";
+import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../controllers/caseBillingRetainerController.js";
 import { asyncHandler } from "../utils/http.js";
 
 // Billing-tab-scoped retainer endpoints (Fix 3.1/4.1) — deliberately
@@ -16,5 +16,6 @@ import { asyncHandler } from "../utils/http.js";
 const router = Router();
 router.get("/:caseId", asyncHandler(getCaseBillingRetainer));
 router.post("/:caseId/draft", asyncHandler(createCaseBillingRetainerDraft));
+router.post("/:caseId/sync-schedule", asyncHandler(syncCaseBillingRetainerWithSchedule));
 router.post("/:caseId/approve", asyncHandler(approveCaseBillingRetainer));
 export default router;

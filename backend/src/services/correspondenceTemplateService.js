@@ -60,8 +60,17 @@ export async function ensureDefaultCorrespondenceTemplates(agencyId) {
   }
 }
 
-function escapeHtml(value) {
+export function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function missingPlaceholderText(key) {
+  const label = key.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2");
+  return `[Add ${label}]`;
 }
 
 export async function getCorrespondenceContext(agencyId, caseId, userId) {
@@ -121,6 +130,44 @@ export function renderCorrespondenceHtml(contentHtml, context) {
     return `<mark data-casedesk-missing="${escapeHtml(key)}">[Add ${escapeHtml(label)}]</mark>`;
   });
   return { html, missing: [...new Set(missing)] };
+}
+
+// Fills in a merge field that's still showing its "[Add X]" placeholder
+// after the document was already created — e.g. once a case's payment
+// schedule exists, filling {{agreement.totalFees}} into a retainer that
+// was drafted before the schedule did. Only ever touches a field that's
+// still unresolved, so it never overwrites something staff already typed
+// over the placeholder.
+//
+// Matches on the placeholder's literal "[Add X]" bracket text rather than
+// requiring its <mark data-casedesk-missing> wrapper to still be there:
+// the Writer's TipTap schema has no mark/highlight extension registered,
+// so the moment this document is opened there the <mark> tag itself is
+// dropped as an unrecognized node — only the bracket text survives. Text
+// matching keeps this working whether the document has ever been opened in
+// the Writer or not.
+//
+// A key can legitimately appear more than once in a template (e.g. a
+// running total shown in two different tables) — every occurrence of the
+// same still-blank placeholder gets the same value.
+export function applyResolvedMergeValues(html, values) {
+  let result = html;
+  const filled = [];
+  for (const [key, value] of Object.entries(values || {})) {
+    if (value === undefined || value === null || !String(value).trim()) continue;
+    const placeholder = missingPlaceholderText(key);
+    const markPattern = new RegExp(`<mark data-casedesk-missing="${escapeRegExp(key)}">${escapeRegExp(placeholder)}</mark>`, "g");
+    const textPattern = new RegExp(escapeRegExp(placeholder), "g");
+    const escaped = escapeHtml(value);
+    if (markPattern.test(result)) {
+      result = result.replace(markPattern, escaped);
+      filled.push(key);
+    } else if (textPattern.test(result)) {
+      result = result.replace(textPattern, escaped);
+      filled.push(key);
+    }
+  }
+  return { html: result, filled };
 }
 
 export function templateMatchesCase(template, caseType) {

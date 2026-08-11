@@ -168,6 +168,50 @@ export async function getCaseSchedule(agencyId, caseId) {
   return attachTaxBreakdown(schedule, agencyId);
 }
 
+function formatMoney(value) {
+  return Number(value).toLocaleString("en-CA", { style: "currency", currency: "CAD" });
+}
+
+function installmentDueLabel(installment) {
+  if (installment.triggerType === "Date" && installment.triggerDate) {
+    return new Date(installment.triggerDate).toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric" });
+  }
+  if (installment.triggerType === "Stage") return `Upon reaching the "${installment.triggerStage}" stage`;
+  return "—";
+}
+
+// What a retainer document should show for its payment terms/schedule
+// sections, computed from the case's real, approved payment schedule —
+// used both when a schedule already exists at retainer-creation time and
+// by the "sync from schedule" action on an already-created retainer.
+//
+// Professional/Government fee totals reuse the exact taxable/non-taxable
+// split that already drives the Billing tab's own Total Fee summary —
+// administrative and courier fees have no corresponding fee category in
+// the schedule at all (this agency only has Professional/Government/
+// Consultation/Other), so they're deliberately left out here; the
+// retainer keeps them as plain editable placeholder text for a consultant
+// to fill in or delete by hand.
+export async function getRetainerScheduleMergeContext(agencyId, caseId) {
+  const schedule = await getCaseSchedule(agencyId, caseId);
+  if (!schedule) return null;
+  const activeInstallments = schedule.installments.filter((item) => item.status !== "Void");
+  return {
+    values: {
+      "agreement.professionalFees": formatMoney(schedule.taxSummary.taxableSubtotal),
+      "agreement.governmentFees": formatMoney(schedule.taxSummary.nonTaxableSubtotal),
+      "agreement.taxes": formatMoney(schedule.taxSummary.tax),
+      "agreement.totalFees": formatMoney(schedule.taxSummary.totalFee),
+    },
+    installmentRows: activeInstallments.map((item) => ({
+      label: item.label,
+      amount: formatMoney(item.amount),
+      due: installmentDueLabel(item),
+    })),
+    totalLabel: formatMoney(schedule.taxSummary.totalFee),
+  };
+}
+
 export async function createCaseSchedule(agencyId, { caseId, signingDate, installments, actorUserId }) {
   const existing = await prisma.casePaymentSchedule.findFirst({ where: { agencyId, caseId } });
   if (existing) throw createHttpError(409, "This case already has a payment schedule. Edit it instead.", "SCHEDULE_EXISTS");
@@ -465,7 +509,27 @@ async function claimInstallment(installmentId) {
   return result.count === 1;
 }
 
+// A case's retainer (its most-recently-updated Agreement-kind
+// WrittenDocument, same definition the Billing tab itself uses) holds real
+// invoicing back until it's Finalized — signed by the client and
+// countersigned by the agency. Building a schedule no longer bills anyone
+// for a retainer they haven't agreed to yet; this is what used to fire real
+// QuickBooks invoices the moment a schedule was created, before the client
+// had even seen the retainer.
+//
+// A case with no retainer at all (never used the feature) is unaffected —
+// only a case that actually has one, and it isn't Finalized yet, is held.
+async function retainerBlocksInvoicing(agencyId, caseId) {
+  const retainer = await prisma.writtenDocument.findFirst({
+    where: { agencyId, caseId, correspondenceKind: "Agreement" },
+    orderBy: { updatedAt: "desc" },
+    select: { correspondenceStatus: true },
+  });
+  return Boolean(retainer) && retainer.correspondenceStatus !== "Finalized";
+}
+
 async function fireInstallment(agencyId, installment, actorUserId) {
+  if (await retainerBlocksInvoicing(agencyId, installment.caseId)) return null;
   const claimed = await claimInstallment(installment.id);
   if (!claimed) return null;
 
@@ -611,6 +675,13 @@ async function catchUpDueInstallments(agencyId, caseId, actorUserId) {
     }
   }
   return results;
+}
+
+// Called once a retainer reaches Finalized — releases whatever
+// retainerBlocksInvoicing was holding back on this case and fires anything
+// that's already due, exactly like correcting a schedule does today.
+export async function releaseInstallmentsHeldByRetainer(agencyId, caseId, actorUserId) {
+  return catchUpDueInstallments(agencyId, caseId, actorUserId);
 }
 
 /**

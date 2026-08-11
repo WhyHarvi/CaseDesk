@@ -3,6 +3,8 @@ import path from "node:path";
 import prisma from "../services/prisma/client.js";
 import { copyStorageFile, DOCUMENT_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
 import { ensureDefaultCorrespondenceTemplates, getCorrespondenceContext, renderCorrespondenceHtml, templateMatchesCase } from "../services/correspondenceTemplateService.js";
+import { releaseInstallmentsHeldByRetainer } from "../services/paymentScheduleService.js";
+import { logger } from "../services/logger.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -176,6 +178,11 @@ export async function changeCorrespondenceStatus(agencyId, documentId, status, {
 
   const data = await prisma.writtenDocument.update({ where: { id: existing.id }, data: { correspondenceStatus: status, ...(issued ? { issuedAt: existing.issuedAt || new Date(), issuedById: actorUserId } : status === "Draft" ? { issuedAt: null, issuedById: null, issuedClientDocumentId: null } : {}) }, include: documentInclude });
   await recordActivity({ agencyId, userId: actorUserId, clientId: existing.clientId, caseId: existing.caseId, action: "correspondence.status_updated", details: `${existing.title} marked ${status.toLowerCase()}` });
+  if (existing.correspondenceKind === "Agreement" && status === "Finalized" && existing.caseId) {
+    releaseInstallmentsHeldByRetainer(agencyId, existing.caseId, actorUserId).catch((error) => {
+      logger.warn("correspondence.release_installments_failed", { agencyId, caseId: existing.caseId, reason: error.message });
+    });
+  }
   return data;
 }
 
