@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../controllers/caseBillingRetainerController.js";
+import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, previewCaseBillingRetainer, resetCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../controllers/caseBillingRetainerController.js";
 import { asyncHandler } from "../utils/http.js";
 
 // Billing-tab-scoped retainer endpoints (Fix 3.1/4.1) — deliberately
@@ -15,7 +15,9 @@ import { asyncHandler } from "../utils/http.js";
 // Letter/Agreement management access more broadly.
 const router = Router();
 router.get("/:caseId", asyncHandler(getCaseBillingRetainer));
+router.post("/:caseId/preview", asyncHandler(previewCaseBillingRetainer));
 router.post("/:caseId/draft", asyncHandler(createCaseBillingRetainerDraft));
 router.post("/:caseId/sync-schedule", asyncHandler(syncCaseBillingRetainerWithSchedule));
+router.post("/:caseId/reset", asyncHandler(resetCaseBillingRetainer));
 router.post("/:caseId/approve", asyncHandler(approveCaseBillingRetainer));
 export default router;

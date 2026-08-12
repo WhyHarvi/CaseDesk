@@ -25,6 +25,7 @@ import {
   restoreCommunication,
   retryCommunicationDelivery,
   sendCommunicationDraft,
+  toggleCommunicationMessageReaction,
   updateCommunicationConversation,
   updateCommunicationDraft,
   updateCommunicationPermissions,
@@ -42,12 +43,14 @@ import {
 import {
   createCommunicationAutomation,
   deleteCommunicationAutomation,
+  getClientCommunicationPolicy,
   getCommunicationAnalytics,
   getCommunicationPreference,
   getCommunicationSlaPolicy,
   listCommunicationAudit,
   listCommunicationAutomations,
   updateCommunicationAutomation,
+  updateClientCommunicationPolicy,
   updateCommunicationPreference,
   updateCommunicationSlaPolicy,
 } from "../controllers/communicationOperationsController.js";
@@ -83,6 +86,8 @@ router.patch("/automations/:id", asyncHandler(updateCommunicationAutomation));
 router.delete("/automations/:id", asyncHandler(deleteCommunicationAutomation));
 router.get("/sla", asyncHandler(getCommunicationSlaPolicy));
 router.patch("/sla", asyncHandler(updateCommunicationSlaPolicy));
+router.get("/clients/policy", asyncHandler(getClientCommunicationPolicy));
+router.patch("/clients/policy", asyncHandler(updateClientCommunicationPolicy));
 router.get("/unmatched", asyncHandler(listUnmatchedCommunication));
 router.post(
   "/unmatched/:id/assign",
@@ -146,5 +151,6 @@ router.post("/import", asyncHandler(importCommunication));
 router.post("/export", asyncHandler(exportCommunication));
 router.post("/bulk-delete", asyncHandler(bulkDeleteCommunication));
 router.delete("/messages/:id", asyncHandler(deleteCommunication));
+router.post("/messages/:id/reactions", asyncHandler(toggleCommunicationMessageReaction));
 
 export default router;

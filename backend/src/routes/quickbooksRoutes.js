@@ -9,6 +9,7 @@ import {
   getQuickBooksItems,
   getQuickBooksMapping,
   getQuickBooksStatus,
+  getQuickBooksTaxCodes,
   quickBooksCallback,
   startQuickBooksConnect,
   updateQuickBooksMapping,
@@ -27,6 +28,7 @@ router.post("/disconnect", requireAuth, requireRole("admin"), asyncHandler(disco
 router.get("/items", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksItems));
 router.post("/items", requireAuth, requireRole("admin"), rateLimit({ windowMs: 15 * 60_000, max: 20 }), asyncHandler(createQuickBooksMappingItem));
 router.get("/accounts", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksAccounts));
+router.get("/tax-codes", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksTaxCodes));
 router.get("/mapping", requireAuth, requireRole("admin"), asyncHandler(getQuickBooksMapping));
 router.put("/mapping", requireAuth, requireRole("admin"), asyncHandler(updateQuickBooksMapping));
 

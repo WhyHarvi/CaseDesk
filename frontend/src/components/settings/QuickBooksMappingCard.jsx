@@ -7,6 +7,7 @@ import {
   getQuickBooksAccounts,
   getQuickBooksItems,
   getQuickBooksMapping,
+  getQuickBooksTaxCodes,
   updateQuickBooksMapping,
 } from "../../api/quickbooksApi";
 import Select from "../ui/Select";
@@ -318,6 +319,47 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
   );
 }
 
+function TaxCodePicker({ mapping, taxCodes, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function choose(event) {
+    const taxableTaxCodeId = event.target.value || null;
+    setSaving(true);
+    setError("");
+    try {
+      const patch = await updateQuickBooksMapping({ taxableTaxCodeId });
+      onSaved({ taxableTaxCodeId: patch.taxableTaxCodeId, taxableTaxCodeName: patch.taxableTaxCodeName });
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not save the sales-tax mapping.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+        <Percent className="h-[18px] w-[18px]" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Sales tax</p>
+            <p className="text-xs text-slate-500">Choose the QuickBooks HST/GST code used for taxable professional and consultation fees.</p>
+          </div>
+          {saving ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : null}
+        </div>
+        <Select value={mapping.taxableTaxCodeId || ""} onChange={choose} disabled={saving} className="mt-2.5 w-full" ariaLabel="QuickBooks sales-tax code">
+          <option value="">Choose a QuickBooks sales-tax code…</option>
+          {taxCodes.map((taxCode) => <option key={taxCode.id} value={taxCode.id}>{taxCode.name}</option>)}
+        </Select>
+        {error ? <p className="mt-1.5 text-xs text-rose-600">{error}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function AdditionalFeeCategories({ items }) {
   const [categories, setCategories] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -509,16 +551,18 @@ function RefundFeeRateField({ mapping, onSaved }) {
 export default function QuickBooksMappingCard() {
   const [items, setItems] = useState(null);
   const [accounts, setAccounts] = useState(null);
+  const [taxCodes, setTaxCodes] = useState(null);
   const [mapping, setMapping] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
-    Promise.all([getQuickBooksItems(), getQuickBooksAccounts(), getQuickBooksMapping()])
-      .then(([itemRows, accountRows, mappingRow]) => {
+    Promise.all([getQuickBooksItems(), getQuickBooksAccounts(), getQuickBooksTaxCodes(), getQuickBooksMapping()])
+      .then(([itemRows, accountRows, taxCodeRows, mappingRow]) => {
         if (!active) return;
         setItems(itemRows);
         setAccounts(accountRows);
+        setTaxCodes(taxCodeRows);
         setMapping(mappingRow);
       })
       .catch((reason) => active && setError(reason.response?.data?.message || "QuickBooks items could not be loaded."))
@@ -526,8 +570,8 @@ export default function QuickBooksMappingCard() {
     return () => { active = false; };
   }, []);
 
-  const loading = items === null || accounts === null || mapping === null;
-  const bothMapped = mapping && mapping.feeItemId && mapping.disbursementItemId;
+  const loading = items === null || accounts === null || taxCodes === null || mapping === null;
+  const bothMapped = mapping && mapping.feeItemId && mapping.disbursementItemId && mapping.taxableTaxCodeId;
 
   return (
     <section className={card}>
@@ -552,6 +596,7 @@ export default function QuickBooksMappingCard() {
           <ItemPicker slotKey="fee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="disbursement" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="consult" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <TaxCodePicker mapping={mapping} taxCodes={taxCodes} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <RefundFeeRateField mapping={mapping} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <AdditionalFeeCategories items={items} />
         </div>

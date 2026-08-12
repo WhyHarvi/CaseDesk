@@ -22,11 +22,15 @@ export async function recordCommunicationAudit({
         metadata,
       },
     });
-    try {
-      await dispatchCommunicationAuditNotification(event);
-    } catch (error) {
+    // Not awaited — notifyUsers() does preference lookups and delivery
+    // dispatch that measured ~1.5s on a real request. The audit event
+    // itself (the DB write above) is already durable at this point; every
+    // caller of recordCommunicationAudit was blocking its own response on
+    // this notification finishing, which made ordinary sends/edits/deletes
+    // across email, SMS, calls, and chat all feel slow for no reason.
+    dispatchCommunicationAuditNotification(event).catch((error) => {
       if (process.env.NODE_ENV !== "test") console.error("Failed to create communication notification", error);
-    }
+    });
     return event;
   } catch (error) {
     if (process.env.NODE_ENV !== "test") {

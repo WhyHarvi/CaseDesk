@@ -26,6 +26,7 @@ import { DOCUMENT_BUCKET, downloadStorageFile } from "../services/supabaseStorag
 import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/communicationAttachmentStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { getEffectiveClientCommunicationPreference } from "../services/clientCommunicationPolicyService.js";
 
 async function linkedClient(req) {
   const link = await prisma.clientUser.findFirst({
@@ -811,10 +812,11 @@ export async function createPortalMessage(req, res) {
       data: duplicate,
       meta: { duplicate: true },
     });
-  const preference = await prisma.communicationPreference.findUnique({
-    where: { clientId: link.clientId },
+  const preference = await getEffectiveClientCommunicationPreference({
+    agencyId: req.auth.agencyId,
+    clientId: link.clientId,
   });
-  if (preference?.allowChat === false)
+  if (preference.doNotContact || !preference.allowChat)
     throw createHttpError(
       403,
       "Portal messaging is disabled for this account.",

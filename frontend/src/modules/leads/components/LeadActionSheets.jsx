@@ -1,4 +1,4 @@
-import { ArrowLeftRight, CheckCircle2, ClipboardCheck, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, HeartHandshake, PhoneIncoming, UserPen, X, XCircle } from "lucide-react";
 import { useState } from "react";
 import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
@@ -268,23 +268,6 @@ export function CloseFollowUpSheet({ lead, followUp, staff, onClose, onSaved }) 
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Result<select name="status" value={form.status} onChange={update} className={fieldClass}><option value="COMPLETED">Completed</option><option value="CANCELLED">Cancelled</option></select></label>
       <label className="text-sm font-medium text-slate-700 sm:col-span-2">Outcome<textarea required maxLength={500} name="completionOutcome" value={form.completionOutcome} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Consultation scheduled" /></label>
       {requiresNextFollowUp ? <><div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:col-span-2"><b>Add the next action.</b> An open lead cannot be left without an assigned follow-up.</div><label className="text-sm font-medium text-slate-700 sm:col-span-2">Assigned to<select required name="assignedUserId" value={form.nextFollowUp.assignedUserId} onChange={updateNext} className={fieldClass}><option value="">Select team member</option>{(staff || []).map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Type<select required name="type" value={form.nextFollowUp.type} onChange={updateNext} className={fieldClass}>{FOLLOW_UP_TYPES.map((value) => <option key={value} value={value}>{humanize(value)}</option>)}</select></label><label className="text-sm font-medium text-slate-700">Due<input required type="datetime-local" name="dueAt" value={form.nextFollowUp.dueAt} onChange={updateNext} className={fieldClass} /></label><label className="text-sm font-medium text-slate-700 sm:col-span-2">Instruction<textarea required maxLength={1000} name="description" value={form.nextFollowUp.description} onChange={updateNext} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="What needs to happen next?" /></label></> : null}
-    </ActionModal>
-  );
-}
-
-export function ReassignLeadSheet({ lead, staff, onClose, onSaved }) {
-  const [form, setForm] = useState({ ownerUserId: "", reason: "" });
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
-  const { saving, error, submit } = useSubmit(
-    () => api.post(`/leads/${lead.id}/assign`, form),
-    onSaved,
-  );
-  const candidates = staff.filter((person) => person.id !== lead.ownerUserId);
-
-  return (
-    <ActionModal title="Reassign lead" subtitle={`Hand ${lead.firstName || "this lead"} to another team member.`} icon={ArrowLeftRight} onClose={onClose} onSubmit={submit} saving={saving} error={error} submitLabel="Reassign lead">
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">New owner<select required name="ownerUserId" value={form.ownerUserId} onChange={update} className={fieldClass}><option value="">Select team member</option>{candidates.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}</select></label>
-      <label className="text-sm font-medium text-slate-700 sm:col-span-2">Reason<textarea required maxLength={500} name="reason" value={form.reason} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Transferred to evening reception queue" /></label>
     </ActionModal>
   );
 }

@@ -2,9 +2,12 @@ import prisma from "../services/prisma/client.js";
 import { requireLead } from "../modules/leads/lead.repository.js";
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
-import { recordActivity } from "../utils/prismaCrud.js";
 
 const STATUSES = new Set(["Unpaid", "Partially Paid", "Paid"]);
+
+function retiredLedgerError() {
+  return createHttpError(410, "This lightweight ledger is read-only during migration. Record real charges and payments in Billing or Payments so every amount belongs to QuickBooks or CaseDesk Cash.", "MANUAL_LEDGER_RETIRED");
+}
 
 function parseEntry(body) {
   const label = String(body?.label || "").trim().slice(0, 200);
@@ -34,18 +37,18 @@ export async function listLeadLedgerEntries(req, res) {
 }
 
 export async function createLeadLedgerEntry(req, res) {
-  const lead = await requireLead(prisma, req, req.params.leadId);
-  const values = parseEntry(req.body);
-  const entry = await prisma.caseManualLedgerEntry.create({ data: { ...values, agencyId: req.auth.agencyId, leadId: lead.id, createdById: req.auth.userId } });
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "lead.ledger_entry_added", details: `${lead.leadNumber}: ${values.label} ($${values.amountOwed})`, entityType: "lead", entityId: lead.id });
-  res.status(201).json({ data: entry });
+  throw retiredLedgerError();
 }
 
 export async function listImportReviewLedgerEntries(req, res) {
   const data = await prisma.caseManualLedgerEntry.findMany({
-    where: { agencyId: req.auth.agencyId, lead: { pipelineSegment: "IMPORT_REVIEW" } },
+    where: { agencyId: req.auth.agencyId, migratedAt: null },
     orderBy: { createdAt: "asc" },
-    include: { lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true } } },
+    include: {
+      lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true } },
+      client: { select: { id: true, clientNumber: true, fullName: true } },
+      case: { select: { id: true, caseType: true } },
+    },
   });
   res.json({ data });
 }
@@ -57,11 +60,7 @@ export async function listCaseLedgerEntries(req, res) {
 }
 
 export async function createCaseLedgerEntry(req, res) {
-  const kase = await requireCaseForLedger(req);
-  const values = parseEntry(req.body);
-  const entry = await prisma.caseManualLedgerEntry.create({ data: { ...values, agencyId: req.auth.agencyId, caseId: kase.id, clientId: kase.clientId, createdById: req.auth.userId } });
-  await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "case.ledger_entry_added", details: `${values.label} ($${values.amountOwed})`, entityType: "case", entityId: kase.id });
-  res.status(201).json({ data: entry });
+  throw retiredLedgerError();
 }
 
 async function requireLedgerEntry(req) {
@@ -76,18 +75,9 @@ async function requireLedgerEntry(req) {
 }
 
 export async function updateLedgerEntry(req, res) {
-  const existing = await requireLedgerEntry(req);
-  // Explicit status in the request wins; otherwise recompute from the
-  // (possibly just-changed) amounts rather than silently keeping the old
-  // status — spreading `existing` first would otherwise always satisfy the
-  // "explicit status" check in parseEntry with the stale value.
-  const values = parseEntry({ ...existing, ...req.body, status: req.body?.status ?? undefined });
-  const entry = await prisma.caseManualLedgerEntry.update({ where: { id: existing.id }, data: values });
-  res.json({ data: entry });
+  throw retiredLedgerError();
 }
 
 export async function deleteLedgerEntry(req, res) {
-  const existing = await requireLedgerEntry(req);
-  await prisma.caseManualLedgerEntry.delete({ where: { id: existing.id } });
-  res.status(204).send();
+  throw retiredLedgerError();
 }

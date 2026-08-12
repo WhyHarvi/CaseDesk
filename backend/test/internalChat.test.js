@@ -116,22 +116,33 @@ test("a chat message just created here can accept an attachment within the share
   assert.match(controller, /import \{ CHAT_ATTACH_GRACE_MS, storeInternalChatAttachment \} from "\.\.\/services\/internalChatAttachmentStorage\.js";/);
 });
 
-test("a new team chat message notifies every other participant through the generic notification system", async () => {
+test("a new internal chat message notifies every other participant through the generic notification system, into the unified Chats badge", async () => {
   const controller = await source("../src/controllers/internalChatController.js");
   const createMessage = controller.slice(
     controller.indexOf("export async function createMessage"),
     controller.indexOf("export async function getThreadRealtimeConfig"),
   );
   assert.match(createMessage, /type: "internal_chat\.message_received",/);
-  assert.match(createMessage, /destinationKey: "teamChat",/);
+  assert.match(createMessage, /destinationKey: "chats",/);
   assert.match(createMessage, /dedupeKey: `thread:\$\{req\.params\.id\}:unread`,/);
   assert.match(createMessage, /aggregate: true,/);
   // Notification failures must never fail the message send itself.
   assert.match(createMessage, /\}\)\.catch\(\(\) => \{\}\);/);
 
   const notificationService = await source("../src/services/notificationService.js");
-  assert.match(notificationService, /"teamChat",/);
-  assert.match(notificationService, /\["\/team-chat", "teamChat"\],/);
+  assert.match(notificationService, /"chats",/);
+  assert.match(notificationService, /\["\/app\/chats", "chats"\],/);
+});
+
+test("inbound client-chat notifications also route to the unified Chats badge, but other inbound channels (email/SMS) keep badging Cases/Clients", async () => {
+  const notificationService = await source("../src/services/notificationService.js");
+  const dispatch = notificationService.slice(
+    notificationService.indexOf("export async function dispatchCommunicationAuditNotification"),
+    notificationService.indexOf("export function notificationTitle"),
+  );
+  assert.match(dispatch, /const inboundChat = \["communication\.client_chat_received", "communication\.portal_message_received"\]\.includes\(event\.action\);/);
+  assert.match(dispatch, /actionUrl: inboundChat \? `\/app\/chats\?thread=\$\{event\.conversationId\}&kind=client` : caseId/);
+  assert.match(dispatch, /destinationKey: inboundChat \? "chats" : undefined,/);
 });
 
 test("internal chat is mounted for staff roles only, alongside the rest of the internal API", async () => {
@@ -151,4 +162,34 @@ test("internal chat routes cover the full colleague/thread/message/attachment su
   assert.match(routes, /router\.post\("\/threads\/:id\/messages", rateLimit\(/);
   assert.match(routes, /threads\/:id\/messages\/:messageId\/attachments",\s*\n\s*rateLimit\(/);
   assert.match(routes, /router\.get\("\/threads\/:id\/attachments\/:attachmentId\/file", asyncHandler\(serveThreadAttachment\)\);/);
+});
+
+test("Chats is the unified inbox route, replacing the old Team Chat naming everywhere", async () => {
+  const [sidebar, appRoutes, mainLayout] = await Promise.all([
+    source("../../frontend/src/components/layout/Sidebar.jsx"),
+    source("../../frontend/src/routes/AppRoutes.jsx"),
+    source("../../frontend/src/layouts/MainLayout.jsx"),
+  ]);
+  assert.match(sidebar, /label: "Chats",\s*\n\s*to: "\/app\/chats",/);
+  assert.match(sidebar, /badgeKey: "chats"/);
+  assert.doesNotMatch(sidebar, /Team Chat|team-chat|teamChat/);
+  assert.match(appRoutes, /import\("\.\.\/pages\/ChatsPage"\)/);
+  assert.match(appRoutes, /<Route path="\/app\/chats" element=\{<ChatsPage \/>\} \/>/);
+  assert.doesNotMatch(appRoutes, /TeamChatPage|team-chat/);
+  assert.match(mainLayout, /const isChats = location\.pathname === "\/app\/chats";/);
+});
+
+test("Chats merges internal threads with every client Chat conversation, agency-wide, not scoped to one client", async () => {
+  const page = await source("../../frontend/src/pages/ChatsPage.jsx");
+  // No clientId filter here on purpose — this is the whole point of the
+  // merge: every client conversation the staff member can see, not just
+  // one client's thread the way the client-profile drawer scopes it.
+  assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Chat&limit=50"\)/);
+  assert.match(page, /Promise\.allSettled\(\[/);
+  assert.match(page, /kind: "internal"/);
+  assert.match(page, /kind: "client"/);
+  assert.match(page, /\[\.\.\.internal, \.\.\.client\]\.sort\(\(a, b\) => new Date\(b\.lastMessageAt\) - new Date\(a\.lastMessageAt\)\)/);
+  // Per-row unread badge, for both kinds, driven by the same field.
+  assert.match(page, /unreadCount: item\.unreadCount,/);
+  assert.match(page, /unreadCount: conversation\.unreadCount \|\| 0,/);
 });

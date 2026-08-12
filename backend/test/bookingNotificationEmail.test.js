@@ -59,6 +59,26 @@ test("payment request clearly remains unconfirmed, shows expiry, and does not cl
   assert.match(email.html, /separate confirmation with your calendar file/);
 });
 
+test("payment request for an existing consultation asks for payment without claiming it is unbooked", () => {
+  const email = bookingEmailContent({
+    appointment: { ...baseAppointment, status: "Completed", paymentRequestForBookedAppointment: true },
+    kind: "payment_requested",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: null,
+    payNowUrl: "https://payments.example.test/invoice/1002",
+    amount: 150,
+    includeIcs: false,
+  });
+
+  assert.match(email.html, /Payment outstanding/);
+  assert.match(email.html, /consultation fee remains due/i);
+  assert.match(email.text, /consultation is already recorded/i);
+  assert.doesNotMatch(email.html, /Not confirmed yet|booked only after payment/);
+  assert.doesNotMatch(email.text, /not confirmed until payment/i);
+});
+
 test("booking email escapes visitor-controlled content", () => {
   const email = bookingEmailContent({
     appointment: { ...baseAppointment, subject: '<img src=x onerror="alert(1)">' },

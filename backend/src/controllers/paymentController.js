@@ -1,5 +1,6 @@
 import { createCrudController, fieldParsers } from "../utils/prismaCrud.js";
 import { relatedRecordAccessWhere } from "../middleware/authorization.js";
+import { createHttpError } from "../utils/http.js";
 
 const include = {
   client: {
@@ -45,8 +46,12 @@ const controller = createCrudController({
 
 export const listPayments = controller.list;
 export const getPaymentById = controller.getById;
-export const createPayment = controller.create;
-export const updatePayment = controller.update;
-export const deletePayment = controller.remove;
+function retiredPaymentError() {
+  return createHttpError(410, "The legacy payment register is read-only. Create an invoice and record the payment through QuickBooks or CaseDesk Cash.", "LEGACY_PAYMENT_RETIRED");
+}
+
+export const createPayment = async () => { throw retiredPaymentError(); };
+export const updatePayment = async () => { throw retiredPaymentError(); };
+export const deletePayment = async () => { throw retiredPaymentError(); };
 
 export default controller;

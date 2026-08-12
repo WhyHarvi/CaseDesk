@@ -29,9 +29,8 @@ import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAG
 import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
-import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet, ReassignLeadSheet } from "./LeadActionSheets";
+import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
-import ManualLedgerPanel from "../../../components/ledger/ManualLedgerPanel";
 import CompleteConsultationSheet from "./CompleteConsultationSheet";
 
 const tabs = [
@@ -44,8 +43,8 @@ const tabs = [
 
 // `select`, when present, replaces the plain value with a real <select> —
 // pick the new value directly in the grid, no popup panel. Used for Stage
-// and Priority, which are short fixed lists; Owner stays a pencil-icon
-// button into a proper sheet since reassigning needs a reason on record.
+// Admins can transfer Owner directly from the same grid. The backend writes
+// the audit explanation automatically, so routine transfers need no modal.
 function SummaryValue({ label, value, onEdit, select, badge }) {
   return (
     <div className="min-w-0">
@@ -108,6 +107,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [promoteError, setPromoteError] = useState("");
   const [stageSaving, setStageSaving] = useState(false);
   const [prioritySaving, setPrioritySaving] = useState(false);
+  const [ownerSaving, setOwnerSaving] = useState(false);
   const [workflowError, setWorkflowError] = useState("");
 
   useEffect(() => {
@@ -190,6 +190,26 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     }
   }
 
+  async function updateOwner(ownerUserId) {
+    if (!ownerUserId || ownerUserId === lead.ownerUserId) return;
+    try {
+      setOwnerSaving(true);
+      setWorkflowError("");
+      const response = await api.post(`/leads/${lead.id}/assign`, {
+        ownerUserId,
+      });
+      setLead((current) => ({ ...current, ...response.data.data }));
+      onChanged();
+    } catch (requestError) {
+      setWorkflowError(
+        requestError.response?.data?.message ||
+          "The lead could not be transferred.",
+      );
+    } finally {
+      setOwnerSaving(false);
+    }
+  }
+
   function actionCompleted() {
     setActiveAction(null);
     setClosingFollowUp(null);
@@ -219,6 +239,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   // consultant currently assigned to this lead. Frontdesk gets neither —
   // they triage the incoming queue, they don't drive the pipeline.
   const canReassign = isWorkable && role === "admin";
+  const consultantOwners = staff.filter(
+    (person) => person.role === "consultant",
+  );
   const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
   const canCloseFollowUp = (item) => item.status === "PENDING" && (!isFrontdesk || item.assignedUserId === appUser?.id);
   // The three separate things convertLead() checks server-side, mirrored
@@ -236,7 +259,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     ? [
         { id: "activity", label: "Log activity", icon: PhoneIncoming, show: true },
         { id: "follow-up", label: "Add follow-up", icon: CheckCircle2, show: true },
-        { id: "reassign", label: "Reassign", icon: ArrowLeftRight, show: canReassign },
         { id: "nurture", label: "Nurture", icon: HeartHandshake, show: lead.status === "OPEN" },
         { id: "lost", label: "Mark lost", icon: XCircle, show: true, destructive: true },
       ].filter((action) => action.show)
@@ -314,7 +336,24 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         select={canEditWorkflow ? { value: lead.stage, disabled: stageSaving, onChange: updateStage, options: LEAD_STAGES.map((value) => ({ value, label: humanize(value) })) } : null}
                         badge={stageReady && !readyToConvert ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" title="Ready to Convert, but retainer or payment still isn't — see Path to conversion below" /> : null}
                       />
-                      <SummaryValue label="Owner" value={lead.owner?.fullName || "Unassigned"} onEdit={canReassign ? () => setActiveAction("reassign") : null} />
+                      <SummaryValue
+                        label="Owner"
+                        value={lead.owner?.fullName || "Unassigned"}
+                        select={canReassign ? {
+                          value: lead.ownerUserId || "",
+                          disabled: ownerSaving,
+                          onChange: updateOwner,
+                          options: [
+                            ...(!lead.ownerUserId
+                              ? [{ value: "", label: "Select consultant" }]
+                              : []),
+                            ...(!consultantOwners.some((person) => person.id === lead.ownerUserId) && lead.ownerUserId
+                              ? [{ value: lead.ownerUserId, label: lead.owner?.fullName || "Current owner" }]
+                              : []),
+                            ...consultantOwners.map((person) => ({ value: person.id, label: person.fullName })),
+                          ],
+                        } : null}
+                      />
                       <SummaryValue label="Source" value={lead.originalSource?.name || "Unknown"} />
                       <SummaryValue
                         label="Priority"
@@ -460,12 +499,12 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                 </section>
               ) : null}
 
-              {tab === "payments" ? <ManualLedgerPanel leadId={lead.id} /> : null}
+              {tab === "payments" ? <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-8 text-center"><Landmark className="mx-auto h-5 w-5 text-slate-400" /><h3 className="mt-3 text-sm font-semibold text-slate-900">Financial records move with the client</h3><p className="mx-auto mt-1 max-w-md text-sm leading-6 text-slate-500">Leads no longer have an editable notepad ledger. Book a consultation or convert the lead, then record its invoice and payment through the evidence-backed billing flow.</p></section> : null}
 
               {tab === "messages" ? (
                 <section>
                   <div className="mb-4 flex items-start justify-between gap-4">
-                    <div><h3 className="text-sm font-semibold text-slate-900">Lead messages</h3><p className="mt-1 text-xs text-slate-500">Website acknowledgements and appointment messages sent to this lead.</p></div>
+                    <div><h3 className="text-sm font-semibold text-slate-900">Lead messages</h3><p className="mt-1 text-xs text-slate-500">Automatic acknowledgements, stale-lead check-ins, and appointment messages sent to this lead.</p></div>
                     <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">{leadMessages.length} deliveries</span>
                   </div>
                   <div className="space-y-3">
@@ -495,7 +534,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                               {delivery.subject ? <p className="mt-3 text-xs font-semibold text-slate-700">{delivery.subject}</p> : null}
                               {delivery.body ? <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-500">{delivery.body}</p> : null}
                               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
-                                <span className="text-xs font-medium text-slate-500">{delivery.appointment ? `${delivery.appointment.subject} · ${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(delivery.appointment.startsAt))}` : `${humanize(delivery.sourceChannel || "website")} · Automatic welcome${delivery.provider ? ` · ${delivery.provider}` : ""}`}</span>
+                                <span className="text-xs font-medium text-slate-500">{delivery.appointment ? `${delivery.appointment.subject} · ${new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(delivery.appointment.startsAt))}` : `${humanize(delivery.sourceChannel || "website")} · ${delivery.kind === "stale_outreach" ? "Automatic consultation check-in" : "Automatic welcome"}${delivery.provider ? ` · ${delivery.provider}` : ""}`}</span>
                                 <time className="text-[11px] text-slate-400">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(deliveryAt))}</time>
                               </div>
                               {delivery.lastError ? <p className={`mt-2 rounded-xl px-3 py-2 text-xs ${failed ? "bg-rose-50 text-rose-700" : "bg-slate-50 text-slate-600"}`}>{delivery.lastError}</p> : null}
@@ -503,7 +542,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           </div>
                         </MessageRow>
                       );
-                    }) : <EmptyState>No website or appointment messages have been recorded for this lead.</EmptyState>}
+                    }) : <EmptyState>No lead or appointment messages have been recorded for this lead.</EmptyState>}
                   </div>
                 </section>
               ) : null}
@@ -516,7 +555,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={qualificationCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "reassign" ? <ReassignLeadSheet lead={lead} staff={staff} onClose={() => setActiveAction(null)} onSaved={() => { setActiveAction(null); onChanged(); if (isFrontdesk) { onClose(); } else { refreshLead(); } }} /> : null}
       {activeAction === "nurture" ? <NurtureLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "lost" ? <MarkLostSheet lead={lead} initialReasonCode={suggestedLostReason || "NO_RESPONSE"} onClose={() => { setActiveAction(null); setSuggestedLostReason(""); }} onSaved={() => { setSuggestedLostReason(""); actionCompleted(); }} /> : null}
       {activeAction === "reactivate" ? <ReactivateLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}

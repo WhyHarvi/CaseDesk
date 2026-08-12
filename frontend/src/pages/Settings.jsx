@@ -13,13 +13,15 @@ import {
   ShieldCheck,
   UserRound,
   Users,
+  Waypoints,
   Workflow,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { getPortalAccess } from "../auth/portalAccess";
 import api from "../services/api";
 import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPanel";
 import PersonalMailboxSettingsPanel from "../components/settings/PersonalMailboxSettingsPanel";
@@ -36,6 +38,19 @@ import AutomatedRemindersSettingsPanel from "../components/settings/AutomatedRem
 import SecuritySettingsPanel from "../components/settings/SecuritySettingsPanel";
 import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettingsPanel";
 import PortalAccessSettingsPanel from "../components/settings/PortalAccessSettingsPanel";
+
+const LeadIntakeSettingsPanel = lazy(
+  () => import("../modules/leads/pages/LeadIntakePage"),
+);
+
+const leadIntakeSettingsItem = {
+  id: "lead-intake",
+  label: "Lead Intake",
+  icon: Waypoints,
+  title: "Lead Intake",
+  subtitle:
+    "Manage public intake forms, external lead connections, imports, and incoming events.",
+};
 
 const adminSettingsItems = [
   {
@@ -91,6 +106,7 @@ const adminSettingsItems = [
     subtitle:
       "Choose which pages, case tabs, and records each team member can access.",
   },
+  leadIntakeSettingsItem,
   {
     id: "case-workflow",
     label: "Case Workflow",
@@ -168,6 +184,7 @@ const consultantSettingsItems = [
     title: "My Mailbox",
     subtitle: "Connect your own Microsoft mailbox for client communication.",
   },
+  leadIntakeSettingsItem,
   {
     id: "notifications",
     label: "Notifications",
@@ -190,6 +207,10 @@ const consultantSettingsItems = [
     subtitle: "Review your account activity and changes.",
   },
 ];
+
+const personalSettingsItems = consultantSettingsItems.filter(
+  (item) => item.id !== "lead-intake",
+);
 
 function PlaceholderPanel({ item }) {
   return (
@@ -769,9 +790,16 @@ function FrontdeskProfilePanel({ user, agency }) {
 }
 
 export default function Settings() {
-  const { role, appUser, agency } = useAuth();
+  const { role, appUser, agency, membership } = useAuth();
   const isAdmin = role === "admin";
-  const settingsItems = isAdmin ? adminSettingsItems : consultantSettingsItems;
+  const canAccessLeadIntake =
+    isAdmin ||
+    getPortalAccess(role, membership?.permissions).pages.leadIntake === true;
+  const settingsItems = isAdmin
+    ? adminSettingsItems
+    : canAccessLeadIntake
+      ? consultantSettingsItems
+      : personalSettingsItems;
   const defaultSection = isAdmin ? "agency-profile" : "personal-profile";
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSection = searchParams.get("section");
@@ -912,6 +940,16 @@ export default function Settings() {
                     <ActivityLogsSettingsPanel />
                   ) : activeSection === "personal-email" ? (
                     <PersonalMailboxSettingsPanel />
+                  ) : activeSection === "lead-intake" && canAccessLeadIntake ? (
+                    <Suspense
+                      fallback={
+                        <div className="flex min-h-56 items-center justify-center text-sm font-medium text-slate-500">
+                          Loading lead intake…
+                        </div>
+                      }
+                    >
+                      <LeadIntakeSettingsPanel />
+                    </Suspense>
                   ) : activeSection === "agency-profile" ? (
                     <AgencyProfilePanel />
                   ) : activeSection === "agency-email" ? (

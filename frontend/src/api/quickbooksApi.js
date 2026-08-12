@@ -25,6 +25,11 @@ export async function getQuickBooksAccounts() {
   return response.data.data;
 }
 
+export async function getQuickBooksTaxCodes() {
+  const response = await api.get("/quickbooks/tax-codes", { cache: false });
+  return response.data.data;
+}
+
 export async function createQuickBooksItem(values) {
   const response = await api.post("/quickbooks/items", values);
   return response.data.data;

@@ -5,7 +5,7 @@ import api from "../../../services/api";
 import { humanize } from "../leadPresentation";
 
 const retainerStatuses = ["NOT_REQUIRED", "NOT_PREPARED", "PREPARED", "SENT", "VIEWED", "SIGNED", "DECLINED", "EXPIRED"];
-const paymentStatuses = ["NOT_REQUESTED", "REQUESTED", "PARTIAL", "PAID", "FAILED", "REFUNDED", "WAIVED"];
+const paymentStatuses = ["NOT_REQUESTED", "REQUESTED", "FAILED", "WAIVED"];
 const fieldClass = "mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 shadow-sm outline-none transition focus:border-brand-300 focus:ring-4 focus:ring-brand-100";
 
 export default function LeadCommercialStatusSheet({ lead, onClose, onUpdated }) {
@@ -47,7 +47,7 @@ export default function LeadCommercialStatusSheet({ lead, onClose, onUpdated }) 
         <div className="space-y-4 p-6">
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
           <label className="block text-sm font-medium text-slate-700">Retainer status<select name="retainerStatus" value={form.retainerStatus} onChange={update} className={fieldClass}>{retainerStatuses.map((status) => <option key={status} value={status}>{humanize(status)}</option>)}</select></label>
-          <label className="block text-sm font-medium text-slate-700">Initial-payment status<select name="initialPaymentStatus" value={form.initialPaymentStatus} onChange={update} className={fieldClass}>{paymentStatuses.map((status) => <option key={status} value={status}>{humanize(status)}</option>)}</select></label>
+          <label className="block text-sm font-medium text-slate-700">Initial-payment status<select name="initialPaymentStatus" value={form.initialPaymentStatus} onChange={update} className={fieldClass}>{!paymentStatuses.includes(form.initialPaymentStatus) ? <option value={form.initialPaymentStatus}>{humanize(form.initialPaymentStatus)} · financial record</option> : null}{paymentStatuses.map((status) => <option key={status} value={status}>{humanize(status)}</option>)}</select><span className="mt-2 block text-xs leading-5 text-slate-500">Paid, partial and refunded states come from recorded invoices and payments and cannot be selected here.</span></label>
           <label className="block text-sm font-medium text-slate-700">Evidence note{sensitive ? " (required)" : ""}<textarea required={sensitive} name="notes" value={form.notes} onChange={update} rows={3} className={`${fieldClass} h-auto py-3`} placeholder="Signed copy location, invoice number, or reason for the override" /></label>
           {sensitive && !canConfirmSensitive ? <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">Only an admin or this lead's assigned consultant can confirm a signed retainer or received payment.</p> : null}
         </div>

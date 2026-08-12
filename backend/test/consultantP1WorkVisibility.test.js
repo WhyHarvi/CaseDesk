@@ -98,7 +98,7 @@ test("my workload exposes actionable records and recovers from API errors", asyn
   assert.match(controller, /pendingTaskItems/);
   assert.match(controller, /overdueTaskItems/);
   assert.match(controller, /documentReviewItems/);
-  assert.match(controller, /source: "case_owner"/);
+  assert.match(controller, /caseOwnerRole === "frontdesk" \? "front_desk" : "case_owner"/);
   assert.match(controller, /source: "case_assignment"/);
   assert.match(controller, /assignmentSource: owner\.source/);
   assert.match(page, /Unable to load your workload/);
@@ -107,28 +107,35 @@ test("my workload exposes actionable records and recovers from API errors", asyn
 });
 
 test("admin workload shows agency consultants, assignments, and unassigned work", async () => {
-  const [controller, routes, page, dashboard, sidebar, tasksWorkspace] = await Promise.all([
+  const [controller, routes, page, rosterTable, dashboard, sidebar, tasksWorkspace] = await Promise.all([
     source("../src/controllers/adminConsultantController.js"),
     source("../src/routes/adminRoutes.js"),
     source("../../frontend/src/pages/Workload.jsx"),
+    source("../../frontend/src/components/workload/TeamRosterTable.jsx"),
     source("../../frontend/src/components/dashboard/DashboardWorkRow.jsx"),
     source("../../frontend/src/components/layout/Sidebar.jsx"),
     source("../../frontend/src/components/case-profile/TasksWorkspace.jsx"),
   ]);
 
   assert.match(routes, /router\.get\("\/consultants\/workload", asyncHandler\(agencyWorkloads\)\)/);
-  assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned,[\s\S]*outsideTeam: finalizeBucket\(outsideTeamBucket, null, sliceLimit\),[\s\S]*frontDesk: finalizeBucket\(frontDeskBucket, null, sliceLimit\),?[\s\S]*\}/);
-  assert.match(controller, /memberships: \{[\s\S]*some: \{[\s\S]*agencyId,[\s\S]*role: "consultant",[\s\S]*isActive: true,[\s\S]*\}[\s\S]*\}/);
+  assert.match(controller, /return \{[\s\S]*summary,[\s\S]*consultants,[\s\S]*unassigned,?[\s\S]*\}/);
+  assert.doesNotMatch(controller, /outsideTeam: finalizeBucket|frontDesk: finalizeBucket/);
+  // The roster now covers every active staff role, not just consultants —
+  // this is the fix for admin-owned work landing in a real per-person
+  // bucket instead of the old "outside the consultant roster" catch-all.
+  assert.match(controller, /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/);
   assert.match(controller, /status: \{ in: OPEN_CASE_STATUSES \}/);
   assert.match(controller, /pendingFollowUps: followUps\.length/);
   assert.match(controller, /activeLeads: leads\.length/);
   assert.match(controller, /status: \{ in: \["OPEN", "NURTURE"\] \}/);
   assert.match(controller, /upcomingAppointments: appointments\.length/);
   assert.match(controller, /activeCases: cases\.length/);
-  assert.match(page, /isAdmin \? "\/admin\/consultants\/workload" : "\/consultants\/me\/workload"/);
+  // Admins get the new team activity report; the personal per-consultant
+  // view (out of scope for this redesign) is unchanged.
+  assert.match(page, /isAdmin \? `\/workload\/team\?period=\$\{period\}` : "\/consultants\/me\/workload"/);
   assert.match(page, /title=\{isAdmin \? "Team Workload" : "My Workload"\}/);
   assert.match(page, /Unassigned work needs an owner/);
-  assert.match(page, /Consultant workload/);
+  assert.match(rosterTable, /Your team/);
   assert.match(page, /Open Leads/);
   assert.match(page, /Overdue lead actions/);
   assert.match(dashboard, /isAdmin \? "View team workload" : "View all my work"/);
@@ -148,9 +155,13 @@ test("work ownership inherits from the active case consultant before becoming un
     consultantId: consultant.id,
     source: "case_owner",
   });
+  // An admin explicitly assigned but absent from the roster set passed in
+  // here falls back to unassigned — in production this activeConsultantIds
+  // set now always includes every active admin/consultant/frontdesk member,
+  // so this only exercises the defensive fallback path, not a real scenario.
   assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: admin, caseItem: { assignedUser: consultant, assignments: [] } }), {
     consultantId: null,
-    source: "outside_team",
+    source: "unassigned",
   });
   assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: inactive, caseItem: { assignedUser: null, assignments: [{ assignmentType: "primary", consultant }] } }), {
     consultantId: consultant.id,
@@ -159,5 +170,21 @@ test("work ownership inherits from the active case consultant before becoming un
   assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: { assignedUser: null, assignments: [] } }), {
     consultantId: null,
     source: "unassigned",
+  });
+});
+
+test("front desk staff resolve to their own roster slot, not a shared bucket, once they're in the active roster set", () => {
+  const agencyId = "agency-1";
+  const membership = (role, isActive = true) => [{ agencyId, role, isActive }];
+  const frontDeskUser = { id: "frontdesk-1", status: "active", memberships: membership("frontdesk") };
+  const activeConsultantIds = new Set([frontDeskUser.id]);
+
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, explicitUser: frontDeskUser }), {
+    consultantId: frontDeskUser.id,
+    source: "front_desk",
+  });
+  assert.deepEqual(resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: { assignedUser: frontDeskUser, assignments: [] } }), {
+    consultantId: frontDeskUser.id,
+    source: "front_desk",
   });
 });

@@ -3,21 +3,24 @@ import { useLocation } from "react-router-dom";
 import Header from "../components/layout/Header";
 import Sidebar from "../components/layout/Sidebar";
 import IncomingOomaCallAlert from "../components/communications/IncomingOomaCallAlert";
+import FloatingChatWidget from "../components/chat/FloatingChatWidget";
+import usePortalHeartbeat from "../hooks/usePortalHeartbeat";
 
 export default function MainLayout({ children, hideTopBar = false, lockContentScroll = false, flushContent = false }) {
+  usePortalHeartbeat();
   const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const isSettings = location.pathname === "/app/settings";
   const isWriter = /\/documents\/(new|[^/]+\/edit)$/.test(location.pathname);
-  const isTeamChat = location.pathname === "/app/team-chat";
+  const isChats = location.pathname === "/app/chats";
   const useFocusedWorkspace = isSettings || isWriter;
   const effectiveHideTopBar = hideTopBar || useFocusedWorkspace;
-  // Team Chat wants the same flush, non-scrolling workspace shell as
+  // Chats wants the same flush, non-scrolling workspace shell as
   // Settings/Writer, but keeps the top bar — unlike those two, people stay
   // on this page for a while and still want notifications/search/account.
-  const effectiveLockContentScroll = lockContentScroll || useFocusedWorkspace || isTeamChat;
-  const effectiveFlushContent = flushContent || useFocusedWorkspace || isTeamChat;
+  const effectiveLockContentScroll = lockContentScroll || useFocusedWorkspace || isChats;
+  const effectiveFlushContent = flushContent || useFocusedWorkspace || isChats;
 
   return (
     <div className="h-screen overflow-hidden bg-transparent text-slate-900">
@@ -58,6 +61,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
         </div>
       </div>
       <IncomingOomaCallAlert />
+      <FloatingChatWidget />
     </div>
   );
 }

@@ -90,6 +90,7 @@ test("voided and refunded transactions are never presented or totalled as paid",
   assert.equal(netCollectedAmount({ status: "Voided", amount: 500, balance: 0 }), 0);
   assert.equal(netCollectedAmount({ status: "Refunded", amount: 100, balance: 0 }), 0);
   assert.equal(netCollectedAmount({ status: "Paid", amount: 100, balance: 0 }), 100);
+  assert.equal(netCollectedAmount({ status: "PartiallyRefunded", amount: 100, balance: 0, completedRefundAmount: 25 }), 75);
 });
 
 test("paid booking holds have a missed-webhook reconciliation path before expiry and void", async () => {

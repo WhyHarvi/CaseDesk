@@ -58,7 +58,15 @@ function Toggle({ checked, disabled, onChange, label }) {
   );
 }
 
-function ClientPreferences({ value, disabled, busy, onChange, onSave }) {
+function ClientPreferences({
+  value,
+  globalPolicy,
+  hasClientOverride,
+  disabled,
+  busy,
+  onChange,
+  onSave,
+}) {
   const toggleRows = [
     ["allowEmail", "Email"],
     ["allowSms", "SMS"],
@@ -73,6 +81,11 @@ function ClientPreferences({ value, disabled, busy, onChange, onSave }) {
           Respect the client’s preferred channel, language, local time, and
           do-not-contact instructions.
         </p>
+        <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+          {hasClientOverride
+            ? "This client has individual preferences. Workspace-wide restrictions still take priority."
+            : "This client currently inherits the workspace client policy."}
+        </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-xs font-semibold text-slate-700">
@@ -86,10 +99,39 @@ function ClientPreferences({ value, disabled, busy, onChange, onSave }) {
             className="select-field mt-2 h-10 w-full py-0"
           >
             <option value="">No preference</option>
-            <option>Email</option>
-            <option value="Sms">SMS</option>
-            <option>Chat</option>
-            <option>Call</option>
+            <option
+              disabled={
+                globalPolicy?.communicationEnabled === false ||
+                globalPolicy?.allowEmail === false
+              }
+            >
+              Email
+            </option>
+            <option
+              value="Sms"
+              disabled={
+                globalPolicy?.communicationEnabled === false ||
+                globalPolicy?.allowSms === false
+              }
+            >
+              SMS
+            </option>
+            <option
+              disabled={
+                globalPolicy?.communicationEnabled === false ||
+                globalPolicy?.allowChat === false
+              }
+            >
+              Chat
+            </option>
+            <option
+              disabled={
+                globalPolicy?.communicationEnabled === false ||
+                globalPolicy?.allowCalls === false
+              }
+            >
+              Call
+            </option>
           </select>
         </label>
         <label className="text-xs font-semibold text-slate-700">
@@ -145,10 +187,26 @@ function ClientPreferences({ value, disabled, busy, onChange, onSave }) {
             key={key}
             className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
           >
-            <span className="text-sm font-semibold">{label}</span>
+            <span>
+              <span className="block text-sm font-semibold">{label}</span>
+              {globalPolicy?.communicationEnabled === false ||
+              globalPolicy?.[key] === false ? (
+                <span className="mt-0.5 block text-[10px] text-amber-700">
+                  Disabled by workspace policy
+                </span>
+              ) : null}
+            </span>
             <Toggle
-              checked={value[key] !== false}
-              disabled={disabled}
+              checked={
+                globalPolicy?.communicationEnabled !== false &&
+                globalPolicy?.[key] !== false &&
+                value[key] !== false
+              }
+              disabled={
+                disabled ||
+                globalPolicy?.communicationEnabled === false ||
+                globalPolicy?.[key] === false
+              }
               onChange={(next) => onChange(key, next)}
               label={`Allow ${label}`}
             />
@@ -611,6 +669,8 @@ export default function CommunicationOperationsOverlay({
 }) {
   const [tab, setTab] = useState(initialTab);
   const [preference, setPreference] = useState({});
+  const [globalPolicy, setGlobalPolicy] = useState({});
+  const [hasClientOverride, setHasClientOverride] = useState(false);
   const [rules, setRules] = useState([]);
   const [sla, setSla] = useState({});
   const [events, setEvents] = useState([]);
@@ -640,7 +700,12 @@ export default function CommunicationOperationsOverlay({
         api.get("/communications/audit?limit=50"),
         api.get("/users?limit=100"),
       ]);
-      setPreference(preferenceResponse.data.data || {});
+      const preferenceData = preferenceResponse.data.data || {};
+      setPreference(
+        preferenceData.configuredPreference || preferenceData,
+      );
+      setGlobalPolicy(preferenceData.globalPolicy || {});
+      setHasClientOverride(preferenceData.hasClientOverride === true);
       setRules(rulesResponse.data.data || []);
       setSla(slaResponse.data.data || {});
       setEvents(auditResponse.data.data || []);
@@ -683,7 +748,10 @@ export default function CommunicationOperationsOverlay({
         `/communications/case/${caseItem.id}/preferences`,
         preference,
       );
-      setPreference(response.data.data);
+      const preferenceData = response.data.data || {};
+      setPreference(preferenceData.configuredPreference || preferenceData);
+      setGlobalPolicy(preferenceData.globalPolicy || {});
+      setHasClientOverride(preferenceData.hasClientOverride === true);
     }, "Client communication preferences saved.");
   };
   const createRule = (values) =>
@@ -783,6 +851,8 @@ export default function CommunicationOperationsOverlay({
           ) : tab === "client" ? (
             <ClientPreferences
               value={preference}
+              globalPolicy={globalPolicy}
+              hasClientOverride={hasClientOverride}
               disabled={!permissions?.canManageConsent}
               busy={busy}
               onChange={updatePreference}

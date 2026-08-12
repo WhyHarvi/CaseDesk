@@ -17,7 +17,6 @@ function preloadRouteModule(path) {
     "/app/settings": () => import("../pages/Settings"),
     "/leads": () => import("../modules/leads/pages/LeadsPage"),
     "/lead-dashboard": () => import("../modules/leads/pages/LeadDashboardPage"),
-    "/lead-intake": () => import("../modules/leads/pages/LeadIntakePage"),
   };
   void loaders[pathname]?.().catch(() => {});
 }

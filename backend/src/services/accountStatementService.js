@@ -152,7 +152,11 @@ export function buildUnifiedClientLedger({
     const item = {
       key: `case:${row.id}`, id: row.id, source: "case_invoice",
       amount: row.amount, createdAt: row.createdAt, updatedAt: row.updatedAt,
-      reference: invoiceReference(row.qbInvoiceNumber, row.id),
+      // row.invoiceNumber is already a fully-formatted reference (CSH-/INV-
+      // prefixed, or a migrated LEGACY-/raw QuickBooks number) — wrapping it
+      // in invoiceReference()'s own "INV-" prefix again would double it up
+      // (and mislabel a cash invoice as "INV-CSH-...").
+      reference: row.invoiceNumber || invoiceReference(row.qbInvoiceNumber, row.id),
       description: row.description || "Case invoice",
       caseReference: caseReferences[row.caseId] || row.case?.caseType || null,
       voided: ["Void", "Voided"].includes(row.status),
@@ -163,6 +167,15 @@ export function buildUnifiedClientLedger({
     };
     addInvoiceLifecycle(entries, item);
     if (row.qbInvoiceId) invoiceMeta.set(String(row.qbInvoiceId), item);
+    else if (row.accountingProvider === "CaseDeskCash" && item.expectedPaidCents > 0) {
+      entries.push({
+        id: `${item.key}-cash-payment`, sourceId: item.id, source: "casedesk_cash",
+        date: item.paidAt || item.updatedAt || item.createdAt,
+        reference: item.paymentReference || item.reference, type: "Payment",
+        description: `Cash payment received — ${item.description}`, caseReference: item.caseReference,
+        deltaCents: -item.expectedPaidCents, chargeCents: 0, creditCents: item.expectedPaidCents, refundCents: 0,
+      });
+    }
   }
 
   for (const row of bookingPayments) {
@@ -251,9 +264,30 @@ export function buildUnifiedClientLedger({
     bookingPayments.filter((row) => row.qbRefundReceiptId).map((row) => [String(row.qbRefundReceiptId), row]),
   );
   const representedRefundIds = new Set();
+  for (const invoice of caseInvoices) {
+    for (const refund of invoice.refunds || []) {
+      if (refund.status !== "Completed") continue;
+      if (refund.qbRefundReceiptId) representedRefundIds.add(String(refund.qbRefundReceiptId));
+      entries.push({
+        id: `case-refund:${refund.id}`,
+        sourceId: refund.id,
+        source: refund.accountingProvider === "CaseDeskCash" ? "casedesk_cash" : "quickbooks",
+        date: refund.completedAt || refund.updatedAt || refund.createdAt,
+        reference: refund.qbRefundReceiptId ? `QBR-${refund.qbRefundReceiptId}` : `CDR-${refund.id.slice(0, 8)}`,
+        type: "Refund",
+        description: `${invoice.description || "Case invoice"} — refund${refund.reason ? ` — ${refund.reason}` : ""}`,
+        caseReference: caseReferences[invoice.caseId] || invoice.case?.caseType || null,
+        deltaCents: 0,
+        chargeCents: 0,
+        creditCents: 0,
+        refundCents: cents(refund.amount),
+      });
+    }
+  }
   for (const refund of quickBooksRefunds) {
     const refunded = cents(refund.totalAmount);
     if (!refunded) continue;
+    if (representedRefundIds.has(String(refund.id))) continue;
     const booking = bookingByRefundId.get(String(refund.id));
     if (!includeUnmatchedQuickBooks && !booking) continue;
     representedRefundIds.add(String(refund.id));
@@ -383,6 +417,7 @@ export async function buildClientBillingLedger({
       include: {
         case: { select: { caseType: true } },
         paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+        refunds: { where: { status: "Completed" } },
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }) : [],

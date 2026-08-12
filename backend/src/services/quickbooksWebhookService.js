@@ -19,6 +19,7 @@ import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
 import { financialOperationsRecipientIds, notifyUsers, resolveNotifications } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
+import { syncLeadConsultationPaymentFromEvidence, syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
 
 // Deliberately not as fast as it could be: the frontend polls the hold's
 // own status endpoint independently every few seconds regardless, so this
@@ -299,6 +300,7 @@ async function applyBookingRefundReceipt(agencyId, refund) {
     data: { status: "Refunded", qbRefundReceiptId: refund.id },
   });
   if (updated.count !== 1) return null;
+  await syncLeadConsultationPaymentFromEvidence(agencyId, hold.appointmentId, "Refunded").catch(() => {});
 
   await recordActivity({
     agencyId,
@@ -323,9 +325,94 @@ async function applyBookingRefundReceipt(agencyId, refund) {
   return prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
 }
 
+async function notifyAmbiguousInvoiceRefund(agencyId, refund, candidates) {
+  const recipientIds = await financialOperationsRecipientIds(agencyId);
+  if (!recipientIds.length) return;
+  const invoiceNumbers = [...new Set(candidates.map((item) => item.invoice?.invoiceNumber).filter(Boolean))].join(", ");
+  await notifyUsers({
+    agencyId,
+    recipientIds,
+    type: "invoice_refund.ambiguous",
+    category: "payments",
+    audienceKey: "finance",
+    title: "A refund could not be auto-matched to an invoice",
+    body: `A $${Number(refund.totalAmount).toFixed(2)} refund in QuickBooks matches ${candidates.length} pending refund requests with the same amount and customer (${invoiceNumbers}) — resolve it manually from Payments.`,
+    severity: "warning",
+    entityType: "quickBooksRefundReceipt",
+    entityId: refund.id,
+    actionUrl: "/app/payments?view=approvals",
+    metadata: { refundReceiptId: refund.id, amount: Number(refund.totalAmount), candidateRefundIds: candidates.map((item) => item.id) },
+    dedupeKey: `refund_receipt:${refund.id}:invoice_ambiguous`,
+    channels: ["in_app"],
+  });
+}
+
+async function applyCaseInvoiceRefundReceipt(agencyId, refund) {
+  if (!refund?.customerId || !(refund.totalAmount > 0)) return null;
+  const alreadyApplied = await prisma.invoiceRefund.findFirst({
+    where: { agencyId, qbRefundReceiptId: refund.id },
+    include: { invoice: true },
+  });
+  if (alreadyApplied) return alreadyApplied;
+
+  const candidates = await prisma.invoiceRefund.findMany({
+    where: {
+      agencyId,
+      accountingProvider: "QuickBooks",
+      status: "AwaitingQuickBooks",
+      amount: refund.totalAmount,
+      invoice: { client: { qbCustomerId: refund.customerId } },
+    },
+    include: { invoice: true },
+    orderBy: { createdAt: "asc" },
+    take: 5,
+  });
+  if (candidates.length > 1) {
+    // Unlike the booking-refund matcher, this can't safely throw-and-retry —
+    // the ambiguity never resolves itself, so the webhook event would just
+    // burn through its retry budget and die as FAILED with no one told.
+    // Notify once (deduped per refund receipt) and leave both candidates
+    // AwaitingQuickBooks for an admin to resolve — via markInvoiceRefundFailed
+    // on whichever one doesn't apply, or by waiting for the count to drop
+    // to one as other refunds complete.
+    await notifyAmbiguousInvoiceRefund(agencyId, refund, candidates).catch((notifyError) => {
+      logger.warn("invoice_refund.ambiguous_notify_failed", { agencyId, refundReceiptId: refund.id, reason: notifyError.message });
+    });
+    return null;
+  }
+  if (candidates.length !== 1) return null;
+  const candidate = candidates[0];
+  const completed = await prisma.invoiceRefund.update({
+    where: { id: candidate.id },
+    data: { status: "Completed", qbRefundReceiptId: refund.id, completedAt: new Date(refund.createdAt || refund.transactionDate || Date.now()) },
+    include: { invoice: { include: { refunds: { where: { status: "Completed" } } } } },
+  });
+  const totalRefunded = completed.invoice.refunds.reduce((sum, item) => sum + Number(item.amount), 0);
+  const collected = Math.max(0, Number(completed.invoice.amount) - Number(completed.invoice.balance));
+  await prisma.caseInvoice.update({
+    where: { id: completed.invoice.id },
+    data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+  });
+  await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: completed.invoice.clientId, caseId: completed.invoice.caseId }).catch(() => {});
+  await recordActivity({
+    agencyId,
+    userId: null,
+    clientId: completed.invoice.clientId,
+    caseId: completed.invoice.caseId,
+    action: "invoice.refund_completed",
+    details: `${completed.invoice.invoiceNumber} refund of $${Number(refund.totalAmount).toFixed(2)} synchronized from QuickBooks`,
+    entityType: "invoiceRefund",
+    entityId: completed.id,
+    metadata: { refundReceiptId: refund.id },
+  }).catch(() => {});
+  invalidateDashboardCache(agencyId);
+  return completed;
+}
+
 async function processCaseInvoiceEvent(event, invoiceId) {
   const row = await prisma.caseInvoice.findFirst({
     where: { agencyId: event.agencyId, qbInvoiceId: invoiceId },
+    include: { refunds: { where: { status: "Completed" } } },
   });
   if (!row) return false;
 
@@ -345,12 +432,13 @@ async function processCaseInvoiceEvent(event, invoiceId) {
       balance: invoice.balance,
       status: invoice.isVoided
         ? "Void"
-        : deriveCaseInvoiceStatus({ balance: invoice.balance, amount: row.amount, dueDate: invoice.dueDate || row.dueDate }),
+        : deriveCaseInvoiceStatus({ balance: invoice.balance, amount: row.amount, dueDate: invoice.dueDate || row.dueDate, refunds: row.refunds }),
       qbSyncToken: invoice.syncToken,
       qbInvoiceNumber: invoice.docNumber,
       lastSyncedAt: new Date(),
     },
   });
+  await syncLeadInitialPaymentFromEvidence(event.agencyId, { clientId: row.clientId, caseId: row.caseId }).catch(() => {});
   return true;
 }
 
@@ -365,10 +453,11 @@ async function processEvent(event) {
       return;
     }
     const refund = await getQuickBooksRefundReceipt(event.agencyId, event.entityId);
-    const hold = await applyBookingRefundReceipt(event.agencyId, refund);
+    const caseRefund = await applyCaseInvoiceRefundReceipt(event.agencyId, refund);
+    const hold = caseRefund ? null : await applyBookingRefundReceipt(event.agencyId, refund);
     await prisma.quickBooksWebhookEvent.update({
       where: { id: event.id },
-      data: { status: hold ? "PROCESSED" : "IGNORED", processedAt: new Date() },
+      data: { status: hold || caseRefund ? "PROCESSED" : "IGNORED", processedAt: new Date() },
     });
     return;
   }
@@ -421,7 +510,7 @@ export async function reconcileAgencyBookingRefunds(agencyId, { force = false } 
     let matched = 0;
     for (const refund of refunds) {
       try {
-        if (await applyBookingRefundReceipt(agencyId, refund)) matched += 1;
+        if (await applyCaseInvoiceRefundReceipt(agencyId, refund) || await applyBookingRefundReceipt(agencyId, refund)) matched += 1;
       } catch (error) {
         logger.warn("booking_payment_hold.refund_reconcile_failed", {
           agencyId,

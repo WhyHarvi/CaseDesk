@@ -74,7 +74,7 @@ export function requireCommunicationAdministrator(req) {
   if (req.user.role !== "admin") {
     throw createHttpError(
       403,
-      "Only agency administrators can change communication permissions and retention settings",
+      "Only agency administrators can change workspace communication settings",
     );
   }
 }

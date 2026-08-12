@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarDays, ChevronDown, FileClock, ListChecks, RefreshCw, Search, UserRound, UserRoundSearch } from "lucide-react";
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarDays, FileClock, ListChecks, RefreshCw, UserRoundSearch } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import PageContainer from "../components/layout/PageContainer";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
+import TeamRosterTable from "../components/workload/TeamRosterTable";
+import TeamMemberDrawer from "../components/workload/TeamMemberDrawer";
+import { moneyFormatter } from "../components/workload/workloadFormat";
 import api from "../services/api";
 
 function formatDate(value) {
@@ -187,12 +190,12 @@ function ViewAllDrawer({ consultantKey, category, onClose, onOpenAppointment }) 
   );
 }
 
-function WorkDetails({ workload, onOpenAppointment, consultantKey, consultantOptions, onReassign }) {
+export function WorkDetails({ workload, onOpenAppointment, consultantKey, consultantOptions, onReassign }) {
   const [viewAllCategory, setViewAllCategory] = useState(null);
   const viewAll = consultantKey ? (category) => setViewAllCategory(category) : undefined;
   return (
     <div className="grid gap-4 xl:grid-cols-2">
-      <WorkSection icon={UserRoundSearch} title="Open Leads" count={workload.activeLeads} empty="No open leads." caption="Import Review leads aren't included — see Lead Intake." onViewAll={viewAll && (() => viewAll("lead"))}>
+      <WorkSection icon={UserRoundSearch} title="Open Leads" count={workload.activeLeads} empty="No open leads." caption="Import Review leads aren't included — see Settings → Lead Intake." onViewAll={viewAll && (() => viewAll("lead"))}>
         {workload.activeLeadItems.map((item) => <LeadRow key={item.id} item={item} consultantOptions={consultantOptions} onReassign={onReassign} />)}
       </WorkSection>
       <WorkSection icon={AlertTriangle} title="Overdue Tasks" count={workload.overdueTasks} empty="No overdue tasks." tone="rose" onViewAll={viewAll && (() => viewAll("overdueTask"))}>
@@ -234,95 +237,54 @@ function WorkDetails({ workload, onOpenAppointment, consultantKey, consultantOpt
   );
 }
 
-function ConsultantWorkloadCard({ workload, open, onToggle, onOpenAppointment }) {
-  const riskTone = workload.overdueTasks > 0 || workload.overdueLeadActions > 0 || workload.overdueFollowUps > 0 ? "text-rose-700 bg-rose-50" : workload.caseCapacityPercentage >= 90 ? "text-amber-700 bg-amber-50" : "text-emerald-700 bg-emerald-50";
-  return (
-    <article className="overflow-hidden rounded-3xl border border-slate-200/70 bg-white/85 shadow-sm">
-      <button type="button" onClick={onToggle} className="grid w-full gap-4 p-5 text-left transition hover:bg-slate-50/70 lg:grid-cols-[minmax(220px,1.2fr)_repeat(6,minmax(76px,.55fr))_44px] lg:items-center">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 font-semibold text-sky-700"><UserRound className="h-5 w-5" /></div>
-          <div className="min-w-0"><p className="truncate font-semibold text-slate-950">{workload.consultant.fullName}</p><p className="truncate text-xs text-slate-500">{workload.profile.masteryLevel || workload.consultant.email}</p></div>
-        </div>
-        <div><p className="text-xs text-slate-400">Open leads</p><p className="mt-1 text-xl font-semibold text-indigo-700">{workload.activeLeads}</p>{workload.overdueLeadActions ? <p className="mt-0.5 text-[11px] font-semibold text-rose-600">{workload.overdueLeadActions} overdue</p> : null}</div>
-        <div><p className="text-xs text-slate-400">Cases / limit</p><p className="mt-1 text-sm font-semibold text-slate-800">{workload.activeCases} / {workload.capacity} <span className="text-xs font-normal text-slate-500">({workload.caseCapacityPercentage}%)</span></p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={workload.caseCapacityPercentage >= 100 ? "h-full rounded-full bg-rose-500" : workload.caseCapacityPercentage >= 75 ? "h-full rounded-full bg-amber-400" : "h-full rounded-full bg-emerald-500"} style={{ width: `${Math.min(workload.caseCapacityPercentage, 100)}%` }} /></div></div>
-        <div><p className="text-xs text-slate-400">Pending tasks</p><p className="mt-1 text-xl font-semibold text-slate-900">{workload.pendingTasks}</p></div>
-        <div><p className="text-xs text-slate-400">Overdue</p><p className="mt-1 text-xl font-semibold text-rose-700">{workload.overdueTasks}</p></div>
-        <div><p className="text-xs text-slate-400">Overdue follow-ups</p><p className="mt-1 text-xl font-semibold text-rose-700">{workload.overdueFollowUps}</p></div>
-        <div><p className="text-xs text-slate-400">Documents</p><p className="mt-1 text-xl font-semibold text-amber-700">{workload.documentsWaitingReview}</p></div>
-        <div className={["flex h-10 w-10 items-center justify-center rounded-full", riskTone].join(" ")}><ChevronDown className={["h-5 w-5 transition", open ? "rotate-180" : ""].join(" ")} /></div>
-      </button>
-      {open ? <div className="border-t border-slate-100 bg-slate-50/45 p-5"><WorkDetails workload={workload} onOpenAppointment={onOpenAppointment} consultantKey={workload.consultant.id} /></div> : null}
-    </article>
-  );
-}
+const PERIODS = [
+  ["day", "Day"],
+  ["week", "Week"],
+  ["month", "Month"],
+];
 
-function TeamWorkload({ data, onOpenAppointment, onReassign }) {
-  const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(() => new Set());
-  const consultantOptions = useMemo(() => data.consultants.map((item) => item.consultant), [data.consultants]);
-  const totalWork = (bucket) => bucket.activeLeads + bucket.activeCases + bucket.pendingTasks + bucket.documentsWaitingReview + bucket.pendingFollowUps + bucket.upcomingAppointments;
-  const unassignedCount = totalWork(data.unassigned);
-  const outsideTeamCount = totalWork(data.outsideTeam);
-  const frontDeskCount = data.frontDesk ? totalWork(data.frontDesk) : 0;
-  const visibleConsultants = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return [...data.consultants]
-      .filter((item) => !needle || [item.consultant.fullName, item.consultant.email, item.profile.masteryLevel, ...(item.profile.specializations || [])].some((value) => String(value || "").toLowerCase().includes(needle)))
-      .sort((left, right) => right.overdueLeadActions - left.overdueLeadActions || right.overdueTasks - left.overdueTasks || right.activeLeads - left.activeLeads || right.caseCapacityPercentage - left.caseCapacityPercentage || left.consultant.fullName.localeCompare(right.consultant.fullName));
-  }, [data.consultants, query]);
-  const toggle = (id) => setExpanded((current) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
+function TeamWorkload({ data, period, onPeriodChange, onOpenAppointment, onReassign }) {
+  const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const consultantOptions = useMemo(() => data.members.map((item) => item.consultant), [data.members]);
+  const money = useMemo(() => moneyFormatter(data.currency), [data.currency]);
+  const selectedMember = selectedMemberId ? data.members.find((item) => item.consultant.id === selectedMemberId) : null;
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6 2xl:grid-cols-12">
-        <Metric label="Active consultants" value={data.summary.activeConsultants} tone="sky" />
-        <Metric label="Open leads" value={data.summary.activeLeads} tone="sky" />
-        <Metric label="Overdue lead actions" value={data.summary.overdueLeadActions} tone={data.summary.overdueLeadActions ? "rose" : "slate"} />
-        <Metric label="Case assignments" value={data.summary.activeCases} />
-        <Metric label="Pending tasks" value={data.summary.pendingTasks} />
-        <Metric label="Overdue tasks" value={data.summary.overdueTasks} tone={data.summary.overdueTasks ? "rose" : "slate"} />
-        <Metric label="Ready for staff review" value={data.summary.documentsReadyForReview} tone={data.summary.documentsReadyForReview ? "amber" : "slate"} />
-        <Metric label="Documents waiting on client" value={data.summary.documentsWaitingOnClient} />
-        <Metric label="Open follow-ups" value={data.summary.pendingFollowUps} />
-        <Metric label="Appointments" value={data.summary.upcomingAppointments} />
-        <Metric label="Overloaded consultants" value={data.summary.overloadedConsultants} tone={data.summary.overloadedConsultants ? "rose" : "emerald"} />
-        <Metric label="Urgent unassigned follow-ups" value={data.summary.unassignedUrgentFollowUps} tone={data.summary.unassignedUrgentFollowUps ? "rose" : "emerald"} />
-        <Metric label="Unassigned work" value={unassignedCount} tone={unassignedCount ? "rose" : "emerald"} />
+      <div className="inline-flex w-fit rounded-full bg-slate-100 p-1">
+        {PERIODS.map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onPeriodChange(value)}
+            className={`h-9 shrink-0 rounded-full px-4 text-sm font-semibold transition ${period === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {unassignedCount ? (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <Metric label="Active staff" value={data.summary.activeStaff} tone="sky" />
+        <Metric label="Active cases" value={data.summary.activeCases} />
+        <Metric label="Appointments booked" value={data.summary.appointmentsBooked} />
+        <Metric label="Calls handled" value={data.summary.callsHandled} />
+        <Metric label="Collected" value={data.summary.moneyCollected ? money.format(data.summary.moneyCollected) : "—"} tone="emerald" />
+        <Metric label="Unassigned work" value={data.summary.unassignedWork} tone={data.summary.unassignedWork ? "rose" : "emerald"} />
+      </div>
+
+      {data.summary.unassignedWork ? (
         <section className="rounded-3xl border border-rose-200 bg-rose-50/70 p-5">
           <div className="mb-4 flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-rose-700"><AlertTriangle className="h-5 w-5" /></div><div><h2 className="font-semibold text-rose-950">Unassigned work needs an owner</h2><p className="mt-1 text-sm text-rose-700">These items have neither an active direct assignee nor an active inherited case or client owner.</p></div></div>
           <WorkDetails workload={data.unassigned} onOpenAppointment={onOpenAppointment} consultantKey="unassigned" consultantOptions={consultantOptions} onReassign={onReassign} />
         </section>
       ) : null}
 
-      {outsideTeamCount ? (
-        <section className="rounded-3xl border border-violet-200 bg-violet-50/70 p-5">
-          <div className="mb-4"><h2 className="font-semibold text-violet-950">Work owned outside the consultant roster</h2><p className="mt-1 text-sm text-violet-700">These items belong to active internal staff who are not part of this consultant capacity view, so they are not unassigned.</p></div>
-          <WorkDetails workload={data.outsideTeam} onOpenAppointment={onOpenAppointment} consultantKey="outside-team" />
-        </section>
-      ) : null}
+      <TeamRosterTable members={data.members} currency={data.currency} onSelect={(member) => setSelectedMemberId(member.consultant.id)} />
 
-      {frontDeskCount ? (
-        <section className="rounded-3xl border border-sky-200 bg-sky-50/70 p-5">
-          <div className="mb-4"><h2 className="font-semibold text-sky-950">Operations / Front Desk</h2><p className="mt-1 text-sm text-sky-700">Work explicitly assigned to front-desk staff — tracked separately since they don't carry case capacity.</p></div>
-          <WorkDetails workload={data.frontDesk} onOpenAppointment={onOpenAppointment} consultantKey="front-desk" />
-        </section>
+      {selectedMember ? (
+        <TeamMemberDrawer member={selectedMember} currency={data.currency} onClose={() => setSelectedMemberId(null)} onOpenAppointment={onOpenAppointment} />
       ) : null}
-
-      <section className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="text-xl font-semibold text-slate-950">Consultant workload</h2><p className="mt-1 text-sm text-slate-500">Open a consultant to see their current leads, cases, tasks, and review queue.</p></div>
-          <label className="relative block w-full sm:w-80"><Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search consultants" className="h-10 w-full rounded-full border border-slate-200 bg-white pl-10 pr-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
-        </div>
-        {visibleConsultants.map((item) => <ConsultantWorkloadCard key={item.consultant.id} workload={item} open={expanded.has(item.consultant.id)} onToggle={() => toggle(item.consultant.id)} onOpenAppointment={onOpenAppointment} />)}
-        {!visibleConsultants.length ? <div className="rounded-3xl border border-dashed border-slate-200 bg-white/60 p-10 text-center text-sm text-slate-500">{query ? "No consultants match your search." : "No active consultants are available."}</div> : null}
-      </section>
     </>
   );
 }
@@ -353,12 +315,14 @@ export default function Workload() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [period, setPeriod] = useState("week");
 
   const loadWorkload = useCallback(async ({ fresh = false } = {}) => {
     setLoading(true);
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const response = await (fresh ? api.getFresh : api.get)(isAdmin ? "/admin/consultants/workload" : "/consultants/me/workload");
+        const url = isAdmin ? `/workload/team?period=${period}` : "/consultants/me/workload";
+        const response = await (fresh ? api.getFresh : api.get)(url);
         setData(response.data.data);
         setError("");
         setLoading(false);
@@ -374,7 +338,7 @@ export default function Workload() {
       }
     }
     setLoading(false);
-  }, [isAdmin]);
+  }, [isAdmin, period]);
 
   useEffect(() => { loadWorkload(); }, [loadWorkload]);
 
@@ -386,12 +350,12 @@ export default function Workload() {
   return (
     <PageContainer
       title={isAdmin ? "Team Workload" : "My Workload"}
-      description={isAdmin ? "See who is handling each lead and case, where capacity is tight, and what needs attention across your workspace." : "Your assigned leads, cases, deadlines, and documents requiring review."}
+      description={isAdmin ? "Every admin, consultant, and front-desk teammate — what they're carrying, what they've gotten done, and how close they are to their deadlines." : "Your assigned leads, cases, deadlines, and documents requiring review."}
       actions={<button type="button" onClick={() => loadWorkload({ fresh: true })} disabled={loading} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"><RefreshCw className={["h-4 w-4", loading ? "animate-spin" : ""].join(" ")} />Refresh</button>}
     >
       {error ? <div className="flex items-center justify-between gap-4 rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700"><span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4" />{error}</span><button type="button" onClick={loadWorkload} className="font-semibold underline">Try again</button></div> : null}
       {loading && !data ? <div className="rounded-3xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Loading {isAdmin ? "team" : "your"} workload…</div> : null}
-      {data ? (isAdmin ? <TeamWorkload data={data} onOpenAppointment={setOpenAppointmentId} onReassign={reassign} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
+      {data ? (isAdmin ? <TeamWorkload data={data} period={period} onPeriodChange={setPeriod} onOpenAppointment={setOpenAppointmentId} onReassign={reassign} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
       {openAppointmentId ? (
         <AppointmentProfileOverlay
           appointmentId={openAppointmentId}

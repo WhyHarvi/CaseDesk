@@ -214,7 +214,7 @@ export function parseCreateConsultation(body = {}) {
     timezone,
     appointmentType: enumValue(body.appointmentType, "appointmentType", ["IN_PERSON", "PHONE", "VIDEO", "JITSI", "ZOOM"]),
     fee: optionalNumber(body.fee, "fee", { min: 0, max: 1000000 }),
-    paymentStatus: enumValue(body.paymentStatus, "paymentStatus", ["UNPAID", "PAID", "WAIVED", "REFUNDED"], "UNPAID"),
+    paymentStatus: enumValue(body.paymentStatus, "paymentStatus", ["UNPAID", "WAIVED"], "UNPAID"),
     locationId: text(body.locationId, "locationId", { max: 100 }),
     location: text(body.location, "location", { max: 500 }),
     meetingUrl,
@@ -232,6 +232,9 @@ export function parseUpdateConsultation(body = {}) {
 export function parseCommercialStatus(body = {}) {
   const retainerStatus = body.retainerStatus === undefined ? undefined : enumValue(body.retainerStatus, "retainerStatus", LEAD_RETAINER_STATUSES);
   const initialPaymentStatus = body.initialPaymentStatus === undefined ? undefined : enumValue(body.initialPaymentStatus, "initialPaymentStatus", LEAD_INITIAL_PAYMENT_STATUSES);
+  if (["PARTIAL", "PAID", "REFUNDED"].includes(initialPaymentStatus)) {
+    throw createHttpError(409, "Paid, partial, and refunded states are set from recorded financial transactions, not this form.", "PAYMENT_EVIDENCE_REQUIRED");
+  }
   if (retainerStatus === undefined && initialPaymentStatus === undefined) {
     throw createHttpError(400, "A retainer or initial-payment status is required.", "VALIDATION_ERROR");
   }
@@ -307,7 +310,10 @@ export function parseLeadFollowUpOutcome(body = {}) {
 export function parseLeadAssignment(body = {}) {
   return {
     ownerUserId: text(body.ownerUserId, "ownerUserId", { required: true, max: 100 }),
-    reason: text(body.reason, "reason", { required: true, max: 500 }),
+    // Reassignment is an admin-only endpoint. The service writes a
+    // consistent audit explanation, so admins do not need to type one for
+    // every routine transfer.
+    reason: text(body.reason, "reason", { max: 500 }),
   };
 }
 

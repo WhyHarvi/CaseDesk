@@ -136,7 +136,10 @@ test("sensitive commercial states require evidence and converted leads reject in
     () => parseCommercialStatus({ retainerStatus: "SIGNED" }),
     (error) => error.code === "VALIDATION_ERROR",
   );
-  assert.equal(parseCommercialStatus({ initialPaymentStatus: "PAID", notes: "Invoice QB-104 paid." }).notes, "Invoice QB-104 paid.");
+  assert.throws(
+    () => parseCommercialStatus({ initialPaymentStatus: "PAID", notes: "Invoice QB-104 paid." }),
+    (error) => error.code === "PAYMENT_EVIDENCE_REQUIRED",
+  );
 
   const db = {
     $transaction: async (operation) => operation({

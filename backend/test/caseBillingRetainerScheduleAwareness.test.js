@@ -140,7 +140,7 @@ test("case discounts reduce only professional installments and flow through invo
   assert.match(workspace, /function DiscountField/);
   assert.match(workspace, /Government fees are never discounted/);
   assert.match(retainerCard, /DiscountField value=\{discountAmount\}/);
-  assert.match(retainerCard, /discountAmount \} : undefined/);
+  assert.match(retainerCard, /\{ installments, signingDate, discountAmount, reviewToken \}/);
 });
 
 test("retainer sync renders and removes a real dollar discount without corrupting currency", () => {
@@ -181,27 +181,85 @@ test("retainer sync renders and removes a real dollar discount without corruptin
   assert.match(withoutDiscount, /<strong>\$1,930\.00<\/strong>/);
 });
 
-test("the sync-schedule route is registered and the Billing tab exposes both entry points", async () => {
-  const [routes, statusCard] = await Promise.all([
+test("the sync-schedule route is registered and a retainer must be viewed before it can be created", async () => {
+  const [routes, controller, scheduleService, api, statusCard] = await Promise.all([
     source("../src/routes/caseBillingRetainerRoutes.js"),
+    source("../src/controllers/caseBillingRetainerController.js"),
+    source("../src/services/paymentScheduleService.js"),
+    source("../../frontend/src/api/caseBillingRetainerApi.js"),
     source("../../frontend/src/components/case-profile/RetainerStatusCard.jsx"),
   ]);
 
   assert.match(routes, /router\.post\("\/:caseId\/sync-schedule", asyncHandler\(syncCaseBillingRetainerWithSchedule\)\)/);
+  assert.match(routes, /router\.post\("\/:caseId\/preview", asyncHandler\(previewCaseBillingRetainer\)\)/);
+  assert.match(controller, /export async function previewCaseBillingRetainer/);
+  assert.match(controller, /previewRetainerScheduleMergeContext/);
+  assert.match(controller, /createRetainerReviewToken/);
+  assert.match(controller, /requireMatchingRetainerReview/);
+  assert.match(controller, /View the retainer before approving it/);
+  const previewBody = controller.slice(
+    controller.indexOf("export async function previewCaseBillingRetainer"),
+    controller.indexOf("export async function createCaseBillingRetainerDraft"),
+  );
+  assert.doesNotMatch(previewBody, /writtenDocument\.(create|update|delete)/);
+  assert.doesNotMatch(previewBody, /createCaseSchedule\(/);
+  assert.match(scheduleService, /export async function previewRetainerScheduleMergeContext/);
+  assert.match(api, /export async function previewCaseBillingRetainer\(caseId, schedule\)/);
 
   // Starting a retainer on a case with no schedule yet shows the same
-  // template-pick-then-edit builder as the Payment Schedule tab, inline,
-  // before the retainer is created — not a silent blank draft.
+  // template-pick-then-edit builder as the Payment Schedule tab in a
+  // contained overlay, before the retainer is created — not a silent blank
+  // draft or a permanently expanded block above case payments.
   assert.match(statusCard, /function ScheduleReviewStep/);
+  assert.match(statusCard, /> Add template/);
+  assert.match(statusCard, /createPortal\(/);
+  assert.match(statusCard, /typeof globalThis\.document !== "undefined"/);
+  assert.match(statusCard, /globalThis\.document\.body/);
+  assert.doesNotMatch(statusCard, /templateOpen && typeof document !== "undefined"/);
+  assert.match(statusCard, /max-h-\[92dvh\][\s\S]*overflow-hidden/);
+  assert.match(statusCard, /min-h-0 flex-1 overflow-y-auto/);
   assert.match(statusCard, /TemplatePicker caseType=\{caseItem\.caseType\}/);
-  assert.match(statusCard, /Approve schedule &amp; create retainer/);
-  assert.match(statusCard, /Skip for now — start without a schedule/);
+  assert.match(statusCard, /View retainer again/);
+  assert.match(statusCard, /View retainer/);
+  assert.match(statusCard, /reviewedMode === "schedule" \? "Approve schedule & create retainer"/);
+  assert.match(statusCard, /reviewed \? \(/);
+  assert.match(statusCard, /Nothing is created until you return and approve it/);
+  assert.match(statusCard, /DOMPurify\.sanitize\(preview\.contentHtml/);
+  assert.match(statusCard, /function invalidateReview\(\)/);
+  assert.match(statusCard, /setReviewToken\(data\.reviewToken\)/);
   assert.match(statusCard, /const offerScheduleReview = schedule === null/);
 
   // Sync is only offered while the document is still editable and a
   // schedule actually exists to sync from.
   assert.match(statusCard, /const canSync = canApprove && isEditable && Boolean\(schedule\)/);
   assert.match(statusCard, /syncCaseBillingRetainerWithSchedule/);
+});
+
+test("an editable retainer can be reset to the template state without touching billing", async () => {
+  const [routes, controller, api, statusCard] = await Promise.all([
+    source("../src/routes/caseBillingRetainerRoutes.js"),
+    source("../src/controllers/caseBillingRetainerController.js"),
+    source("../../frontend/src/api/caseBillingRetainerApi.js"),
+    source("../../frontend/src/components/case-profile/RetainerStatusCard.jsx"),
+  ]);
+
+  assert.match(routes, /router\.post\("\/:caseId\/reset", asyncHandler\(resetCaseBillingRetainer\)\)/);
+  assert.match(controller, /export async function resetCaseBillingRetainer/);
+  assert.match(controller, /\["Draft", "Saved", "ReadyToIssue"\]\.includes/);
+  assert.match(controller, /writtenDocument\.deleteMany/);
+  assert.match(controller, /clientDocument\.deleteMany/);
+  assert.match(controller, /removeDocumentFile\(storageKey\)/);
+  assert.doesNotMatch(
+    controller.slice(
+      controller.indexOf("export async function resetCaseBillingRetainer"),
+      controller.indexOf('// Fix 4.1 — the "Approve and send" action'),
+    ),
+    /casePaymentSchedule\.(delete|deleteMany)/,
+  );
+  assert.match(api, /export async function resetCaseBillingRetainer\(caseId, documentId\)/);
+  assert.match(statusCard, /> Reset retainer/);
+  assert.match(statusCard, /Reset & choose again/);
+  assert.match(statusCard, /payment schedule, invoices,[\s\S]*payments on this case will stay unchanged/);
 });
 
 test("a voided installment invoice never fires again, and voided invoices drop out of the case's Billing tab", async () => {

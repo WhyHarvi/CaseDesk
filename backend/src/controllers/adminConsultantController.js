@@ -438,9 +438,9 @@ function activeRole(user, agencyId) {
         // Front-desk staff can be a real, explicit owner of work (a task,
         // follow-up, or appointment assignedUserId) — recognize them here
         // so that work doesn't fall through to case/client inheritance or
-        // Unassigned. They're routed to a separate operations bucket in
-        // resolveWorkOwner()/route(), not a numbered consultant slot, since
-        // they aren't in activeConsultantIds and don't carry case capacity.
+        // Unassigned. They get their own roster slot in resolveWorkOwner()/
+        // route() like admins and consultants, just tagged source:
+        // "front_desk" and with no case capacity.
         ["admin", "consultant", "frontdesk"].includes(membership.role),
     )?.role || null
   );
@@ -501,19 +501,15 @@ export function resolveWorkOwner({
   clientUser = null,
 }) {
   const explicitRole = activeRole(explicitUser, agencyId);
-  if (explicitRole === "frontdesk")
-    return { consultantId: null, source: "front_desk", frontDeskUserId: explicitUser.id };
   if (explicitRole) {
     return activeConsultantIds.has(explicitUser.id)
-      ? { consultantId: explicitUser.id, source: "explicit" }
-      : { consultantId: null, source: "outside_team" };
+      ? { consultantId: explicitUser.id, source: explicitRole === "frontdesk" ? "front_desk" : "explicit" }
+      : { consultantId: null, source: "unassigned" };
   }
 
   // Check for a real consultant primary assignment BEFORE trusting an
   // admin-of-record as the final answer — an admin can be the nominal case
-  // owner while a consultant does the actual work via CaseAssignment. Without
-  // this ordering, activeRole() would recognize the admin as valid ownership
-  // and return outside_team before ever looking at primaryAssignment.
+  // owner while a consultant does the actual work via CaseAssignment.
   const primaryAssignment = caseItem?.assignments?.find(
     (assignment) =>
       assignment.assignmentType === "primary" &&
@@ -526,20 +522,16 @@ export function resolveWorkOwner({
     };
 
   const caseOwnerRole = activeRole(caseItem?.assignedUser, agencyId);
-  if (caseOwnerRole === "frontdesk")
-    return { consultantId: null, source: "front_desk", frontDeskUserId: caseItem.assignedUser.id };
   if (caseOwnerRole) {
     return activeConsultantIds.has(caseItem.assignedUser.id)
-      ? { consultantId: caseItem.assignedUser.id, source: "case_owner" }
-      : { consultantId: null, source: "outside_team" };
+      ? { consultantId: caseItem.assignedUser.id, source: caseOwnerRole === "frontdesk" ? "front_desk" : "case_owner" }
+      : { consultantId: null, source: "unassigned" };
   }
   const clientOwnerRole = activeRole(clientUser, agencyId);
-  if (clientOwnerRole === "frontdesk")
-    return { consultantId: null, source: "front_desk", frontDeskUserId: clientUser.id };
   if (clientOwnerRole) {
     return activeConsultantIds.has(clientUser.id)
-      ? { consultantId: clientUser.id, source: "client_owner" }
-      : { consultantId: null, source: "outside_team" };
+      ? { consultantId: clientUser.id, source: clientOwnerRole === "frontdesk" ? "front_desk" : "client_owner" }
+      : { consultantId: null, source: "unassigned" };
   }
   return { consultantId: null, source: "unassigned" };
 }
@@ -679,25 +671,38 @@ function isSameCalendarDay(left, right) {
   );
 }
 
-async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
+export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
   const now = new Date();
   // 30-day look-ahead — an appointment scheduled six months out shouldn't
   // count identically to one happening in the next hour.
   const horizon = new Date(now.getTime() + 30 * 24 * 60 * 60_000);
-  const [profiles, leads, cases, tasks, documents, followUps, leadFollowUps, appointments] =
+  const [staffMembers, leads, cases, tasks, documents, followUps, leadFollowUps, appointments] =
     await prisma.$transaction([
-      prisma.consultantProfile.findMany({
+      // The full team roster — every active admin, consultant, and front-desk
+      // member, not just consultants. This is what used to be a
+      // consultant-only ConsultantProfile query; broadening it is what makes
+      // admin- and front-desk-owned work land in a real per-person bucket
+      // instead of the old "outside the consultant roster" catch-all.
+      prisma.agencyMember.findMany({
         where: {
           agencyId,
+          isActive: true,
+          role: { in: ["admin", "consultant", "frontdesk"] },
+          user: { status: "active" },
+        },
+        select: {
+          role: true,
           user: {
-            status: "active",
-            memberships: {
-              some: { agencyId, role: "consultant", isActive: true },
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              consultantProfiles: {
+                where: { agencyId },
+                select: { employeeId: true, specializations: true, masteryLevel: true, maximumActiveCases: true },
+              },
             },
           },
-        },
-        include: {
-          user: { select: { id: true, fullName: true, email: true } },
         },
       }),
       prisma.lead.findMany({
@@ -879,27 +884,19 @@ async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
       }),
     ]);
 
+  // Despite the name, this now covers every active roster member (admin,
+  // consultant, front desk) — kept as-is rather than renamed everywhere
+  // since resolveWorkOwner()'s call sites all pass it by this name.
   const activeConsultantIds = new Set(
-    profiles.map((profile) => profile.userId),
+    staffMembers.map((member) => member.user.id),
   );
   const buckets = new Map(
-    profiles.map((profile) => [profile.userId, emptyWorkloadBucket()]),
+    staffMembers.map((member) => [member.user.id, emptyWorkloadBucket()]),
   );
   const unassignedBucket = emptyWorkloadBucket();
-  const outsideTeamBucket = emptyWorkloadBucket();
-  // Front-desk staff are explicit owners of real work, but they don't carry
-  // case capacity and aren't in activeConsultantIds — keep their work
-  // visibly distinct from both the consultant roster and Unassigned.
-  const frontDeskBucket = emptyWorkloadBucket();
   const route = (type, item, owner) =>
     addWork(
-      owner.consultantId
-        ? buckets.get(owner.consultantId)
-        : owner.source === "front_desk"
-          ? frontDeskBucket
-          : owner.source === "outside_team"
-            ? outsideTeamBucket
-            : unassignedBucket,
+      owner.consultantId ? buckets.get(owner.consultantId) : unassignedBucket,
       type,
       item,
       owner,
@@ -1025,18 +1022,28 @@ async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
     route("appointment", item, owner);
   });
 
-  const consultants = profiles.map((profile) => ({
-    consultant: profile.user,
-    profile: {
-      employeeId: profile.employeeId,
-      specializations: profile.specializations,
-      masteryLevel: profile.masteryLevel,
-    },
-    ...finalizeBucket(buckets.get(profile.userId), profile.maximumActiveCases, sliceLimit),
-  }));
+  const consultants = staffMembers.map((member) => {
+    // Only ever populated for role: "consultant" — createConsultant() is the
+    // only path that creates a ConsultantProfile row. Admins and front desk
+    // simply have none, which is exactly what makes finalizeBucket() omit
+    // capacity/caseCapacityPercentage for them below (capacity === null).
+    const consultantProfile = member.user.consultantProfiles[0] || null;
+    return {
+      consultant: { id: member.user.id, fullName: member.user.fullName, email: member.user.email },
+      role: member.role,
+      profile: consultantProfile
+        ? {
+            employeeId: consultantProfile.employeeId,
+            specializations: consultantProfile.specializations,
+            masteryLevel: consultantProfile.masteryLevel,
+          }
+        : null,
+      ...finalizeBucket(buckets.get(member.user.id), consultantProfile?.maximumActiveCases ?? null, sliceLimit),
+    };
+  });
   const unassigned = finalizeBucket(unassignedBucket, null, sliceLimit);
   const summary = {
-    activeConsultants: consultants.length,
+    activeStaff: consultants.length,
     activeLeads: leads.length,
     overdueLeadActions: leads.filter(
       (item) => item.nextActionAt && new Date(item.nextActionAt) < now,
@@ -1066,8 +1073,6 @@ async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
     summary,
     consultants,
     unassigned,
-    outsideTeam: finalizeBucket(outsideTeamBucket, null, sliceLimit),
-    frontDesk: finalizeBucket(frontDeskBucket, null, sliceLimit),
   };
 }
 
@@ -1116,8 +1121,6 @@ const CATEGORY_ITEM_FIELDS = {
 
 const BUCKET_KEY_FIELDS = {
   unassigned: "unassigned",
-  "outside-team": "outsideTeam",
-  "front-desk": "frontDesk",
 };
 
 export async function consultantWorkloadCategory(req, res) {

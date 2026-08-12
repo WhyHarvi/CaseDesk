@@ -534,6 +534,7 @@ model Agency {
   followUps                      FollowUp[]
   payments                       Payment[]
   activityLogs                   ActivityLog[]
+  portalActivity                 UserPortalActivity[]
   workflowTemplates              WorkflowTemplate[]
   workflowTemplateSteps          WorkflowTemplateStep[]
   caseWorkflowSteps              CaseWorkflowStep[]
@@ -557,6 +558,11 @@ model Agency {
   zoomHostMappings               ZoomHostMapping[]
   appointmentMeetingJobs         AppointmentMeetingJob[]
   caseInvoices                   CaseInvoice[]
+  caseInvoiceLines               CaseInvoiceLine[]
+  cashTransactions               CashTransaction[]
+  cashAllocations                CashAllocation[]
+  cashReconciliations            CashReconciliation[]
+  invoiceRefunds                 InvoiceRefund[]
   caseManualLedgerEntries        CaseManualLedgerEntry[]
   feeCategories                  AgencyFeeCategory[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
@@ -583,6 +589,7 @@ model Agency {
   communicationAuditEvents       CommunicationAuditEvent[]
   communicationAttachments       CommunicationAttachment[]
   communicationRetentionPolicy   CommunicationRetentionPolicy?
+  clientCommunicationPolicy      AgencyClientCommunicationPolicy?
   communicationPreferences       CommunicationPreference[]
   communicationAutomationRules   CommunicationAutomationRule[]
   communicationSlaPolicy         CommunicationSlaPolicy?
@@ -640,6 +647,8 @@ model Agency {
   internalChatParticipants       InternalChatParticipant[]
   internalChatMessages           InternalChatMessage[]
   internalChatAttachments        InternalChatAttachment[]
+  internalChatMessageReactions   InternalChatMessageReaction[]
+  communicationMessageReactions  CommunicationMessageReaction[]
 
   @@map("agencies")
 }
@@ -748,44 +757,185 @@ model ExpiringDocumentReminderDelivery {
 }
 
 model CaseInvoice {
-  id                        String                   @id @default(uuid())
-  agencyId                  String                   @map("agency_id")
-  caseId                    String                   @map("case_id")
-  clientId                  String                   @map("client_id")
-  paymentType               String                   @map("payment_type")
-  description               String
-  qbInvoiceId               String                   @map("qb_invoice_id")
-  qbInvoiceNumber           String?                  @map("qb_invoice_number")
-  qbInvoiceLink             String?                  @map("qb_invoice_link")
-  qbSyncToken               String                   @map("qb_sync_token")
-  amount                    Decimal                  @db.Decimal(10, 2)
-  balance                   Decimal                  @db.Decimal(10, 2)
-  status                    String                   @default("Open")
-  dueDate                   DateTime?                @map("due_date")
-  lastPaymentMethod         String?                  @map("last_payment_method")
-  lastPaymentReference      String?                  @map("last_payment_reference")
-  lastPaymentAt             DateTime?                @map("last_payment_at")
-  lastQbPaymentId           String?                  @map("last_qb_payment_id")
-  creationIdempotencyKey    String?                  @map("creation_idempotency_key")
-  lastPaymentIdempotencyKey String?                  @map("last_payment_idempotency_key")
-  createdById               String?                  @map("created_by_id")
-  createdAt                 DateTime                 @default(now()) @map("created_at")
-  updatedAt                 DateTime                 @updatedAt @map("updated_at")
-  lastSyncedAt              DateTime                 @map("last_synced_at")
-  agency                    Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                      Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client                    Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy                 User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  installments              CasePaymentInstallment[]
-  followUps                 FollowUp[]
-  paymentApprovals          PaymentApproval[]
+  id                              String                   @id @default(uuid())
+  agencyId                        String                   @map("agency_id")
+  caseId                          String                   @map("case_id")
+  clientId                        String                   @map("client_id")
+  paymentType                     String                   @map("payment_type")
+  description                     String
+  // The CaseDesk invoice is the durable business document. QuickBooks fields
+  // are optional because cash-only invoices never leave CaseDesk.
+  invoiceNumber                   String                   @map("invoice_number")
+  accountingProvider              String                   @default("QuickBooks") @map("accounting_provider")
+  currency                        String                   @default("CAD")
+  issuedAt                        DateTime                 @default(now()) @map("issued_at")
+  subtotalAmount                  Decimal                  @default(0) @map("subtotal_amount") @db.Decimal(10, 2)
+  discountAmount                  Decimal                  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  taxAmount                       Decimal                  @default(0) @map("tax_amount") @db.Decimal(10, 2)
+  taxRatePercent                  Decimal                  @default(0) @map("tax_rate_percent") @db.Decimal(5, 2)
+  agencySnapshot                  Json                     @default("{}") @map("agency_snapshot")
+  clientSnapshot                  Json                     @default("{}") @map("client_snapshot")
+  qbInvoiceId                     String?                  @map("qb_invoice_id")
+  qbInvoiceNumber                 String?                  @map("qb_invoice_number")
+  qbInvoiceLink                   String?                  @map("qb_invoice_link")
+  qbSyncToken                     String?                  @map("qb_sync_token")
+  amount                          Decimal                  @db.Decimal(10, 2)
+  balance                         Decimal                  @db.Decimal(10, 2)
+  status                          String                   @default("Open")
+  dueDate                         DateTime?                @map("due_date")
+  lastPaymentMethod               String?                  @map("last_payment_method")
+  lastPaymentReference            String?                  @map("last_payment_reference")
+  lastPaymentAt                   DateTime?                @map("last_payment_at")
+  lastQbPaymentId                 String?                  @map("last_qb_payment_id")
+  creationIdempotencyKey          String?                  @map("creation_idempotency_key")
+  lastPaymentIdempotencyKey       String?                  @map("last_payment_idempotency_key")
+  createdById                     String?                  @map("created_by_id")
+  createdAt                       DateTime                 @default(now()) @map("created_at")
+  updatedAt                       DateTime                 @updatedAt @map("updated_at")
+  lastSyncedAt                    DateTime?                @map("last_synced_at")
+  agency                          Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                            Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client                          Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy                       User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  installments                    CasePaymentInstallment[]
+  followUps                       FollowUp[]
+  paymentApprovals                PaymentApproval[]
+  lines                           CaseInvoiceLine[]
+  cashAllocations                 CashAllocation[]
+  refunds                         InvoiceRefund[]
+  migratedFromManualLedgerEntries CaseManualLedgerEntry[]  @relation("ManualLedgerMigratedInvoice")
 
   @@unique([agencyId, qbInvoiceId])
+  @@unique([agencyId, invoiceNumber])
   @@unique([agencyId, creationIdempotencyKey])
   @@unique([agencyId, lastPaymentIdempotencyKey])
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
   @@map("case_invoices")
+}
+
+model CaseInvoiceLine {
+  id          String      @id @default(uuid())
+  agencyId    String      @map("agency_id")
+  invoiceId   String      @map("invoice_id")
+  feeCategory String      @map("fee_category")
+  description String
+  quantity    Decimal     @default(1) @db.Decimal(10, 2)
+  unitAmount  Decimal     @map("unit_amount") @db.Decimal(10, 2)
+  discount    Decimal     @default(0) @db.Decimal(10, 2)
+  taxable     Boolean     @default(false)
+  taxRate     Decimal     @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount   Decimal     @default(0) @map("tax_amount") @db.Decimal(10, 2)
+  lineTotal   Decimal     @map("line_total") @db.Decimal(10, 2)
+  sortOrder   Int         @default(0) @map("sort_order")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  agency      Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  invoice     CaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId, invoiceId, sortOrder])
+  @@map("case_invoice_lines")
+}
+
+model CashTransaction {
+  id                    String            @id @default(uuid())
+  agencyId              String            @map("agency_id")
+  clientId              String?           @map("client_id")
+  caseId                String?           @map("case_id")
+  appointmentId         String?           @map("appointment_id")
+  paymentApprovalId     String?           @unique @map("payment_approval_id")
+  type                  String            @default("Payment")
+  amount                Decimal           @db.Decimal(10, 2)
+  currency              String            @default("CAD")
+  reference             String?           @map("reference")
+  occurredAt            DateTime          @map("occurred_at") @db.Date
+  status                String            @default("Posted")
+  note                  String?
+  createdById           String?           @map("created_by_id")
+  reversedTransactionId String?           @map("reversed_transaction_id")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+  agency                Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                  Case?             @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment           Appointment?      @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  paymentApproval       PaymentApproval?  @relation(fields: [paymentApprovalId], references: [id], onDelete: SetNull)
+  createdBy             User?             @relation("CashTransactionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  reversedTransaction   CashTransaction?  @relation("CashTransactionReversal", fields: [reversedTransactionId], references: [id], onDelete: SetNull)
+  reversals             CashTransaction[] @relation("CashTransactionReversal")
+  allocations           CashAllocation[]
+  invoiceRefund         InvoiceRefund?
+
+  @@unique([agencyId, reference])
+  @@index([agencyId, occurredAt])
+  @@index([clientId, occurredAt])
+  @@index([caseId, occurredAt])
+  @@index([createdById, occurredAt])
+  @@map("cash_transactions")
+}
+
+model CashAllocation {
+  id            String          @id @default(uuid())
+  agencyId      String          @map("agency_id")
+  transactionId String          @map("transaction_id")
+  invoiceId     String          @map("invoice_id")
+  amount        Decimal         @db.Decimal(10, 2)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  agency        Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  transaction   CashTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  invoice       CaseInvoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([transactionId, invoiceId])
+  @@index([agencyId, invoiceId])
+  @@map("cash_allocations")
+}
+
+model CashReconciliation {
+  id             String   @id @default(uuid())
+  agencyId       String   @map("agency_id")
+  periodStart    DateTime @map("period_start")
+  periodEnd      DateTime @map("period_end")
+  expectedAmount Decimal  @map("expected_amount") @db.Decimal(10, 2)
+  countedAmount  Decimal  @map("counted_amount") @db.Decimal(10, 2)
+  varianceAmount Decimal  @map("variance_amount") @db.Decimal(10, 2)
+  receiptCount   Int      @default(0) @map("receipt_count")
+  refundCount    Int      @default(0) @map("refund_count")
+  note           String?
+  status         String   @default("Closed")
+  closedById     String?  @map("closed_by_id")
+  closedAt       DateTime @default(now()) @map("closed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  agency         Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  closedBy       User?    @relation("CashReconciliationCloser", fields: [closedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, periodStart])
+  @@index([agencyId, closedAt])
+  @@map("cash_reconciliations")
+}
+
+model InvoiceRefund {
+  id                 String           @id @default(uuid())
+  agencyId           String           @map("agency_id")
+  invoiceId          String           @map("invoice_id")
+  amount             Decimal          @db.Decimal(10, 2)
+  currency           String           @default("CAD")
+  accountingProvider String           @map("accounting_provider")
+  status             String           @default("Requested")
+  reason             String?
+  qbRefundReceiptId  String?          @map("qb_refund_receipt_id")
+  cashTransactionId  String?          @unique @map("cash_transaction_id")
+  requestedById      String?          @map("requested_by_id")
+  completedAt        DateTime?        @map("completed_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  agency             Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  invoice            CaseInvoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  cashTransaction    CashTransaction? @relation(fields: [cashTransactionId], references: [id], onDelete: SetNull)
+  requestedBy        User?            @relation("InvoiceRefundRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, qbRefundReceiptId])
+  @@index([agencyId, status, createdAt])
+  @@index([invoiceId, createdAt])
+  @@map("invoice_refunds")
 }
 
 // A lightweight, QuickBooks-independent record of money owed/received on a
@@ -800,24 +950,32 @@ model CaseInvoice {
 // start recording "what's paid, what's still owed" during the lead stage
 // too, before there's a Case to hang it off of.
 model CaseManualLedgerEntry {
-  id          String   @id @default(uuid())
-  agencyId    String   @map("agency_id")
-  leadId      String?  @map("lead_id")
-  caseId      String?  @map("case_id")
-  clientId    String?  @map("client_id")
-  label       String
-  amountOwed  Decimal  @default(0) @map("amount_owed") @db.Decimal(10, 2)
-  amountPaid  Decimal  @default(0) @map("amount_paid") @db.Decimal(10, 2)
-  status      String   @default("Unpaid")
-  note        String?
-  createdById String?  @map("created_by_id")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  case        Case?    @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client      Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  id                String       @id @default(uuid())
+  agencyId          String       @map("agency_id")
+  leadId            String?      @map("lead_id")
+  caseId            String?      @map("case_id")
+  clientId          String?      @map("client_id")
+  label             String
+  amountOwed        Decimal      @default(0) @map("amount_owed") @db.Decimal(10, 2)
+  amountPaid        Decimal      @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  status            String       @default("Unpaid")
+  note              String?
+  createdById       String?      @map("created_by_id")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  // Set once scripts/migrateManualLedgerToCashLedger.js has recreated this
+  // entry as a real CaseDeskCash CaseInvoice (+ CashTransaction/Allocation
+  // for whatever was already paid). Lets the Payments-tab "needs
+  // classification" review queue drop a row once it's been moved into the
+  // real cash ledger, without deleting the original record.
+  migratedInvoiceId String?      @map("migrated_invoice_id")
+  migratedAt        DateTime?    @map("migrated_at")
+  agency            Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead              Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  case              Case?        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client            Client?      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy         User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  migratedInvoice   CaseInvoice? @relation("ManualLedgerMigratedInvoice", fields: [migratedInvoiceId], references: [id], onDelete: SetNull)
 
   @@index([agencyId, leadId])
   @@index([agencyId, caseId])
@@ -950,6 +1108,8 @@ model AgencyQuickBooksSettings {
   disbursementItemName  String?  @map("disbursement_item_name")
   consultFeeItemId      String?  @map("consult_fee_item_id")
   consultFeeItemName    String?  @map("consult_fee_item_name")
+  taxableTaxCodeId      String?  @map("taxable_tax_code_id")
+  taxableTaxCodeName    String?  @map("taxable_tax_code_name")
   // Percent, not a fraction (2.99 means 2.99%) — matches how an admin
   // reads it off their QuickBooks Payments account rate. Applied twice
   // when estimating a refund (original charge's fee, never returned, plus
@@ -1174,6 +1334,7 @@ model OomaCallSession {
   @@index([followUpId])
   @@index([leadId, startedAt])
   @@index([clientId, startedAt])
+  @@index([agencyId, handledByUserId, startedAt])
   @@map("ooma_call_sessions")
 }
 
@@ -1226,6 +1387,7 @@ model User {
   completedFollowUps                   FollowUp[]                      @relation("CompletedFollowUpUser")
   cancelledFollowUps                   FollowUp[]                      @relation("CancelledFollowUpUser")
   activityLogs                         ActivityLog[]
+  portalActivity                       UserPortalActivity[]
   caseAssessments                      CaseAssessment[]
   uploadedDocuments                    ClientDocument[]                @relation("UploadedDocumentUser")
   reviewedDocuments                    ClientDocument[]                @relation("ReviewedDocumentUser")
@@ -1284,6 +1446,9 @@ model User {
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                       LeadConversion[]                @relation("LeadConversionActorUser")
   createdCaseInvoices                  CaseInvoice[]
+  createdCashTransactions              CashTransaction[]               @relation("CashTransactionCreator")
+  closedCashReconciliations            CashReconciliation[]            @relation("CashReconciliationCloser")
+  requestedInvoiceRefunds              InvoiceRefund[]                 @relation("InvoiceRefundRequester")
   createdCaseManualLedgerEntries       CaseManualLedgerEntry[]
   createdPaymentSchedules              CasePaymentSchedule[]           @relation("PaymentScheduleCreator")
   createdPaymentInstallments           CasePaymentInstallment[]        @relation("PaymentInstallmentCreator")
@@ -1315,6 +1480,8 @@ model User {
   internalChatParticipations           InternalChatParticipant[]
   sentInternalChatMessages             InternalChatMessage[]           @relation("InternalChatMessageSender")
   uploadedInternalChatAttachments      InternalChatAttachment[]        @relation("UploadedInternalChatAttachmentUser")
+  internalChatMessageReactions         InternalChatMessageReaction[]
+  communicationMessageReactions        CommunicationMessageReaction[]
 
   @@index([agencyId])
   @@index([authUserId])
@@ -1485,6 +1652,7 @@ model Client {
   paymentSchedules           CasePaymentSchedule[]
   paymentInstallments        CasePaymentInstallment[]
   paymentApprovals           PaymentApproval[]
+  cashTransactions           CashTransaction[]
   caseEasyImportContacts     CaseEasyImportContact[]
   caseEasyImportReportRows   CaseEasyImportReportRow[]
   oomaCallSessions           OomaCallSession[]
@@ -1549,6 +1717,7 @@ model Case {
   paymentSchedule              CasePaymentSchedule?
   paymentInstallments          CasePaymentInstallment[]
   paymentApprovals             PaymentApproval[]
+  cashTransactions             CashTransaction[]
   caseEasyImportCases          CaseEasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportReportRow[]
   oomaCallSessions             OomaCallSession[]
@@ -1676,6 +1845,7 @@ model Appointment {
   followUps              FollowUp[]
   paymentHold            BookingPaymentHold?
   paymentApprovals       PaymentApproval[]
+  cashTransactions       CashTransaction[]
   meetingJobs            AppointmentMeetingJob[]
 
   @@unique([agencyId, idempotencyKey])
@@ -1690,6 +1860,7 @@ model Appointment {
   @@index([agencyId, seriesKey, recurrenceIndex])
   @@index([agencyId, confirmationStatus, startsAt])
   @@index([agencyId, meetingProvider, meetingProviderId])
+  @@index([agencyId, createdById, createdAt])
   @@map("appointments")
 }
 
@@ -1990,42 +2161,43 @@ model BookingPaymentHold {
 // remain Pending until an administrator decides them. Approved cash stays in
 // CaseDesk; approved non-cash entries retain their QuickBooks payment result.
 model PaymentApproval {
-  id                   String       @id @default(uuid())
-  agencyId             String       @map("agency_id")
-  clientId             String?      @map("client_id")
-  caseId               String?      @map("case_id")
-  appointmentId        String?      @map("appointment_id")
-  caseInvoiceId        String?      @map("case_invoice_id")
-  paymentId            String?      @map("payment_id")
-  entryType            String       @map("entry_type")
+  id                   String           @id @default(uuid())
+  agencyId             String           @map("agency_id")
+  clientId             String?          @map("client_id")
+  caseId               String?          @map("case_id")
+  appointmentId        String?          @map("appointment_id")
+  caseInvoiceId        String?          @map("case_invoice_id")
+  paymentId            String?          @map("payment_id")
+  entryType            String           @map("entry_type")
   method               String
-  amount               Decimal      @db.Decimal(10, 2)
-  chargeAmount         Decimal?     @map("charge_amount") @db.Decimal(10, 2)
-  paymentType          String?      @map("payment_type")
+  amount               Decimal          @db.Decimal(10, 2)
+  chargeAmount         Decimal?         @map("charge_amount") @db.Decimal(10, 2)
+  paymentType          String?          @map("payment_type")
   description          String?
-  transactionReference String?      @map("transaction_reference")
-  paymentDate          DateTime     @map("payment_date") @db.Date
+  transactionReference String?          @map("transaction_reference")
+  paymentDate          DateTime         @map("payment_date") @db.Date
   note                 String?
-  status               String       @default("Pending")
-  sourceRole           String       @map("source_role")
-  idempotencyKey       String       @map("idempotency_key")
-  submittedById        String       @map("submitted_by_id")
-  reviewedById         String?      @map("reviewed_by_id")
-  reviewedAt           DateTime?    @map("reviewed_at")
-  rejectionReason      String?      @map("rejection_reason")
-  qbPaymentId          String?      @map("qb_payment_id")
-  processingError      String?      @map("processing_error")
+  status               String           @default("Pending")
+  sourceRole           String           @map("source_role")
+  idempotencyKey       String           @map("idempotency_key")
+  submittedById        String           @map("submitted_by_id")
+  reviewedById         String?          @map("reviewed_by_id")
+  reviewedAt           DateTime?        @map("reviewed_at")
+  rejectionReason      String?          @map("rejection_reason")
+  qbPaymentId          String?          @map("qb_payment_id")
+  processingError      String?          @map("processing_error")
   result               Json?
-  createdAt            DateTime     @default(now()) @map("created_at")
-  updatedAt            DateTime     @updatedAt @map("updated_at")
-  agency               Agency       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client               Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case                 Case?        @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  appointment          Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  caseInvoice          CaseInvoice? @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
-  payment              Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-  submittedBy          User         @relation("SubmittedPaymentApprovalUser", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviewedBy           User?        @relation("ReviewedPaymentApprovalUser", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  agency               Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                 Case?            @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment          Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  caseInvoice          CaseInvoice?     @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
+  payment              Payment?         @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  cashTransaction      CashTransaction?
+  submittedBy          User             @relation("SubmittedPaymentApprovalUser", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy           User?            @relation("ReviewedPaymentApprovalUser", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId, status, createdAt])
@@ -2214,58 +2386,59 @@ model CommunicationConversation {
 }
 
 model CommunicationMessage {
-  id                String                       @id @default(uuid())
-  agencyId          String                       @map("agency_id")
-  clientId          String                       @map("client_id")
-  caseId            String?                      @map("case_id")
-  conversationId    String                       @map("conversation_id")
+  id                String                         @id @default(uuid())
+  agencyId          String                         @map("agency_id")
+  clientId          String                         @map("client_id")
+  caseId            String?                        @map("case_id")
+  conversationId    String                         @map("conversation_id")
   channel           CommunicationChannel
   direction         CommunicationDirection
   status            CommunicationStatus
-  senderUserId      String?                      @map("sender_user_id")
-  senderAddress     String?                      @map("sender_address")
-  recipients        Json                         @default("[]")
-  cc                Json                         @default("[]")
-  bcc               Json                         @default("[]")
-  replyTo           String?                      @map("reply_to")
+  senderUserId      String?                        @map("sender_user_id")
+  senderAddress     String?                        @map("sender_address")
+  recipients        Json                           @default("[]")
+  cc                Json                           @default("[]")
+  bcc               Json                           @default("[]")
+  replyTo           String?                        @map("reply_to")
   subject           String?
-  bodyText          String?                      @map("body_text")
-  bodyHtml          String?                      @map("body_html")
+  bodyText          String?                        @map("body_text")
+  bodyHtml          String?                        @map("body_html")
   provider          String?
-  providerMessageId String?                      @map("provider_message_id")
-  idempotencyKey    String?                      @map("idempotency_key")
-  parentMessageId   String?                      @map("parent_message_id")
-  emailMessageId    String?                      @map("email_message_id")
-  emailInReplyTo    String?                      @map("email_in_reply_to")
-  emailReferences   Json                         @default("[]") @map("email_references")
-  occurredAt        DateTime                     @default(now()) @map("occurred_at")
-  scheduledAt       DateTime?                    @map("scheduled_at")
-  sentAt            DateTime?                    @map("sent_at")
-  deliveredAt       DateTime?                    @map("delivered_at")
-  failedAt          DateTime?                    @map("failed_at")
-  failureReason     String?                      @map("failure_reason")
-  durationSeconds   Int?                         @map("duration_seconds")
-  callDisposition   String?                      @map("call_disposition")
-  callRecordingUrl  String?                      @map("call_recording_url")
-  callTranscript    String?                      @map("call_transcript")
-  attachments       Json                         @default("[]")
-  metadata          Json                         @default("{}")
-  isRead            Boolean                      @default(true) @map("is_read")
-  deletedAt         DateTime?                    @map("deleted_at")
-  deletedById       String?                      @map("deleted_by_id")
-  createdAt         DateTime                     @default(now()) @map("created_at")
-  updatedAt         DateTime                     @updatedAt @map("updated_at")
-  agency            Agency                       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client            Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case              Case?                        @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  conversation      CommunicationConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  senderUser        User?                        @relation("SenderCommunicationMessageUser", fields: [senderUserId], references: [id], onDelete: SetNull)
-  deletedBy         User?                        @relation("DeletedCommunicationMessageUser", fields: [deletedById], references: [id], onDelete: SetNull)
-  parentMessage     CommunicationMessage?        @relation("CommunicationMessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
-  replies           CommunicationMessage[]       @relation("CommunicationMessageReplies")
+  providerMessageId String?                        @map("provider_message_id")
+  idempotencyKey    String?                        @map("idempotency_key")
+  parentMessageId   String?                        @map("parent_message_id")
+  emailMessageId    String?                        @map("email_message_id")
+  emailInReplyTo    String?                        @map("email_in_reply_to")
+  emailReferences   Json                           @default("[]") @map("email_references")
+  occurredAt        DateTime                       @default(now()) @map("occurred_at")
+  scheduledAt       DateTime?                      @map("scheduled_at")
+  sentAt            DateTime?                      @map("sent_at")
+  deliveredAt       DateTime?                      @map("delivered_at")
+  failedAt          DateTime?                      @map("failed_at")
+  failureReason     String?                        @map("failure_reason")
+  durationSeconds   Int?                           @map("duration_seconds")
+  callDisposition   String?                        @map("call_disposition")
+  callRecordingUrl  String?                        @map("call_recording_url")
+  callTranscript    String?                        @map("call_transcript")
+  attachments       Json                           @default("[]")
+  metadata          Json                           @default("{}")
+  isRead            Boolean                        @default(true) @map("is_read")
+  deletedAt         DateTime?                      @map("deleted_at")
+  deletedById       String?                        @map("deleted_by_id")
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+  agency            Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client            Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case              Case?                          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  conversation      CommunicationConversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUser        User?                          @relation("SenderCommunicationMessageUser", fields: [senderUserId], references: [id], onDelete: SetNull)
+  deletedBy         User?                          @relation("DeletedCommunicationMessageUser", fields: [deletedById], references: [id], onDelete: SetNull)
+  parentMessage     CommunicationMessage?          @relation("CommunicationMessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies           CommunicationMessage[]         @relation("CommunicationMessageReplies")
   deliveryEvents    CommunicationDeliveryEvent[]
   outboxJobs        CommunicationOutbox[]
   attachmentRecords CommunicationAttachment[]
+  reactions         CommunicationMessageReaction[]
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, provider, providerMessageId])
@@ -2279,6 +2452,22 @@ model CommunicationMessage {
   @@index([scheduledAt, status])
   @@index([deletedAt])
   @@map("communication_messages")
+}
+
+model CommunicationMessageReaction {
+  id        String               @id @default(uuid())
+  agencyId  String               @map("agency_id")
+  messageId String               @map("message_id")
+  userId    String               @map("user_id")
+  emoji     String
+  createdAt DateTime             @default(now()) @map("created_at")
+  agency    Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message   CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("communication_message_reactions")
 }
 
 model CommunicationDeliveryEvent {
@@ -2422,18 +2611,20 @@ model CommunicationAttachment {
 // clientLastReadAt) and doesn't fit arbitrary N-party staff membership or
 // per-participant read state, which group threads genuinely need.
 model InternalChatThread {
-  id            String                    @id @default(uuid())
-  agencyId      String                    @map("agency_id")
-  isGroup       Boolean                   @default(false) @map("is_group")
-  name          String?
-  createdById   String                    @map("created_by_id")
-  lastMessageAt DateTime                  @default(now()) @map("last_message_at")
-  createdAt     DateTime                  @default(now()) @map("created_at")
-  updatedAt     DateTime                  @updatedAt @map("updated_at")
-  agency        Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  createdBy     User                      @relation("InternalChatThreadCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  participants  InternalChatParticipant[]
-  messages      InternalChatMessage[]
+  id               String                    @id @default(uuid())
+  agencyId         String                    @map("agency_id")
+  isGroup          Boolean                   @default(false) @map("is_group")
+  name             String?
+  avatarStorageKey String?                   @map("avatar_storage_key")
+  avatarMimeType   String?                   @map("avatar_mime_type")
+  createdById      String                    @map("created_by_id")
+  lastMessageAt    DateTime                  @default(now()) @map("last_message_at")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+  agency           Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy        User                      @relation("InternalChatThreadCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants     InternalChatParticipant[]
+  messages         InternalChatMessage[]
 
   @@index([agencyId, lastMessageAt])
   @@map("internal_chat_threads")
@@ -2456,24 +2647,45 @@ model InternalChatParticipant {
 }
 
 model InternalChatMessage {
-  id                String                   @id @default(uuid())
-  agencyId          String                   @map("agency_id")
-  threadId          String                   @map("thread_id")
-  senderId          String                   @map("sender_id")
-  bodyText          String?                  @map("body_text")
-  hasAttachment     Boolean                  @default(false) @map("has_attachment")
-  clientMessageId   String?                  @map("client_message_id")
-  occurredAt        DateTime                 @default(now()) @map("occurred_at")
-  deletedAt         DateTime?                @map("deleted_at")
-  createdAt         DateTime                 @default(now()) @map("created_at")
-  agency            Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  thread            InternalChatThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  sender            User                     @relation("InternalChatMessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  id                String                        @id @default(uuid())
+  agencyId          String                        @map("agency_id")
+  threadId          String                        @map("thread_id")
+  senderId          String                        @map("sender_id")
+  bodyText          String?                       @map("body_text")
+  hasAttachment     Boolean                       @default(false) @map("has_attachment")
+  clientMessageId   String?                       @map("client_message_id")
+  replyToId         String?                       @map("reply_to_id")
+  editedAt          DateTime?                     @map("edited_at")
+  occurredAt        DateTime                      @default(now()) @map("occurred_at")
+  deletedAt         DateTime?                     @map("deleted_at")
+  createdAt         DateTime                      @default(now()) @map("created_at")
+  agency            Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  thread            InternalChatThread            @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender            User                          @relation("InternalChatMessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  replyTo           InternalChatMessage?          @relation("InternalChatMessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies           InternalChatMessage[]         @relation("InternalChatMessageReplies")
   attachmentRecords InternalChatAttachment[]
+  reactions         InternalChatMessageReaction[]
 
   @@index([threadId, occurredAt])
   @@index([agencyId, threadId, clientMessageId])
   @@map("internal_chat_messages")
+}
+
+model InternalChatMessageReaction {
+  id        String              @id @default(uuid())
+  agencyId  String              @map("agency_id")
+  messageId String              @map("message_id")
+  userId    String              @map("user_id")
+  emoji     String
+  createdAt DateTime            @default(now()) @map("created_at")
+  agency    Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  message   InternalChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("internal_chat_message_reactions")
 }
 
 model InternalChatAttachment {
@@ -2549,6 +2761,26 @@ model CommunicationRetentionPolicy {
   agency           Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("communication_retention_policies")
+}
+
+model AgencyClientCommunicationPolicy {
+  id                   String                @id @default(uuid())
+  agencyId             String                @unique @map("agency_id")
+  communicationEnabled Boolean               @default(true) @map("communication_enabled")
+  preferredChannel     CommunicationChannel? @map("preferred_channel")
+  language             String                @default("English")
+  timezone             String                @default("America/Toronto")
+  quietHoursStart      String?               @map("quiet_hours_start")
+  quietHoursEnd        String?               @map("quiet_hours_end")
+  allowEmail           Boolean               @default(true) @map("allow_email")
+  allowSms             Boolean               @default(true) @map("allow_sms")
+  allowChat            Boolean               @default(true) @map("allow_chat")
+  allowCalls           Boolean               @default(true) @map("allow_calls")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  agency               Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@map("agency_client_communication_policies")
 }
 
 model CommunicationPreference {
@@ -3323,7 +3555,31 @@ model ActivityLog {
   @@index([clientId])
   @@index([caseId])
   @@index([agencyId, action, createdAt])
+  @@index([agencyId, userId, createdAt])
   @@map("activity_logs")
+}
+
+// Coarse portal-usage tracking for the team workload dashboard — one row
+// per (agency, user, calendar day), upserted by a client heartbeat rather
+// than one row per ping, so growth stays bounded to active-users × active-
+// days instead of active-users × pings.
+model UserPortalActivity {
+  id            String   @id @default(uuid())
+  agencyId      String   @map("agency_id")
+  userId        String   @map("user_id")
+  activityDate  DateTime @map("activity_date") @db.Date
+  activeSeconds Int      @default(0) @map("active_seconds")
+  pingCount     Int      @default(0) @map("ping_count")
+  firstPingAt   DateTime @map("first_ping_at")
+  lastPingAt    DateTime @map("last_ping_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  agency        Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, userId, activityDate])
+  @@index([agencyId, activityDate])
+  @@map("user_portal_activity")
 }
 
 model AgencyLeadSequence {
@@ -3345,15 +3601,20 @@ model AgencyClientSequence {
 }
 
 model LeadSettings {
-  id                  String   @id @default(uuid())
-  agencyId            String   @unique @map("agency_id")
+  id                        String    @id @default(uuid())
+  agencyId                  String    @unique @map("agency_id")
   // Sent once, right after a genuinely fresh inbound lead is created
   // (website chat widget, connectors, public forms) — not for CSV
   // imports or leads created from a booking that already happened.
-  welcomeEmailEnabled Boolean  @default(true) @map("welcome_email_enabled")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-  agency              Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  welcomeEmailEnabled       Boolean   @default(true) @map("welcome_email_enabled")
+  staleOutreachEnabled      Boolean   @default(false) @map("stale_outreach_enabled")
+  staleOutreachDays         Int       @default(14) @map("stale_outreach_days")
+  staleOutreachEmailEnabled Boolean   @default(true) @map("stale_outreach_email_enabled")
+  staleOutreachSmsEnabled   Boolean   @default(true) @map("stale_outreach_sms_enabled")
+  staleOutreachLastRunAt    DateTime? @map("stale_outreach_last_run_at")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+  agency                    Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("lead_settings")
 }

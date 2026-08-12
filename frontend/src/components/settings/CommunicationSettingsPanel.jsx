@@ -3,9 +3,15 @@ import {
   Check,
   ChevronRight,
   Clock3,
+  Globe2,
   Loader2,
+  Mail,
+  MessageCircle,
+  Phone,
   ShieldCheck,
+  Smartphone,
   Trash2,
+  UserRound,
   UsersRound,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -53,8 +59,21 @@ function Toggle({ checked, disabled, onChange, label }) {
 }
 
 export default function CommunicationSettingsPanel() {
+  const [audience, setAudience] = useState("clients");
   const [users, setUsers] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [clientPolicy, setClientPolicy] = useState({
+    communicationEnabled: true,
+    preferredChannel: null,
+    language: "English",
+    timezone: "America/Toronto",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    allowEmail: true,
+    allowSms: true,
+    allowChat: true,
+    allowCalls: true,
+  });
   const [retention, setRetention] = useState({
     retentionDays: 2555,
     trashDays: 30,
@@ -70,13 +89,17 @@ export default function CommunicationSettingsPanel() {
     let active = true;
     Promise.all([
       api.get("/communications/permissions/team"),
+      api.get("/communications/clients/policy"),
       api.get("/communications/retention"),
     ])
-      .then(([userResponse, retentionResponse]) => {
+      .then(([userResponse, policyResponse, retentionResponse]) => {
         if (!active) return;
-        const nextUsers = userResponse.data.data || [];
+        const nextUsers = (userResponse.data.data || []).filter(
+          (user) => user.role !== "client" && user.status === "active",
+        );
         setUsers(nextUsers);
         setSelectedId(nextUsers[0]?.id || "");
+        setClientPolicy(policyResponse.data.data || clientPolicy);
         setRetention(retentionResponse.data.data || retention);
       })
       .catch((requestError) => {
@@ -157,6 +180,28 @@ export default function CommunicationSettingsPanel() {
     }
   };
 
+  const saveClientPolicy = async (event) => {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      const response = await api.patch(
+        "/communications/clients/policy",
+        clientPolicy,
+      );
+      setClientPolicy(response.data.data);
+      setNotice("Global client communication settings saved.");
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          "Client communication settings could not be saved.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading)
     return (
       <div className="space-y-3">
@@ -178,8 +223,8 @@ export default function CommunicationSettingsPanel() {
           Communication controls
         </h2>
         <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
-          Control who can contact clients, protect sensitive records, and define
-          how long deleted communication remains recoverable.
+          Set one client-wide communication policy, manage team access
+          separately, and define how long deleted records remain recoverable.
         </p>
       </div>
       {notice ? (
@@ -193,6 +238,212 @@ export default function CommunicationSettingsPanel() {
           {error}
         </p>
       ) : null}
+      <div className="inline-flex w-full rounded-2xl bg-slate-100 p-1 sm:w-auto">
+        {[
+          ["clients", "Clients", UserRound],
+          ["team", "Team members", UsersRound],
+        ].map(([key, label, Icon]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setAudience(key)}
+            className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition sm:flex-none ${audience === key ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+      {audience === "clients" ? (
+        <form
+          onSubmit={saveClientPolicy}
+          className="rounded-[1.7rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6"
+        >
+          <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-700">
+                <Globe2 className="h-4 w-4" />
+              </span>
+              <div>
+                <h3 className="text-base font-semibold">Global client policy</h3>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+                  These settings apply to every client. A client-specific opt-out
+                  or Do Not Contact instruction always remains blocked.
+                </p>
+              </div>
+            </div>
+            <label className="flex items-center justify-between gap-4 rounded-2xl bg-slate-50 px-4 py-3 sm:min-w-[16rem]">
+              <span>
+                <span className="block text-sm font-semibold">Client communication</span>
+                <span className="mt-0.5 block text-[11px] text-slate-400">
+                  Master workspace control
+                </span>
+              </span>
+              <Toggle
+                checked={clientPolicy.communicationEnabled !== false}
+                disabled={busy}
+                onChange={(value) =>
+                  setClientPolicy((current) => ({
+                    ...current,
+                    communicationEnabled: value,
+                  }))
+                }
+                label="Client communication"
+              />
+            </label>
+          </div>
+
+          <div className="mt-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">
+              Available channels for all clients
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {[
+                ["allowEmail", "Email", "System mailbox and connected inbox", Mail],
+                ["allowSms", "SMS", "Workspace text messages", Smartphone],
+                ["allowChat", "Secure chat", "Client portal messaging", MessageCircle],
+                ["allowCalls", "Phone calls", "Outbound client calls", Phone],
+              ].map(([key, label, help, Icon]) => (
+                <label
+                  key={key}
+                  className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 ${clientPolicy.communicationEnabled === false ? "bg-slate-50/60" : "bg-slate-50"}`}
+                >
+                  <span className="flex min-w-0 items-start gap-3">
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                    <span>
+                      <span className="block text-sm font-semibold">{label}</span>
+                      <span className="mt-1 block text-[11px] leading-4 text-slate-400">
+                        {help}
+                      </span>
+                    </span>
+                  </span>
+                  <Toggle
+                    checked={clientPolicy[key] !== false}
+                    disabled={busy || clientPolicy.communicationEnabled === false}
+                    onChange={(value) =>
+                      setClientPolicy((current) => ({
+                        ...current,
+                        [key]: value,
+                        preferredChannel:
+                          !value &&
+                          current.preferredChannel ===
+                            ({
+                              allowEmail: "Email",
+                              allowSms: "Sms",
+                              allowChat: "Chat",
+                              allowCalls: "Call",
+                            })[key]
+                            ? null
+                            : current.preferredChannel,
+                      }))
+                    }
+                    label={`Allow ${label}`}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-700">
+              Default preferred channel
+              <select
+                value={clientPolicy.preferredChannel || ""}
+                disabled={busy}
+                onChange={(event) =>
+                  setClientPolicy((current) => ({
+                    ...current,
+                    preferredChannel: event.target.value || null,
+                  }))
+                }
+                className="select-field mt-2 h-11 w-full py-0"
+              >
+                <option value="">No default preference</option>
+                {clientPolicy.allowEmail !== false ? <option>Email</option> : null}
+                {clientPolicy.allowSms !== false ? <option value="Sms">SMS</option> : null}
+                {clientPolicy.allowChat !== false ? <option>Chat</option> : null}
+                {clientPolicy.allowCalls !== false ? <option>Call</option> : null}
+              </select>
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Default language
+              <input
+                value={clientPolicy.language || ""}
+                disabled={busy}
+                onChange={(event) =>
+                  setClientPolicy((current) => ({
+                    ...current,
+                    language: event.target.value,
+                  }))
+                }
+                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 px-3.5 text-sm outline-none focus:border-sky-400"
+                placeholder="English"
+              />
+            </label>
+            <label className="text-xs font-semibold text-slate-700">
+              Default timezone
+              <input
+                value={clientPolicy.timezone || ""}
+                disabled={busy}
+                onChange={(event) =>
+                  setClientPolicy((current) => ({
+                    ...current,
+                    timezone: event.target.value,
+                  }))
+                }
+                className="mt-2 h-11 w-full rounded-2xl border border-slate-200 px-3.5 text-sm outline-none focus:border-sky-400"
+                placeholder="America/Toronto"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs font-semibold text-slate-700">
+                Quiet from
+                <input
+                  type="time"
+                  value={clientPolicy.quietHoursStart || ""}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setClientPolicy((current) => ({
+                      ...current,
+                      quietHoursStart: event.target.value || null,
+                    }))
+                  }
+                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none focus:border-sky-400"
+                />
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                Until
+                <input
+                  type="time"
+                  value={clientPolicy.quietHoursEnd || ""}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setClientPolicy((current) => ({
+                      ...current,
+                      quietHoursEnd: event.target.value || null,
+                    }))
+                  }
+                  className="mt-2 h-11 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none focus:border-sky-400"
+                />
+              </label>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs leading-5 text-sky-800">
+              New clients inherit these defaults. Existing client restrictions
+              can only make this policy stricter, never bypass it.
+            </p>
+            <button
+              type="submit"
+              disabled={busy}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Save client policy
+            </button>
+          </div>
+        </form>
+      ) : (
       <section className="grid overflow-hidden rounded-[1.7rem] border border-slate-200 bg-white shadow-sm lg:grid-cols-[17rem_minmax(0,1fr)]">
         <aside className="border-b border-slate-200 bg-slate-50/70 p-3 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-2 px-3 pb-3 pt-2 text-[10px] font-semibold uppercase tracking-[.14em] text-slate-400">
@@ -278,6 +529,7 @@ export default function CommunicationSettingsPanel() {
           )}
         </div>
       </section>
+      )}
       <form
         onSubmit={saveRetention}
         className="rounded-[1.7rem] border border-slate-200 bg-white p-5 shadow-sm"

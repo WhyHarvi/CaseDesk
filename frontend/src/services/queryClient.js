@@ -80,6 +80,12 @@ const RELATED_PATHS = {
   leads: ["leads", "dashboard", "workload", "clients", "cases"],
   "ooma-calls": ["ooma-calls", "leads", "clients", "communications", "follow-ups", "dashboard", "workload"],
   settings: ["settings", "booking", "staff", "team"],
+  // Empty, not absent — the heartbeat ping fires up to once a minute per
+  // active user and invalidates nothing of its own. An absent key here
+  // falls through to the "no related list = invalidate everything"
+  // fallback below, which would otherwise blow away every cached query in
+  // the app on every ping.
+  workload: [],
 };
 
 function resourceFor(url) {

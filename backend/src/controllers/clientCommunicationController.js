@@ -13,6 +13,7 @@ import {
 } from "../services/supabaseRealtimeService.js";
 import { DOCUMENT_BUCKET, downloadStorageFile } from "../services/supabaseStorage.js";
 import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/communicationAttachmentStorage.js";
+import { getEffectiveClientCommunicationPreference } from "../services/clientCommunicationPolicyService.js";
 import { createHttpError } from "../utils/http.js";
 
 const clean = (value, max = 500) =>
@@ -56,8 +57,9 @@ async function validAccess(token) {
       410,
       "This secure chat link has expired or was revoked. Ask your consultant for a new link.",
     );
-  const preference = await prisma.communicationPreference.findUnique({
-    where: { clientId: data.clientId },
+  const preference = await getEffectiveClientCommunicationPreference({
+    agencyId: data.agencyId,
+    clientId: data.clientId,
   });
   if (preference?.doNotContact || preference?.allowChat === false)
     throw createHttpError(
@@ -101,6 +103,15 @@ export async function getCaseClientChatAccess(req, res) {
 export async function createCaseClientChatAccess(req, res) {
   await requireCommunicationPermission(req, "canUseChat");
   const caseItem = await scopedCase(req, req.params.caseId);
+  const preference = await getEffectiveClientCommunicationPreference({
+    agencyId: req.user.agencyId,
+    clientId: caseItem.clientId,
+  });
+  if (preference.doNotContact || !preference.allowChat)
+    throw createHttpError(
+      409,
+      "Secure chat is disabled by the workspace client policy or this client's preferences.",
+    );
   const expiresInDays = Math.min(
     Math.max(Number(req.body.expiresInDays) || 30, 1),
     365,

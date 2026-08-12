@@ -2,6 +2,7 @@ import * as service from "./lead.service.js";
 import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
 import { getLeadDashboard as loadLeadDashboard, getLeadDashboardDrilldown as loadLeadDashboardDrilldown } from "./lead.dashboard.service.js";
 import { getAgeingReport as loadAgeingReport, getConversionTrendReport as loadConversionTrendReport, getEmployeeReport as loadEmployeeReport, getFunnelReport as loadFunnelReport, getLostReport as loadLostReport, getResponseTimeReport as loadResponseTimeReport, getSourceReport as loadSourceReport, getWorkloadReport as loadWorkloadReport } from "./lead.report.service.js";
+import { requestStaleLeadOutreachForAgency } from "./lead.staleOutreach.service.js";
 
 export async function getLeadDashboard(req, res) {
   res.json({ data: await loadLeadDashboard(req) });
@@ -77,6 +78,15 @@ export async function getLeadSettings(req, res) {
 
 export async function updateLeadSettings(req, res) {
   res.json({ data: await service.updateLeadSettings(req) });
+}
+
+export async function getStaleLeadOutreachOverview(req, res) {
+  res.json({ data: await service.getStaleLeadOutreachOverview(req) });
+}
+
+export async function runStaleLeadOutreach(req, res) {
+  const accepted = requestStaleLeadOutreachForAgency(req.auth.agencyId);
+  res.status(202).json({ data: { accepted, message: accepted ? "Outreach run started." : "An outreach run is already in progress." } });
 }
 
 export async function qualifyLead(req, res) {

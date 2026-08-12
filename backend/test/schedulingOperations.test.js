@@ -197,6 +197,14 @@ test("the calendar grid gives appointments real room instead of cramming them in
   assert.match(calendar, /rounded-b-3xl border-t border-slate-100 bg-slate-50\/60/);
 });
 
+test("free consultations have a dedicated calendar color and visible legend", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  assert.match(calendar, /const FREE_CONSULTATION_TONE = \{ chip: "bg-teal-500"/);
+  assert.match(calendar, /item\.status === "NoShow" \? NO_SHOW_TONE : item\.isFreeConsultation \? FREE_CONSULTATION_TONE : item\.source === "WalkIn" \? WALK_IN_TONE/);
+  assert.match(calendar, /FREE_CONSULTATION_TONE\.chip[\s\S]*Free consultation/);
+});
+
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
@@ -1002,6 +1010,14 @@ test("the calendar grid marks the half-hour boundary as well as the hour, and of
   // used for the pill's display name.
   assert.match(calendar, /const email = item\.client\?\.email \|\| item\.guestEmail \|\| "";/);
   assert.match(calendar, /const phone = item\.client\?\.phone \|\| item\.guestPhone \|\| "";/);
+
+  // Placement uses the card's real rendered height and clamps every edge to
+  // the viewport. On unusually short screens the card itself can scroll,
+  // instead of allowing its footer or actions to render off-screen.
+  assert.match(calendar, /hoverCardPosition\(rect, card\.scrollHeight\)/);
+  assert.match(calendar, /window\.addEventListener\("resize", reposition\)/);
+  assert.match(calendar, /const visibleHeight = Math\.min\(measuredHeight, maxHeight\)/);
+  assert.match(calendar, /overflow-x-hidden overflow-y-auto/);
 });
 
 test("appointment pills dropped the avatar experiment — one consistent icon+full-name layout, no avatar, on every pill", async () => {

@@ -253,9 +253,7 @@ function installmentDueLabel(installment) {
 // Consultation/Other), so they're deliberately left out here; the
 // retainer keeps them as plain editable placeholder text for a consultant
 // to fill in or delete by hand.
-export async function getRetainerScheduleMergeContext(agencyId, caseId) {
-  const schedule = await getCaseSchedule(agencyId, caseId);
-  if (!schedule) return null;
+function buildRetainerScheduleMergeContext(schedule) {
   const activeInstallments = schedule.installments.filter((item) => item.status !== "Void");
   return {
     values: {
@@ -274,6 +272,54 @@ export async function getRetainerScheduleMergeContext(agencyId, caseId) {
     discountLabel: formatMoney(schedule.taxSummary.discountAmount),
     hasDiscount: schedule.taxSummary.discountAmount > 0,
   };
+}
+
+export async function getRetainerScheduleMergeContext(agencyId, caseId) {
+  const schedule = await getCaseSchedule(agencyId, caseId);
+  return schedule ? buildRetainerScheduleMergeContext(schedule) : null;
+}
+
+// Builds the exact fee/installment merge data a retainer would receive from
+// a proposed schedule, but deliberately does not persist a schedule or fire
+// any invoice triggers. The Billing retainer flow uses this for its mandatory
+// read-only preview before a consultant can approve creation.
+export async function previewRetainerScheduleMergeContext(
+  agencyId,
+  { signingDate, installments, discountAmount = 0 },
+) {
+  const resolvedSigningDate = signingDate ? new Date(signingDate) : new Date();
+  if (Number.isNaN(resolvedSigningDate.getTime())) {
+    throw createHttpError(400, "Enter a valid signing date.", "VALIDATION_ERROR");
+  }
+  if (!Array.isArray(installments) || !installments.length) {
+    throw createHttpError(400, "Add at least one installment.", "VALIDATION_ERROR");
+  }
+  const validated = await validateInstallmentsInput(agencyId, installments);
+  const discounted = await allocateScheduleDiscount(
+    agencyId,
+    validated,
+    discountAmount,
+  );
+  const previewSchedule = await attachTaxBreakdown(
+    {
+      signingDate: resolvedSigningDate,
+      discountAmount: discounted.discountAmount,
+      installments: discounted.installments.map((item, index) => ({
+        ...item,
+        sortOrder: index,
+        status: "Scheduled",
+        triggerDate:
+          item.triggerType === "Date"
+            ? resolveTriggerDate(
+                resolvedSigningDate,
+                item.triggerDaysAfterSigning,
+              )
+            : null,
+      })),
+    },
+    agencyId,
+  );
+  return buildRetainerScheduleMergeContext(previewSchedule);
 }
 
 export async function createCaseSchedule(agencyId, { caseId, signingDate, installments, discountAmount = 0, actorUserId }) {
@@ -481,29 +527,50 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
   let paidAmount = 0;
   let taxableSubtotal = 0;
   let nonTaxableSubtotal = 0;
+  let tax = 0;
+  let outstandingAmount = 0;
   for (const installment of installments) {
     const kind = kindByCode.get(installment.paymentType) || "Other";
-    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += installmentNetAmount(installment);
-    else nonTaxableSubtotal += Number(installment.amount);
-    if (installment.caseInvoiceId) {
-      const invoice = invoiceById.get(installment.caseInvoiceId);
-      if (invoice) paidAmount += Number(invoice.amount) - Number(invoice.balance);
+    const invoice = installment.caseInvoiceId ? invoiceById.get(installment.caseInvoiceId) : null;
+    const subtotal = invoice ? Number(invoice.subtotalAmount ?? invoice.amount) : installmentNetAmount(installment);
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += subtotal;
+    else nonTaxableSubtotal += subtotal;
+    if (invoice) {
+      const refunded = (invoice.refunds || []).reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+      paidAmount += Math.max(0, Number(invoice.amount) - Number(invoice.balance) - refunded);
+      tax += Number(invoice.taxAmount ?? (TAXABLE_FEE_KINDS.has(kind) ? Math.round(subtotal * taxRatePercent) / 100 : 0));
+      outstandingAmount += Math.max(0, Number(invoice.balance));
+    } else if (TAXABLE_FEE_KINDS.has(kind)) {
+      const estimatedTax = Math.round(subtotal * taxRatePercent) / 100;
+      tax += estimatedTax;
+      outstandingAmount += subtotal + estimatedTax;
+    } else {
+      outstandingAmount += subtotal;
     }
   }
   for (const invoice of invoices) {
     if (linkedInvoiceIds.has(invoice.id) || ["Void", "Voided"].includes(invoice.status)) continue;
     const kind = kindByCode.get(invoice.paymentType) || "Other";
-    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += Number(invoice.amount);
-    else nonTaxableSubtotal += Number(invoice.amount);
-    paidAmount += Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+    const invoiceSubtotal = Number(invoice.subtotalAmount ?? invoice.amount);
+    if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += invoiceSubtotal;
+    else nonTaxableSubtotal += invoiceSubtotal;
+    tax += Number(invoice.taxAmount ?? (TAXABLE_FEE_KINDS.has(kind) ? Math.round(invoiceSubtotal * taxRatePercent) / 100 : 0));
+    const refunded = (invoice.refunds || []).reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+    paidAmount += Math.max(0, Number(invoice.amount) - Number(invoice.balance) - refunded);
+    outstandingAmount += Math.max(0, Number(invoice.balance));
   }
   for (const payment of legacyPayments) {
     nonTaxableSubtotal += Number(payment.totalFee);
     paidAmount += Number(payment.paidAmount);
+    outstandingAmount += Math.max(0, Number(payment.balance));
   }
-  const tax = Math.round(taxableSubtotal * taxRatePercent) / 100;
+  tax = Math.round(tax * 100) / 100;
   const totalFee = taxableSubtotal + tax + nonTaxableSubtotal;
-  const balance = Math.max(totalFee - paidAmount, 0);
+  // Refunds reduce net collections, but do not reopen a settled invoice.
+  // Outstanding money is therefore the explicit balance carried by each
+  // invoice plus the estimated total of installments not issued yet—not
+  // simply charges minus net collections.
+  const balance = Math.round(Math.max(outstandingAmount, 0) * 100) / 100;
   const status = totalFee === 0 ? "Unpaid" : balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
   return { totalFee, paidAmount, balance, status, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent };
 }
@@ -537,11 +604,12 @@ export async function getCasePaymentSummary(agencyId, caseId) {
     prisma.caseInvoice.findMany({
       where: { agencyId, caseId },
       select: {
-        id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true,
+        id: true, caseId: true, amount: true, subtotalAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
         paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
+        refunds: { where: { status: "Completed" }, select: { amount: true } },
       },
     }).then((rows) => rows.map(applyLocalCashToInvoice)),
-    prisma.payment.findMany({ where: { agencyId, caseId }, select: { totalFee: true, paidAmount: true } }),
+    prisma.payment.findMany({ where: { agencyId, caseId }, select: { totalFee: true, paidAmount: true, balance: true } }),
     getFeeCategoryKindMap(agencyId),
     getAgencyTaxRatePercent(agencyId),
   ]);
@@ -561,11 +629,12 @@ export async function getCasePaymentSummariesByCase(agencyId) {
   }), prisma.caseInvoice.findMany({
     where: { agencyId },
     select: {
-      id: true, caseId: true, amount: true, balance: true, status: true, paymentType: true,
+      id: true, caseId: true, amount: true, subtotalAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
       paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
+      refunds: { where: { status: "Completed" }, select: { amount: true } },
     },
   }).then((rows) => rows.map(applyLocalCashToInvoice)), prisma.payment.findMany({
-    where: { agencyId }, select: { caseId: true, totalFee: true, paidAmount: true },
+    where: { agencyId }, select: { caseId: true, totalFee: true, paidAmount: true, balance: true },
   }), getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
 
   const byCaseId = new Map();
@@ -629,6 +698,7 @@ async function fireInstallment(agencyId, installment, actorUserId) {
       paymentType: installment.paymentType,
       description: installment.label,
       amount: invoiceAmount,
+      discountAmount: Number(installment.discountAmount || 0),
       dueDate: undefined,
       actorUserId,
     });

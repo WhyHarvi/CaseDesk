@@ -20,6 +20,11 @@ export async function recordCaseInvoiceManualPayment(caseId, invoiceId, values) 
   return response.data.data;
 }
 
+export async function requestCaseInvoiceRefund(caseId, invoiceId, values) {
+  const response = await api.post(`/cases/${caseId}/invoices/${invoiceId}/refunds`, values);
+  return response.data.data;
+}
+
 export async function downloadCaseInvoicePdf(caseId, invoiceId, filename) {
   const response = await api.get(`/cases/${caseId}/invoices/${invoiceId}/pdf`, { responseType: "blob", timeout: 30000 });
   const url = URL.createObjectURL(response.data);

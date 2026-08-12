@@ -1,23 +1,30 @@
 import {
   getConsultationRefundReview,
   getPaymentsSummary,
+  getCashReconciliation,
+  closeCashReconciliation,
   listAgencyPayments,
+  listStuckInvoiceRefunds,
+  listCashLedgerActivity,
+  listQuickBooksSyncFailures,
 } from "../services/paymentsOverviewService.js";
 import { createHttpError } from "../utils/http.js";
 import { approvePaymentApproval, listPaymentApprovals, rejectPaymentApproval } from "../services/paymentApprovalService.js";
+import { markInvoiceRefundFailed } from "../services/caseInvoiceService.js";
 
 function requireAdmin(req) {
   if (req.auth.role !== "admin") throw createHttpError(403, "Only an administrator can review staff-entered payments.", "FORBIDDEN");
 }
 
 export async function getPaymentsList(req, res) {
-  const { status, source, query, from, to, page, pageSize } = req.query;
+  const { status, source, query, from, to, bucket, page, pageSize } = req.query;
   const data = await listAgencyPayments(req.auth.agencyId, {
     status: status || undefined,
     source: source || undefined,
     query: query || undefined,
     from: from || undefined,
     to: to || undefined,
+    bucket: bucket || undefined,
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Math.min(Number(pageSize), 100) : 25,
   });
@@ -25,8 +32,18 @@ export async function getPaymentsList(req, res) {
 }
 
 export async function getPaymentsSummaryOverview(req, res) {
-  const data = await getPaymentsSummary(req.auth.agencyId);
+  const data = await getPaymentsSummary(req.auth.agencyId, { month: req.query.month });
   res.json({ data });
+}
+
+export async function getCashClosing(req, res) {
+  requireAdmin(req);
+  res.json({ data: await getCashReconciliation(req.auth.agencyId, req.query.day) });
+}
+
+export async function closeCash(req, res) {
+  requireAdmin(req);
+  res.json({ data: await closeCashReconciliation(req.auth.agencyId, { day: req.body?.day, countedAmount: req.body?.countedAmount, note: req.body?.note, actorUserId: req.auth.userId }) });
 }
 
 export async function getRefundReview(req, res) {
@@ -56,5 +73,40 @@ export async function approvePayment(req, res) {
 export async function rejectPayment(req, res) {
   requireAdmin(req);
   const data = await rejectPaymentApproval(req.auth.agencyId, req.params.id, req.auth.userId, req.body?.reason);
+  res.json({ data });
+}
+
+// Manual override for a QuickBooks invoice refund that never completed —
+// staff never finished it in QuickBooks, or the automatic matcher found
+// more than one same-amount pending refund for the client and refused to
+// guess which one it was (see quickbooksWebhookService.applyCaseInvoiceRefundReceipt).
+// Cash refunds never reach this endpoint — they complete synchronously.
+export async function getStuckInvoiceRefunds(req, res) {
+  requireAdmin(req);
+  const data = await listStuckInvoiceRefunds(req.auth.agencyId);
+  res.json({ data });
+}
+
+// Detail drawers behind the Cash On Hand and QuickBooks Sync Failures KPI
+// boxes — neither maps onto the payments table's row shape, so they get
+// their own small read views instead of being forced through the bucket
+// filter used by the other boxes.
+export async function getCashLedgerActivity(req, res) {
+  const data = await listCashLedgerActivity(req.auth.agencyId);
+  res.json({ data });
+}
+
+export async function getQuickBooksSyncFailures(req, res) {
+  const data = await listQuickBooksSyncFailures(req.auth.agencyId);
+  res.json({ data });
+}
+
+export async function failInvoiceRefund(req, res) {
+  requireAdmin(req);
+  const data = await markInvoiceRefundFailed(req.auth.agencyId, {
+    refundId: req.params.id,
+    actorUserId: req.auth.userId,
+    note: req.body?.note,
+  });
   res.json({ data });
 }

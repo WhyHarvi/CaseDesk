@@ -6,8 +6,8 @@ export async function getPaymentsOverview(params = {}) {
   return response.data.data;
 }
 
-export async function getPaymentsOverviewSummary() {
-  const response = await api.get("/payments-overview/summary", { cache: false });
+export async function getPaymentsOverviewSummary(month) {
+  const response = await api.get("/payments-overview/summary", { params: month ? { month } : undefined, cache: false });
   return response.data.data;
 }
 
@@ -32,5 +32,35 @@ export async function approvePaymentApproval(id) {
 
 export async function rejectPaymentApproval(id, reason) {
   const response = await api.post(`/payments-overview/approvals/${encodeURIComponent(id)}/reject`, { reason });
+  return response.data.data;
+}
+
+export async function getCashClosing(day) {
+  const response = await api.get("/payments-overview/cash-closing", { params: { day }, cache: false });
+  return response.data.data;
+}
+
+export async function closeCashLedger(values) {
+  const response = await api.post("/payments-overview/cash-closing", values);
+  return response.data.data;
+}
+
+export async function getStuckInvoiceRefunds() {
+  const response = await api.get("/payments-overview/invoice-refunds/stuck", { cache: false });
+  return response.data.data;
+}
+
+export async function failInvoiceRefund(id, note) {
+  const response = await api.post(`/payments-overview/invoice-refunds/${encodeURIComponent(id)}/fail`, { note });
+  return response.data.data;
+}
+
+export async function getCashLedgerActivity() {
+  const response = await api.get("/payments-overview/cash-ledger-activity", { cache: false });
+  return response.data.data;
+}
+
+export async function getQuickBooksSyncFailures() {
+  const response = await api.get("/payments-overview/quickbooks-sync-failures", { cache: false });
   return response.data.data;
 }

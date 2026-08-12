@@ -19,7 +19,7 @@ const callResolutions = new Set(["UNRESOLVED", "LINKED_LEAD", "LINKED_CLIENT", "
 const callInclude = {
   lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true, phone: true, status: true, stage: true, owner: { select: { id: true, fullName: true } } } },
   client: { select: { id: true, clientNumber: true, fullName: true, phone: true, status: true } },
-  case: { select: { id: true, caseNumber: true, caseType: true, status: true } },
+  case: { select: { id: true, caseType: true, status: true } },
   handledBy: { select: { id: true, fullName: true, email: true } },
   resolvedBy: { select: { id: true, fullName: true } },
   followUp: { select: { id: true, type: true, description: true, dueAt: true, status: true } },

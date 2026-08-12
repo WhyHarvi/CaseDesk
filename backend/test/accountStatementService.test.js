@@ -117,6 +117,23 @@ test("shows the entered e-transfer number for an ordinary case invoice payment",
   assert.equal(result.summary.closingBalance, 0);
 });
 
+test("a completed case refund reduces net collection without inventing a new balance due", () => {
+  const result = buildUnifiedClientLedger({
+    caseInvoices: [{
+      id: "case-invoice-refund", caseId: "case-1", invoiceNumber: "INV-2026-REFUND", qbInvoiceId: null,
+      accountingProvider: "CaseDeskCash", description: "Professional fees", amount: 113, balance: 0, status: "PartiallyRefunded",
+      createdAt: new Date("2026-08-01T12:00:00Z"), updatedAt: new Date("2026-08-02T12:00:00Z"),
+      refunds: [{ id: "refund-1", status: "Completed", amount: 25, accountingProvider: "CaseDeskCash", completedAt: new Date("2026-08-02T12:00:00Z") }],
+    }],
+  }, { caseReferences: { "case-1": "Study Permit" } });
+
+  assert.equal(result.summary.totalCharges, 113);
+  assert.equal(result.summary.totalPayments, 113);
+  assert.equal(result.summary.totalRefunds, 25);
+  assert.equal(result.summary.netCollected, 88);
+  assert.equal(result.summary.closingBalance, 0);
+});
+
 test("reports a consultation payment and refund without reopening the paid invoice balance", () => {
   const result = buildUnifiedClientLedger({
     bookingPayments: [{

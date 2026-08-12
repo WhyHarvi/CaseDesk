@@ -3745,7 +3745,19 @@ export default function CaseWorkspaceTabs({
   const highlightId = searchParams.get("highlight") || "";
   const [profileSectionRequest, setProfileSectionRequest] = useState(null);
   const [caseTabCounts, setCaseTabCounts] = useState({});
+  const workspaceShellRef = useRef(null);
   const workspaceContentRef = useRef(null);
+  const previousUsesPageScrollRef = useRef(
+    ["DOCUMENTS", "APPOINTMENTS", "BILLING"].includes(activeTab),
+  );
+  // Documents, the case calendar, and billing can all grow substantially as
+  // folders, appointment history, payment schedules, or invoices expand.
+  // Let the Case Profile's main page scroller own them so wheel and touch
+  // input never has to cross between competing vertical scroll containers.
+  // Modal sheets still own their contained scroll areas independently.
+  const usesPageScroll = ["DOCUMENTS", "APPOINTMENTS", "BILLING"].includes(
+    activeTab,
+  );
 
   const selectWorkspaceTab = (tab) => {
     if (!visibleCaseWorkspaceTabs.includes(tab)) return;
@@ -3792,8 +3804,19 @@ export default function CaseWorkspaceTabs({
   }, [activeTab, searchParams, visibleCaseWorkspaceTabs]);
 
   useEffect(() => {
-    workspaceContentRef.current?.scrollTo({ top: 0, behavior: "instant" });
-  }, [activeTab]);
+    if (!usesPageScroll) {
+      // If a user changes tabs while deep inside Documents, bring the
+      // bounded workspace back into view before its content collapses.
+      if (previousUsesPageScrollRef.current) {
+        workspaceShellRef.current?.scrollIntoView({
+          block: "start",
+          behavior: "auto",
+        });
+      }
+      workspaceContentRef.current?.scrollTo({ top: 0, behavior: "instant" });
+    }
+    previousUsesPageScrollRef.current = usesPageScroll;
+  }, [activeTab, usesPageScroll]);
 
   if (!visibleCaseWorkspaceTabs.length)
     return (
@@ -3812,8 +3835,8 @@ export default function CaseWorkspaceTabs({
     );
 
   return (
-    <article className="flex h-[calc(100dvh-7rem)] min-h-[36rem] max-h-[56rem] flex-col overflow-hidden rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-      <div className="relative z-10 shrink-0 border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl">
+    <article ref={workspaceShellRef} className={`flex flex-col rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl ${usesPageScroll ? "overflow-clip" : "h-[calc(100dvh-7rem)] min-h-[36rem] max-h-[56rem] overflow-hidden"}`}>
+      <div className={`${usesPageScroll ? "sticky top-0 z-20 rounded-t-[2rem]" : "relative z-10"} shrink-0 border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl`}>
         <div className="scrollbar-hidden flex gap-1 overflow-x-auto pb-0.5">
           {visibleCaseWorkspaceTabs.map((tab) => {
             const isActive = activeTab === tab;
@@ -3850,12 +3873,12 @@ export default function CaseWorkspaceTabs({
 
       <div
         ref={workspaceContentRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white px-5 py-5 [scrollbar-gutter:stable]"
+        className={`${usesPageScroll ? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"} bg-white px-5 py-5`}
       >
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
-            className="min-h-full"
+            className={usesPageScroll ? "" : "min-h-full"}
             initial={{ opacity: 0, y: 10, scale: 0.995 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.995 }}

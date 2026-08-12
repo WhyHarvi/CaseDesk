@@ -1,4 +1,5 @@
 import prisma from "./prisma/client.js";
+import { randomUUID } from "node:crypto";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { logger } from "./logger.js";
@@ -8,13 +9,60 @@ import {
   createQuickBooksInvoice,
   createQuickBooksReceivePayment,
   findOrCreateQuickBooksPaymentMethod,
-  getQuickBooksInvoicePdf,
   getQuickBooksInvoicesByIds,
+  quickBooksAppUrl,
+  voidQuickBooksInvoice,
 } from "./quickbooksService.js";
+import { generateCaseInvoicePdf } from "./caseInvoicePdfService.js";
+import { syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
-import { applyLocalCashToInvoice, createApprovedCashLedgerRecord } from "./paymentApprovalLedgerService.js";
+import { applyLocalCashToInvoice, createApprovedCashLedgerRecord, postApprovedCashTransaction } from "./paymentApprovalLedgerService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
+export const ACCOUNTING_PROVIDERS = Object.freeze({ QUICKBOOKS: "QuickBooks", CASH: "CaseDeskCash" });
+export const MANUAL_PAYMENT_METHODS = Object.freeze(["Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"]);
+const TAXABLE_FEE_KINDS = new Set(["Professional", "Consultation"]);
+
+function money(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+// Cash and QuickBooks invoices get visibly different prefixes (CSH- vs
+// INV-) so staff scanning a list of invoice numbers — mixed with each other,
+// and with historical QuickBooks-imported numbers and the LEGACY- fallback
+// from the original migration backfill — can tell at a glance which ledger
+// an invoice belongs to, without relying solely on the ledger badge.
+function newInvoiceNumber(accountingProvider) {
+  const prefix = accountingProvider === ACCOUNTING_PROVIDERS.CASH ? "CSH" : "INV";
+  return `${prefix}-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
+}
+
+function agencySnapshot(agency, billing) {
+  return {
+    name: agency.legalName || agency.name,
+    tradingName: agency.name,
+    email: agency.email,
+    phone: agency.phone,
+    address: agency.address,
+    city: agency.city,
+    province: agency.province,
+    country: agency.country,
+    postalCode: agency.postalCode,
+    logoUrl: agency.logoUrl,
+    businessNumber: agency.businessNumber,
+    taxNumber: billing?.taxNumber || agency.taxNumber,
+  };
+}
+
+function clientSnapshot(client) {
+  return {
+    clientNumber: client.clientNumber,
+    fullName: client.fullName,
+    email: client.email,
+    phone: client.phone,
+    address: client.address,
+  };
+}
 
 function normalizeIdempotencyKey(value) {
   return String(value || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
@@ -23,6 +71,13 @@ function normalizeIdempotencyKey(value) {
 export function deriveCaseInvoiceStatus(row) {
   const balance = Number(row.balance);
   const amount = Number(row.amount);
+  const completedRefundAmount = (row.refunds || [])
+    .filter((refund) => refund.status === "Completed")
+    .reduce((total, refund) => total + Number(refund.amount || 0), 0);
+  const collected = Math.max(0, amount - balance);
+  if (completedRefundAmount > 0) {
+    return completedRefundAmount >= collected - 0.01 ? "Refunded" : "PartiallyRefunded";
+  }
   if (balance <= 0) return "Paid";
   if (balance < amount) return "PartiallyPaid";
   if (row.dueDate && new Date(row.dueDate) < new Date()) return "Overdue";
@@ -44,7 +99,18 @@ export async function requireMappedItem(agencyId, paymentType) {
  * activity logging, or notification — callers (manual creation, schedule
  * triggers) each layer those on since the details differ between them.
  */
-export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null }) {
+export async function createInvoiceRecord(agencyId, {
+  caseId,
+  clientId,
+  paymentType,
+  description,
+  amount,
+  dueDate,
+  actorUserId,
+  idempotencyKey = null,
+  accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS,
+  discountAmount = 0,
+}) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   if (operationKey) {
     const existing = await prisma.caseInvoice.findUnique({
@@ -52,7 +118,60 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
     });
     if (existing) return existing;
   }
-  const itemId = await requireMappedItem(agencyId, paymentType);
+  const category = await requireFeeCategory(agencyId, paymentType, { requireMapping: accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS });
+  const [agency, clientRecord, billing, quickBooksSettings] = await Promise.all([
+    prisma.agency.findUnique({ where: { id: agencyId } }),
+    prisma.client.findFirst({ where: { id: clientId, agencyId } }),
+    prisma.agencyBillingSettings.findUnique({ where: { agencyId } }),
+    accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS
+      ? prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } })
+      : Promise.resolve(null),
+  ]);
+  if (!agency || !clientRecord) throw createHttpError(404, "Agency or client not found.", "NOT_FOUND");
+  const subtotal = money(amount);
+  const discount = money(discountAmount);
+  const taxable = TAXABLE_FEE_KINDS.has(category.kind);
+  const taxRatePercent = taxable ? Number(billing?.taxRatePercent ?? 13) : 0;
+  const taxAmount = taxable ? money(subtotal * taxRatePercent / 100) : 0;
+  const total = money(subtotal + taxAmount);
+  const invoiceNumber = newInvoiceNumber(accountingProvider);
+
+  if (accountingProvider === ACCOUNTING_PROVIDERS.CASH) {
+    return prisma.caseInvoice.create({
+      data: {
+        agencyId,
+        caseId,
+        clientId,
+        paymentType,
+        description,
+        invoiceNumber,
+        accountingProvider,
+        currency: agency.defaultCurrency || "CAD",
+        subtotalAmount: subtotal,
+        discountAmount: discount,
+        taxAmount,
+        taxRatePercent,
+        agencySnapshot: agencySnapshot(agency, billing),
+        clientSnapshot: clientSnapshot(clientRecord),
+        amount: total,
+        balance: total,
+        status: "Open",
+        dueDate: dueDate ? new Date(dueDate) : null,
+        createdById: actorUserId,
+        creationIdempotencyKey: operationKey,
+        lines: {
+          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
+        },
+      },
+      include: { lines: true },
+    });
+  }
+  if (!quickBooksSettings || quickBooksSettings.status !== "connected") {
+    throw createHttpError(409, "Connect QuickBooks in Settings before creating invoices.", "QBO_NOT_CONNECTED");
+  }
+  if (taxable && !quickBooksSettings.taxableTaxCodeId) {
+    throw createHttpError(409, "Choose the QuickBooks HST/GST code in Settings before creating a taxable invoice.", "QBO_TAX_MAPPING_REQUIRED");
+  }
 
   // Validate the cached customer link before every new invoice. A numeric
   // QBO id can become stale or resolve to a different contact after a
@@ -67,10 +186,14 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
   try {
     invoice = await createQuickBooksInvoice(agencyId, {
       customerId: client.qbCustomerId,
-      itemId,
+      itemId: category.qboItemId,
       description,
-      amount,
+      amount: subtotal,
       dueDate: dueDate || undefined,
+      invoiceNumber,
+      taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
+      expectedTotal: total,
+      lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   } catch (error) {
@@ -90,10 +213,14 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
     client = resynced;
     invoice = await createQuickBooksInvoice(agencyId, {
       customerId: client.qbCustomerId,
-      itemId,
+      itemId: category.qboItemId,
       description,
-      amount,
+      amount: subtotal,
       dueDate: dueDate || undefined,
+      invoiceNumber,
+      taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
+      expectedTotal: total,
+      lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
   }
@@ -106,18 +233,31 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
         clientId: client.id,
         paymentType,
         description,
+        invoiceNumber,
+        accountingProvider,
+        currency: invoice.currency || agency.defaultCurrency || "CAD",
+        subtotalAmount: subtotal,
+        discountAmount: discount,
+        taxAmount: money(invoice.totalTax),
+        taxRatePercent,
+        agencySnapshot: agencySnapshot(agency, billing),
+        clientSnapshot: clientSnapshot(clientRecord),
         qbInvoiceId: invoice.id,
         qbInvoiceNumber: invoice.docNumber,
         qbInvoiceLink: invoice.invoiceLink,
         qbSyncToken: invoice.syncToken,
-        amount,
+        amount: invoice.totalAmount,
         balance: invoice.balance,
-        status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount, dueDate: invoice.dueDate }),
+        status: deriveCaseInvoiceStatus({ balance: invoice.balance, amount: invoice.totalAmount, dueDate: invoice.dueDate }),
         dueDate: invoice.dueDate ? new Date(invoice.dueDate) : null,
         createdById: actorUserId,
         creationIdempotencyKey: operationKey,
         lastSyncedAt: new Date(),
+        lines: {
+          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
+        },
       },
+      include: { lines: true },
     });
   } catch (error) {
     if (error?.code !== "P2002") throw error;
@@ -135,7 +275,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
   }
 }
 
-export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null, notifyClient = true }) {
+export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   if (operationKey) {
     const existing = await prisma.caseInvoice.findUnique({
@@ -163,6 +303,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     dueDate,
     actorUserId,
     idempotencyKey: operationKey,
+    accountingProvider,
   });
 
   await recordActivity({
@@ -171,7 +312,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     clientId: row.clientId,
     caseId,
     action: "invoice.created",
-    details: `${category.name} invoice for $${numericAmount.toFixed(2)} created — ${trimmedDescription}`,
+    details: `${category.name} invoice ${row.invoiceNumber} for $${Number(row.amount).toFixed(2)} created in ${row.accountingProvider === ACCOUNTING_PROVIDERS.CASH ? "CaseDesk Cash" : "QuickBooks"} — ${trimmedDescription}`,
     entityType: "caseInvoice",
     entityId: row.id,
   });
@@ -193,9 +334,11 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
 // than failing the whole read over a transient API blip.
 async function refreshInvoiceRows(agencyId, rows) {
   if (!rows.length) return [];
+  const quickBooksRows = rows.filter((row) => row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS && row.qbInvoiceId);
+  if (!quickBooksRows.length) return rows;
   let live = [];
   try {
-    live = await getQuickBooksInvoicesByIds(agencyId, rows.map((row) => row.qbInvoiceId));
+    live = await getQuickBooksInvoicesByIds(agencyId, quickBooksRows.map((row) => row.qbInvoiceId));
   } catch {
     return rows;
   }
@@ -207,7 +350,7 @@ async function refreshInvoiceRows(agencyId, rows) {
       if (!fresh) return row;
       const status = fresh.isVoided
         ? "Void"
-        : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate });
+        : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate, refunds: row.refunds });
       if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
       return prisma.caseInvoice.update({
         where: { id: row.id },
@@ -220,7 +363,7 @@ async function refreshInvoiceRows(agencyId, rows) {
 export async function listCaseInvoices(agencyId, caseId) {
   const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { id: true } });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
-  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, orderBy: { createdAt: "desc" } });
+  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, include: { lines: { orderBy: { sortOrder: "asc" } }, refunds: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } });
   const [refreshed, categories] = await Promise.all([refreshInvoiceRows(agencyId, rows), listFeeCategories(agencyId, { includeInactive: true })]);
   const cashRows = await prisma.paymentApproval.findMany({ where: { agencyId, caseInvoiceId: { in: refreshed.map((row) => row.id) }, status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } });
   const cashByInvoice = new Map();
@@ -233,7 +376,7 @@ export async function listCaseInvoices(agencyId, caseId) {
 // caller's ClientUser link, never from a client-supplied id) so it covers
 // every case that client has, not just one.
 export async function listClientInvoices(agencyId, clientId) {
-  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, clientId }, orderBy: { createdAt: "desc" } });
+  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, clientId }, include: { lines: { orderBy: { sortOrder: "asc" } }, refunds: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } });
   const refreshed = await refreshInvoiceRows(agencyId, rows);
   const cashRows = await prisma.paymentApproval.findMany({ where: { agencyId, clientId, caseInvoiceId: { in: refreshed.map((row) => row.id) }, status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } });
   const cashByInvoice = new Map();
@@ -242,27 +385,28 @@ export async function listClientInvoices(agencyId, clientId) {
 }
 
 export async function getCaseInvoicePdf(agencyId, { caseId, invoiceId }) {
-  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId } });
+  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId }, include: { lines: { orderBy: { sortOrder: "asc" } } } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
-  const buffer = await getQuickBooksInvoicePdf(agencyId, row.qbInvoiceId);
-  return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
+  const buffer = await generateCaseInvoicePdf(row);
+  return { buffer, filename: `Invoice-${row.invoiceNumber}.pdf` };
 }
 
 // Client-portal reader: scoped by clientId (resolved server-side), never a
 // client-supplied id, so a client can never fetch another client's invoice.
 export async function getClientInvoicePdf(agencyId, { clientId, invoiceId }) {
-  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, clientId } });
+  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, clientId }, include: { lines: { orderBy: { sortOrder: "asc" } } } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
-  const buffer = await getQuickBooksInvoicePdf(agencyId, row.qbInvoiceId);
-  return { buffer, filename: `Invoice-${row.qbInvoiceNumber || row.id.slice(0, 8)}.pdf` };
+  const buffer = await generateCaseInvoicePdf(row);
+  return { buffer, filename: `Invoice-${row.invoiceNumber}.pdf` };
 }
 
 export function validateManualPaymentInput({ amount, method = "Cash", transactionReference, paymentDate }) {
-  const methodName = method === "ETransfer" ? "E-transfer" : method === "Cash" ? "Cash" : null;
-  if (!methodName) throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  const methodNames = { Cash: "Cash", ETransfer: "E-transfer", Cheque: "Cheque", Wire: "Wire transfer", Debit: "Debit", BankDraft: "Bank draft" };
+  const methodName = methodNames[method] || null;
+  if (!methodName) throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
-  if (method === "ETransfer" && !paymentReference) {
-    throw createHttpError(400, "Enter the e-transfer transaction number before recording the payment.", "VALIDATION_ERROR");
+  if (method !== "Cash" && !paymentReference) {
+    throw createHttpError(400, method === "ETransfer" ? "Enter the e-transfer transaction number before recording the payment." : `Enter the ${methodName.toLowerCase()} reference before recording the payment.`, "VALIDATION_ERROR");
   }
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
@@ -274,18 +418,19 @@ export function validateManualPaymentInput({ amount, method = "Cash", transactio
 
 export async function assertManualPaymentReferenceAvailable(agencyId, paymentReference) {
   if (!paymentReference) return;
-  const [invoiceDuplicate, appointmentDuplicate] = await Promise.all([
+  const [invoiceDuplicate, appointmentDuplicate, cashDuplicate] = await Promise.all([
     prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
     prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference }, select: { id: true } }),
+    prisma.cashTransaction.findFirst({ where: { agencyId, reference: paymentReference }, select: { id: true } }),
   ]);
-  if (invoiceDuplicate || appointmentDuplicate) {
+  if (invoiceDuplicate || appointmentDuplicate || cashDuplicate) {
     throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
   }
 }
 
 export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
-  const row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId } });
+  let row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId }, include: { refunds: { where: { status: "Completed" } } } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
   if (operationKey && row.lastPaymentIdempotencyKey === operationKey) return row;
 
@@ -295,10 +440,12 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     transactionReference,
     paymentDate,
   });
-  const priorCash = await prisma.paymentApproval.aggregate({
-    where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
-    _sum: { amount: true },
-  });
+  const priorCash = row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS
+    ? await prisma.paymentApproval.aggregate({
+      where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
+      _sum: { amount: true },
+    })
+    : { _sum: { amount: 0 } };
   const effectiveBalance = Math.max(0, Number(row.balance) - Number(priorCash._sum.amount || 0));
   if (numericAmount > effectiveBalance + 0.01) {
     throw createHttpError(400, `That's more than the outstanding balance of $${effectiveBalance.toFixed(2)}.`, "VALIDATION_ERROR");
@@ -306,6 +453,26 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   await assertManualPaymentReferenceAvailable(agencyId, paymentReference);
 
   if (method === "Cash") {
+    if (row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS) {
+      if (!row.qbInvoiceId || !row.qbSyncToken || Math.abs(Number(row.balance) - Number(row.amount)) > 0.01) {
+        throw createHttpError(409, "A partially paid QuickBooks invoice cannot be moved to the cash ledger. Finish or reverse its QuickBooks payments first.", "CASH_INVOICE_PROVIDER_MISMATCH");
+      }
+      await voidQuickBooksInvoice(agencyId, { id: row.qbInvoiceId, syncToken: row.qbSyncToken });
+      row = await prisma.caseInvoice.update({
+        where: { id: row.id },
+        data: { accountingProvider: ACCOUNTING_PROVIDERS.CASH, status: "Open", balance: row.amount, lastSyncedAt: new Date() },
+      });
+      await recordActivity({
+        agencyId,
+        userId: actorUserId,
+        clientId: row.clientId,
+        caseId,
+        action: "invoice.moved_to_cash_ledger",
+        details: `${row.invoiceNumber} was voided in QuickBooks and moved to CaseDesk Cash before accepting cash.`,
+        entityType: "caseInvoice",
+        entityId: row.id,
+      });
+    }
     if (!approvalId) {
       await createApprovedCashLedgerRecord({
         agencyId,
@@ -323,11 +490,19 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
         idempotencyKey: operationKey || `invoice-cash:${row.id}:${Date.now()}`,
       });
     }
-    const cashRows = await prisma.paymentApproval.findMany({
-      where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
-      orderBy: { paymentDate: "desc" },
+    const newBalance = money(Math.max(0, Number(row.balance) - numericAmount));
+    const updatedRow = await prisma.caseInvoice.update({
+      where: { id: row.id },
+      data: {
+        balance: newBalance,
+        status: deriveCaseInvoiceStatus({ balance: newBalance, amount: row.amount, dueDate: row.dueDate, refunds: row.refunds }),
+        lastPaymentMethod: "Cash",
+        lastPaymentReference: paymentReference,
+        lastPaymentAt: transactionDate?.paidAt || new Date(),
+        lastPaymentIdempotencyKey: operationKey,
+      },
     });
-    const updated = applyLocalCashToInvoice({ ...row, paymentApprovals: cashRows });
+    const updated = { ...updatedRow, localCashPaid: numericAmount };
     await recordActivity({
       agencyId,
       userId: actorUserId,
@@ -339,7 +514,12 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
       entityId: row.id,
       metadata: { method: "Cash", quickBooksStored: false, approvalId, note: note || null },
     });
+    await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: row.clientId, caseId }).catch(() => {});
     return updated;
+  }
+
+  if (row.accountingProvider !== ACCOUNTING_PROVIDERS.QUICKBOOKS || !row.qbInvoiceId) {
+    throw createHttpError(409, "Non-cash payments must be applied to a QuickBooks invoice.", "QBO_INVOICE_REQUIRED");
   }
 
   const client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { qbCustomerId: true } });
@@ -363,7 +543,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     where: { id: row.id },
     data: {
       balance: newBalance,
-      status: deriveCaseInvoiceStatus({ balance: newBalance, amount: row.amount, dueDate: refreshed?.dueDate || row.dueDate }),
+      status: deriveCaseInvoiceStatus({ balance: newBalance, amount: row.amount, dueDate: refreshed?.dueDate || row.dueDate, refunds: row.refunds }),
       qbSyncToken: refreshed?.syncToken || row.qbSyncToken,
       lastPaymentMethod: method,
       lastPaymentReference: paymentReference,
@@ -385,6 +565,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     entityId: row.id,
     metadata: { method, transactionReference: paymentReference, paymentDate: transactionDate?.qboDate || null, qboPaymentId: payment.id, note: note || null },
   });
+  await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: row.clientId, caseId }).catch(() => {});
 
   return updated;
 }
@@ -407,4 +588,171 @@ function normalizeCasePaymentDate(value) {
 
 export async function recordCashPayment(agencyId, values) {
   return recordManualPayment(agencyId, { ...values, method: "Cash" });
+}
+
+async function loadRefundableInvoice(agencyId, { caseId, invoiceId }) {
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: invoiceId, agencyId, ...(caseId ? { caseId } : {}) },
+    include: { refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } } } },
+  });
+  if (!invoice) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  if (["Void", "Voided"].includes(invoice.status)) throw createHttpError(409, "A void invoice cannot be refunded.", "INVALID_STATE");
+  const collected = Math.max(0, money(Number(invoice.amount) - Number(invoice.balance)));
+  const committedRefunds = money(invoice.refunds.reduce((sum, item) => sum + Number(item.amount), 0));
+  const refundable = money(collected - committedRefunds);
+  return { invoice, collected, committedRefunds, refundable };
+}
+
+function validateRefundAmountReason(amount, reason, refundable, currency) {
+  const numericAmount = money(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > refundable + 0.01) {
+    throw createHttpError(400, `Enter a refund no greater than the available ${new Intl.NumberFormat("en-CA", { style: "currency", currency }).format(refundable)}.`, "VALIDATION_ERROR");
+  }
+  const refundReason = String(reason || "").trim().slice(0, 500);
+  if (!refundReason) throw createHttpError(400, "Add a reason for the refund.", "VALIDATION_ERROR");
+  return { numericAmount, refundReason };
+}
+
+// Pure validation used by the case-invoice-refund route before it decides how
+// to route the request: cash invoices go through the payment-approval queue
+// (see completeCashInvoiceRefund, invoked only after admin approval);
+// QuickBooks invoices keep the direct "tracked request, finish in QuickBooks"
+// path below, since a human completing the refund inside QuickBooks is
+// already the control — no second CaseDesk approval gate is layered on top.
+export async function describeInvoiceRefundRequest(agencyId, { caseId, invoiceId, amount, reason }) {
+  const { invoice, refundable } = await loadRefundableInvoice(agencyId, { caseId, invoiceId });
+  const { numericAmount, refundReason } = validateRefundAmountReason(amount, reason, refundable, invoice.currency);
+  return { invoice, numericAmount, refundReason, refundable };
+}
+
+export async function requestCaseInvoiceRefund(agencyId, { caseId, invoiceId, amount, reason, actorUserId }) {
+  const { invoice, refundable } = await loadRefundableInvoice(agencyId, { caseId, invoiceId });
+  if (invoice.accountingProvider === ACCOUNTING_PROVIDERS.CASH) {
+    throw createHttpError(409, "Cash refunds go through the payment approval queue.", "CASH_REFUND_NEEDS_APPROVAL");
+  }
+  const { numericAmount, refundReason } = validateRefundAmountReason(amount, reason, refundable, invoice.currency);
+  if (!invoice.qbInvoiceId) throw createHttpError(409, "The QuickBooks invoice link is missing.", "QBO_INVOICE_REQUIRED");
+  const refund = await prisma.invoiceRefund.create({
+    data: {
+      agencyId,
+      invoiceId: invoice.id,
+      amount: numericAmount,
+      currency: invoice.currency,
+      accountingProvider: ACCOUNTING_PROVIDERS.QUICKBOOKS,
+      status: "AwaitingQuickBooks",
+      reason: refundReason,
+      requestedById: actorUserId,
+    },
+  });
+
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: invoice.clientId,
+    caseId: invoice.caseId,
+    action: "invoice.refund_requested",
+    details: `${invoice.invoiceNumber} refund of $${numericAmount.toFixed(2)} awaits completion in QuickBooks — ${refundReason}`,
+    entityType: "invoiceRefund",
+    entityId: refund.id,
+  });
+
+  return { ...refund, quickBooksUrl: quickBooksAppUrl("invoice", invoice.qbInvoiceId) };
+}
+
+// Executes a cash refund — called only from paymentApprovalService's
+// processApprovedPayment, after an admin has approved the "invoice_refund"
+// PaymentApproval entry (or immediately, when an admin submitted it
+// themselves — see caseInvoiceController.createInvoiceRefund). Idempotent on
+// approvalId so a retried approval never double-posts the ledger.
+export async function completeCashInvoiceRefund(agencyId, { invoiceId, caseId, amount, reason, actorUserId, approvalId }) {
+  if (approvalId) {
+    const existingTransaction = await prisma.cashTransaction.findUnique({
+      where: { paymentApprovalId: approvalId },
+      include: { invoiceRefund: true },
+    });
+    if (existingTransaction?.invoiceRefund) return existingTransaction.invoiceRefund;
+  }
+
+  const { invoice, collected, committedRefunds, refundable } = await loadRefundableInvoice(agencyId, { caseId, invoiceId });
+  if (invoice.accountingProvider !== ACCOUNTING_PROVIDERS.CASH) {
+    throw createHttpError(409, "This invoice is not a CaseDesk Cash invoice.", "INVALID_STATE");
+  }
+  const { numericAmount, refundReason } = validateRefundAmountReason(amount, reason, refundable, invoice.currency);
+
+  const transaction = await postApprovedCashTransaction({
+    agencyId,
+    paymentApprovalId: approvalId,
+    clientId: invoice.clientId,
+    caseId: invoice.caseId,
+    caseInvoiceId: invoice.id,
+    amount: -numericAmount,
+    paymentDate: new Date().toISOString().slice(0, 10),
+    note: refundReason,
+    actorUserId,
+    type: "Refund",
+  });
+  const refund = await prisma.invoiceRefund.upsert({
+    where: { cashTransactionId: transaction.id },
+    create: {
+      agencyId,
+      invoiceId: invoice.id,
+      amount: numericAmount,
+      currency: invoice.currency,
+      accountingProvider: ACCOUNTING_PROVIDERS.CASH,
+      status: "Completed",
+      reason: refundReason,
+      cashTransactionId: transaction.id,
+      requestedById: actorUserId,
+      completedAt: new Date(),
+    },
+    update: {},
+  });
+  const totalRefunded = money(committedRefunds + numericAmount);
+  await prisma.caseInvoice.update({
+    where: { id: invoice.id },
+    data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+  });
+
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: invoice.clientId,
+    caseId: invoice.caseId,
+    action: "invoice.cash_refunded",
+    details: `${invoice.invoiceNumber} refund of $${numericAmount.toFixed(2)} recorded in CaseDesk Cash — ${refundReason}`,
+    entityType: "invoiceRefund",
+    entityId: refund.id,
+  });
+  await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: invoice.clientId, caseId: invoice.caseId }).catch(() => {});
+
+  return refund;
+}
+
+// Manual override for a QuickBooks refund request that never completed —
+// staff either never finished it in QuickBooks, or the automated matcher
+// found more than one same-amount pending refund for the client and refused
+// to guess (see quickbooksWebhookService.applyCaseInvoiceRefundReceipt).
+// Cash refunds never reach this state (they complete synchronously), so this
+// only ever applies to QuickBooks-provider refunds.
+export async function markInvoiceRefundFailed(agencyId, { refundId, actorUserId, note }) {
+  const refund = await prisma.invoiceRefund.findFirst({ where: { id: refundId, agencyId }, include: { invoice: true } });
+  if (!refund) throw createHttpError(404, "Refund not found.", "NOT_FOUND");
+  if (!["Requested", "AwaitingQuickBooks"].includes(refund.status)) {
+    throw createHttpError(409, "Only a refund still awaiting QuickBooks can be marked failed.", "INVALID_STATE");
+  }
+  const updated = await prisma.invoiceRefund.update({
+    where: { id: refund.id },
+    data: { status: "Failed", reason: [refund.reason, note ? `Marked failed: ${note}` : "Marked failed by staff"].filter(Boolean).join(" — ").slice(0, 500) },
+  });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: refund.invoice?.clientId,
+    caseId: refund.invoice?.caseId,
+    action: "invoice.refund_failed",
+    details: `${refund.invoice?.invoiceNumber || "Invoice"} refund of $${Number(refund.amount).toFixed(2)} marked failed${note ? ` — ${note}` : ""}`,
+    entityType: "invoiceRefund",
+    entityId: refund.id,
+  });
+  return updated;
 }

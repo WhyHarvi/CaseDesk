@@ -14,9 +14,8 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment } from "../../api/caseInvoiceApi";
+import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
-import ManualLedgerPanel from "../ledger/ManualLedgerPanel";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
@@ -29,6 +28,8 @@ const STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600",
   PartiallyPaid: "bg-amber-50 text-amber-700",
   Paid: "bg-emerald-50 text-emerald-700",
+  Refunded: "bg-violet-50 text-violet-700",
+  PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-700",
   Overdue: "bg-rose-50 text-rose-700",
   Void: "bg-slate-100 text-slate-400",
 };
@@ -45,6 +46,7 @@ function formatDate(value) {
 const ERROR_HINTS = {
   QBO_NOT_CONNECTED: "Connect QuickBooks in Settings → Payments & Fees before creating invoices.",
   QBO_MAPPING_REQUIRED: null, // server message is already specific and actionable
+  QBO_TAX_MAPPING_REQUIRED: "Choose the QuickBooks sales-tax code in Settings → Payments & Fees, then try again.",
   QBO_CLIENT_NOT_LINKED: null,
 };
 
@@ -61,7 +63,7 @@ function CashPaymentRow({ invoice, onPaid }) {
 
   async function submit(event) {
     event.preventDefault();
-    if (method === "ETransfer" && !transactionReference.trim()) {
+    if (method !== "Cash" && !transactionReference.trim()) {
       setError("Enter the e-transfer transaction number.");
       return;
     }
@@ -107,7 +109,7 @@ function CashPaymentRow({ invoice, onPaid }) {
           <button key={value} type="button" onClick={() => { setMethod(value); setError(""); }} className={`h-8 rounded-lg text-xs font-semibold transition ${method === value ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}>{label}</button>
         ))}
       </div>
-      {method === "ETransfer" ? (
+      {method !== "Cash" ? (
         <label className="mb-2.5 block text-xs font-medium text-slate-600">Transaction number
           <input required maxLength={100} value={transactionReference} onChange={(event) => setTransactionReference(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="Enter the bank transaction number" />
         </label>
@@ -147,7 +149,7 @@ function CashPaymentRow({ invoice, onPaid }) {
   );
 }
 
-function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighted }) {
+function InvoiceCard({ invoice, onPaid, onRefunded, canRecordPayment, canRefund, categories, highlighted, role }) {
   const category = categories.find((item) => item.code === invoice.paymentType);
   const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
@@ -156,12 +158,20 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundNotice, setRefundNotice] = useState("");
+  const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+  const refunded = (invoice.refunds || []).filter((item) => ["Requested", "AwaitingQuickBooks", "Completed"].includes(item.status)).reduce((sum, item) => sum + Number(item.amount), 0);
+  const refundable = Math.max(0, collected - refunded);
 
   async function download() {
     setDownloading(true);
     setDownloadError("");
     try {
-      await downloadCaseInvoicePdf(invoice.caseId, invoice.id, `Invoice-${invoice.qbInvoiceNumber || invoice.id.slice(0, 8)}.pdf`);
+      await downloadCaseInvoicePdf(invoice.caseId, invoice.id, `${invoice.invoiceNumber || `Invoice-${invoice.id.slice(0, 8)}`}.pdf`);
     } catch (reason) {
       setDownloadError(reason.response?.data?.message || "The PDF could not be downloaded.");
     } finally {
@@ -176,6 +186,29 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
       window.setTimeout(() => setLinkCopied(false), 2000);
     } catch {
       setDownloadError("Could not copy the pay link.");
+    }
+  }
+
+  async function submitRefund(event) {
+    event.preventDefault();
+    setRefundBusy(true);
+    setDownloadError("");
+    setRefundNotice("");
+    try {
+      const refund = await requestCaseInvoiceRefund(invoice.caseId, invoice.id, { amount: Number(refundAmount), reason: refundReason.trim() });
+      setRefundOpen(false);
+      setRefundAmount("");
+      setRefundReason("");
+      if (refund.approvalRequired) {
+        setRefundNotice("Refund request submitted — it needs admin approval before it's posted. You'll find it in Payments → Approvals.");
+      } else {
+        await onRefunded();
+        if (refund.quickBooksUrl) window.open(refund.quickBooksUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (reason) {
+      setDownloadError(reason.response?.data?.message || "The refund could not be started.");
+    } finally {
+      setRefundBusy(false);
     }
   }
 
@@ -196,9 +229,10 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
             <p className="text-sm font-semibold text-slate-900">{invoice.description}</p>
             <p className="mt-0.5 text-xs text-slate-400">
               {meta.label}
-              {invoice.qbInvoiceNumber ? ` · Invoice #${invoice.qbInvoiceNumber}` : ""}
+              {invoice.invoiceNumber ? ` · ${invoice.invoiceNumber}` : ""}
               {invoice.dueDate ? ` · Due ${formatDate(invoice.dueDate)}` : ""}
             </p>
+            {invoice.qbInvoiceNumber ? <p className="mt-1 text-[11px] text-slate-400">QuickBooks reference #{invoice.qbInvoiceNumber}</p> : null}
             {invoice.lastPaymentReference ? <p className="mt-1 text-[11px] font-medium text-emerald-700">Latest payment · Transaction #{invoice.lastPaymentReference}</p> : null}
           </div>
         </div>
@@ -238,6 +272,25 @@ function InvoiceCard({ invoice, onPaid, canRecordPayment, categories, highlighte
       </div>
 
       {downloadError ? <p className="mt-2 text-xs text-rose-600">{downloadError}</p> : null}
+
+      {canRefund && refundable > 0 ? (
+        <div className="mt-3">
+          {refundNotice ? <p className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">{refundNotice}</p> : null}
+          {!refundOpen ? <button type="button" onClick={() => { setRefundOpen(true); setRefundAmount(refundable.toFixed(2)); setRefundNotice(""); }} className="text-xs font-semibold text-violet-700 hover:underline">Issue refund</button> : (
+            <form onSubmit={submitRefund} className="space-y-2 rounded-2xl border border-violet-100 bg-violet-50/70 p-3">
+              <p className="text-xs leading-5 text-violet-800">
+                {invoice.accountingProvider === "CaseDeskCash"
+                  ? role === "admin"
+                    ? "This posts a cash refund immediately."
+                    : "This submits a cash refund for admin approval — nothing posts until an admin approves it."
+                  : "This creates a tracked request, then opens the exact QuickBooks invoice. CaseDesk completes it only after the QuickBooks refund is detected."}
+              </p>
+              <div className="grid grid-cols-[120px_1fr] gap-2"><input required type="number" min="0.01" max={refundable} step="0.01" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm outline-none" /><input required maxLength={500} value={refundReason} onChange={(event) => setRefundReason(event.target.value)} placeholder="Reason for refund" className="rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm outline-none" /></div>
+              <div className="flex gap-2"><button type="submit" disabled={refundBusy || !refundReason.trim()} className="rounded-full bg-violet-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{refundBusy ? "Saving…" : invoice.accountingProvider === "CaseDeskCash" ? (role === "admin" ? "Record refund" : "Submit for approval") : "Continue in QuickBooks"}</button><button type="button" onClick={() => setRefundOpen(false)} className="rounded-full px-3 py-2 text-xs font-semibold text-slate-500">Cancel</button></div>
+            </form>
+          )}
+        </div>
+      ) : null}
 
       {payable ? <div className="mt-3"><CashPaymentRow invoice={invoice} onPaid={onPaid} /></div> : null}
     </motion.article>
@@ -324,7 +377,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
               </div>
 
               <p className="rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs leading-5 text-slate-500">
-                QuickBooks calculates any applicable tax and becomes the record of this invoice. CaseDesk only mirrors its status.
+                Enter the charge before tax. CaseDesk applies the agency tax rules, sends the same total to QuickBooks, and blocks the invoice if the totals do not match.
               </p>
 
               {error ? (
@@ -355,6 +408,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cashSheetOpen, setCashSheetOpen] = useState(false);
   const canManage = ["admin", "consultant"].includes(role);
+  const canRefund = ["admin", "accountant"].includes(role);
   const canRecordCash = ["admin", "consultant", "frontdesk"].includes(role);
 
   async function load() {
@@ -427,7 +481,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {visibleInvoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} canRecordPayment={canManage} categories={categories} highlighted={invoice.id === activeHighlightId} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} onRefunded={handleCashSaved} canRecordPayment={canManage} canRefund={canRefund} categories={categories} highlighted={invoice.id === activeHighlightId} role={role} />
             ))}
           </AnimatePresence>
         </div>
@@ -436,9 +490,6 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
       {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={handleInvoiceChanged} categories={categories} /> : null}
       {canRecordCash && (caseItem.clientId || caseItem.client?.id) ? <ClientManualBillingEntrySheet open={cashSheetOpen} clientId={caseItem.clientId || caseItem.client.id} clientName={caseItem.client?.fullName || "Client"} initialCaseId={caseItem.id} restrictCaseId={caseItem.id} includeAppointments={false} fixedMethod="Cash" onClose={() => setCashSheetOpen(false)} onSaved={handleCashSaved} /> : null}
 
-      <div className="mt-8 border-t border-slate-100 pt-6">
-        <ManualLedgerPanel caseId={caseItem.id} />
-      </div>
     </div>
   );
 }

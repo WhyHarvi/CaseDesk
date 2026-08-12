@@ -10,7 +10,7 @@ test("professional payment validation runs before an invoice can be created", ()
   );
   assert.throws(
     () => validateManualPaymentInput({ amount: 100, method: "Card", transactionReference: "", paymentDate }),
-    /Cash or E-transfer/i,
+    /supported payment method/i,
   );
   assert.throws(
     () => validateManualPaymentInput({ amount: 0, method: "Cash", paymentDate }),

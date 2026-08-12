@@ -19,6 +19,7 @@ import {
   X,
   Trash2,
   ClipboardCheck,
+  Scale,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -30,6 +31,12 @@ import {
   getPaymentApprovals,
   approvePaymentApproval,
   rejectPaymentApproval,
+  getCashClosing,
+  closeCashLedger,
+  getStuckInvoiceRefunds,
+  failInvoiceRefund,
+  getCashLedgerActivity,
+  getQuickBooksSyncFailures,
 } from "../api/paymentsOverviewApi";
 import api from "../services/api";
 import { leadName } from "../modules/leads/leadPresentation";
@@ -43,6 +50,21 @@ function compactMoney(value) {
   return `$${Math.round(value)}`;
 }
 
+const TREND_RANGE_LABEL = {
+  day: "last 30 days",
+  month: "last 8 months",
+  year: "last 5 years",
+};
+
+const BUCKET_LABELS = {
+  collected: "Collected",
+  cash_collected: "Cash collected",
+  noncash_collected: "Non-cash collected",
+  outstanding: "Outstanding balance",
+  overdue: "Overdue invoices",
+  refunded: "Refunded",
+};
+
 const glass = "rounded-[1.6rem] border border-white/70 bg-white/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)] backdrop-blur-2xl";
 const spring = { type: "spring", stiffness: 320, damping: 30 };
 
@@ -50,20 +72,22 @@ function cx(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", Overdue: "Overdue", Voided: "Voided" };
+const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue", Voided: "Voided", NeedsClassification: "Needs classification" };
 const STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600 ring-slate-200",
   PartiallyPaid: "bg-amber-50 text-amber-600 ring-amber-100",
   Paid: "bg-emerald-50 text-emerald-600 ring-emerald-100",
   Refunded: "bg-violet-50 text-violet-600 ring-violet-100",
+  PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-600 ring-fuchsia-100",
+  NeedsClassification: "bg-orange-50 text-orange-700 ring-orange-200",
   Overdue: "bg-rose-50 text-rose-600 ring-rose-100",
   Voided: "bg-slate-100 text-slate-400 ring-slate-200",
 };
 const STATUS_COLOR = { Paid: "#10B981", Refunded: "#8B5CF6", PartiallyPaid: "#F59E0B", Open: "#94A3B8", Overdue: "#F43F5E", Voided: "#CBD5E1" };
-const SOURCE_LABEL = { case_invoice: "Case invoices", booking_payment: "Consultation bookings", legacy_payment: "Legacy retainers" };
-const SOURCE_ROW_LABEL = { case_invoice: "Case invoice", booking_payment: "Consultation booking", legacy_payment: "Legacy retainer" };
-const SOURCE_ICON = { case_invoice: Banknote, booking_payment: CalendarClock, legacy_payment: Landmark };
-const SOURCE_COLOR = { case_invoice: "#0EA5E9", booking_payment: "#8B5CF6", legacy_payment: "#64748B" };
+const SOURCE_LABEL = { quickbooks: "QuickBooks", casedesk_cash: "CaseDesk Cash", case_invoice: "Invoices", booking_payment: "Consultation bookings", cash_transaction: "Cash ledger", legacy_payment: "Legacy retainers", manual_ledger_review: "Needs classification" };
+const SOURCE_ROW_LABEL = { case_invoice: "Invoice", booking_payment: "Consultation booking", cash_transaction: "Cash transaction", legacy_payment: "Legacy retainer", manual_ledger_review: "Legacy entry review" };
+const SOURCE_ICON = { case_invoice: Banknote, booking_payment: CalendarClock, cash_transaction: HandCoins, legacy_payment: Landmark, manual_ledger_review: ShieldAlert };
+const SOURCE_COLOR = { quickbooks: "#0EA5E9", casedesk_cash: "#10B981", case_invoice: "#0EA5E9", booking_payment: "#8B5CF6", cash_transaction: "#10B981", legacy_payment: "#64748B", manual_ledger_review: "#F97316" };
 const ORPHANED_PAYMENT_RUNBOOK = [
   "Acknowledge the critical alert within 10 minutes.",
   "Confirm the payment in QuickBooks.",
@@ -403,6 +427,134 @@ function RefundReviewDrawer({ refundReceiptId, onClose }) {
   );
 }
 
+/** Generic slide-over shell shared by the Cash On Hand and Sync Failures detail drawers. */
+function InfoDrawer({ eyebrow, title, onClose, children }) {
+  return (
+    <div
+      className="fixed inset-0 z-[420] flex justify-end bg-slate-950/25 backdrop-blur-[2px]"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <motion.aside
+        initial={{ x: 70, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 70, opacity: 0 }}
+        transition={spring}
+        className="flex h-full w-full max-w-[470px] flex-col border-l border-white/70 bg-white/95 shadow-[-30px_0_90px_rgba(15,23,42,0.2)] backdrop-blur-2xl"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-violet-500">{eyebrow}</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">{title}</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">{children}</div>
+      </motion.aside>
+    </div>
+  );
+}
+
+/** Detail behind the Cash On Hand KPI: last-closing baseline plus every posted cash movement since. */
+function CashLedgerDrawer({ onClose }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getCashLedgerActivity()
+      .then((result) => active && setData(result))
+      .catch((reason) => active && setError(reason.response?.data?.message || "Cash ledger activity could not be loaded."));
+    return () => { active = false; };
+  }, []);
+
+  return (
+    <InfoDrawer eyebrow="CaseDesk Cash" title="Cash On Hand" onClose={onClose}>
+      {!data && !error ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : null}
+      {error ? <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error}</div> : null}
+      {data ? (
+        <>
+          <section className="rounded-[1.4rem] border border-violet-100 bg-gradient-to-br from-violet-50 to-white p-5">
+            <p className="text-3xl font-semibold tracking-tight text-slate-950">{money.format(data.currentBalance)}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {data.baselineAsOf
+                ? `Baseline ${money.format(data.baseline)} from the closing on ${formatDate(data.baselineClosedAt || data.baselineAsOf)}, plus ${data.activity.length} movement${data.activity.length === 1 ? "" : "s"} since.`
+                : `No cash closing on record yet — this is the all-time net of ${data.activity.length} posted cash transaction${data.activity.length === 1 ? "" : "s"}.`}
+            </p>
+          </section>
+          <section>
+            <h3 className="text-sm font-semibold text-slate-950">Activity since baseline</h3>
+            <div className="mt-3 space-y-2">
+              {data.activity.length ? data.activity.map((row) => (
+                <div key={row.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-900">{row.clientName || "No client linked"}</p>
+                      <p className="mt-1 text-xs text-slate-500">{row.type === "Refund" ? "Cash refund" : "Cash receipt"} · {formatDate(row.occurredAt)}</p>
+                      {row.note ? <p className="mt-1 text-[11px] text-slate-400">{row.note}</p> : null}
+                      {row.reference ? <p className="mt-1 text-[11px] text-slate-400">Ref #{row.reference}</p> : null}
+                    </div>
+                    <p className={cx("shrink-0 text-sm font-semibold tabular-nums", row.type === "Refund" ? "text-rose-600" : "text-emerald-600")}>
+                      {row.type === "Refund" ? "-" : "+"}{money.format(Math.abs(row.amount))}
+                    </p>
+                  </div>
+                </div>
+              )) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-6 text-center text-sm text-slate-500">No cash activity since the last closing.</div>
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
+    </InfoDrawer>
+  );
+}
+
+/** Detail behind the QuickBooks Sync Failures KPI: webhook events stuck in status FAILED. */
+function SyncFailuresDrawer({ onClose }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    getQuickBooksSyncFailures()
+      .then((result) => active && setRows(result))
+      .catch((reason) => active && setError(reason.response?.data?.message || "Sync failures could not be loaded."));
+    return () => { active = false; };
+  }, []);
+
+  return (
+    <InfoDrawer eyebrow="QuickBooks" title="Sync Failures" onClose={onClose}>
+      {!rows && !error ? <div className="flex h-48 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : null}
+      {error ? <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error}</div> : null}
+      {rows ? (
+        rows.length ? (
+          <div className="space-y-2">
+            {rows.map((row) => (
+              <div key={row.id} className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{row.entityName} · {row.operation}</p>
+                    <p className="mt-1 text-xs text-slate-500">First seen {formatDate(row.createdAt)} · {row.attempts}/{row.maxAttempts} attempts</p>
+                    <p className="mt-1 text-[11px] text-slate-400">Entity ID {row.entityId}</p>
+                  </div>
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-rose-500" />
+                </div>
+                {row.lastError ? <p className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-[11px] leading-5 text-rose-700">{row.lastError}</p> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-6 text-center text-sm text-slate-500">No failed QuickBooks syncs right now.</div>
+        )
+      ) : null}
+    </InfoDrawer>
+  );
+}
+
 function paymentBalanceLabel(row) {
   if (row.status === "Refunded") return <span className="font-medium text-violet-600">Refunded</span>;
   if (row.status === "Voided") return <span className="font-medium text-slate-400">Not collected</span>;
@@ -419,14 +571,18 @@ function CountUp({ value, format = (v) => moneyWhole.format(v) }) {
   return <motion.span>{text}</motion.span>;
 }
 
-function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote }) {
+function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote, onClick }) {
   return (
     <motion.article
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...spring, delay }}
       whileHover={{ y: -3, boxShadow: "0 26px 60px rgba(15,23,42,0.12)" }}
-      className={cx(glass, "min-w-0 cursor-default p-5")}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}
+      className={cx(glass, "min-w-0 p-5", onClick ? "cursor-pointer" : "cursor-default")}
     >
       <div className="flex min-w-0 items-center gap-4">
         <motion.div whileHover={{ scale: 1.08, rotate: -4 }} transition={spring} className={cx("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1", tint)}>
@@ -441,6 +597,49 @@ function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote }
         </div>
       </div>
     </motion.article>
+  );
+}
+
+/**
+ * Side-by-side "this month vs last month" strip for the flow figures that
+ * genuinely reset every month (Collected/Cash/Non-Cash/Refunded) — unlike
+ * balances such as Cash On Hand, which intentionally keep running.
+ */
+function MonthComparisonPanel({ summary, delay = 0.3, onSelectBucket }) {
+  if (!summary?.selectedMonth || !summary?.previousMonth) return null;
+  const rows = [
+    { label: "Collected", bucket: "collected", curr: summary.selectedMonth.collected, prev: summary.previousMonth.collected },
+    { label: "Cash Collected", bucket: "cash_collected", curr: summary.selectedMonth.cashCollected, prev: summary.previousMonth.cashCollected },
+    { label: "Non-Cash Collected", bucket: "noncash_collected", curr: summary.selectedMonth.nonCashCollected, prev: summary.previousMonth.nonCashCollected },
+    { label: "Refunded", bucket: "refunded", curr: summary.selectedMonth.refunded, prev: summary.previousMonth.refunded },
+  ];
+  return (
+    <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay }} className={cx(glass, "min-w-0 overflow-hidden p-4 sm:p-5")}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900">Month comparison</h3>
+        <p className="text-xs text-slate-400">{summary.selectedMonth.label} vs {summary.previousMonth.label}</p>
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        {rows.map((row) => {
+          const delta = row.prev ? Math.round(((row.curr - row.prev) / row.prev) * 100) : null;
+          return (
+            <button
+              type="button"
+              key={row.label}
+              onClick={() => onSelectBucket?.(row.bucket)}
+              className="rounded-xl border border-slate-200/70 bg-white/60 px-3.5 py-3 text-left transition hover:border-sky-200 hover:bg-sky-50/40"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{row.label}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{money.format(row.curr)}</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {row.prev ? `${money.format(row.prev)} prior month` : row.curr > 0 ? "No activity prior month" : "No activity either month"}
+                {delta !== null ? <span className={cx("ml-1.5 font-semibold", delta >= 0 ? "text-emerald-600" : "text-rose-600")}>{delta >= 0 ? "+" : ""}{delta}%</span> : null}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+    </motion.section>
   );
 }
 
@@ -487,7 +686,7 @@ function TrendChart({ data }) {
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
         role="img"
-        aria-label="Monthly invoiced and collected amounts"
+        aria-label="Invoiced and collected amounts over time"
       >
         <defs>
           <linearGradient id="collectedFill" x1="0" y1="0" x2="0" y2="1">
@@ -522,9 +721,17 @@ function TrendChart({ data }) {
           collected.map((p, i) => <circle key={p.label + i} cx={p.x} cy={p.y} r="3" fill="#fff" stroke="#10B981" strokeWidth="2" />)
         )}
 
-        {data.map((item, index) => (
-          <text key={item.label + index} x={pad.left + (index / Math.max(1, data.length - 1)) * innerW} y={height - 6} textAnchor="middle" className="fill-slate-400 text-[9.5px] font-medium">{item.label}</text>
-        ))}
+        {data.map((item, index) => {
+          // Daily view has 30 points — showing every label would overlap
+          // into an unreadable smear, so thin them to roughly 8 evenly
+          // spaced labels (always keeping the last one) once there are more
+          // than 10 points; month/year views (8 and 5 points) are untouched.
+          const step = Math.max(1, Math.ceil(data.length / 8));
+          if (data.length > 10 && index % step !== 0 && index !== data.length - 1) return null;
+          return (
+            <text key={item.label + index} x={pad.left + (index / Math.max(1, data.length - 1)) * innerW} y={height - 6} textAnchor="middle" className="fill-slate-400 text-[9.5px] font-medium">{item.label}</text>
+          );
+        })}
       </svg>
 
       <AnimatePresence>
@@ -687,7 +894,7 @@ function TypeBars({ breakdown }) {
   );
 }
 
-function ChartCard({ title, subtitle, children, className, delay = 0 }) {
+function ChartCard({ title, subtitle, children, className, delay = 0, headerRight }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 18 }}
@@ -695,9 +902,12 @@ function ChartCard({ title, subtitle, children, className, delay = 0 }) {
       transition={{ ...spring, delay }}
       className={cx(glass, "min-w-0 p-5", className)}
     >
-      <div className="mb-4">
-        <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-slate-950">{title}</h2>
-        {subtitle ? <p className="mt-0.5 text-[12px] text-slate-400">{subtitle}</p> : null}
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-slate-950">{title}</h2>
+          {subtitle ? <p className="mt-0.5 text-[12px] text-slate-400">{subtitle}</p> : null}
+        </div>
+        {headerRight ? <div className="shrink-0">{headerRight}</div> : null}
       </div>
       {children}
     </motion.section>
@@ -710,7 +920,7 @@ const filterControl = "rounded-2xl border border-slate-200/80 bg-white/80 px-3.5
 // most browsers (Safari in particular) ignore background/text-color CSS on
 // <option> entirely, so it can never actually match the glass styling
 // everything else on this page uses. This renders the whole list ourselves.
-function FilterDropdown({ value, onChange, options, placeholder }) {
+function FilterDropdown({ value, onChange, options, placeholder, buttonClassName }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
@@ -730,7 +940,7 @@ function FilterDropdown({ value, onChange, options, placeholder }) {
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={cx(filterControl, "flex min-w-[150px] items-center gap-2 pr-9 text-left")}
+        className={cx(filterControl, "flex items-center gap-2 pr-9 text-left", buttonClassName || "min-w-[150px]")}
       >
         <span className="truncate">{selected ? selected.label : placeholder}</span>
         <ChevronDown className={cx("pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 transition-transform", open && "rotate-180")} />
@@ -773,11 +983,8 @@ const LEDGER_STATUS_TONE = {
   Paid: "bg-emerald-50 text-emerald-600 ring-emerald-100",
 };
 
-// Read-only by design — "just render what's there" for the Import Review
-// batch's ledger entries. Editing still happens on the lead itself (the
-// same ManualLedgerPanel used in LeadDetailSheet's Payments tab); this view
-// exists so staff can scan collected/outstanding amounts across the whole
-// batch without leaving the Payments page or polluting its default view.
+// Historical notepad entries are read-only and excluded from financial
+// totals until an administrator classifies them into a real invoice/payment.
 function ImportReviewLedgerSection() {
   const [entries, setEntries] = useState(null);
   const [error, setError] = useState("");
@@ -799,8 +1006,8 @@ function ImportReviewLedgerSection() {
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "overflow-hidden p-5 sm:p-7")}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-950">Import review ledger</h2>
-          <p className="mt-1 text-sm text-slate-500">Payment entries recorded against leads still in Import Review. Edit these from the lead itself.</p>
+          <h2 className="text-lg font-semibold text-slate-950">Historical ledger review</h2>
+          <p className="mt-1 text-sm text-slate-500">Historical entries awaiting classification. They are not included in totals and can no longer be edited as financial records.</p>
         </div>
         {entries?.length ? (
           <div className="flex gap-4 text-sm">
@@ -820,7 +1027,7 @@ function ImportReviewLedgerSection() {
             <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"><th className="px-4 py-3">Lead</th><th className="px-4 py-3">Label</th><th className="px-4 py-3">Owed</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Status</th></tr></thead>
             <tbody>{entries.map((entry, index) => (
               <tr key={entry.id} className={cx("text-slate-700", index ? "border-t border-slate-100" : "")}>
-                <td className="px-4 py-3"><p className="font-medium text-slate-900">{leadName(entry.lead || {})}</p><p className="text-xs text-slate-400">{entry.lead?.leadNumber}</p></td>
+                <td className="px-4 py-3"><p className="font-medium text-slate-900">{entry.client?.fullName || leadName(entry.lead || {}) || "Unlinked record"}</p><p className="text-xs text-slate-400">{entry.client?.clientNumber || entry.lead?.leadNumber || entry.case?.caseType || "Historical import"}</p></td>
                 <td className="px-4 py-3">{entry.label}</td>
                 <td className="px-4 py-3 font-medium">{money.format(Number(entry.amountOwed))}</td>
                 <td className="px-4 py-3 font-medium text-emerald-600">{money.format(Number(entry.amountPaid))}</td>
@@ -834,11 +1041,57 @@ function ImportReviewLedgerSection() {
   );
 }
 
+function CashClosingSection({ onChanged }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [day, setDay] = useState(today);
+  const [data, setData] = useState(null);
+  const [countedAmount, setCountedAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load(value = day) {
+    setBusy(true); setError("");
+    try {
+      const next = await getCashClosing(value);
+      setData(next); setCountedAmount(next.closing ? String(Number(next.closing.countedAmount)) : ""); setNote(next.closing?.note || "");
+    } catch (reason) { setError(reason.response?.data?.message || "Cash closing could not be loaded."); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => { load(day); }, [day]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function closeDay(event) {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      setData(await closeCashLedger({ day, countedAmount, note }));
+      onChanged?.();
+    }
+    catch (reason) { setError(reason.response?.data?.message || "Cash closing could not be saved."); }
+    finally { setBusy(false); }
+  }
+
+  const variance = Number(countedAmount || 0) - Number(data?.expectedAmount || 0);
+  return <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className={cx(glass, "overflow-hidden p-5 sm:p-7")}>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><Scale className="h-5 w-5 text-emerald-600" /><h2 className="text-lg font-semibold text-slate-950">CaseDesk Cash closing</h2></div><p className="mt-1 text-sm text-slate-500">Compare the physical cash count with posted cash receipts and refunds.</p></div><input type="date" max={today} value={day} onChange={(event) => setDay(event.target.value)} className={filterControl} /></div>
+    {error ? <p className="mt-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+    <p className="mt-4 text-xs text-slate-400">Opening balance carries forward from your last closing (or $0 if you've never closed cash before) — "System cash" is what should be in the drawer right now, not just what moved today.</p>
+    <div className="mt-3 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Opening balance</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(Number(data?.openingBalance || 0))}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">System cash (running total)</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(Number(data?.expectedAmount || 0))}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Receipts</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.receiptCount || 0}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Cash refunds</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.refundCount || 0}</p></div></div>
+    <form onSubmit={closeDay} className="mt-5 grid gap-4 rounded-[1.4rem] border border-emerald-100 bg-emerald-50/60 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="text-xs font-semibold text-slate-600">Physical cash counted<input required type="number" min="0" step="0.01" value={countedAmount} onChange={(event) => setCountedAmount(event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><label className="text-xs font-semibold text-slate-600">Closing note<input value={note} onChange={(event) => setNote(event.target.value)} maxLength="500" placeholder="Optional context for a variance" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><button type="submit" disabled={busy || countedAmount === ""} className="flex h-11 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{data?.closing ? "Update closing" : "Close cash"}</button><p className={`text-xs font-semibold sm:col-span-3 ${Math.abs(variance) < 0.01 ? "text-emerald-700" : "text-amber-700"}`}>Current variance: {money.format(variance)}{data?.closing?.closedBy?.fullName ? ` · last closed by ${data.closing.closedBy.fullName}` : ""}</p></form>
+  </motion.section>;
+}
+
 function approvalTarget(item) {
+  if (item.entryType === "invoice_refund") return `Cash refund${item.caseInvoice?.qbInvoiceNumber ? ` · Invoice #${item.caseInvoice.qbInvoiceNumber}` : ""} · ${item.description || "No reason given"}`;
   if (item.appointment) return `${item.appointment.subject || "Consultation"} · ${new Date(item.appointment.startsAt).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
   if (item.caseInvoice) return `${item.caseInvoice.qbInvoiceNumber ? `Invoice #${item.caseInvoice.qbInvoiceNumber} · ` : ""}${item.caseInvoice.description}`;
   if (item.case) return `${item.case.caseType} · ${item.description || "New charge"}`;
   return item.description || "Payment";
+}
+
+function approvalMethodLabel(method) {
+  if (method === "ETransfer") return "E-transfer";
+  if (["Card", "Cash"].includes(method)) return method;
+  return method ? "Other non-cash" : "Unknown";
 }
 
 function PaymentApprovalDrawer({ item, busy, error, onClose, onApprove, onReject }) {
@@ -856,7 +1109,7 @@ function PaymentApprovalDrawer({ item, busy, error, onClose, onApprove, onReject
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold text-slate-500">Amount reported</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{money.format(Number(item.amount))}</p></div><span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" ? "bg-rose-50 text-rose-700" : item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></div>
-            <div className="mt-5 grid grid-cols-2 gap-3 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Method</p><p className="mt-1 font-semibold text-slate-800">{item.method === "ETransfer" ? "E-transfer" : "Cash"}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Payment date</p><p className="mt-1 font-semibold text-slate-800">{formatDate(item.paymentDate)}</p></div></div>
+            <div className="mt-5 grid grid-cols-2 gap-3 text-xs"><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Method</p><p className="mt-1 font-semibold text-slate-800">{approvalMethodLabel(item.method)}</p></div><div className="rounded-2xl bg-slate-50 p-3"><p className="text-slate-400">Payment date</p><p className="mt-1 font-semibold text-slate-800">{formatDate(item.paymentDate)}</p></div></div>
             <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Apply to</p><p className="mt-1 text-sm font-semibold text-slate-800">{approvalTarget(item)}</p></div>
             {item.transactionReference ? <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Transaction / receipt</p><p className="mt-1 text-sm font-semibold text-slate-800">{item.transactionReference}</p></div> : null}
             {item.note ? <div className="mt-3 rounded-2xl bg-slate-50 p-3"><p className="text-xs text-slate-400">Frontdesk note</p><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.note}</p></div> : null}
@@ -872,6 +1125,67 @@ function PaymentApprovalDrawer({ item, busy, error, onClose, onApprove, onReject
         {canReview && !rejecting ? <footer className="grid grid-cols-2 gap-2 border-t border-white bg-white/85 p-4"><button type="button" disabled={busy} onClick={() => setRejecting(true)} className="h-12 rounded-full border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-40">Reject</button><button type="button" disabled={busy} onClick={onApprove} className="flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Approve</button></footer> : null}
       </motion.aside>
     </motion.div>
+  );
+}
+
+// A QuickBooks refund request that never completed — staff never finished
+// it in QuickBooks, or the automatic matcher found more than one
+// same-amount pending refund for the client and refused to guess which one
+// it was. Cash refunds never appear here — they complete synchronously.
+function StuckInvoiceRefundsSection({ onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setRows(await getStuckInvoiceRefunds());
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Stuck refunds could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function markFailed(id) {
+    const note = window.prompt("Optional note — why is this refund being marked failed?") || "";
+    setBusyId(id);
+    setError("");
+    try {
+      await failInvoiceRefund(id, note);
+      await load();
+      onChanged?.();
+    } catch (reason) {
+      setError(reason.response?.data?.message || "This refund could not be marked failed.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  if (loading || !rows.length) return null;
+  return (
+    <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className={cx(glass, "mb-5 overflow-hidden border-amber-200/70 bg-amber-50/40 p-5 sm:p-6")}>
+      <div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-amber-600" /><h2 className="text-lg font-semibold text-slate-950">Refunds awaiting QuickBooks</h2><span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">{rows.length}</span></div>
+      <p className="mt-1 text-sm text-slate-600">These were requested but never confirmed as completed in QuickBooks. Finish the refund in QuickBooks, or mark it failed if it was never actually completed.</p>
+      {error ? <p className="mt-2 text-xs text-rose-600">{error}</p> : null}
+      <div className="mt-4 divide-y divide-amber-100 rounded-2xl border border-amber-100 bg-white/70">
+        {rows.map((row) => (
+          <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900">{row.client?.fullName || "Unlinked client"} · {row.invoice?.invoiceNumber || row.invoice?.qbInvoiceNumber || "Invoice"}</p>
+              <p className="mt-0.5 truncate text-xs text-slate-500">{row.reason || "No reason given"} · requested {row.ageDays === 0 ? "today" : `${row.ageDays} day${row.ageDays === 1 ? "" : "s"} ago`}{row.requestedBy ? ` by ${row.requestedBy.fullName}` : ""}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(row.amount))}</span>
+              <button type="button" disabled={busyId === row.id} onClick={() => markFailed(row.id)} className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">{busyId === row.id ? "Saving…" : "Mark failed"}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.section>
   );
 }
 
@@ -906,7 +1220,7 @@ function PaymentApprovalsSection({ selectedId, onSelected, onChanged }) {
     <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className={cx(glass, "overflow-hidden p-5 sm:p-6")}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-violet-600" /><h2 className="text-xl font-semibold text-slate-950">Payment approvals</h2>{data.pendingCount ? <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold text-white">{data.pendingCount}</span> : null}</div><p className="mt-1 text-sm text-slate-500">Review money reported by frontdesk before it changes financial records.</p></div><div className="flex rounded-2xl bg-slate-100 p-1">{["Pending", "Approved", "Rejected", "Failed"].map((value) => <button key={value} type="button" onClick={() => setStatus(value)} className={`h-9 rounded-xl px-3 text-xs font-semibold transition ${status === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{value}</button>)}</div></div>
       <div className="mt-5 overflow-hidden rounded-[1.3rem] border border-slate-200/70 bg-white/65">
-        {loading ? <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : error && !data.rows.length ? <p className="p-8 text-center text-sm text-rose-600">{error}</p> : data.rows.length ? <div className="divide-y divide-slate-100">{data.rows.map((item) => <button key={item.id} type="button" onClick={() => onSelected(item.id)} className="grid w-full gap-3 px-4 py-4 text-left transition hover:bg-sky-50/50 sm:grid-cols-[1.1fr_1.4fr_auto_auto] sm:items-center"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client?.fullName || item.appointment?.guestName || "Unlinked client"}</p><p className="mt-0.5 truncate text-xs text-slate-400">{item.submittedBy?.fullName || "Frontdesk"}</p></div><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{approvalTarget(item)}</p><p className="mt-0.5 text-xs text-slate-400">{formatDate(item.paymentDate)}</p></div><div><p className="text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(item.amount))}</p><p className={`mt-0.5 text-[10px] font-semibold ${item.method === "Cash" ? "text-violet-600" : "text-sky-600"}`}>{item.method === "Cash" ? "Cash · CaseDesk only" : "E-transfer · QuickBooks"}</p></div><span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" || item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></button>)}</div> : <div className="px-6 py-14 text-center"><ClipboardCheck className="mx-auto h-6 w-6 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-700">No {status.toLowerCase()} payments</p><p className="mt-1 text-xs text-slate-400">Frontdesk submissions will appear here.</p></div>}
+        {loading ? <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : error && !data.rows.length ? <p className="p-8 text-center text-sm text-rose-600">{error}</p> : data.rows.length ? <div className="divide-y divide-slate-100">{data.rows.map((item) => <button key={item.id} type="button" onClick={() => onSelected(item.id)} className="grid w-full gap-3 px-4 py-4 text-left transition hover:bg-sky-50/50 sm:grid-cols-[1.1fr_1.4fr_auto_auto] sm:items-center"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client?.fullName || item.appointment?.guestName || "Unlinked client"}</p><p className="mt-0.5 truncate text-xs text-slate-400">{item.submittedBy?.fullName || "Frontdesk"}</p></div><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{approvalTarget(item)}</p><p className="mt-0.5 text-xs text-slate-400">{formatDate(item.paymentDate)}</p></div><div><p className="text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(item.amount))}</p><p className={`mt-0.5 text-[10px] font-semibold ${item.method === "Cash" ? "text-violet-600" : "text-sky-600"}`}>{item.method === "Cash" ? "Cash · CaseDesk only" : `${approvalMethodLabel(item.method)} · QuickBooks`}</p></div><span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" || item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></button>)}</div> : <div className="px-6 py-14 text-center"><ClipboardCheck className="mx-auto h-6 w-6 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-700">No {status.toLowerCase()} payments</p><p className="mt-1 text-xs text-slate-400">Frontdesk submissions will appear here.</p></div>}
       </div>
     </motion.section>
     <AnimatePresence>{selected ? <PaymentApprovalDrawer item={selected} busy={busy} error={error} onClose={() => onSelected("")} onApprove={() => act("approve")} onReject={(reason) => act("reject", reason)} /> : null}</AnimatePresence>
@@ -921,10 +1235,10 @@ export default function Payments() {
   const selectedRefundId = searchParams.get("refund") || "";
   const selectedApprovalId = searchParams.get("approval") || "";
   const requestedView = searchParams.get("view");
-  const view = requestedView === "import-review" ? "import-review" : requestedView === "approvals" && role === "admin" ? "approvals" : "payments";
+  const view = requestedView === "import-review" ? "import-review" : requestedView === "cash-closing" && role === "admin" ? "cash-closing" : requestedView === "approvals" && role === "admin" ? "approvals" : "payments";
   const setView = (nextView) => {
     const next = new URLSearchParams(searchParams);
-    if (["import-review", "approvals"].includes(nextView)) next.set("view", nextView);
+    if (["import-review", "approvals", "cash-closing"].includes(nextView)) next.set("view", nextView);
     else next.delete("view");
     if (nextView !== "approvals") next.delete("approval");
     setSearchParams(next);
@@ -939,19 +1253,62 @@ export default function Payments() {
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [bucket, setBucket] = useState("");
+  const [trendGranularity, setTrendGranularity] = useState("month");
+  const [cashLedgerOpen, setCashLedgerOpen] = useState(false);
+  const [syncFailuresOpen, setSyncFailuresOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const tableRef = useRef(null);
+
+  // Every KPI box click resolves to one of these two actions: filter the
+  // table to the transactions behind that number, or (for boxes with no
+  // matching row shape — Cash On Hand, Sync Failures) open a detail drawer.
+  // Clearing status/source/query keeps the resulting view unambiguous —
+  // otherwise a stale manual filter could silently zero out the results.
+  function applyBucket(nextBucket, { resetDates = false } = {}) {
+    setView("payments");
+    setStatus("");
+    setSource("");
+    setQuery("");
+    if (resetDates) { setFrom(""); setTo(""); }
+    setBucket(nextBucket);
+    requestAnimationFrame(() => tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
 
   useEffect(() => {
-    getPaymentsOverviewSummary().catch(() => null).then((data) => data && setSummary(data));
-  }, [refreshKey]);
+    getPaymentsOverviewSummary(month).catch(() => null).then((data) => data && setSummary(data));
+  }, [refreshKey, month]);
+
+  // Selecting a month scopes the transaction list to that month too, using
+  // the same from/to filters the manual date pickers already drive — the
+  // month picker is just a shortcut for "give me a full calendar month."
+  // Editing from/to afterward is still fine; it just stops matching the
+  // month picker exactly.
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const [year, monthNumber] = month.split("-").map(Number);
+    const start = new Date(Date.UTC(year, monthNumber - 1, 1));
+    const end = new Date(Date.UTC(year, monthNumber, 0)); // last day of month
+    setFrom(start.toISOString().slice(0, 10));
+    setTo(end.toISOString().slice(0, 10));
+  }, [month]);
+
+  function shiftMonth(delta) {
+    setMonth((current) => {
+      const [year, monthNumber] = (/^\d{4}-\d{2}$/.test(current) ? current : new Date().toISOString().slice(0, 7)).split("-").map(Number);
+      const next = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
+      return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+    });
+  }
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
-    getPaymentsOverview({ status, source, query, from, to, page, pageSize })
+    getPaymentsOverview({ status, source, query, from, to, bucket, page, pageSize })
       .then((data) => {
         if (!active) return;
         setRows(data.rows);
@@ -960,9 +1317,9 @@ export default function Payments() {
       .catch((reason) => active && setError(reason.response?.data?.message || "Payments could not be loaded."))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [status, source, query, from, to, page, refreshKey]);
+  }, [status, source, query, from, to, bucket, page, refreshKey]);
 
-  useEffect(() => { setPage(1); }, [status, source, query, from, to]);
+  useEffect(() => { setPage(1); }, [status, source, query, from, to, bucket]);
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
@@ -987,11 +1344,14 @@ export default function Payments() {
   }
 
   const monthDelta = useMemo(() => {
-    if (!summary) return null;
-    if (!summary.paidLastMonth) return summary.paidThisMonth > 0 ? "First collections this month" : null;
-    const change = ((summary.paidThisMonth - summary.paidLastMonth) / summary.paidLastMonth) * 100;
-    return `${change >= 0 ? "+" : ""}${Math.round(change)}% vs last month`;
+    if (!summary?.selectedMonth) return null;
+    const { selectedMonth, previousMonth } = summary;
+    if (!previousMonth?.collected) return selectedMonth.collected > 0 ? "First collections this month" : null;
+    const change = ((selectedMonth.collected - previousMonth.collected) / previousMonth.collected) * 100;
+    return `${change >= 0 ? "+" : ""}${Math.round(change)}% vs ${previousMonth.label}`;
   }, [summary]);
+
+  const isCurrentMonth = month === new Date().toISOString().slice(0, 7);
 
   return (
     <main className="min-w-0 bg-[radial-gradient(circle_at_12%_-4%,rgba(56,130,246,0.10),transparent_36%),radial-gradient(circle_at_92%_16%,rgba(139,92,246,0.08),transparent_38%)] px-3 py-4 sm:px-5 lg:px-6">
@@ -1001,7 +1361,7 @@ export default function Payments() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Payments</h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-500 sm:text-base">
-                Every case invoice, consultation booking payment, and legacy retainer across the agency — trends first, details below.
+                One source of truth across QuickBooks non-cash payments and CaseDesk Cash, with historical entries isolated for review.
               </p>
             </div>
             <FilterDropdown
@@ -1010,15 +1370,41 @@ export default function Payments() {
               options={[
                 { value: "payments", label: "Payments" },
                 ...(role === "admin" ? [{ value: "approvals", label: "Payment approvals" }] : []),
-                { value: "import-review", label: "Import review ledger" },
+                ...(role === "admin" ? [{ value: "cash-closing", label: "Cash closing" }] : []),
+                { value: "import-review", label: "Historical ledger review" },
               ]}
               placeholder="Payments"
             />
           </div>
+          {view === "payments" ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-full border border-slate-200/70 bg-white/70 p-1">
+                <button type="button" onClick={() => shiftMonth(-1)} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100">‹</button>
+                <input
+                  type="month"
+                  value={month}
+                  onChange={(event) => event.target.value && setMonth(event.target.value)}
+                  className="h-7 rounded-full border-none bg-transparent px-1 text-xs font-semibold text-slate-700 focus:outline-none"
+                />
+                <button type="button" onClick={() => shiftMonth(1)} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100">›</button>
+              </div>
+              {!isCurrentMonth ? (
+                <button type="button" onClick={() => setMonth(new Date().toISOString().slice(0, 7))} className="text-xs font-semibold text-sky-600 hover:text-sky-700">
+                  Jump to this month
+                </button>
+              ) : null}
+              <p className="text-xs text-slate-400">"Collected", the month comparison, and the table below are scoped to this month. Total Collected, Cash On Hand, Pending Approval, and Sync Failures always reflect everything to date.</p>
+            </div>
+          ) : null}
         </motion.div>
 
         {view === "payments" ? (
         <>
+        {summary?.legacyReviewCount > 0 ? (
+          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} role="status" className="rounded-[1.5rem] border border-amber-200 bg-amber-50/90 px-5 py-4 shadow-[0_12px_34px_rgba(245,158,11,0.08)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold text-amber-950">{summary.legacyReviewCount} historical ledger {summary.legacyReviewCount === 1 ? "entry needs" : "entries need"} classification</p><p className="mt-1 text-xs leading-5 text-amber-800">These records are isolated from all financial totals until they are verified and moved to QuickBooks or CaseDesk Cash.</p></div><button type="button" onClick={() => setView("import-review")} className="h-9 shrink-0 rounded-full bg-amber-900 px-4 text-xs font-semibold text-white">Review entries</button></div>
+          </motion.section>
+        ) : null}
         {summary?.manualBookingCount > 0 ? (
           <motion.section
             initial={{ opacity: 0, y: 12 }}
@@ -1052,25 +1438,60 @@ export default function Payments() {
         ) : null}
 
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <KpiCard label="Total Collected" value={summary?.totalCollected ?? 0} icon={HandCoins} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} />
-          <KpiCard label="Outstanding Balance" value={summary?.outstandingBalance ?? 0} icon={Wallet} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.1} />
-          <KpiCard label="Paid This Month" value={summary?.paidThisMonth ?? 0} icon={TrendingUp} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.15} footnote={monthDelta} />
-          <KpiCard label="Overdue Invoices" value={summary?.overdueCount ?? 0} format={(v) => String(Math.round(v))} icon={ShieldAlert} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.2} />
+          <KpiCard label="Total Collected (all-time)" value={summary?.totalCollected ?? 0} icon={HandCoins} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} onClick={() => applyBucket("collected", { resetDates: true })} />
+          <KpiCard label="Outstanding Balance" value={summary?.outstandingBalance ?? 0} icon={Wallet} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.1} onClick={() => applyBucket("outstanding", { resetDates: true })} />
+          <KpiCard label={`Collected · ${summary?.selectedMonth?.label || "This month"}`} value={summary?.selectedMonth?.collected ?? 0} icon={TrendingUp} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.15} footnote={monthDelta} onClick={() => applyBucket("collected")} />
+          <KpiCard label="Overdue Invoices" value={summary?.overdueCount ?? 0} format={(v) => String(Math.round(v))} icon={ShieldAlert} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.2} onClick={() => applyBucket("overdue", { resetDates: true })} />
         </div>
 
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
+          <KpiCard label="Cash On Hand" value={summary?.cashOnHand ?? 0} icon={Banknote} tint="bg-violet-50 text-violet-500 ring-violet-100" delay={0.22} footnote="Since last cash closing · click for detail" onClick={() => setCashLedgerOpen(true)} />
+          <KpiCard label="Pending Approval" value={summary?.pendingApprovalCount ?? 0} format={(v) => String(Math.round(v))} icon={ClipboardCheck} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.26} onClick={() => setView("approvals")} />
+          <KpiCard label="QuickBooks Sync Failures" value={summary?.quickBooksSyncFailures ?? 0} format={(v) => String(Math.round(v))} icon={RefreshCw} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.3} onClick={() => setSyncFailuresOpen(true)} />
+        </div>
+
+        <MonthComparisonPanel summary={summary} delay={0.34} onSelectBucket={(nextBucket) => applyBucket(nextBucket)} />
+
         <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-12">
-          <ChartCard title="Collections Trend" subtitle="Invoiced vs collected, last 8 months" className="xl:col-span-5" delay={0.15}>
-            {summary ? <TrendChart data={summary.monthlyTrend || []} /> : <div className="flex h-[190px] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-300" /></div>}
+          <ChartCard
+            title="Collections Trend"
+            subtitle={`Invoiced vs collected, ${TREND_RANGE_LABEL[trendGranularity]}`}
+            className="xl:col-span-5"
+            delay={0.15}
+            headerRight={
+              <FilterDropdown
+                value={trendGranularity}
+                onChange={setTrendGranularity}
+                buttonClassName="min-w-[104px] py-1.5 text-xs"
+                options={[
+                  { value: "day", label: "Day" },
+                  { value: "month", label: "Month" },
+                  { value: "year", label: "Year" },
+                ]}
+              />
+            }
+          >
+            {summary ? <TrendChart data={summary.trend?.[trendGranularity] || []} /> : <div className="flex h-[190px] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-300" /></div>}
           </ChartCard>
           <ChartCard title="Payment Status" subtitle="Share of invoiced value by status" className="xl:col-span-4" delay={0.22}>
             {summary ? <StatusDonut breakdown={summary.statusBreakdown} /> : <div className="flex h-[168px] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-300" /></div>}
           </ChartCard>
-          <ChartCard title="By Payment Type" subtitle="Collected vs outstanding per source" className="xl:col-span-3" delay={0.29}>
+          <ChartCard title="By Ledger" subtitle="QuickBooks and CaseDesk Cash, with legacy records separated" className="xl:col-span-3" delay={0.29}>
             {summary ? <TypeBars breakdown={summary.typeBreakdown} /> : <div className="flex h-[168px] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-300" /></div>}
           </ChartCard>
         </div>
 
-        <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.3 }} className={cx(glass, "min-w-0 overflow-hidden p-4 sm:p-5")}>
+        <motion.section ref={tableRef} initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.3 }} className={cx(glass, "min-w-0 overflow-hidden p-4 sm:p-5")}>
+          {bucket ? (
+            <div className="mb-3 flex items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 ring-1 ring-sky-100">
+                Showing: {BUCKET_LABELS[bucket] || bucket}
+                <button type="button" onClick={() => setBucket("")} aria-label="Clear filter" className="rounded-full p-0.5 hover:bg-sky-100">
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="relative min-w-[200px] flex-1">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1144,6 +1565,8 @@ export default function Payments() {
                           {row.qbInvoiceNumber ? (
                             <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.qbInvoiceNumber}</p>
                           ) : null}
+                          {row.invoiceNumber ? <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.invoiceNumber}</p> : null}
+                          {row.ledger ? <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${row.ledger === "QuickBooks" ? "bg-sky-50 text-sky-700" : row.ledger === "CaseDesk Cash" ? "bg-emerald-50 text-emerald-700" : "bg-orange-50 text-orange-700"}`}>{row.ledger}</span> : null}
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600"><Icon className="h-3.5 w-3.5" style={{ color: SOURCE_COLOR[row.source] }} /> {row.type || SOURCE_ROW_LABEL[row.source]}</span>
@@ -1261,13 +1684,20 @@ export default function Payments() {
         </motion.section>
         </>
         ) : view === "approvals" ? (
-          <PaymentApprovalsSection selectedId={selectedApprovalId} onSelected={selectApproval} onChanged={() => setRefreshKey((value) => value + 1)} />
+          <>
+            <StuckInvoiceRefundsSection onChanged={() => setRefreshKey((value) => value + 1)} />
+            <PaymentApprovalsSection selectedId={selectedApprovalId} onSelected={selectApproval} onChanged={() => setRefreshKey((value) => value + 1)} />
+          </>
+        ) : view === "cash-closing" ? (
+          <CashClosingSection onChanged={() => setRefreshKey((value) => value + 1)} />
         ) : (
           <ImportReviewLedgerSection />
         )}
       </div>
       <AnimatePresence>{selectedHoldId ? <PaymentHoldDrawer key={selectedHoldId} holdId={selectedHoldId} onClose={closePaymentHold} onChanged={() => setRefreshKey((value) => value + 1)} /> : null}</AnimatePresence>
       <AnimatePresence>{selectedRefundId ? <RefundReviewDrawer key={selectedRefundId} refundReceiptId={selectedRefundId} onClose={closeRefundReview} /> : null}</AnimatePresence>
+      <AnimatePresence>{cashLedgerOpen ? <CashLedgerDrawer onClose={() => setCashLedgerOpen(false)} /> : null}</AnimatePresence>
+      <AnimatePresence>{syncFailuresOpen ? <SyncFailuresDrawer onClose={() => setSyncFailuresOpen(false)} /> : null}</AnimatePresence>
     </main>
   );
 }

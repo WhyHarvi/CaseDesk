@@ -8,6 +8,7 @@ import {
   exchangeAuthorizationCode,
   listQuickBooksAccounts,
   listQuickBooksItems,
+  listQuickBooksTaxCodes,
   parseOAuthState,
   quickBooksConfigured,
   revokeConnection,
@@ -83,6 +84,11 @@ export async function getQuickBooksAccounts(req, res) {
   res.json({ data: accounts });
 }
 
+export async function getQuickBooksTaxCodes(req, res) {
+  const taxCodes = await listQuickBooksTaxCodes(req.auth.agencyId);
+  res.json({ data: taxCodes });
+}
+
 export async function createQuickBooksMappingItem(req, res) {
   if (req.auth.role !== "admin") throw createHttpError(403, "Only workspace administrators can create QuickBooks items.", "FORBIDDEN");
   const name = String(req.body?.name || "").trim().slice(0, 100);
@@ -110,12 +116,12 @@ export async function createQuickBooksMappingItem(req, res) {
 export async function getQuickBooksMapping(req, res) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
     where: { agencyId: req.auth.agencyId },
-    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true, refundFeeRatePercent: true },
+    select: { feeItemId: true, feeItemName: true, disbursementItemId: true, disbursementItemName: true, consultFeeItemId: true, consultFeeItemName: true, taxableTaxCodeId: true, taxableTaxCodeName: true, refundFeeRatePercent: true },
   });
   res.json({
     data: settings
       ? { ...settings, refundFeeRatePercent: Number(settings.refundFeeRatePercent) }
-      : { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null, refundFeeRatePercent: null },
+      : { feeItemId: null, feeItemName: null, disbursementItemId: null, disbursementItemName: null, consultFeeItemId: null, consultFeeItemName: null, taxableTaxCodeId: null, taxableTaxCodeName: null, refundFeeRatePercent: null },
   });
 }
 
@@ -124,11 +130,12 @@ export async function updateQuickBooksMapping(req, res) {
   const feeItemId = req.body?.feeItemId !== undefined ? String(req.body.feeItemId || "").trim() || null : undefined;
   const disbursementItemId = req.body?.disbursementItemId !== undefined ? String(req.body.disbursementItemId || "").trim() || null : undefined;
   const consultFeeItemId = req.body?.consultFeeItemId !== undefined ? String(req.body.consultFeeItemId || "").trim() || null : undefined;
+  const taxableTaxCodeId = req.body?.taxableTaxCodeId !== undefined ? String(req.body.taxableTaxCodeId || "").trim() || null : undefined;
   const refundFeeRatePercent = req.body?.refundFeeRatePercent !== undefined ? Number(req.body.refundFeeRatePercent) : undefined;
   if (refundFeeRatePercent !== undefined && (!Number.isFinite(refundFeeRatePercent) || refundFeeRatePercent < 0 || refundFeeRatePercent > 20)) {
     throw createHttpError(400, "Enter a refund fee rate between 0% and 20%.", "VALIDATION_ERROR");
   }
-  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined && refundFeeRatePercent === undefined) {
+  if (feeItemId === undefined && disbursementItemId === undefined && consultFeeItemId === undefined && taxableTaxCodeId === undefined && refundFeeRatePercent === undefined) {
     throw createHttpError(400, "Nothing to update.", "VALIDATION_ERROR");
   }
 
@@ -140,6 +147,9 @@ export async function updateQuickBooksMapping(req, res) {
   if (feeItemId && !byId.has(feeItemId)) throw createHttpError(400, "That fee item was not found in QuickBooks.", "VALIDATION_ERROR");
   if (disbursementItemId && !byId.has(disbursementItemId)) throw createHttpError(400, "That disbursement item was not found in QuickBooks.", "VALIDATION_ERROR");
   if (consultFeeItemId && !byId.has(consultFeeItemId)) throw createHttpError(400, "That consultation fee item was not found in QuickBooks.", "VALIDATION_ERROR");
+  const taxCodes = taxableTaxCodeId ? await listQuickBooksTaxCodes(req.auth.agencyId) : [];
+  const taxCode = taxCodes.find((candidate) => candidate.id === taxableTaxCodeId) || null;
+  if (taxableTaxCodeId && !taxCode) throw createHttpError(400, "That sales-tax code was not found in QuickBooks.", "VALIDATION_ERROR");
 
   const existing = await prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId: req.auth.agencyId } });
   if (!existing) throw createHttpError(409, "QuickBooks is not connected for this workspace.", "QBO_NOT_CONNECTED");
@@ -148,6 +158,7 @@ export async function updateQuickBooksMapping(req, res) {
     ...(feeItemId !== undefined ? { feeItemId, feeItemName: feeItemId ? byId.get(feeItemId).name : null } : {}),
     ...(disbursementItemId !== undefined ? { disbursementItemId, disbursementItemName: disbursementItemId ? byId.get(disbursementItemId).name : null } : {}),
     ...(consultFeeItemId !== undefined ? { consultFeeItemId, consultFeeItemName: consultFeeItemId ? byId.get(consultFeeItemId).name : null } : {}),
+    ...(taxableTaxCodeId !== undefined ? { taxableTaxCodeId, taxableTaxCodeName: taxCode?.name || null } : {}),
     ...(refundFeeRatePercent !== undefined ? { refundFeeRatePercent } : {}),
   };
   const settings = await prisma.agencyQuickBooksSettings.update({ where: { agencyId: req.auth.agencyId }, data });
@@ -162,7 +173,7 @@ export async function updateQuickBooksMapping(req, res) {
     action: "quickbooks.mapping_updated",
     details: "Payment account mapping updated",
   }).catch(() => {});
-  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName, refundFeeRatePercent: Number(settings.refundFeeRatePercent) } });
+  res.json({ data: { feeItemId: settings.feeItemId, feeItemName: settings.feeItemName, disbursementItemId: settings.disbursementItemId, disbursementItemName: settings.disbursementItemName, consultFeeItemId: settings.consultFeeItemId, consultFeeItemName: settings.consultFeeItemName, taxableTaxCodeId: settings.taxableTaxCodeId, taxableTaxCodeName: settings.taxableTaxCodeName, refundFeeRatePercent: Number(settings.refundFeeRatePercent) } });
 }
 
 export async function disconnectQuickBooks(req, res) {

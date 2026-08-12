@@ -141,7 +141,7 @@ async function failEvent(event, error) {
     if (terminal) await refreshBatch(tx, event.importBatchId);
   });
   if (terminal) {
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: await adminRecipientIds(event.agencyId), type: "lead.intake_failed", category: "leads", title: "Lead intake failed", body: message, severity: "critical", entityType: "lead_incoming_event", entityId: event.id, actionUrl: `/lead-intake?tab=events&event=${encodeURIComponent(event.id)}`, channels: ["in_app"], dedupeKey: `lead-intake:${event.id}:failed:${event.attempts + 1}` });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: await adminRecipientIds(event.agencyId), type: "lead.intake_failed", category: "leads", title: "Lead intake failed", body: message, severity: "critical", entityType: "lead_incoming_event", entityId: event.id, actionUrl: `/app/settings?section=lead-intake&tab=events&event=${encodeURIComponent(event.id)}`, channels: ["in_app"], dedupeKey: `lead-intake:${event.id}:failed:${event.attempts + 1}` });
   }
 }
 

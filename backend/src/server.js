@@ -69,6 +69,7 @@ import {
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import internalChatRoutes from "./routes/internalChatRoutes.js";
+import workloadRoutes from "./modules/workload/workload.routes.js";
 import oomaCallRoutes from "./routes/oomaCallRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
@@ -88,6 +89,10 @@ import {
   startLeadReactivationWorker,
   stopLeadReactivationWorker,
 } from "./modules/leads/lead.reactivation.worker.js";
+import {
+  startLeadStaleOutreachWorker,
+  stopLeadStaleOutreachWorker,
+} from "./modules/leads/lead.staleOutreach.worker.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
@@ -416,6 +421,7 @@ app.use(
   communicationRoutes,
 );
 app.use("/api/internal-chat", requireAuth, staffUser, internalChatRoutes);
+app.use("/api/workload", requireAuth, staffUser, workloadRoutes);
 app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);
 
 app.use(notFoundHandler);
@@ -448,6 +454,7 @@ function onListening() {
   startCommunicationMaintenance();
   startLeadIntakeWorker();
   startLeadReactivationWorker();
+  startLeadStaleOutreachWorker();
   startBookingReminderWorker();
   startPaymentScheduleWorker();
   startPaymentHoldExpiryWorker();
@@ -493,6 +500,7 @@ async function shutdown(signal) {
   stopCommunicationMaintenance();
   stopLeadIntakeWorker();
   stopLeadReactivationWorker();
+  stopLeadStaleOutreachWorker();
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();
   stopPaymentHoldExpiryWorker();

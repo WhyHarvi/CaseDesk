@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordLeadActivity, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
+import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getStaleLeadOutreachOverview, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordLeadActivity, runStaleLeadOutreach, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, forceCreateFromEvent, getDuplicateReview, getImport, getOperations, listEvents, listForms, listImports, previewImport, resolveDuplicate, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
@@ -17,6 +17,8 @@ router.get(
 );
 router.get("/settings", asyncHandler(getLeadSettings));
 router.patch("/settings", requireRole("admin"), asyncHandler(updateLeadSettings));
+router.get("/settings/stale-outreach", requireRole("admin"), asyncHandler(getStaleLeadOutreachOverview));
+router.post("/settings/stale-outreach/run", requireRole("admin"), asyncHandler(runStaleLeadOutreach));
 router.get("/dashboard", requireRole("admin"), asyncHandler(getLeadDashboard));
 router.get("/dashboard/drilldown", requireRole("admin"), asyncHandler(getLeadDashboardDrilldown));
 router.get("/reports/funnel", requireRole("admin"), asyncHandler(getFunnelReport));

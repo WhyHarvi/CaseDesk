@@ -20,6 +20,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { clientAccessWhere } from "../middleware/authorization.js";
 import { resolveNotifications } from "../services/notificationService.js";
+import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const directions = new Set(["Inbound", "Outbound", "Internal"]);
@@ -48,8 +49,19 @@ const conversationStates = new Set([
 ]);
 const priorities = new Set(["Low", "Normal", "High", "Urgent"]);
 const consentStatuses = new Set(["Unknown", "Consented", "OptedOut"]);
+const internalTeamRoles = [
+  "admin",
+  "consultant",
+  "frontdesk",
+  "staff",
+  "manager",
+  "accountant",
+];
 
 const userSelect = { id: true, fullName: true, email: true };
+// A small fixed set, tapback-style (like iMessage's own reaction model)
+// rather than a full emoji-picker library — matches internal chat's set.
+const reactionEmoji = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
 const messageInclude = {
   senderUser: { select: userSelect },
   deletedBy: { select: userSelect },
@@ -74,6 +86,15 @@ const messageInclude = {
       scanStatus: true,
       createdAt: true,
     },
+  },
+  // Reused as-is from email reply-chains — chat never touches the other
+  // consumer of this relation (sendCommunicationDraft's in-reply-to
+  // header), so it's safe to also surface it for a quoted-reply preview.
+  parentMessage: {
+    select: { id: true, bodyText: true, direction: true, senderUser: { select: userSelect } },
+  },
+  reactions: {
+    select: { id: true, emoji: true, userId: true, user: { select: { id: true, fullName: true } } },
   },
 };
 
@@ -160,26 +181,26 @@ async function scopedConversation(req, id, include = conversationInclude) {
 }
 
 async function ensureRecipientAllowed(agencyId, clientId, channel, recipients) {
-  const preference = await prisma.communicationPreference.findUnique({
-    where: { clientId },
+  const { allowed, preference } = await assertClientCommunicationAllowed({
+    agencyId,
+    clientId,
+    channel,
   });
-  if (preference?.agencyId === agencyId) {
-    const channelAllowed =
-      channel === "Email"
-        ? preference.allowEmail
-        : channel === "Sms"
-          ? preference.allowSms
-          : channel === "Chat"
-            ? preference.allowChat
-            : preference.allowCalls;
-    if (preference.doNotContact || !channelAllowed) {
-      throw createHttpError(
-        409,
-        preference.doNotContact
-          ? "This client is marked Do Not Contact."
-          : `${channel === "Sms" ? "SMS" : channel} is disabled in the client's communication preferences.`,
-      );
-    }
+  const channelAllowed =
+    channel === "Email"
+      ? preference.allowEmail
+      : channel === "Sms"
+        ? preference.allowSms
+        : channel === "Chat"
+          ? preference.allowChat
+          : preference.allowCalls;
+  if (!allowed || !channelAllowed) {
+    throw createHttpError(
+      409,
+      preference.doNotContact
+        ? "This client is marked Do Not Contact."
+        : `${channel === "Sms" ? "SMS" : channel} is disabled by the workspace client policy or the client's communication preferences.`,
+    );
   }
   if (!["Email", "Sms"].includes(channel)) return preference;
   const normalized = recipients
@@ -370,9 +391,27 @@ export async function getCurrentCommunicationPermissions(req, res) {
 export async function listTeamCommunicationPermissions(req, res) {
   requireCommunicationAdministrator(req);
   const users = await prisma.user.findMany({
-    where: { agencyId: req.user.agencyId },
+    where: {
+      agencyId: req.user.agencyId,
+      status: "active",
+      role: { in: internalTeamRoles },
+      memberships: {
+        some: {
+          agencyId: req.user.agencyId,
+          isActive: true,
+          role: { in: internalTeamRoles },
+        },
+      },
+    },
     orderBy: [{ role: "asc" }, { fullName: "asc" }],
-    include: { communicationPermission: true },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      status: true,
+      communicationPermission: true,
+    },
   });
   res.json({
     data: users.map(({ communicationPermission, ...user }) => ({
@@ -393,7 +432,19 @@ export async function listTeamCommunicationPermissions(req, res) {
 export async function updateCommunicationPermissions(req, res) {
   requireCommunicationAdministrator(req);
   const user = await prisma.user.findFirst({
-    where: { id: req.params.userId, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.userId,
+      agencyId: req.user.agencyId,
+      status: "active",
+      role: { in: internalTeamRoles },
+      memberships: {
+        some: {
+          agencyId: req.user.agencyId,
+          isActive: true,
+          role: { in: internalTeamRoles },
+        },
+      },
+    },
   });
   if (!user) throw createHttpError(404, "Workspace user not found");
   const values = Object.fromEntries(
@@ -975,9 +1026,11 @@ export async function createCommunicationMessage(req, res) {
   // An attachment-only message broadcasts once the file finishes
   // uploading/scanning (from uploadCommunicationAttachment), not here —
   // otherwise every recipient sees an empty bubble flash before the image
-  // or file appears in it.
+  // or file appears in it. Not awaited — the sender's response shouldn't
+  // wait on a network round-trip to Supabase Realtime (measured ~0.9s on a
+  // real request, on top of notifyUsers' own ~1.5s inside audit() below).
   if (channel === "Chat" && caseItem && !hasAttachment) {
-    await broadcastCaseCommunication({
+    broadcastCaseCommunication({
       agencyId: req.user.agencyId,
       caseId: caseItem.id,
       event: "message",
@@ -1780,6 +1833,50 @@ export async function deleteCommunication(req, res) {
     details: `${existing.channel} communication moved to trash`,
   });
   res.status(204).send();
+}
+
+// No edit endpoint exists for communication messages, deliberately — chat
+// messages here are part of the case record (what a client was actually
+// told matters later), so the only mutation path is the delete above
+// (already admin-gated and audit-logged) plus reactions, which annotate
+// without rewriting anything.
+export async function toggleCommunicationMessageReaction(req, res) {
+  await requireCommunicationPermission(req, "canUseChat");
+  const emoji = clean(req.body.emoji, 8);
+  if (!reactionEmoji.has(emoji)) throw createHttpError(400, "Unsupported reaction");
+  const message = await prisma.communicationMessage.findFirst({
+    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+  });
+  if (!message) throw createHttpError(404, "Communication record not found");
+  const existing = await prisma.communicationMessageReaction.findUnique({
+    where: { messageId_userId_emoji: { messageId: message.id, userId: req.user.id, emoji } },
+  });
+  if (existing) {
+    await prisma.communicationMessageReaction.delete({ where: { id: existing.id } });
+  } else {
+    await prisma.communicationMessageReaction.create({
+      data: { agencyId: req.user.agencyId, messageId: message.id, userId: req.user.id, emoji },
+    });
+  }
+  const reactions = await prisma.communicationMessageReaction.findMany({
+    where: { messageId: message.id },
+    select: { id: true, emoji: true, userId: true, user: { select: { id: true, fullName: true } } },
+  });
+  await audit(req, {
+    conversationId: message.conversationId,
+    messageId: message.id,
+    action: existing ? "communication.reaction_removed" : "communication.reaction_added",
+    details: `${emoji} ${existing ? "removed from" : "added to"} a message`,
+  });
+  if (message.channel === "Chat" && message.caseId) {
+    broadcastCaseCommunication({
+      agencyId: req.user.agencyId,
+      caseId: message.caseId,
+      event: "message",
+      payload: { messageId: message.id, conversationId: message.conversationId, occurredAt: message.occurredAt },
+    }).catch(() => {});
+  }
+  res.json({ data: reactions });
 }
 
 export async function bulkDeleteCommunication(req, res) {

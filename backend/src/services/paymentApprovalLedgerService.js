@@ -8,6 +8,7 @@ export const PAYMENT_APPROVAL_STATUSES = Object.freeze({
   rejected: "Rejected",
   failed: "Failed",
 });
+export const STAFF_PAYMENT_METHODS = Object.freeze(["Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"]);
 
 export function normalizePaymentApprovalKey(value) {
   return String(value || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
@@ -29,14 +30,55 @@ export function normalizePaymentApprovalDate(value) {
 }
 
 export function validateStaffPayment({ method, amount, transactionReference, paymentDate }) {
-  if (!["Cash", "ETransfer"].includes(method)) throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  if (!STAFF_PAYMENT_METHODS.includes(method)) throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 1_000_000) {
     throw createHttpError(400, "Enter a payment amount between $0.01 and $1,000,000.", "VALIDATION_ERROR");
   }
   const reference = String(transactionReference || "").trim().slice(0, 100) || null;
-  if (method === "ETransfer" && !reference) throw createHttpError(400, "Enter the e-transfer transaction number.", "VALIDATION_ERROR");
+  if (method !== "Cash" && !reference) throw createHttpError(400, method === "ETransfer" ? "Enter the e-transfer transaction number." : "Enter the payment transaction or cheque reference.", "VALIDATION_ERROR");
   return { numericAmount, reference, paymentDate: normalizePaymentApprovalDate(paymentDate) };
+}
+
+export async function postApprovedCashTransaction({
+  agencyId,
+  paymentApprovalId,
+  clientId = null,
+  caseId = null,
+  appointmentId = null,
+  caseInvoiceId = null,
+  amount,
+  transactionReference = null,
+  paymentDate,
+  note = null,
+  actorUserId = null,
+  type = "Payment",
+}) {
+  const transaction = await prisma.cashTransaction.upsert({
+    where: { paymentApprovalId },
+    create: {
+      agencyId,
+      paymentApprovalId,
+      clientId,
+      caseId,
+      appointmentId,
+      type,
+      amount,
+      reference: String(transactionReference || "").trim().slice(0, 100) || null,
+      occurredAt: normalizePaymentApprovalDate(paymentDate),
+      note: String(note || "").trim().slice(0, 500) || null,
+      createdById: actorUserId,
+    },
+    update: {},
+  });
+  if (caseInvoiceId) {
+    await prisma.cashAllocation.upsert({
+      where: { transactionId_invoiceId: { transactionId: transaction.id, invoiceId: caseInvoiceId } },
+      create: { agencyId, transactionId: transaction.id, invoiceId: caseInvoiceId, amount },
+      update: {},
+    });
+  }
+  return transaction;
 }
 
 export async function createApprovedCashLedgerRecord({
@@ -61,11 +103,17 @@ export async function createApprovedCashLedgerRecord({
     reviewedById: actorUserId,
     reviewedAt: new Date(),
   };
-  return prisma.paymentApproval.upsert({
+  const approval = await prisma.paymentApproval.upsert({
     where: { agencyId_idempotencyKey: { agencyId, idempotencyKey: key } },
     create: data,
     update: {},
   });
+  await postApprovedCashTransaction({
+    agencyId, paymentApprovalId: approval.id, clientId, caseId, appointmentId,
+    caseInvoiceId, amount, transactionReference, paymentDate, note,
+    actorUserId,
+  });
+  return approval;
 }
 
 export function approvedCashAmount(rows = []) {
@@ -76,10 +124,11 @@ export function approvedCashAmount(rows = []) {
 
 export function applyLocalCashToInvoice(row) {
   const localCashPaid = approvedCashAmount(row.paymentApprovals);
-  const balance = Math.max(0, Number(row.balance) - localCashPaid);
+  const quickBooksBacked = row.accountingProvider !== "CaseDeskCash";
+  const balance = Math.max(0, Number(row.balance) - (quickBooksBacked ? localCashPaid : 0));
   return {
     ...row,
-    quickBooksBalance: Number(row.balance),
+    quickBooksBalance: quickBooksBacked ? Number(row.balance) : null,
     localCashPaid,
     balance,
     status: row.status === "Void" || row.status === "Voided"

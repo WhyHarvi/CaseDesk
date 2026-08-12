@@ -376,6 +376,7 @@ function mapQuickBooksInvoice(invoice) {
     syncToken: invoice.SyncToken,
     docNumber: invoice.DocNumber || null,
     totalAmount: Number(invoice.TotalAmt ?? 0),
+    totalTax: Number(invoice.TxnTaxDetail?.TotalTax ?? 0),
     balance: Number(invoice.Balance ?? 0),
     dueDate: invoice.DueDate || null,
     transactionDate: invoice.TxnDate || null,
@@ -394,27 +395,74 @@ function mapQuickBooksInvoice(invoice) {
   };
 }
 
-export async function createQuickBooksInvoice(agencyId, { customerId, itemId, description, amount, dueDate, requestId }) {
+export async function createQuickBooksInvoice(agencyId, {
+  customerId,
+  itemId,
+  description,
+  amount,
+  dueDate,
+  requestId,
+  invoiceNumber,
+  lines,
+  taxableTaxCodeId,
+  expectedTotal,
+  globalTaxCalculation = "TaxExcluded",
+}) {
+  const invoiceLines = Array.isArray(lines) && lines.length
+    ? lines
+    : [{ itemId, description, amount, taxable: false }];
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",
     requestId,
     body: {
       CustomerRef: { value: customerId },
+      ...(invoiceNumber ? { DocNumber: invoiceNumber } : {}),
       ...(dueDate ? { DueDate: dueDate } : {}),
+      GlobalTaxCalculation: globalTaxCalculation,
       AllowOnlineCreditCardPayment: true,
       AllowOnlineACHPayment: true,
-      Line: [
-        {
-          Amount: amount,
+      Line: invoiceLines.map((line) => {
+        const lineAmount = Number(line.amount);
+        return {
+          Amount: lineAmount,
           DetailType: "SalesItemLineDetail",
-          Description: description,
-          SalesItemLineDetail: { ItemRef: { value: itemId }, Qty: 1, UnitPrice: amount },
-        },
-      ],
+          Description: line.description,
+          SalesItemLineDetail: {
+            ItemRef: { value: line.itemId },
+            Qty: Number(line.quantity || 1),
+            UnitPrice: Number(line.unitAmount ?? lineAmount),
+            ...(line.taxable && taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {}),
+          },
+        };
+      }),
     },
   });
   const invoice = payload.Invoice;
+  const mappedInvoice = mapQuickBooksInvoice(invoice);
+
+  // Tax is accounting data, not presentation-only arithmetic. Refuse to
+  // persist an invoice when the live QuickBooks total differs from the
+  // CaseDesk total; immediately void the newly-created QBO transaction so a
+  // tax-code mapping problem cannot leave an incorrect receivable behind.
+  if (Number.isFinite(Number(expectedTotal)) && Math.abs(mappedInvoice.totalAmount - Number(expectedTotal)) > 0.01) {
+    try {
+      await voidQuickBooksInvoice(agencyId, { id: mappedInvoice.id, syncToken: mappedInvoice.syncToken });
+    } catch (voidError) {
+      logger.error("quickbooks.invoice_total_mismatch_void_failed", {
+        agencyId,
+        invoiceId: mappedInvoice.id,
+        expectedTotal: Number(expectedTotal),
+        actualTotal: mappedInvoice.totalAmount,
+        error: voidError.message,
+      });
+    }
+    throw createHttpError(
+      409,
+      `QuickBooks calculated $${mappedInvoice.totalAmount.toFixed(2)}, but CaseDesk calculated $${Number(expectedTotal).toFixed(2)}. Check the QuickBooks sales-tax mapping before invoicing.`,
+      "QBO_INVOICE_TOTAL_MISMATCH",
+    );
+  }
 
   // QuickBooks only provisions the hosted "Pay now" InvoiceLink once the
   // invoice is sent, never at creation. CaseDesk delivers the link to the
@@ -431,6 +479,45 @@ export async function createQuickBooksInvoice(agencyId, { customerId, itemId, de
     logger.warn("quickbooks.invoice_link_trigger_failed", { agencyId, invoiceId: invoice.Id, error: error.message });
     return mapQuickBooksInvoice(invoice);
   }
+}
+
+// Consultation pricing is displayed to the visitor as one final amount.
+// Keep that advertised total unchanged while still assigning the agency's
+// real QBO sales-tax code so QuickBooks records the included tax instead of
+// silently treating the entire consultation as non-taxable.
+export async function createQuickBooksConsultationInvoice(agencyId, values) {
+  const settings = await prisma.agencyQuickBooksSettings.findUnique({
+    where: { agencyId },
+    select: { status: true, taxableTaxCodeId: true },
+  });
+  if (!settings || settings.status !== "connected") {
+    throw createHttpError(409, "Connect QuickBooks in Settings before creating consultation invoices.", "QBO_NOT_CONNECTED");
+  }
+  if (!settings.taxableTaxCodeId) {
+    throw createHttpError(409, "Choose the QuickBooks HST/GST code in Settings before creating consultation invoices.", "QBO_TAX_MAPPING_REQUIRED");
+  }
+  return createQuickBooksInvoice(agencyId, {
+    ...values,
+    taxableTaxCodeId: settings.taxableTaxCodeId,
+    expectedTotal: Number(values.amount),
+    globalTaxCalculation: "TaxInclusive",
+    lines: [{ itemId: values.itemId, description: values.description, amount: Number(values.amount), taxable: true }],
+  });
+}
+
+export async function listQuickBooksTaxCodes(agencyId) {
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: "SELECT * FROM TaxCode MAXRESULTS 1000",
+  });
+  return (payload.QueryResponse?.TaxCode || [])
+    .filter((taxCode) => taxCode.Active !== false && taxCode.Taxable !== false)
+    .map((taxCode) => ({
+      id: taxCode.Id,
+      name: taxCode.Name,
+      description: taxCode.Description || null,
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 // Batched refresh for the invoices already known to CaseDesk — one round

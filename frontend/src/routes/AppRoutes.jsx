@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import {
   AdminRoute,
   HomeRedirect,
@@ -112,9 +112,9 @@ const OomaCallsPage = lazyWithRetry(
   () => import("../pages/OomaCallsPage"),
   "ooma-calls",
 );
-const TeamChatPage = lazyWithRetry(
-  () => import("../pages/TeamChatPage"),
-  "team-chat",
+const ChatsPage = lazyWithRetry(
+  () => import("../pages/ChatsPage"),
+  "chats",
 );
 const LeadDashboardPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadDashboardPage"),
@@ -123,10 +123,6 @@ const LeadDashboardPage = lazyWithRetry(
 const LeadReportsPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadReportsPage"),
   "lead-reports",
-);
-const LeadIntakePage = lazyWithRetry(
-  () => import("../modules/leads/pages/LeadIntakePage"),
-  "lead-intake",
 );
 const PublicLeadIntakePage = lazyWithRetry(
   () => import("../modules/leads/pages/PublicLeadIntakePage"),
@@ -198,6 +194,13 @@ function Legacy({ path }) {
       <Navigate to={`/app${path}`} replace />
     </InternalRoute>
   );
+}
+
+function LeadIntakeSettingsRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  params.set("section", "lead-intake");
+  return <Navigate to={`/app/settings?${params.toString()}`} replace />;
 }
 
 export default function AppRoutes() {
@@ -403,7 +406,7 @@ export default function AppRoutes() {
             </Access>
           }
         />
-        <Route path="/app/team-chat" element={<TeamChatPage />} />
+        <Route path="/app/chats" element={<ChatsPage />} />
         <Route
           path="/lead-dashboard"
           element={
@@ -424,7 +427,7 @@ export default function AppRoutes() {
           path="/lead-intake"
           element={
             <Access page="leadIntake">
-              <LeadIntakePage />
+              <LeadIntakeSettingsRedirect />
             </Access>
           }
         />

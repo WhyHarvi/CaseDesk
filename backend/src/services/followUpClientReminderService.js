@@ -1,4 +1,5 @@
 import prisma from "./prisma/client.js";
+import { assertClientCommunicationAllowed } from "./clientCommunicationPolicyService.js";
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (character) => ({
@@ -15,9 +16,10 @@ export async function queueDirectFollowUpEmail({ followUp, milestone, scheduledK
   if (!email) return { queued: false, reason: "missing_email" };
 
   const [preference, consent, agency] = await Promise.all([
-    prisma.communicationPreference.findUnique({
-      where: { clientId: followUp.clientId },
-      select: { agencyId: true, doNotContact: true, allowEmail: true },
+    assertClientCommunicationAllowed({
+      agencyId: followUp.agencyId,
+      clientId: followUp.clientId,
+      channel: "Email",
     }),
     prisma.communicationConsent.findFirst({
       where: {
@@ -34,7 +36,7 @@ export async function queueDirectFollowUpEmail({ followUp, milestone, scheduledK
       select: { timezone: true },
     }),
   ]);
-  if (preference?.agencyId === followUp.agencyId && (preference.doNotContact || !preference.allowEmail)) {
+  if (!preference.allowed) {
     return { queued: false, reason: "email_disabled" };
   }
   if (!consent) return { queued: false, reason: "email_consent_required" };

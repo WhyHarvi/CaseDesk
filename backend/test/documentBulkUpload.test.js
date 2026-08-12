@@ -59,3 +59,13 @@ test("consultants can organize My Documents into folders, scoped to one case and
   assert.match(caseProfile, /async function uploadMyCaseDocument\(file, onProgress, folderId\)/);
   assert.match(caseProfile, /if \(folderId\) formData\.append\("folderId", folderId\)/);
 });
+
+test("long case workspaces use the page scroller instead of a competing nested scroller", async () => {
+  const tabs = await source("../../frontend/src/components/case-profile/CaseWorkspaceTabs.jsx");
+
+  assert.match(tabs, /const usesPageScroll = \["DOCUMENTS", "APPOINTMENTS", "BILLING"\]\.includes\(/);
+  assert.match(tabs, /usesPageScroll \? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto overscroll-contain/);
+  assert.match(tabs, /usesPageScroll \? "sticky top-0 z-20 rounded-t-\[2rem\]"/);
+  assert.match(tabs, /if \(!usesPageScroll\) \{[\s\S]*workspaceContentRef\.current\?\.scrollTo/);
+  assert.match(tabs, /previousUsesPageScrollRef\.current[\s\S]*workspaceShellRef\.current\?\.scrollIntoView/);
+});

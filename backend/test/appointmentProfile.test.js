@@ -24,6 +24,27 @@ test("calendar client identity opens the connected client profile", async () => 
   assert.match(profile, /`\/app\/clients\/\$\{appointment\.client\.id\}`/);
 });
 
+test("appointment notes show the client query before an explicit note composer", async () => {
+  const profile = await source(
+    "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",
+  );
+  const detailsStart = profile.indexOf('tab === "details"');
+  const notesStart = profile.indexOf('tab === "notes"');
+  const historyStart = profile.indexOf('tab === "history"');
+  const detailsPanel = profile.slice(detailsStart, notesStart);
+  const notesPanel = profile.slice(notesStart, historyStart);
+
+  assert.ok(detailsStart >= 0 && notesStart > detailsStart && historyStart > notesStart);
+  assert.doesNotMatch(detailsPanel, /Client query|Client’s reason/);
+  assert.match(notesPanel, /Client query/);
+  assert.ok(notesPanel.indexOf("Client query") < notesPanel.indexOf("Internal note"));
+  assert.match(notesPanel, /onClick=\{cancelContextEdit\}/);
+  assert.match(profile, /function cancelContextEdit\(\)[\s\S]*setPurpose\(appointment\?\.purpose \|\| appointment\?\.description \|\| ""\)[\s\S]*setInternalNotes\(appointment\?\.internalNotes \|\| ""\)[\s\S]*setEditingContext\(false\)/);
+  assert.match(notesPanel, /setShowNoteComposer\(true\)/);
+  assert.match(notesPanel, />Cancel</);
+  assert.match(notesPanel, /Save note/);
+});
+
 test("dashboard upcoming appointments open the client profile or save an unlinked visitor", async () => {
   const [dashboard, controller] = await Promise.all([
     source("../../frontend/src/components/dashboard/DashboardWorkRow.jsx"),

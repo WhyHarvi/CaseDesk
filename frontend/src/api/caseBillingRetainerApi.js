@@ -10,8 +10,23 @@ export async function createCaseBillingRetainerDraft(caseId, schedule) {
   return response.data.data;
 }
 
+export async function previewCaseBillingRetainer(caseId, schedule) {
+  const response = await api.post(
+    `/case-billing-retainer/${caseId}/preview`,
+    schedule || undefined,
+  );
+  return response.data.data;
+}
+
 export async function syncCaseBillingRetainerWithSchedule(caseId) {
   const response = await api.post(`/case-billing-retainer/${caseId}/sync-schedule`);
+  return response.data.data;
+}
+
+export async function resetCaseBillingRetainer(caseId, documentId) {
+  const response = await api.post(`/case-billing-retainer/${caseId}/reset`, {
+    documentId,
+  });
   return response.data.data;
 }
 

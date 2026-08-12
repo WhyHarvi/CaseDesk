@@ -6,7 +6,7 @@ import { assertSlotAvailable } from "./bookingAvailabilityService.js";
 import { chooseAppointmentAssignee, lockSchedulingTransaction } from "./schedulingAssignmentService.js";
 import {
   createQuickBooksCustomer,
-  createQuickBooksInvoice,
+  createQuickBooksConsultationInvoice,
   createQuickBooksReceivePayment,
   findOrCreateQuickBooksPaymentMethod,
   findQuickBooksPaymentIdForInvoice,
@@ -20,11 +20,21 @@ import { reconcilePaymentHold } from "./quickbooksWebhookService.js";
 import { captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { financialOperationsRecipientIds, notifyUsers, resolveNotifications } from "./notificationService.js";
 import { paymentHoldMeetingFields } from "./bookingMeetingModeService.js";
-import { paymentHoldDeliverySummary, queuePaymentHoldMessages, sendBookingMessages } from "./bookingNotificationService.js";
+import { paymentHoldDeliverySummary, queuePaymentHoldMessages } from "./bookingNotificationService.js";
 import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import { requireFeeCategory } from "./feeCategoryService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createApprovedCashLedgerRecord } from "./paymentApprovalLedgerService.js";
+import { syncLeadConsultationPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
+
+const MANUAL_PAYMENT_METHOD_LABELS = Object.freeze({
+  Cash: "Cash",
+  ETransfer: "E-transfer",
+  Cheque: "Cheque",
+  Wire: "Wire transfer",
+  Debit: "Debit",
+  BankDraft: "Bank draft",
+});
 
 // Standalone resolver, deliberately not layered onto caseInvoiceService.js's
 // requireMappedItem/PAYMENT_TYPES — those are also consumed by payment
@@ -44,7 +54,7 @@ export async function requireConsultFeeItem(agencyId) {
 // rather than going through clientQuickBooksSyncService.js, which is
 // Client-row-shaped.
 export async function resolveOrCreateQuickBooksCustomer(agencyId, { name, email, phone }) {
-  const existing = await findQuickBooksCustomerByEmail(agencyId, email);
+  const existing = email ? await findQuickBooksCustomerByEmail(agencyId, email) : null;
   if (existing) return existing.id;
   try {
     const created = await createQuickBooksCustomer(agencyId, { displayName: name, email, phone });
@@ -55,7 +65,7 @@ export async function resolveOrCreateQuickBooksCustomer(agencyId, { name, email,
     // Another request may have created this email between our lookup and
     // create. Re-query first; otherwise use a deterministic unique display
     // name instead of attaching this booking to the same-name stranger.
-    const raced = await findQuickBooksCustomerByEmail(agencyId, email);
+    const raced = email ? await findQuickBooksCustomerByEmail(agencyId, email) : null;
     if (raced) return raced.id;
     const identitySuffix = String(email || phone || "CaseDesk")
       .trim()
@@ -68,7 +78,7 @@ export async function resolveOrCreateQuickBooksCustomer(agencyId, { name, email,
       return created.id;
     } catch (retryError) {
       if (!isQuickBooksDuplicateNameError(retryError)) throw retryError;
-      const concurrent = await findQuickBooksCustomerByEmail(agencyId, email);
+      const concurrent = email ? await findQuickBooksCustomerByEmail(agencyId, email) : null;
       if (concurrent) return concurrent.id;
       throw retryError;
     }
@@ -212,7 +222,7 @@ export async function createPaymentHoldForPublicBooking(agencyId, {
       email,
       phone,
     });
-    const invoice = await createQuickBooksInvoice(agencyId, {
+    const invoice = await createQuickBooksConsultationInvoice(agencyId, {
       customerId: qbCustomerId,
       itemId,
       description: `${sessionTypeName} — consultation booking`,
@@ -322,8 +332,8 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
         endsAt,
         clientId,
         guestName: name,
-        guestEmail: email,
-        guestEmailNormalized: email.toLowerCase(),
+        guestEmail: email || null,
+        guestEmailNormalized: email?.toLowerCase() || null,
         guestPhone: phone || null,
         ...paymentHoldMeetingFields({ mode: meetingMode, settings }),
         locationId: location?.id || null,
@@ -353,7 +363,7 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
   let invoiceVoided = false;
   try {
     const qbCustomerId = await resolveQuickBooksCustomerForBooking(agencyId, { clientId, name, email, phone });
-    const invoice = await createQuickBooksInvoice(agencyId, {
+    const invoice = await createQuickBooksConsultationInvoice(agencyId, {
       customerId: qbCustomerId,
       itemId,
       description: `${sessionTypeName || subject || "Consultation"} — consultation booking`,
@@ -439,7 +449,9 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
     include: { client: { select: { id: true, fullName: true, email: true, phone: true } } },
   });
   if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
-  if (appointment.status !== "Scheduled") throw createHttpError(409, "Only a scheduled appointment can be charged.", "INVALID_STATE");
+  if (!["Scheduled", "Completed", "NoShow"].includes(appointment.status)) {
+    throw createHttpError(409, "Only a scheduled, attended, or no-show consultation can be charged.", "INVALID_STATE");
+  }
   if (appointment.isFreeConsultation) throw createHttpError(409, "This is a free consultation — no payment is needed.", "FREE_CONSULTATION");
   if (!appointment.assignedToId) throw createHttpError(409, "This appointment has no consultant assigned yet.", "VALIDATION_ERROR");
 
@@ -448,8 +460,17 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
   // returned rather than attempting a second invoice for the same booking.
   const existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
   if (existingHold) {
+    if (existingHold.status === "Paid") return existingHold;
+    if (existingHold.status !== "AwaitingPayment" || !existingHold.qbInvoiceLink) {
+      throw createHttpError(409, "The existing consultation payment request is not available for card payment. Resolve it in Payments, then try again.", "INVALID_STATE");
+    }
+    const updated = await prisma.bookingPaymentHold.update({
+      where: { id: existingHold.id },
+      data: { paymentMethod: "Card", paymentError: null },
+    });
+    await queuePaymentHoldMessages({ agencyId, hold: updated, actorUserId, dedupeSuffix: `card-${Date.now()}` });
     await resolveMissingAppointmentPaymentNotification(agencyId, appointmentId).catch(() => {});
-    return existingHold;
+    return updated;
   }
 
   const settings = await prisma.bookingSettings.findUnique({ where: { agencyId } });
@@ -458,12 +479,12 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
   const name = appointment.client?.fullName || appointment.guestName;
   const email = appointment.client?.email || appointment.guestEmail;
   const phone = appointment.client?.phone || appointment.guestPhone;
-  if (!email) throw createHttpError(409, "This appointment has no email on file to bill.", "VALIDATION_ERROR");
+  if (!email && !phone) throw createHttpError(409, "Add an email address or phone number before sending a card payment link.", "VALIDATION_ERROR");
 
   const itemId = await requireConsultFeeItem(agencyId);
   const qbCustomerId = await resolveQuickBooksCustomerForBooking(agencyId, { clientId: appointment.clientId, name, email, phone });
   const amount = Number(settings.consultFeeAmount);
-  const invoice = await createQuickBooksInvoice(agencyId, {
+  const invoice = await createQuickBooksConsultationInvoice(agencyId, {
     customerId: qbCustomerId,
     itemId,
     description: `${appointment.subject} — consultation booking`,
@@ -480,8 +501,8 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
         startsAt: appointment.startsAt,
         endsAt: appointment.endsAt,
         guestName: name,
-        guestEmail: email,
-        guestEmailNormalized: email.toLowerCase(),
+        guestEmail: email || null,
+        guestEmailNormalized: email?.toLowerCase() || null,
         guestPhone: phone || null,
         meetingMode: appointment.meetingMode,
         meetingPhoneNumber: appointment.meetingPhoneNumber,
@@ -513,7 +534,8 @@ export async function createPaymentHoldForWalkIn(agencyId, { appointmentId, acto
   // Nothing else ever tells the client this link exists — before this, staff
   // had to read the payNowUrl off the screen and share it their own way.
   if (hold.qbInvoiceLink) {
-    await sendBookingMessages({ agencyId, appointment, kind: "payment_requested", actorUserId, payNowUrl: hold.qbInvoiceLink, amount }).catch((error) => {
+    hold = await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { paymentMethod: "Card" } });
+    await queuePaymentHoldMessages({ agencyId, hold, actorUserId }).catch((error) => {
       logger.warn("booking_payment_hold.payment_request_message_failed", { agencyId, appointmentId: appointment.id, reason: error.message });
     });
   }
@@ -764,7 +786,7 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
       email,
       phone,
     });
-    const invoice = await createQuickBooksInvoice(agencyId, {
+    const invoice = await createQuickBooksConsultationInvoice(agencyId, {
       customerId: qbCustomerId,
       itemId,
       description: `Consultation — ${name}`,
@@ -835,8 +857,8 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
   return hold;
 }
 
-// Front-desk collected payment outside QuickBooks' hosted checkout (cash or
-// e-transfer). The money still belongs in the same accounting trail as card
+// Staff collected payment outside QuickBooks' hosted checkout. The money
+// still belongs in the same accounting trail as card
 // payments, so this creates/reuses the consultation invoice and applies a
 // real QuickBooks Payment before CaseDesk marks the hold paid.
 export async function recordWalkInManualPayment(agencyId, {
@@ -850,15 +872,15 @@ export async function recordWalkInManualPayment(agencyId, {
   overrideFreeConsultation = false,
   approvalId = null,
 }) {
-  if (!["Cash", "ETransfer"].includes(method)) {
-    throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  if (!MANUAL_PAYMENT_METHOD_LABELS[method]) {
+    throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   }
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
   const transactionDate = normalizeManualPaymentDate(paymentDate);
-  if (method === "ETransfer" && !paymentReference) {
+  if (method !== "Cash" && !paymentReference) {
     throw createHttpError(
       400,
-      "Enter the e-transfer transaction number before recording the payment.",
+      method === "ETransfer" ? "Enter the e-transfer transaction number before recording the payment." : `Enter the ${MANUAL_PAYMENT_METHOD_LABELS[method].toLowerCase()} reference before recording the payment.`,
       "VALIDATION_ERROR",
     );
   }
@@ -1031,6 +1053,7 @@ export async function recordWalkInManualPayment(agencyId, {
       entityId: hold.id,
       metadata: { method: "Cash", quickBooksStored: false, approvalId },
     }).catch(() => {});
+    await syncLeadConsultationPaymentFromEvidence(agencyId, appointment.id, "Paid").catch(() => {});
     invalidateDashboardCache(agencyId);
     return hold;
   }
@@ -1054,7 +1077,7 @@ export async function recordWalkInManualPayment(agencyId, {
       if (invoice?.isVoided) invoice = null;
     }
     if (!invoice) {
-      invoice = await createQuickBooksInvoice(agencyId, {
+      invoice = await createQuickBooksConsultationInvoice(agencyId, {
         customerId: qbCustomerId,
         itemId,
         description: `Consultation — ${name}`,
@@ -1077,7 +1100,7 @@ export async function recordWalkInManualPayment(agencyId, {
       throw createHttpError(409, "QuickBooks already shows this consultation invoice as paid. Refresh payments before recording another payment.", "ALREADY_PAID");
     }
     const paymentAmount = Number(invoice.balance);
-    const methodName = method === "Cash" ? "Cash" : "E-transfer";
+    const methodName = MANUAL_PAYMENT_METHOD_LABELS[method];
     const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
     const payment = await createQuickBooksReceivePayment(agencyId, {
       customerId: qbCustomerId,
@@ -1111,7 +1134,7 @@ export async function recordWalkInManualPayment(agencyId, {
     });
     invalidateDashboardCache(agencyId);
 
-    const methodLabel = method === "Cash" ? "cash" : "e-transfer";
+    const methodLabel = methodName.toLowerCase();
     await recordActivity({
       agencyId,
       userId: actorUserId,
@@ -1123,6 +1146,8 @@ export async function recordWalkInManualPayment(agencyId, {
       entityId: hold.id,
       metadata: { method, transactionReference: paymentReference, note: note || null },
     }).catch(() => {});
+
+    await syncLeadConsultationPaymentFromEvidence(agencyId, appointment.id, "Paid").catch(() => {});
 
     return hold;
   } catch (error) {
@@ -1181,12 +1206,12 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
   actorRole = "admin",
   approvalId = null,
 }) {
-  if (!["Cash", "ETransfer"].includes(method)) {
-    throw createHttpError(400, "Choose Cash or E-transfer.", "VALIDATION_ERROR");
+  if (!MANUAL_PAYMENT_METHOD_LABELS[method]) {
+    throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   }
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
-  if (method === "ETransfer" && !paymentReference) {
-    throw createHttpError(400, "Enter the e-transfer transaction number.", "VALIDATION_ERROR");
+  if (method !== "Cash" && !paymentReference) {
+    throw createHttpError(400, method === "ETransfer" ? "Enter the e-transfer transaction number." : `Enter the ${MANUAL_PAYMENT_METHOD_LABELS[method].toLowerCase()} reference.`, "VALIDATION_ERROR");
   }
   const transactionDate = normalizeManualPaymentDate(paymentDate);
   const appointment = await prisma.appointment.findFirst({
@@ -1259,7 +1284,7 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
   if (!qbPaymentId) {
     throw createHttpError(409, "The matching QuickBooks payment could not be found. Refresh billing and try again.", "QBO_PAYMENT_NOT_FOUND");
   }
-  const methodName = method === "Cash" ? "Cash" : "E-transfer";
+  const methodName = MANUAL_PAYMENT_METHOD_LABELS[method];
   const qboMethod = await findOrCreateQuickBooksPaymentMethod(agencyId, methodName);
   await updateQuickBooksPaymentDetails(agencyId, {
     id: qbPaymentId,
@@ -1341,7 +1366,7 @@ export async function resendPaymentHoldRequest(agencyId, holdId, { email = null,
 
   const nextEmail = email == null ? hold.guestEmail : String(email).trim().toLowerCase().slice(0, 254);
   const nextPhone = phone === undefined ? hold.guestPhone : String(phone || "").trim().slice(0, 40) || null;
-  if (!nextEmail) throw createHttpError(400, "Enter an email address for the payment request.", "VALIDATION_ERROR");
+  if (!nextEmail && !nextPhone) throw createHttpError(400, "Enter an email address or phone number for the payment request.", "VALIDATION_ERROR");
 
   await prisma.bookingMessageDelivery.updateMany({
     where: { paymentHoldId: hold.id, kind: "payment_requested", status: { in: ["pending", "processing"] } },
@@ -1349,7 +1374,7 @@ export async function resendPaymentHoldRequest(agencyId, holdId, { email = null,
   });
   hold = await prisma.bookingPaymentHold.update({
     where: { id: hold.id },
-    data: { guestEmail: nextEmail, guestEmailNormalized: nextEmail, guestPhone: nextPhone },
+    data: { guestEmail: nextEmail || null, guestEmailNormalized: nextEmail || null, guestPhone: nextPhone },
   });
   const delivery = await queuePaymentHoldMessages({ agencyId, hold, actorUserId, dedupeSuffix: `resend-${Date.now()}` });
   await recordActivity({
@@ -1357,7 +1382,7 @@ export async function resendPaymentHoldRequest(agencyId, holdId, { email = null,
     userId: actorUserId,
     clientId: hold.clientId,
     action: "appointment.payment_request_resent",
-    details: `Consultation payment request resent to ${nextEmail}`,
+    details: `Consultation payment request resent by ${[nextEmail ? "email" : null, nextPhone ? "SMS" : null].filter(Boolean).join(" and ")}`,
     entityType: "bookingPaymentHold",
     entityId: hold.id,
   }).catch(() => {});

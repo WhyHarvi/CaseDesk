@@ -572,7 +572,7 @@ export async function getPortalPayments(req, res) {
                 status: installment.status === "Invoicing" ? "Scheduled" : installment.status,
                 invoice: installment.caseInvoice
                   ? {
-                      invoiceNumber: installment.caseInvoice.qbInvoiceNumber,
+                      invoiceNumber: installment.caseInvoice.invoiceNumber || installment.caseInvoice.qbInvoiceNumber,
                       status: installment.caseInvoice.status,
                       balance: money(installment.caseInvoice.balance),
                     }
@@ -589,10 +589,11 @@ export async function getPortalPayments(req, res) {
         id: invoice.id,
         description: invoice.description,
         paymentType: invoice.paymentType,
-        invoiceNumber: invoice.qbInvoiceNumber,
+        invoiceNumber: invoice.invoiceNumber || invoice.qbInvoiceNumber,
         amount: money(invoice.amount),
         balance: money(invoice.balance),
         status: invoice.status,
+        refundedAmount: money((invoice.refunds || []).filter((refund) => refund.status === "Completed").reduce((sum, refund) => sum + Number(refund.amount), 0)),
         dueDate: invoice.dueDate,
         createdAt: invoice.createdAt,
         payNowUrl: Number(invoice.balance) > 0 ? invoice.qbInvoiceLink || null : null,

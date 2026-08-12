@@ -90,6 +90,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [purpose, setPurpose] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
   const [note, setNote] = useState("");
+  const [showNoteComposer, setShowNoteComposer] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [editingNoteContent, setEditingNoteContent] = useState("");
   const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
@@ -120,7 +121,12 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (appointmentId) setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
+    if (appointmentId) {
+      setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
+      setEditingContext(false);
+      setShowNoteComposer(false);
+      setNote("");
+    }
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
     const close = (event) => event.key === "Escape" && !saving && onClose();
@@ -147,6 +153,12 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     } finally { setSaving(false); }
   }
 
+  function cancelContextEdit() {
+    setPurpose(appointment?.purpose || appointment?.description || "");
+    setInternalNotes(appointment?.internalNotes || "");
+    setEditingContext(false);
+  }
+
   async function addNote(event) {
     event.preventDefault();
     if (!note.trim()) return;
@@ -155,6 +167,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       const created = await createAppointmentNote(appointment.id, note.trim());
       setAppointment((current) => ({ ...current, notes: [created, ...(current.notes || [])], events: current.events }));
       setNote("");
+      setShowNoteComposer(false);
       await load();
       onChanged?.();
     } catch (requestError) {
@@ -288,13 +301,6 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 <div className="rounded-[1.4rem] border border-white bg-white p-4 shadow-sm"><p className="flex items-center gap-2 text-xs font-semibold text-slate-400"><UserRound className="h-4 w-4" />Consultant</p><p className="mt-2 text-sm font-semibold text-slate-900">{appointment.assignedTo?.fullName || "Unassigned"}</p><p className="mt-1 text-xs text-slate-400">{appointment.meetingMode || "In person"}</p></div>
               </section>
               <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Meeting context</h3><p className="mt-1 text-xs text-slate-400">The client’s reason and private staff preparation context.</p></div>{canWrite ? <button type="button" onClick={() => editingContext ? saveContext() : setEditingContext(true)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white">{editingContext ? <Save className="h-3.5 w-3.5" /> : <NotebookPen className="h-3.5 w-3.5" />}{editingContext ? "Save" : "Edit"}</button> : null}</div>
-                <div className="mt-4 space-y-4">
-                  <label className="block"><span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-600">Client’s reason</span>{editingContext ? <textarea rows={4} value={purpose} onChange={(event) => setPurpose(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /> : <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{purpose || "No purpose recorded."}</p>}</label>
-                  {canWrite ? <label className="block border-t border-slate-100 pt-4"><span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">Private staff context</span>{editingContext ? <textarea rows={4} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 bg-violet-50/30 px-4 py-3 text-sm outline-none focus:border-violet-400" /> : <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{internalNotes || "No private context recorded."}</p>}</label> : null}
-                </div>
-              </section>
-              <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
                 <h3 className="text-sm font-semibold text-slate-900">Connected records</h3>
                 <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                   <div><p className="text-xs text-slate-400">Contact</p>{appointment.client?.id ? <Link to={`/app/clients/${appointment.client.id}`} className="mt-1 inline-flex font-semibold text-slate-800 transition hover:text-sky-700 hover:underline hover:decoration-sky-300 hover:underline-offset-4">{person?.fullName || "Visitor"}</Link> : <p className="mt-1 font-semibold text-slate-800">{person?.fullName || "Visitor"}</p>}{person?.email ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Mail className="h-3.5 w-3.5" />{person.email}</p> : null}{person?.phone ? <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Phone className="h-3.5 w-3.5" />{person.phone}</p> : null}</div>
@@ -307,7 +313,17 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
             </div> : null}
 
             {!loading && appointment && tab === "notes" ? <div className="space-y-5">
-              {canWrite ? <form onSubmit={addNote} className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm"><label className="text-sm font-semibold text-slate-900">Add internal note<textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Discussion, preparation, outcome, or context for the next contact…" className="mt-3 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /></label><div className="mt-3 flex justify-end"><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" />Add note</button></div></form> : null}
+              <section className="rounded-[1.5rem] border border-sky-100 bg-sky-50/55 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-600">Client query</p><p className="mt-1 text-xs text-slate-500">Keep the client’s original concern visible while documenting the consultation.</p></div>{canWrite ? editingContext ? <div className="flex items-center gap-2"><button type="button" onClick={cancelContextEdit} disabled={saving} className="rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200 disabled:opacity-50">Cancel</button><button type="button" onClick={saveContext} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save context"}</button></div> : <button type="button" onClick={() => setEditingContext(true)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200"><NotebookPen className="h-3.5 w-3.5" />Edit context</button> : null}</div>
+                <div className="mt-4 space-y-4">
+                  <label className="block">{editingContext ? <textarea rows={4} value={purpose} onChange={(event) => setPurpose(event.target.value)} className="w-full rounded-2xl border border-sky-200 bg-white px-4 py-3 text-sm outline-none focus:border-sky-400" /> : <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{purpose || "No client query was recorded."}</p>}</label>
+                  {canWrite ? <label className="block border-t border-sky-100 pt-4"><span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">Private staff context</span>{editingContext ? <textarea rows={4} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-violet-400" /> : <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{internalNotes || "No private context recorded."}</p>}</label> : null}
+                </div>
+              </section>
+              {canWrite ? <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Internal note</h3><p className="mt-1 text-xs text-slate-400">Discussion, outcome, or context for the next contact.</p></div>{!showNoteComposer ? <button type="button" onClick={() => setShowNoteComposer(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Note</button> : null}</div>
+                {showNoteComposer ? <form onSubmit={addNote} className="mt-4"><textarea autoFocus rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write an internal note…" className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => { setNote(""); setShowNoteComposer(false); }} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save note"}</button></div></form> : null}
+              </section> : null}
               <section>
                 <div className="mb-3 flex items-center justify-between">
                   <div>

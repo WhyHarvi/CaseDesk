@@ -106,7 +106,7 @@ export const SIDEBAR_DESTINATIONS = new Set([
   "portalAppointments",
   "portalPayments",
   "portalChat",
-  "teamChat",
+  "chats",
 ]);
 
 function notificationPath(actionUrl) {
@@ -133,7 +133,7 @@ export function destinationFromNotification({ destinationKey, actionUrl, categor
     ["/client-portal/appointments", "portalAppointments"],
     ["/client-portal/payments", "portalPayments"],
     ["/client-portal/chat", "portalChat"],
-    ["/team-chat", "teamChat"],
+    ["/app/chats", "chats"],
     ["/lead-intake", "leadIntake"],
     ["/leads", "leads"],
     ["/calls", "calls"],
@@ -629,12 +629,17 @@ export async function dispatchCommunicationAuditNotification(event) {
   const caseId = conversation?.caseId || message?.caseId;
   const clientId = conversation?.clientId || message?.clientId;
   if (inbound && (caseId || clientId)) {
+    // The two chat-specific inbound actions (token-link and authenticated
+    // portal) always route to the unified Chats inbox; communication.
+    // inbound_received also covers non-chat channels (email/SMS via
+    // webhook), which keep badging Cases/Clients as before.
+    const inboundChat = ["communication.client_chat_received", "communication.portal_message_received"].includes(event.action);
     const recipients = conversation?.assignedToId
       ? [conversation.assignedToId]
       : caseId
         ? await internalCaseRecipientIds(event.agencyId, caseId)
         : await adminRecipientIds(event.agencyId);
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, dedupeKey: `conversation:${event.conversationId}:unread:staff`, aggregate: true, attentionLevel: "action_required" });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: inboundChat ? `/app/chats?thread=${event.conversationId}&kind=client` : caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, destinationKey: inboundChat ? "chats" : undefined, dedupeKey: `conversation:${event.conversationId}:unread:staff`, aggregate: true, attentionLevel: "action_required" });
   }
   if (failed) {
     const recipients = [...new Set([message?.senderUserId, ...(await adminRecipientIds(event.agencyId))].filter(Boolean))];

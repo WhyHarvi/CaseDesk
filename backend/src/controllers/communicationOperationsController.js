@@ -4,6 +4,10 @@ import {
   requireCommunicationPermission,
 } from "../services/communicationPermissions.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
+import {
+  getAgencyClientCommunicationPolicy,
+  getEffectiveClientCommunicationPreference,
+} from "../services/clientCommunicationPolicyService.js";
 import { createHttpError } from "../utils/http.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
@@ -78,28 +82,65 @@ function preferenceInput(body) {
   };
 }
 
+function clientPolicyInput(body) {
+  const values = preferenceInput(body);
+  const communicationEnabled = body.communicationEnabled !== false;
+  const channelEnabled = {
+    Email: values.allowEmail,
+    Sms: values.allowSms,
+    Chat: values.allowChat,
+    Call: values.allowCalls,
+  };
+  return {
+    communicationEnabled,
+    preferredChannel:
+      communicationEnabled && channelEnabled[values.preferredChannel]
+        ? values.preferredChannel
+        : null,
+    language: values.language,
+    timezone: values.timezone,
+    quietHoursStart: values.quietHoursStart,
+    quietHoursEnd: values.quietHoursEnd,
+    allowEmail: values.allowEmail,
+    allowSms: values.allowSms,
+    allowChat: values.allowChat,
+    allowCalls: values.allowCalls,
+  };
+}
+
+export async function getClientCommunicationPolicy(req, res) {
+  requireCommunicationAdministrator(req);
+  res.json({
+    data: await getAgencyClientCommunicationPolicy(req.user.agencyId),
+  });
+}
+
+export async function updateClientCommunicationPolicy(req, res) {
+  requireCommunicationAdministrator(req);
+  const values = clientPolicyInput(req.body);
+  const data = await prisma.agencyClientCommunicationPolicy.upsert({
+    where: { agencyId: req.user.agencyId },
+    create: { agencyId: req.user.agencyId, ...values },
+    update: values,
+  });
+  await recordCommunicationAudit({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "communication.client_policy_updated",
+    details: "Global client communication policy updated",
+    metadata: values,
+  });
+  res.json({ data });
+}
+
 export async function getCommunicationPreference(req, res) {
   await requireCommunicationPermission(req, "canView");
   const caseItem = await scopedCase(req, req.params.caseId);
-  const data = await prisma.communicationPreference.findUnique({
-    where: { clientId: caseItem.clientId },
+  const data = await getEffectiveClientCommunicationPreference({
+    agencyId: req.user.agencyId,
+    clientId: caseItem.clientId,
   });
-  res.json({
-    data: data || {
-      clientId: caseItem.clientId,
-      preferredChannel: null,
-      language: "English",
-      timezone: "America/Toronto",
-      quietHoursStart: null,
-      quietHoursEnd: null,
-      allowEmail: true,
-      allowSms: true,
-      allowChat: true,
-      allowCalls: true,
-      doNotContact: false,
-      notes: null,
-    },
-  });
+  res.json({ data });
 }
 
 export async function updateCommunicationPreference(req, res) {
@@ -126,7 +167,12 @@ export async function updateCommunicationPreference(req, res) {
       doNotContact: data.doNotContact,
     },
   });
-  res.json({ data });
+  res.json({
+    data: await getEffectiveClientCommunicationPreference({
+      agencyId: req.user.agencyId,
+      clientId: caseItem.clientId,
+    }),
+  });
 }
 
 export async function getCommunicationSlaPolicy(req, res) {

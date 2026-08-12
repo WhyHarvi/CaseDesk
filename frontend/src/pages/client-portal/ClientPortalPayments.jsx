@@ -8,11 +8,13 @@ import ClientPaymentCard, { formatMoney } from "../../components/client-portal/C
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
 
-const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Overdue: "Overdue" };
+const INVOICE_STATUS_LABEL = { Open: "Awaiting payment", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue" };
 const INVOICE_STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600",
   PartiallyPaid: "bg-amber-50 text-amber-700",
   Paid: "bg-emerald-50 text-emerald-700",
+  Refunded: "bg-violet-50 text-violet-700",
+  PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-700",
   Overdue: "bg-rose-50 text-rose-700",
 };
 const INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee" };
@@ -159,6 +161,7 @@ export default function ClientPortalPayments() {
                           {formatPortalMoney(invoice.amount)} total
                           {Number(invoice.balance) > 0 ? ` · ${formatPortalMoney(invoice.balance)} due` : ""}
                         </p>
+                        {Number(invoice.refundedAmount) > 0 ? <p className="mt-1 text-[11px] font-medium text-violet-600">{formatPortalMoney(invoice.refundedAmount)} refunded</p> : null}
                         {invoice.dueDate ? <p className="mt-1 text-[11px] text-slate-400">Due {formatPortalDate(invoice.dueDate)}</p> : null}
                         {invoice.payNowUrl ? (
                           <a

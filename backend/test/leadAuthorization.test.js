@@ -48,11 +48,15 @@ test("stage, priority, and owner each have a real endpoint with the right role g
   assert.match(routes, /router\.patch\("\/:id\/stage", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadStage\)\)/);
   assert.match(routes, /router\.patch\("\/:id\/priority", requireRole\("admin", "consultant"\), asyncHandler\(changeLeadPriority\)\)/);
 
-  // Owner still opens a proper sheet (needs a reason on record); stage and
-  // priority are inline <select>s directly in the summary grid — no popup.
+  // All three are inline selectors. Admin owner transfers save immediately
+  // without opening a reason form, while the API stays admin-only.
   assert.match(leadDetail, /canReassign = isWorkable && role === "admin"/);
   assert.match(leadDetail, /canEditWorkflow = isWorkable && \(role === "admin" \|\| \(role === "consultant" && ownsLead\)\)/);
-  assert.match(leadDetail, /onEdit=\{canReassign \? \(\) => setActiveAction\("reassign"\) : null\}/);
+  assert.match(leadDetail, /consultantOwners = staff\.filter/);
+  assert.match(leadDetail, /person\.role === "consultant"/);
+  assert.match(leadDetail, /select=\{canReassign \? \{/);
+  assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/assign`, \{\s*ownerUserId,\s*\}\)/);
+  assert.doesNotMatch(leadDetail, /ReassignLeadSheet/);
   assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.stage, disabled: stageSaving, onChange: updateStage,/);
   assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.priority, disabled: prioritySaving, onChange: updatePriority,/);
   assert.match(leadDetail, /api\.patch\(`\/leads\/\$\{lead\.id\}\/stage`, \{ stage: nextStage \}\)/);

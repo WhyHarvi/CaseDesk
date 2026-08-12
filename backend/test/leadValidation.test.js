@@ -95,7 +95,8 @@ test("timezone-less lead consultation times use the agency timezone", () => {
 });
 
 test("commercial tracking accepts supported retainer and payment states", () => {
-  assert.deepEqual(parseCommercialStatus({ retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Received" }), { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Received" });
+  assert.deepEqual(parseCommercialStatus({ retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED", notes: "Requested" }), { retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED", notes: "Requested" });
+  assert.throws(() => parseCommercialStatus({ initialPaymentStatus: "PAID", notes: "Received" }), (error) => error.code === "PAYMENT_EVIDENCE_REQUIRED");
   assert.throws(() => parseCommercialStatus({}), /status is required/);
   assert.throws(() => parseCommercialStatus({ retainerStatus: "UNKNOWN" }), /retainerStatus is invalid/);
 });

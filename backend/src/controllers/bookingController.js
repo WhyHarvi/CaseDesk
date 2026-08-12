@@ -727,7 +727,7 @@ export async function createBookingAppointment(req, res) {
 
   const subject = String(body.subject || "").trim().slice(0, 200) || (sessionType ? sessionType.name : "Appointment");
   const effectiveBuffer = sessionType?.bufferMinutes ?? settings.bufferMinutes;
-  const paymentMethod = ["Card", "Cash", "ETransfer"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
+  const paymentMethod = ["Card", "Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
   const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
   const paymentReference = String(body.paymentReference || "").trim().slice(0, 100) || null;
   const [existingRequestAppointment, existingRequestHold] = idempotencyKey
@@ -769,7 +769,7 @@ export async function createBookingAppointment(req, res) {
   // so there's nothing to wait on.
   if (paymentMethod === "Card" && feeApplies) {
     if (startDates.length > 1) {
-      throw createHttpError(400, "Card payment isn't available for recurring appointments yet — choose cash, e-transfer, or skip payment for now.", "VALIDATION_ERROR");
+      throw createHttpError(400, "Card payment isn't available for recurring appointments yet — choose an offline payment method or skip payment for now.", "VALIDATION_ERROR");
     }
     const submittedEmail = String(body.guestEmail || "").trim().toLowerCase().slice(0, 254);
     const submittedPhone = String(body.guestPhone || "").trim().slice(0, 40) || null;
@@ -778,8 +778,9 @@ export async function createBookingAppointment(req, res) {
     // client profile. Existing-client mode has no submitted guest contact and
     // therefore correctly falls back to the profile.
     const holdEmail = body.source === "WalkIn" && submittedEmail ? submittedEmail : client?.email || submittedEmail;
-    if (!holdEmail) throw createHttpError(400, "An email is required to send the card payment link.", "VALIDATION_ERROR");
-    if (!/^\S+@\S+\.\S+$/.test(holdEmail)) throw createHttpError(400, "Enter a valid email address for the card payment link.", "VALIDATION_ERROR");
+    const holdPhone = body.source === "WalkIn" && submittedPhone ? submittedPhone : client?.phone || submittedPhone;
+    if (!holdEmail && !holdPhone) throw createHttpError(400, "An email address or phone number is required to send the card payment link.", "VALIDATION_ERROR");
+    if (holdEmail && !/^\S+@\S+\.\S+$/.test(holdEmail)) throw createHttpError(400, "Enter a valid email address for the card payment link.", "VALIDATION_ERROR");
     const hold = await createPaymentHoldForStaffBooking(req.auth.agencyId, {
       sessionTypeId: sessionType?.id || null,
       sessionTypeName: sessionType?.name || null,
@@ -793,7 +794,7 @@ export async function createBookingAppointment(req, res) {
       clientId: client?.id || null,
       name: client?.fullName || guestName,
       email: holdEmail,
-      phone: body.source === "WalkIn" && submittedPhone ? submittedPhone : client?.phone || submittedPhone,
+      phone: holdPhone,
       notes: String(body.description || "").trim().slice(0, 2000) || null,
       amount: Number(settings.consultFeeAmount),
       bufferMinutes: effectiveBuffer,
@@ -814,6 +815,7 @@ export async function createBookingAppointment(req, res) {
         guestPhone: hold.guestPhone,
         startsAt: hold.startsAt,
         endsAt: hold.endsAt,
+        delivery: await paymentHoldDeliverySummary(hold.id),
       },
     });
     return;
@@ -968,7 +970,7 @@ export async function createBookingAppointment(req, res) {
       });
     });
   }
-  if ((paymentMethod === "Cash" || paymentMethod === "ETransfer") && feeApplies) {
+  if (paymentMethod && paymentMethod !== "Card" && feeApplies) {
     try {
       if (manualPaymentHold) {
         // A transport retry after the original request succeeded must return
@@ -1171,6 +1173,10 @@ export async function createWalkInPayNowLink(req, res) {
       amount: hold.amount,
       invoiceNumber: hold.qbInvoiceNumber,
       payNowUrl: hold.status === "AwaitingPayment" ? hold.qbInvoiceLink || null : null,
+      paymentMethod: hold.paymentMethod,
+      guestEmail: hold.guestEmail,
+      guestPhone: hold.guestPhone,
+      delivery: await paymentHoldDeliverySummary(hold.id),
     },
   });
 }

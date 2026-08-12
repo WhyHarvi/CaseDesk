@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -74,6 +74,97 @@ test("lead creation writes its operational foundation in one transaction", async
   assert.equal(lead.leadNumber, `LD-${new Date().getUTCFullYear()}-000001`);
   assert.deepEqual(created.map(([kind]) => kind).sort(), ["activity", "assignment", "audit", "followUp", "lead", "stage"].sort());
   assert.equal(created.find(([kind]) => kind === "lead")[1].agencyId, "agency-1");
+});
+
+test("admin transfers a lead to a consultant in one action with an automatic audit reason", async () => {
+  const calls = [];
+  const lead = {
+    id: "lead-1",
+    leadNumber: "LD-2026-000001",
+    status: "OPEN",
+    stage: "NEW",
+    priority: "NORMAL",
+    ownerUserId: "consultant-1",
+    nextActionOwnerId: "consultant-1",
+  };
+  const tx = {
+    lead: {
+      findFirst: async () => lead,
+      update: async ({ data }) => {
+        calls.push(["lead", data]);
+        return {
+          ...lead,
+          ...data,
+          ownerUserId: "consultant-2",
+          stage: "ASSIGNED",
+          updatedAt: new Date("2026-08-11T12:00:00Z"),
+        };
+      },
+    },
+    user: {
+      findFirst: async ({ where }) => {
+        calls.push(["consultantLookup", where]);
+        return { id: "consultant-2", fullName: "Manpreet Kaur" };
+      },
+    },
+    leadFollowUp: {
+      updateMany: async ({ data }) => calls.push(["followUps", data]),
+    },
+    leadAssignmentHistory: {
+      create: async ({ data }) => calls.push(["assignment", data]),
+    },
+    leadActivity: {
+      create: async ({ data }) => calls.push(["activity", data]),
+    },
+    activityLog: {
+      create: async ({ data }) => calls.push(["audit", data]),
+    },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = {
+    auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" },
+    params: { id: "lead-1" },
+    body: { ownerUserId: "consultant-2" },
+  };
+
+  const result = await assignLead(req, db);
+
+  const automaticReason = "Transferred by an administrator to Manpreet Kaur";
+  assert.equal(result.ownerUserId, "consultant-2");
+  assert.equal(result.stage, "ASSIGNED");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].nextActionOwnerId, "consultant-2");
+  assert.equal(calls.find(([kind]) => kind === "followUps")[1].assignedUserId, "consultant-2");
+  assert.equal(calls.find(([kind]) => kind === "assignment")[1].reason, automaticReason);
+  assert.equal(calls.find(([kind]) => kind === "activity")[1].description, automaticReason);
+  assert.match(calls.find(([kind]) => kind === "audit")[1].details, new RegExp(automaticReason));
+  assert.equal(
+    calls.find(([kind]) => kind === "consultantLookup")[1].memberships.some.role,
+    "consultant",
+  );
+});
+
+test("lead transfers reject targets who are not active consultants", async () => {
+  const tx = {
+    lead: {
+      findFirst: async () => ({
+        id: "lead-1",
+        status: "OPEN",
+        ownerUserId: "consultant-1",
+      }),
+    },
+    user: { findFirst: async () => null },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = {
+    auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" },
+    params: { id: "lead-1" },
+    body: { ownerUserId: "frontdesk-1" },
+  };
+
+  await assert.rejects(
+    () => assignLead(req, db),
+    (error) => error.code === "INVALID_LEAD_OWNER" && /active consultant/i.test(error.message),
+  );
 });
 
 test("qualified outcome advances an earlier lead and records history atomically", async () => {
@@ -346,54 +437,14 @@ test("public booking links an existing client and website lead to the same consu
   assert.equal(calls.find(([kind]) => kind === "stage")[1].createdAt.toISOString(), appointment.createdAt.toISOString());
 });
 
-test("signed retainer and paid initial payment make a lead ready to convert", async () => {
-  const calls = [];
-  const tx = {
-    lead: {
-      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "PAYMENT_PENDING", ownerUserId: "user-1", retainerStatus: "SENT", initialPaymentStatus: "REQUESTED" }),
-      update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
-    },
-    leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
-    leadFollowUp: {
-      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
-      create: async ({ data }) => calls.push(["followUp", data]),
-    },
-    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
-    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
-  };
-  const db = { $transaction: async (operation) => operation(tx) };
-  const req = { auth: { role: "admin", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Signed agreement and payment receipt verified." } };
-
-  await updateCommercialStatus(req, db);
-
-  const update = calls.find(([kind]) => kind === "lead")[1];
-  assert.equal(update.stage, "READY_TO_CONVERT");
-  assert.equal(update.nextActionType, "REVIEW_CONVERSION");
-  assert.equal(calls.filter(([kind]) => kind === "activity").length, 2);
+test("paid initial payment cannot be asserted without a posted financial record", async () => {
+  const req = { auth: { role: "admin", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Receipt note only." } };
+  await assert.rejects(() => updateCommercialStatus(req, {}), (error) => error.code === "PAYMENT_EVIDENCE_REQUIRED");
 });
 
-test("commercial status update lets the lead's owning consultant confirm a signed retainer and paid initial payment, no admin required", async () => {
-  const calls = [];
-  const tx = {
-    lead: {
-      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "PAYMENT_PENDING", ownerUserId: "user-1", retainerStatus: "SENT", initialPaymentStatus: "REQUESTED" }),
-      update: async ({ data }) => { calls.push(["lead", data]); return { id: "lead-1", ...data }; },
-    },
-    leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },
-    leadFollowUp: {
-      updateMany: async ({ data }) => calls.push(["closedFollowUp", data]),
-      create: async ({ data }) => calls.push(["followUp", data]),
-    },
-    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
-    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
-  };
-  const db = { $transaction: async (operation) => operation(tx) };
+test("an owning consultant also cannot assert a paid initial payment", async () => {
   const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { retainerStatus: "SIGNED", initialPaymentStatus: "PAID", notes: "Signed agreement and payment receipt verified." } };
-
-  await updateCommercialStatus(req, db);
-
-  const update = calls.find(([kind]) => kind === "lead")[1];
-  assert.equal(update.stage, "READY_TO_CONVERT");
+  await assert.rejects(() => updateCommercialStatus(req, {}), (error) => error.code === "PAYMENT_EVIDENCE_REQUIRED");
 });
 
 test("commercial status update rejects a consultant who does not own the lead when confirming signed or paid", async () => {

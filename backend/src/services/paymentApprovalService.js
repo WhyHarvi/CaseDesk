@@ -4,10 +4,11 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { notifyUsers, resolveNotifications } from "./notificationService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "./bookingPaymentHoldService.js";
-import { createCaseInvoice, recordManualPayment } from "./caseInvoiceService.js";
+import { ACCOUNTING_PROVIDERS, completeCashInvoiceRefund, createCaseInvoice, recordManualPayment } from "./caseInvoiceService.js";
 import {
   normalizePaymentApprovalKey,
   PAYMENT_APPROVAL_STATUSES,
+  postApprovedCashTransaction,
   validateStaffPayment,
 } from "./paymentApprovalLedgerService.js";
 
@@ -48,9 +49,27 @@ async function targetContext(agencyId, values) {
     });
     if (!invoice) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
     if (values.clientId && invoice.clientId !== values.clientId) throw createHttpError(404, "Invoice not found for this client.", "NOT_FOUND");
-    const localCashPaid = invoice.paymentApprovals.reduce((sum, item) => sum + Number(item.amount), 0);
+    const localCashPaid = invoice.accountingProvider === "QuickBooks" ? invoice.paymentApprovals.reduce((sum, item) => sum + Number(item.amount), 0) : 0;
     const effectiveBalance = Math.max(0, Number(invoice.balance) - localCashPaid);
     if (Number(values.amount) > effectiveBalance + 0.01) throw createHttpError(400, "The payment is greater than the outstanding invoice balance.", "VALIDATION_ERROR");
+    return { clientId: invoice.clientId, caseId: invoice.caseId, caseInvoiceId: invoice.id, amount: values.amount };
+  }
+  if (values.entryType === "invoice_refund") {
+    const invoice = await prisma.caseInvoice.findFirst({
+      where: { id: values.caseInvoiceId || values.invoiceId, agencyId },
+      include: { refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } } } },
+    });
+    if (!invoice) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+    if (values.clientId && invoice.clientId !== values.clientId) throw createHttpError(404, "Invoice not found for this client.", "NOT_FOUND");
+    if (invoice.accountingProvider !== ACCOUNTING_PROVIDERS.CASH) throw createHttpError(409, "Only cash invoices are refunded through the approval queue.", "INVALID_STATE");
+    if (["Void", "Voided"].includes(invoice.status)) throw createHttpError(409, "A void invoice cannot be refunded.", "INVALID_STATE");
+    if (!safeText(values.description, 500)) throw createHttpError(400, "Add a reason for the refund.", "VALIDATION_ERROR");
+    const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
+    const committedRefunds = invoice.refunds.reduce((sum, item) => sum + Number(item.amount), 0);
+    const refundable = Math.round((collected - committedRefunds) * 100) / 100;
+    if (!Number.isFinite(Number(values.amount)) || Number(values.amount) <= 0 || Number(values.amount) > refundable + 0.01) {
+      throw createHttpError(400, "The refund is greater than the invoice's available balance.", "VALIDATION_ERROR");
+    }
     return { clientId: invoice.clientId, caseId: invoice.caseId, caseInvoiceId: invoice.id, amount: values.amount };
   }
   if (values.entryType === "new_charge_payment") {
@@ -58,7 +77,13 @@ async function targetContext(agencyId, values) {
     if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
     if (values.clientId && caseItem.clientId !== values.clientId) throw createHttpError(404, "Case not found for this client.", "NOT_FOUND");
     const chargeAmount = Number(values.chargeAmount);
-    if (!Number.isFinite(chargeAmount) || chargeAmount <= 0 || Number(values.amount) > chargeAmount) {
+    const [category, billing] = await Promise.all([
+      prisma.agencyFeeCategory.findFirst({ where: { agencyId, code: values.paymentType, isActive: true }, select: { kind: true } }),
+      prisma.agencyBillingSettings.findUnique({ where: { agencyId }, select: { taxRatePercent: true } }),
+    ]);
+    const taxable = ["Professional", "Consultation"].includes(category?.kind);
+    const invoiceTotal = Math.round(chargeAmount * (taxable ? 1 + Number(billing?.taxRatePercent ?? 13) / 100 : 1) * 100) / 100;
+    if (!Number.isFinite(chargeAmount) || chargeAmount <= 0 || Number(values.amount) > invoiceTotal + 0.01) {
       throw createHttpError(400, "The charge must cover the payment amount.", "VALIDATION_ERROR");
     }
     if (!safeText(values.description, 500) || !safeText(values.paymentType, 100)) {
@@ -117,7 +142,7 @@ export async function submitPaymentApproval(agencyId, {
       type: "payment.approval_required",
       category: "payments",
       title: "Payment needs approval",
-      body: `${row.submittedBy.fullName} submitted a ${row.method === "ETransfer" ? "e-transfer" : "cash"} payment of ${Number(row.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}.`,
+      body: `${row.submittedBy.fullName} submitted a ${row.method === "ETransfer" ? "e-transfer" : row.method === "BankDraft" ? "bank draft" : row.method.toLowerCase()} payment of ${Number(row.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}.`,
       severity: "warning",
       attentionLevel: "action_required",
       entityType: "paymentApproval",
@@ -172,20 +197,16 @@ async function processApprovedPayment(row, actorUserId) {
     });
     return { qbPaymentId: invoice.lastQbPaymentId || null, result: { caseInvoiceId: invoice.id } };
   }
-  if (row.entryType === "new_charge_payment" && row.method === "Cash") {
-    const payment = await prisma.payment.create({
-      data: {
-        agencyId: row.agencyId,
-        clientId: row.clientId,
-        caseId: row.caseId,
-        totalFee: row.chargeAmount,
-        paidAmount: row.amount,
-        balance: Math.max(0, Number(row.chargeAmount) - Number(row.amount)),
-        status: Number(row.amount) >= Number(row.chargeAmount) ? "Paid" : "Partial",
-        notes: [row.description, "Cash payment recorded in CaseDesk only", row.note].filter(Boolean).join(" — "),
-      },
+  if (row.entryType === "invoice_refund") {
+    const refund = await completeCashInvoiceRefund(row.agencyId, {
+      invoiceId: row.caseInvoiceId,
+      caseId: row.caseId,
+      amount: Number(row.amount),
+      reason: row.description,
+      actorUserId,
+      approvalId: row.id,
     });
-    return { paymentId: payment.id, result: { paymentId: payment.id } };
+    return { result: { caseInvoiceId: row.caseInvoiceId, invoiceRefundId: refund.id } };
   }
   if (row.entryType === "new_charge_payment") {
     const invoice = await createCaseInvoice(row.agencyId, {
@@ -197,6 +218,7 @@ async function processApprovedPayment(row, actorUserId) {
       actorUserId,
       idempotencyKey: `approval-${row.id}`,
       notifyClient: false,
+      accountingProvider: row.method === "Cash" ? ACCOUNTING_PROVIDERS.CASH : ACCOUNTING_PROVIDERS.QUICKBOOKS,
     });
     const updated = await recordManualPayment(row.agencyId, {
       caseId: row.caseId,
@@ -243,6 +265,24 @@ export async function approvePaymentApproval(agencyId, id, actorUserId) {
       },
       include: approvalInclude,
     });
+    // invoice_refund already posts its own (negative) cash transaction inside
+    // completeCashInvoiceRefund — posting again here would try to re-create
+    // it with the wrong sign; skip the generic hook for that entry type.
+    if (updated.method === "Cash" && row.entryType !== "invoice_refund") {
+      await postApprovedCashTransaction({
+        agencyId,
+        paymentApprovalId: updated.id,
+        clientId: updated.clientId,
+        caseId: updated.caseId,
+        appointmentId: updated.appointmentId,
+        caseInvoiceId: updated.caseInvoiceId,
+        amount: Number(updated.amount),
+        transactionReference: updated.transactionReference,
+        paymentDate: updated.paymentDate,
+        note: updated.note,
+        actorUserId,
+      });
+    }
     await resolveNotifications({ agencyId, entityType: "paymentApproval", entityId: id, types: ["payment.approval_required"] }).catch(() => {});
     await recordActivity({ agencyId, userId: actorUserId, clientId: updated.clientId, caseId: updated.caseId, action: "payment.approved", details: `${updated.method} payment of $${Number(updated.amount).toFixed(2)} approved`, entityType: "paymentApproval", entityId: id }).catch(() => {});
     invalidateDashboardCache(agencyId);

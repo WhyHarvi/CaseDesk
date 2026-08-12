@@ -423,6 +423,7 @@ export async function getClientById(req, res) {
             status: true,
             updatedAt: true,
             createdAt: true,
+            refunds: { where: { status: "Completed" }, select: { amount: true } },
           },
         })
       : Promise.resolve([]),
@@ -453,14 +454,17 @@ export async function getClientById(req, res) {
   const modernPaymentRecords = [
     ...caseInvoices
       .filter((row) => !["Void", "Voided"].includes(row.status))
-      .map((row) => ({
-        totalFee: row.amount,
-        paidAmount: Math.max(0, Number(row.amount) - Number(row.balance)),
-        balance: row.balance,
-        status: row.status,
-        updatedAt: row.updatedAt,
-        createdAt: row.createdAt,
-      })),
+      .map((row) => {
+        const refundedAmount = (row.refunds || []).reduce((sum, refund) => sum + Number(refund.amount), 0);
+        return {
+          totalFee: row.amount,
+          paidAmount: Math.max(0, Number(row.amount) - Number(row.balance) - refundedAmount),
+          balance: row.balance,
+          status: row.status,
+          updatedAt: row.updatedAt,
+          createdAt: row.createdAt,
+        };
+      }),
     ...bookingPayments
       .filter(
         (row) =>
@@ -627,7 +631,7 @@ export async function listClients(req, res) {
     ? await Promise.all([
         prisma.caseInvoice.findMany({
           where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } },
-          select: { clientId: true, amount: true, balance: true, status: true },
+          select: { clientId: true, amount: true, balance: true, status: true, refunds: { where: { status: "Completed" }, select: { amount: true } } },
         }),
         prisma.bookingPaymentHold.findMany({
           where: { agencyId: req.auth.agencyId, clientId: { in: clientIds } },
@@ -654,11 +658,13 @@ export async function listClients(req, res) {
   for (const row of caseInvoices) {
     if (["Void", "Voided"].includes(row.status)) continue;
     const summary = summaries.get(row.clientId);
+    const refunded = (row.refunds || []).reduce((sum, refund) => sum + Number(refund.amount), 0);
     summary.totalCharges += Number(row.amount);
     summary.totalCollected += Math.max(
       0,
       Number(row.amount) - Number(row.balance),
     );
+    summary.totalRefunds += refunded;
     summary.balance += Number(row.balance);
   }
   for (const row of bookingPayments) {

@@ -37,6 +37,19 @@ export default function ChatThread({
   senderLabelFor,
   mineSenderLabelFor,
   className = "",
+  myUserId,
+  onReply,
+  onToggleReaction,
+  canEditMessage,
+  canDeleteMessage,
+  editingMessageId,
+  editDraft,
+  onEditDraftChange,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDeleteMessage,
+  savingEdit,
 }) {
   const scrollRef = useRef(null);
   const stickToBottomRef = useRef(true);
@@ -112,6 +125,19 @@ export default function ChatThread({
                   onRetry={onRetryMessage}
                   readState={mine ? readState : undefined}
                   timeLabel={timeLabel(message.occurredAt)}
+                  myUserId={myUserId}
+                  onReply={onReply}
+                  onToggleReaction={onToggleReaction}
+                  canEdit={Boolean(canEditMessage?.(message))}
+                  canDelete={Boolean(canDeleteMessage?.(message))}
+                  editing={editingMessageId === message.id}
+                  editDraft={editDraft}
+                  onEditDraftChange={onEditDraftChange}
+                  onStartEdit={onStartEdit}
+                  onSaveEdit={onSaveEdit}
+                  onCancelEdit={onCancelEdit}
+                  onDeleteMessage={onDeleteMessage}
+                  savingEdit={savingEdit}
                 />
               );
             })}

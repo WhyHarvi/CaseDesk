@@ -149,6 +149,10 @@ test("front desk operational payloads are constrained and auditable", () => {
     "user-2",
   );
   assert.equal(
+    parseLeadAssignment({ ownerUserId: "user-2" }).reason,
+    null,
+  );
+  assert.equal(
     parseLeadLost({ reasonCode: "NO_RESPONSE", notes: "Three attempts" })
       .reasonCode,
     "NO_RESPONSE",

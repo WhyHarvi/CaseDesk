@@ -6,6 +6,7 @@ import {
 } from "./communicationProviderService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
 import { DOCUMENT_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
+import { assertClientCommunicationAllowed } from "./clientCommunicationPolicyService.js";
 
 const POLL_INTERVAL_MS = Math.max(Number(process.env.COMMUNICATION_OUTBOX_POLL_MS) || 2500, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.COMMUNICATION_OUTBOX_BATCH_SIZE) || 10, 1), 50);
@@ -106,6 +107,44 @@ async function complete(job, result) {
   });
 }
 
+async function cancelForClientPolicy(job, preference) {
+  const at = new Date();
+  const reason = preference.doNotContact
+    ? "Delivery cancelled because the client is marked Do Not Contact."
+    : `Delivery cancelled because ${job.message.channel === "Sms" ? "SMS" : job.message.channel} is disabled by the workspace client policy or the client's communication preferences.`;
+  await prisma.$transaction([
+    prisma.communicationOutbox.update({
+      where: { id: job.id },
+      data: {
+        status: "Cancelled",
+        completedAt: at,
+        lockedAt: null,
+        lastError: reason,
+      },
+    }),
+    prisma.communicationMessage.update({
+      where: { id: job.messageId },
+      data: { status: "Blocked", failedAt: at, failureReason: reason },
+    }),
+    prisma.communicationDeliveryEvent.create({
+      data: {
+        agencyId: job.agencyId,
+        messageId: job.messageId,
+        type: "BlockedByClientPolicy",
+        details: reason,
+        metadata: {},
+      },
+    }),
+  ]);
+  await recordCommunicationAudit({
+    agencyId: job.agencyId,
+    conversationId: job.message.conversationId,
+    messageId: job.messageId,
+    action: "communication.blocked_by_client_policy",
+    details: reason,
+  });
+}
+
 async function fail(job, error) {
   const attempts = job.attempts + 1;
   const terminal = attempts >= job.maxAttempts;
@@ -143,6 +182,15 @@ async function fail(job, error) {
 async function processJob(job) {
   if (!(await claim(job))) return;
   try {
+    const { allowed, preference } = await assertClientCommunicationAllowed({
+      agencyId: job.agencyId,
+      clientId: job.message.clientId,
+      channel: job.message.channel,
+    });
+    if (!allowed) {
+      await cancelForClientPolicy(job, preference);
+      return;
+    }
     const result = await deliver(job);
     await complete(job, result);
   } catch (error) {

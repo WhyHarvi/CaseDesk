@@ -66,7 +66,7 @@ export function focusedNotificationActionUrl(notification) {
     return `/leads?lead=${encodeURIComponent(notification.entityId)}`;
   }
   if (notification?.type === "lead.intake_failed" && notification.entityId) {
-    return `/lead-intake?tab=events&event=${encodeURIComponent(notification.entityId)}`;
+    return `/app/settings?section=lead-intake&tab=events&event=${encodeURIComponent(notification.entityId)}`;
   }
   return notification?.actionUrl || null;
 }
@@ -89,6 +89,12 @@ function addCount(target, key, kind, amount = 1) {
   if (!target[key]) target[key] = emptyCount();
   target[key][kind] += amount;
   target[key].total += amount;
+}
+
+function visibleSidebarDestination(destinationKey) {
+  // Lead Intake now lives inside Settings. Fold legacy notification rows
+  // into the Settings badge until their normal lifecycle resolves them.
+  return destinationKey === "leadIntake" ? "settings" : destinationKey;
 }
 
 function positiveInteger(value, fallback, maximum = 100) {
@@ -245,12 +251,19 @@ export async function getSidebarNotificationCounts(req, res) {
     }),
   ]);
   const destinations = {};
-  for (const group of actionGroups) addCount(destinations, group.destinationKey, "actions", group._count._all);
-  for (const group of updateGroups) addCount(destinations, group.destinationKey, "updates", group._count._all);
+  for (const group of actionGroups) addCount(destinations, visibleSidebarDestination(group.destinationKey), "actions", group._count._all);
+  for (const group of updateGroups) addCount(destinations, visibleSidebarDestination(group.destinationKey), "updates", group._count._all);
   for (const row of focusRows) {
-    if (!row.destinationKey || !destinations[row.destinationKey]) continue;
+    const destinationKey = visibleSidebarDestination(row.destinationKey);
+    if (!destinationKey || !destinations[destinationKey]) continue;
     const focusActionUrl = focusedNotificationActionUrl(row);
-    destinations[row.destinationKey].focus = {
+    const currentFocus = destinations[destinationKey].focus;
+    if (
+      currentFocus &&
+      new Date(currentFocus.lastOccurredAt).getTime() >=
+        new Date(row.lastOccurredAt).getTime()
+    ) continue;
+    destinations[destinationKey].focus = {
       type: row.type,
       title: row.title,
       body: row.body,
@@ -296,7 +309,10 @@ export async function markDestinationUpdatesRead(req, res) {
   }
   const where = {
     ...activeNotificationWhere(req),
-    destinationKey,
+    destinationKey:
+      destinationKey === "settings"
+        ? { in: ["settings", "leadIntake"] }
+        : destinationKey,
     readAt: null,
   };
   let ids = null;

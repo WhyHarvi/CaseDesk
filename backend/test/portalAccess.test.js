@@ -201,3 +201,26 @@ test("open sessions refresh portal access without recording repeated logins", as
   assert.match(authContext, /event === "TOKEN_REFRESHED"/);
   assert.match(authGuards, /if \(!accessReady\) return <AuthLoading \/>/);
 });
+
+test("Lead Intake is a permission-aware Settings section with a compatible legacy route", async () => {
+  const [settings, sidebar, routes, worker, controller, accessPanel] =
+    await Promise.all([
+      source("../../frontend/src/pages/Settings.jsx"),
+      source("../../frontend/src/components/layout/Sidebar.jsx"),
+      source("../../frontend/src/routes/AppRoutes.jsx"),
+      source("../src/modules/leads/lead.intake.worker.js"),
+      source("../src/controllers/notificationController.js"),
+      source("../../frontend/src/components/settings/PortalAccessSettingsPanel.jsx"),
+    ]);
+
+  assert.match(settings, /id: "lead-intake"/);
+  assert.match(settings, /getPortalAccess[\s\S]*?pages\.leadIntake/);
+  assert.match(settings, /<LeadIntakeSettingsPanel \/>/);
+  assert.doesNotMatch(sidebar, /label: "Lead Intake"/);
+  assert.match(routes, /function LeadIntakeSettingsRedirect/);
+  assert.match(routes, /params\.set\("section", "lead-intake"\)/);
+  assert.match(routes, /path="\/lead-intake"[\s\S]*?<Access page="leadIntake">/);
+  assert.match(worker, /\/app\/settings\?section=lead-intake&tab=events/);
+  assert.match(controller, /destinationKey === "leadIntake" \? "settings"/);
+  assert.match(accessPanel, /Lead intake settings/);
+});

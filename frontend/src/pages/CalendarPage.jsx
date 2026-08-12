@@ -23,7 +23,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -109,6 +109,10 @@ const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-5
 // distinct, at-a-glance "this came from the front desk" signal.
 const WALK_IN_TONE = { chip: "bg-fuchsia-500", block: "border-fuchsia-400 bg-fuchsia-50/90 hover:bg-fuchsia-100/90", title: "text-fuchsia-900", meta: "text-fuchsia-600" };
 const NO_SHOW_TONE = { chip: "bg-amber-500", block: "border-amber-400 bg-amber-50/95 hover:bg-amber-100/95", title: "text-amber-950", meta: "text-amber-700" };
+// Free consultations are a service/payment distinction, so their color is
+// stable across consultants and booking sources. Teal is intentionally not
+// part of the rotating staff palette and stays distinct from walk-ins.
+const FREE_CONSULTATION_TONE = { chip: "bg-teal-500", block: "border-teal-400 bg-teal-50/95 hover:bg-teal-100/95", title: "text-teal-950", meta: "text-teal-700" };
 const MEETING_MODE_ICON = { InPerson: MapPin, Phone: Phone, Online: Video, Zoom: Video };
 const MEETING_MODE_LABEL = { InPerson: "In person", Phone: "Phone call", Online: "Jitsi video call", Zoom: "Zoom video call" };
 const APPOINTMENT_STATUS_TONE = {
@@ -316,27 +320,55 @@ function InitialsAvatar({ name, tone, className = "h-6 w-6 text-[10px]" }) {
 const HOVER_CARD_WIDTH = 296;
 const HOVER_CARD_MARGIN = 10;
 
+function hoverCardPosition(anchorRect, measuredHeight = 260) {
+  const availableWidth = Math.max(0, window.innerWidth - HOVER_CARD_MARGIN * 2);
+  const availableHeight = Math.max(0, window.innerHeight - HOVER_CARD_MARGIN * 2);
+  const width = Math.min(HOVER_CARD_WIDTH, availableWidth);
+  const maxHeight = availableHeight;
+
+  const spaceRight = window.innerWidth - anchorRect.right - HOVER_CARD_MARGIN;
+  const spaceLeft = anchorRect.left - HOVER_CARD_MARGIN;
+  let left;
+  if (spaceRight >= width) left = anchorRect.right + HOVER_CARD_MARGIN;
+  else if (spaceLeft >= width) left = anchorRect.left - width - HOVER_CARD_MARGIN;
+  else left = spaceRight >= spaceLeft ? anchorRect.right + HOVER_CARD_MARGIN : anchorRect.left - width - HOVER_CARD_MARGIN;
+
+  const maxLeft = Math.max(HOVER_CARD_MARGIN, window.innerWidth - HOVER_CARD_MARGIN - width);
+  left = Math.min(Math.max(left, HOVER_CARD_MARGIN), maxLeft);
+
+  const visibleHeight = Math.min(measuredHeight, maxHeight);
+  const maxTop = Math.max(HOVER_CARD_MARGIN, window.innerHeight - HOVER_CARD_MARGIN - visibleHeight);
+  const top = Math.min(Math.max(anchorRect.top, HOVER_CARD_MARGIN), maxTop);
+
+  return { left, top, width, maxHeight };
+}
+
 // A lightweight preview on hover, additive to the existing click-to-open
 // side panel (EventDetails) — this never replaces it, it just answers "who
 // is this / are they reachable" without committing to opening the full
 // panel and losing whatever was already selected there.
 function AppointmentHoverCard({ item, tone, rect, onViewDetails, onMouseEnter, onMouseLeave }) {
-  const style = useMemo(() => {
-    const estimatedHeight = 260;
-    let left = rect.right + HOVER_CARD_MARGIN;
-    if (left + HOVER_CARD_WIDTH > window.innerWidth - HOVER_CARD_MARGIN) {
-      left = rect.left - HOVER_CARD_WIDTH - HOVER_CARD_MARGIN;
-    }
-    left = Math.max(HOVER_CARD_MARGIN, Math.min(left, window.innerWidth - HOVER_CARD_WIDTH - HOVER_CARD_MARGIN));
+  const cardRef = useRef(null);
+  const [style, setStyle] = useState(() => hoverCardPosition(rect));
 
-    let top = rect.top;
-    if (top + estimatedHeight > window.innerHeight - HOVER_CARD_MARGIN) {
-      top = window.innerHeight - estimatedHeight - HOVER_CARD_MARGIN;
-    }
-    top = Math.max(HOVER_CARD_MARGIN, top);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return undefined;
 
-    return { left, top, width: HOVER_CARD_WIDTH };
-  }, [rect]);
+    const reposition = () => {
+      const next = hoverCardPosition(rect, card.scrollHeight);
+      setStyle((current) => Object.keys(next).every((key) => current[key] === next[key]) ? current : next);
+    };
+
+    reposition();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(reposition);
+    observer?.observe(card);
+    window.addEventListener("resize", reposition);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", reposition);
+    };
+  }, [item.id, rect]);
 
   const start = new Date(item.startsAt);
   const displayName = item.client?.fullName || item.guestName || item.subject;
@@ -347,13 +379,14 @@ function AppointmentHoverCard({ item, tone, rect, onViewDetails, onMouseEnter, o
 
   return createPortal(
     <motion.div
+      ref={cardRef}
       initial={{ opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.12 }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="fixed z-[500] overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)]"
+      className="fixed z-[500] overflow-x-hidden overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] overscroll-contain"
       style={style}
     >
       <div className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-3.5">
@@ -497,12 +530,20 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     appointment.paymentHold?.manualPaymentReference || "",
   );
   const [manualNote, setManualNote] = useState("");
+  const [manualEntryMethod, setManualEntryMethod] = useState("");
   const [manualPaymentDate, setManualPaymentDate] = useState(appointment.paymentHold?.paidAt ? dateKey(new Date(appointment.paymentHold.paidAt)) : dateKey(new Date()));
   const [paidDetailsOpen, setPaidDetailsOpen] = useState(false);
-  const [paidDetailsMethod, setPaidDetailsMethod] = useState(appointment.paymentHold?.paymentMethod || "ETransfer");
+  const [paidDetailsMethod, setPaidDetailsMethod] = useState(["Cash", "ETransfer"].includes(appointment.paymentHold?.paymentMethod) ? appointment.paymentHold.paymentMethod : "ETransfer");
   const [manualBusy, setManualBusy] = useState("");
   const [manualError, setManualError] = useState("");
   const paymentAttention = appointmentPaymentAttention(appointment, payNow, settings);
+  const paymentLinkDelivery = payNow?.delivery || [];
+  const paymentLinkChannels = [
+    paymentLinkDelivery.some((item) => item.channel === "email") ? "email" : null,
+    paymentLinkDelivery.some((item) => item.channel === "sms") ? "SMS" : null,
+  ].filter(Boolean);
+  const paymentLinkDeliveryFailed = paymentLinkDelivery.some((item) => item.status === "failed");
+  const paymentLinkDeliveryPending = paymentLinkDelivery.some((item) => ["pending", "processing"].includes(item.status));
   const meetingSyncLabel = appointment.meetingSyncStatus === "Pending"
     ? "preparing link"
     : appointment.meetingSyncStatus === "Retrying"
@@ -555,7 +596,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   }
 
   async function recordManualPayment(method) {
-    if (method === "ETransfer" && !manualReference.trim()) {
+    if (method !== "Cash" && !manualReference.trim()) {
       setManualError("Enter the e-transfer transaction number first.");
       return;
     }
@@ -570,6 +611,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       });
       setPayNow(result);
       setManualNote("");
+      setManualEntryMethod("");
       onPaymentUpdated?.(result);
     } catch (reason) {
       setManualError(reason.response?.data?.message || "Could not record this payment.");
@@ -579,7 +621,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   }
 
   async function savePaidPaymentDetails() {
-    if (paidDetailsMethod === "ETransfer" && !manualReference.trim()) {
+    if (paidDetailsMethod !== "Cash" && !manualReference.trim()) {
       setManualError("Enter the e-transfer transaction number first.");
       return;
     }
@@ -629,7 +671,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
     });
     setManualReference(paymentHold.manualPaymentReference || "");
     setManualPaymentDate(paymentHold.paidAt ? dateKey(new Date(paymentHold.paidAt)) : dateKey(new Date()));
-    setPaidDetailsMethod(paymentHold.paymentMethod || "ETransfer");
+    setPaidDetailsMethod(["Cash", "ETransfer"].includes(paymentHold.paymentMethod) ? paymentHold.paymentMethod : "ETransfer");
     setPaidDetailsOpen(false);
   }, [appointment.id, appointment.paymentHold, appointment.paymentApprovals]);
 
@@ -841,7 +883,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                       <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/80 p-1">{[["ETransfer", "E-transfer"], ["Cash", "Cash"]].map(([value, label]) => <button key={value} type="button" onClick={() => setPaidDetailsMethod(value)} className={`h-8 rounded-lg text-[11px] font-semibold ${paidDetailsMethod === value ? "bg-slate-950 text-white" : "text-slate-500"}`}>{label}</button>)}</div>
                       <input value={manualReference} onChange={(event) => setManualReference(event.target.value)} maxLength={100} placeholder={paidDetailsMethod === "ETransfer" ? "Transaction number" : "Receipt / reference (optional)"} className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-sky-400" />
                       <input type="date" max={dateKey(new Date())} value={manualPaymentDate} onChange={(event) => setManualPaymentDate(event.target.value)} className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-sky-400" />
-                      <div className="flex gap-2"><button type="button" disabled={Boolean(manualBusy)} onClick={() => setPaidDetailsOpen(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Cancel</button><button type="button" disabled={Boolean(manualBusy) || (paidDetailsMethod === "ETransfer" && !manualReference.trim())} onClick={savePaidPaymentDetails} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-slate-950 text-xs font-semibold text-white">{manualBusy === "details" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Save details</button></div>
+                      <div className="flex gap-2"><button type="button" disabled={Boolean(manualBusy)} onClick={() => setPaidDetailsOpen(false)} className="h-9 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Cancel</button><button type="button" disabled={Boolean(manualBusy) || (paidDetailsMethod !== "Cash" && !manualReference.trim())} onClick={savePaidPaymentDetails} className="flex h-9 flex-1 items-center justify-center gap-1 rounded-full bg-slate-950 text-xs font-semibold text-white">{manualBusy === "details" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Save details</button></div>
                       {manualError ? <p className="text-xs text-rose-600">{manualError}</p> : null}
                     </div>
                   ) : <button type="button" onClick={() => setPaidDetailsOpen(true)} className="mt-2 text-xs font-semibold text-amber-700 underline decoration-amber-300 underline-offset-4">Add missing transaction number</button>
@@ -871,6 +913,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                 <p className="text-xs font-semibold text-slate-700">Consultation fee — {Number(payNow.amount).toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
                 <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-700"><Wallet className="h-3.5 w-3.5" /> Payment pending</p>
                 <p className="mt-1 text-xs text-amber-700">This stays outstanding even after the consultation is marked attended.</p>
+                {paymentLinkChannels.length ? <p className={`mt-1 text-[11px] font-medium ${paymentLinkDeliveryFailed ? "text-rose-600" : "text-amber-600"}`}>{paymentLinkDeliveryFailed ? "The payment link could not be delivered through every available channel." : paymentLinkDeliveryPending ? `Payment link is being sent by ${paymentLinkChannels.join(" and ")}.` : `Payment link sent by ${paymentLinkChannels.join(" and ")}.`}</p> : null}
                 {payNow.payNowUrl ? <button type="button" onClick={copyPayNowLink} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800">
                   {payNowCopied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />} {payNowCopied ? "Link copied" : "Copy pay-now link"}
                 </button> : null}
@@ -886,9 +929,6 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Wallet className="h-3.5 w-3.5" /> Payment not recorded</p>
                 <p className="mt-1 text-xs leading-5 text-amber-700">This consultation {appointment.status === "Completed" ? "was attended" : "is scheduled"}, but no payment or payment method is recorded. The warning remains until payment is recorded.</p>
               </div>
-              <button type="button" disabled={payNowBusy} onClick={generatePayNowLink} className="mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
-                {payNowBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />} {payNowBusy ? "Generating…" : "Charge consultation fee by card"}
-              </button>
             </div>
           ) : (
             <p className="text-xs leading-5 text-slate-500">No consultation payment is recorded. If payment was received previously, record it below to restore the billing history.</p>
@@ -896,31 +936,41 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
           {payNowError ? <p className="mt-2 text-xs text-rose-600">{payNowError}</p> : null}
           {!["Paid", "Confirming", "PendingApproval", "ApprovalFailed"].includes(payNow?.status) ? (
             <div className="mt-3 border-t border-slate-200/70 pt-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Already paid another way?</p>
-              <input
-                type="text"
-                value={manualReference}
-                onChange={(event) => setManualReference(event.target.value)}
-                maxLength={100}
-                placeholder="Transaction / receipt number (required for e-transfer)"
-                className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-              />
-              <input type="date" max={dateKey(new Date())} value={manualPaymentDate} onChange={(event) => setManualPaymentDate(event.target.value)} className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
-              <input
-                type="text"
-                value={manualNote}
-                onChange={(event) => setManualNote(event.target.value)}
-                placeholder="Note (optional)"
-                className="mt-2 h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-              />
-              <div className="mt-2 flex gap-2">
-                <button type="button" disabled={Boolean(manualBusy)} onClick={() => recordManualPayment("Cash")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
-                  {manualBusy === "Cash" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record cash
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Collect consultation payment</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <button type="button" disabled={Boolean(manualBusy) || payNowBusy} onClick={() => { setManualEntryMethod(""); generatePayNowLink(); }} className="flex h-9 items-center justify-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-50">
+                  {payNowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />} Card
                 </button>
-                <button type="button" disabled={Boolean(manualBusy) || !manualReference.trim()} onClick={() => recordManualPayment("ETransfer")} className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50">
-                  {manualBusy === "ETransfer" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Record e-transfer
-                </button>
+                {[["ETransfer", "E-transfer"], ["Cash", "Cash"]].map(([method, label]) => (
+                  <button key={method} type="button" disabled={Boolean(manualBusy) || payNowBusy} onClick={() => { setManualEntryMethod(method); setManualError(""); }} className={`flex h-9 items-center justify-center gap-1 rounded-full border px-2 text-[11px] font-semibold transition disabled:opacity-50 ${manualEntryMethod === method ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50"}`}>
+                    {label}
+                  </button>
+                ))}
               </div>
+              <p className="mt-2 text-[11px] leading-4 text-slate-500">Card sends the secure payment link by email, SMS, or both—using the contact details on this appointment.</p>
+              {manualEntryMethod ? (
+                <div className="mt-2 space-y-2 rounded-2xl border border-slate-200 bg-white p-3">
+                  <input
+                    type="text"
+                    value={manualReference}
+                    onChange={(event) => setManualReference(event.target.value)}
+                    maxLength={100}
+                    placeholder={manualEntryMethod === "ETransfer" ? "E-transfer transaction number" : "Cash receipt / reference (optional)"}
+                    className="h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                  />
+                  <input type="date" max={dateKey(new Date())} value={manualPaymentDate} onChange={(event) => setManualPaymentDate(event.target.value)} className="h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                  <input
+                    type="text"
+                    value={manualNote}
+                    onChange={(event) => setManualNote(event.target.value)}
+                    placeholder="Note (optional)"
+                    className="h-9 w-full rounded-full border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                  />
+                  <button type="button" disabled={Boolean(manualBusy) || (manualEntryMethod === "ETransfer" && !manualReference.trim())} onClick={() => recordManualPayment(manualEntryMethod)} className="flex h-9 w-full items-center justify-center gap-1.5 rounded-full bg-slate-950 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-40">
+                    {manualBusy === manualEntryMethod ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}Record {manualEntryMethod === "ETransfer" ? "e-transfer" : "cash"} payment
+                  </button>
+                </div>
+              ) : null}
               {manualError ? <p className="mt-2 text-xs text-rose-600">{manualError}</p> : null}
             </div>
           ) : null}
@@ -1256,6 +1306,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     event.preventDefault();
     if (!form.startsAt) { setError("Pick an available time."); return; }
     if (showsPaymentStep && !form.paymentMethod) { setError("Choose how the client will pay."); return; }
+    if (showsPaymentStep && !["Card", "Cash", "ETransfer", "Skip"].includes(form.paymentMethod)) { setError("Choose card, cash, or e-transfer."); return; }
     setSaving(true);
     setError("");
     try {
@@ -1326,16 +1377,17 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 </div>
                 {!paymentTerminal && !paymentOrphaned ? (
                   <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
-                    <div className="flex items-center justify-between gap-3">
+                    {pendingHold.guestEmail || paymentRecipient ? <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">
                         <Mail className="h-4 w-4 shrink-0 text-slate-400" />
                         <div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{pendingHold.guestEmail || paymentRecipient}</p><p className="text-[11px] text-slate-400">{emailDelivery?.status === "sent" ? "Payment email sent" : emailDelivery?.status === "failed" ? "Delivery failed" : emailDelivery?.lastError ? "Retrying after a delivery error…" : "Sending payment email…"}</p></div>
                       </div>
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${emailDelivery?.status === "sent" ? "bg-emerald-500" : emailDelivery?.status === "failed" ? "bg-rose-500" : "animate-pulse bg-amber-400"}`} />
-                    </div>
+                    </div> : null}
                     {emailDelivery?.lastError ? <p className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-4 text-rose-600">{emailDelivery.lastError}</p> : null}
                     {pendingHold.guestPhone ? <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3"><MessageSquare className="h-4 w-4 text-slate-400" /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-slate-700">{pendingHold.guestPhone}</p><p className="text-[11px] text-slate-400">{smsDelivery?.status === "sent" ? "Payment SMS sent" : smsDelivery?.status === "failed" ? "SMS delivery failed" : smsDelivery?.lastError ? "Retrying SMS…" : smsDelivery ? "Sending payment SMS…" : "SMS not queued"}</p></div><span className={`h-2.5 w-2.5 rounded-full ${smsDelivery?.status === "sent" ? "bg-emerald-500" : smsDelivery?.status === "failed" || !smsDelivery ? "bg-slate-300" : "animate-pulse bg-amber-400"}`} /></div> : null}
-                    <input type="email" value={paymentRecipient} onChange={(event) => setPaymentRecipient(event.target.value.replace(/\s/g, ""))} aria-label="Payment request email" className="mt-3 h-9 w-full rounded-xl border border-slate-200 px-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                    <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-500">The secure card link is sent by email, SMS, or both—based on the contact details available above.</p>
+                    <input type="email" value={paymentRecipient} onChange={(event) => setPaymentRecipient(event.target.value.replace(/\s/g, ""))} aria-label="Payment request email" placeholder={pendingHold.guestPhone ? "Add or update email (optional)" : "Payment request email"} className="mt-3 h-9 w-full rounded-xl border border-slate-200 px-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
                     <button type="button" disabled={Boolean(paymentAction) || paymentConfirming} onClick={resendPaymentRequest} className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-full border border-slate-200 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-50">
                       {paymentAction === "resend" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Resend payment request
                     </button>
@@ -1445,8 +1497,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               {showsPaymentStep ? (
                 <div className={initialIntake?.action === "appointment-payment" ? "rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3" : ""}>
                   <p className="text-xs font-medium text-slate-600">How will they pay? — {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })}</p>
-                  <div className={`mt-1.5 grid gap-1.5 ${intakePaymentRequested ? "grid-cols-3" : "grid-cols-4"}`}>
-                    {[["Card", "Card"], ["Cash", "Cash"], ["ETransfer", "E-transfer"], ...(intakePaymentRequested ? [] : [["Skip", "Skip"]])].map(([value, label]) => (
+                  <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                    {[["Card", "Card"], ["ETransfer", "E-transfer"], ["Cash", "Cash"], ...(intakePaymentRequested ? [] : [["Skip", "Skip"]])].map(([value, label]) => (
                       <button key={value} type="button" onClick={() => setForm((c) => ({ ...c, paymentMethod: value, paymentReference: c.paymentMethod === value ? c.paymentReference : "" }))} className={`rounded-lg px-2 py-2 text-xs font-semibold transition ${form.paymentMethod === value ? "bg-slate-950 text-white shadow" : "border border-slate-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50/50"}`}>
                         {label}
                       </button>
@@ -1454,12 +1506,12 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                   </div>
                   {["Cash", "ETransfer"].includes(form.paymentMethod) ? (
                     <label className="mt-2 block text-xs font-medium text-slate-600">
-                      {form.paymentMethod === "ETransfer" ? "E-transfer transaction number (optional)" : "Cash receipt / reference (optional)"}
+                      {form.paymentMethod === "Cash" ? "Cash receipt / reference (optional)" : "E-transfer transaction number (optional)"}
                       <input
                         value={form.paymentReference}
                         onChange={(event) => setForm((current) => ({ ...current, paymentReference: event.target.value }))}
                         maxLength={100}
-                        placeholder={form.paymentMethod === "ETransfer" ? "Enter it now, or leave blank and add it later" : "Receipt or internal reference"}
+                        placeholder={form.paymentMethod === "Cash" ? "Receipt or internal reference" : "Enter it now, or leave blank and add it later"}
                         className={`mt-1.5 ${input}`}
                       />
                       {form.paymentMethod === "ETransfer" ? (
@@ -1679,7 +1731,9 @@ export default function CalendarPage() {
   }, [staff]);
 
   const toneFor = useCallback(
-    (item) => item.status === "NoShow" ? NO_SHOW_TONE : item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
+    // No-show is the strongest operational state. Otherwise a free
+    // consultation keeps its dedicated color even when frontdesk booked it.
+    (item) => item.status === "NoShow" ? NO_SHOW_TONE : item.isFreeConsultation ? FREE_CONSULTATION_TONE : item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
     [staffTone, role],
   );
 
@@ -1995,6 +2049,7 @@ export default function CalendarPage() {
               )) : role === "consultant" ? (
                 <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${EVENT_TONES[0].chip}`} />Your appointments</span>
               ) : null}
+              <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${FREE_CONSULTATION_TONE.chip}`} />Free consultation</span>
               <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${WALK_IN_TONE.chip}`} />Frontdesk (walk-in)</span>
             </div>
           </div>

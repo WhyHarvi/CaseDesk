@@ -28,6 +28,7 @@ import { assertZoomOperational } from "../../services/zoomService.js";
 import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
 import { triggerRetainerFlow } from "./lead.retainer.service.js";
 import { listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
+import { staleLeadOutreachOverview } from "./lead.staleOutreach.service.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -310,14 +311,35 @@ export async function getLeadSettings(req) {
   });
 }
 
+export async function getStaleLeadOutreachOverview(req) {
+  return staleLeadOutreachOverview(req.auth.agencyId);
+}
+
 export async function updateLeadSettings(req) {
-  if (typeof req.body?.welcomeEmailEnabled !== "boolean") {
-    throw createHttpError(400, "welcomeEmailEnabled must be true or false.", "VALIDATION_ERROR");
+  const data = {};
+  for (const field of ["welcomeEmailEnabled", "staleOutreachEnabled", "staleOutreachEmailEnabled", "staleOutreachSmsEnabled"]) {
+    if (req.body?.[field] !== undefined) {
+      if (typeof req.body[field] !== "boolean") throw createHttpError(400, `${field} must be true or false.`, "VALIDATION_ERROR");
+      data[field] = req.body[field];
+    }
+  }
+  if (req.body?.staleOutreachDays !== undefined) {
+    const days = Number(req.body.staleOutreachDays);
+    if (!Number.isInteger(days) || days < 3 || days > 180) throw createHttpError(400, "staleOutreachDays must be between 3 and 180.", "VALIDATION_ERROR");
+    data.staleOutreachDays = days;
+  }
+  if (!Object.keys(data).length) throw createHttpError(400, "No lead setting was provided.", "VALIDATION_ERROR");
+  if (["staleOutreachEnabled", "staleOutreachEmailEnabled", "staleOutreachSmsEnabled"].some((field) => data[field] !== undefined)) {
+    const current = await prisma.leadSettings.findUnique({ where: { agencyId: req.auth.agencyId } });
+    const outreachEnabled = data.staleOutreachEnabled ?? current?.staleOutreachEnabled ?? false;
+    const emailEnabled = data.staleOutreachEmailEnabled ?? current?.staleOutreachEmailEnabled ?? true;
+    const smsEnabled = data.staleOutreachSmsEnabled ?? current?.staleOutreachSmsEnabled ?? true;
+    if (outreachEnabled && !emailEnabled && !smsEnabled) throw createHttpError(400, "Enable email, SMS, or both before turning on stale-lead outreach.", "VALIDATION_ERROR");
   }
   return prisma.leadSettings.upsert({
     where: { agencyId: req.auth.agencyId },
-    create: { agencyId: req.auth.agencyId, welcomeEmailEnabled: req.body.welcomeEmailEnabled },
-    update: { welcomeEmailEnabled: req.body.welcomeEmailEnabled },
+    create: { agencyId: req.auth.agencyId, ...data },
+    update: data,
   });
 }
 
@@ -327,6 +349,28 @@ async function requireLeadStaff(tx, agencyId, userId) {
     select: { id: true },
   });
   if (!user) throw createHttpError(400, "Select an active lead team member.", "INVALID_LEAD_OWNER");
+  return user;
+}
+
+async function requireLeadConsultant(tx, agencyId, userId) {
+  const user = await tx.user.findFirst({
+    where: {
+      id: userId,
+      agencyId,
+      status: "active",
+      memberships: {
+        some: { agencyId, isActive: true, role: "consultant" },
+      },
+    },
+    select: { id: true, fullName: true },
+  });
+  if (!user) {
+    throw createHttpError(
+      400,
+      "Select an active consultant.",
+      "INVALID_LEAD_OWNER",
+    );
+  }
   return user;
 }
 
@@ -482,19 +526,20 @@ export async function assignLead(req, db = prisma) {
   const actorId = req.auth.userId;
   const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
-    await requireLeadStaff(tx, agencyId, values.ownerUserId);
+    const consultant = await requireLeadConsultant(tx, agencyId, values.ownerUserId);
     if (lead.ownerUserId === values.ownerUserId) throw createHttpError(409, "This team member already owns the lead.", "NO_ASSIGNMENT_CHANGE");
+    const assignmentReason = values.reason || `Transferred by an administrator to ${consultant.fullName}`;
     const updated = await tx.lead.update({ where: { id: lead.id }, data: { ownerUserId: values.ownerUserId, ...(lead.nextActionOwnerId === lead.ownerUserId ? { nextActionOwnerId: values.ownerUserId } : {}), stage: lead.stage === "NEW" ? "ASSIGNED" : lead.stage, version: { increment: 1 } }, include: leadInclude });
     await tx.leadFollowUp.updateMany({ where: { agencyId, leadId: lead.id, status: "PENDING" }, data: { assignedUserId: values.ownerUserId } });
-    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, previousOwnerId: lead.ownerUserId, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: "REASSIGNMENT", reason: values.reason } });
-    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "ASSIGNMENT_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reassigned", description: values.reason, performedById: actorId, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
-    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.assigned", details: `${lead.leadNumber}: ${values.reason}`, entityType: "lead", entityId: lead.id, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
-    return updated;
+    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, previousOwnerId: lead.ownerUserId, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: "REASSIGNMENT", reason: assignmentReason } });
+    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "ASSIGNMENT_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reassigned", description: assignmentReason, performedById: actorId, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.assigned", details: `${lead.leadNumber}: ${assignmentReason}`, entityType: "lead", entityId: lead.id, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
+    return { updated, assignmentReason };
   }, leadTransactionOptions);
   if (db === prisma) {
-    await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead reassigned: ${result.leadNumber}`, body: values.reason, severity: result.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.id, actionUrl: "/leads", dedupeKey: `lead:${result.id}:assigned:${values.ownerUserId}:${result.updatedAt.toISOString()}` });
+    await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead reassigned: ${result.updated.leadNumber}`, body: result.assignmentReason, severity: result.updated.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.updated.id, actionUrl: "/leads", dedupeKey: `lead:${result.updated.id}:assigned:${values.ownerUserId}:${result.updated.updatedAt.toISOString()}` });
   }
-  return result;
+  return result.updated;
 }
 
 export async function moveLeadToNurture(req, db = prisma) {

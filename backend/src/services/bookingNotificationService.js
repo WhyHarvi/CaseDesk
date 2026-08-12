@@ -235,6 +235,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
   const paymentExpiry = kind === "payment_requested" && expiresAt
     ? new Date(expiresAt).toLocaleString("en-CA", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : null;
+  const existingConsultationPayment = kind === "payment_requested" && Boolean(appointment.paymentRequestForBookedAppointment);
   const primaryUrl = kind === "cancelled" ? null : (safePayNowUrl || meetingUrl || mapsUrl || safeManageUrl);
   const primaryLabel = safePayNowUrl
     ? "Pay consultation fee"
@@ -266,7 +267,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
         <h1 style="margin:0;color:#0f172a;font-size:30px;line-height:1.18;letter-spacing:-.035em;font-weight:750">${escapeHtml(copy.title)}</h1>
         <p style="margin:14px 0 0;color:#475569;font-size:16px;line-height:1.65">Hi ${escapeHtml(contactName)},<br>${escapeHtml(copy.intro)}</p>
       </td></tr>
-      ${kind === "payment_requested" ? `<tr><td class="content-pad" style="padding:14px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:17px 18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em">Not confirmed yet</p><p style="margin:8px 0 0;color:#475569;font-size:14px;line-height:1.6">Your appointment will be booked only after payment is completed.${paymentExpiry ? ` This reservation is held until <strong>${escapeHtml(paymentExpiry)}</strong>.` : ""}</p></div></td></tr>` : ""}
+      ${kind === "payment_requested" ? `<tr><td class="content-pad" style="padding:14px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:17px 18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em">${existingConsultationPayment ? "Payment outstanding" : "Not confirmed yet"}</p><p style="margin:8px 0 0;color:#475569;font-size:14px;line-height:1.6">${existingConsultationPayment ? "This consultation is already recorded in CaseDesk. The consultation fee remains due." : `Your appointment will be booked only after payment is completed.${paymentExpiry ? ` This reservation is held until <strong>${escapeHtml(paymentExpiry)}</strong>.` : ""}`}</p></div></td></tr>` : ""}
       <tr><td class="content-pad" style="padding:24px 34px 8px">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border:1px solid #e2e8f0;border-radius:20px;background:#f8fafc">
           <tr><td style="padding:23px 24px 8px"><p style="margin:0 0 20px;color:#0f172a;font-size:19px;font-weight:750;line-height:1.35">${escapeHtml(subject)}</p>
@@ -289,7 +290,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
       ${kind === "cancelled" && refundEstimate ? `<tr><td class="content-pad" style="padding:18px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">About your refund</p><p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">You paid $${Number(refundEstimate.paid).toFixed(2)}. QuickBooks processing fees mean you'll receive approximately <strong>$${Number(refundEstimate.estimatedRefund).toFixed(2)}</strong> back, not the full amount. Our team will process this in QuickBooks and follow up.</p></div></td></tr>` : ""}
       ${primaryUrl ? `<tr><td class="content-pad" style="padding:18px 34px 0"><a class="action-button" href="${escapeHtml(primaryUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(primaryLabel)} &nbsp;→</a>${showManageButton ? `<a class="action-button secondary-action" href="${escapeHtml(safeManageUrl)}" style="display:inline-block;margin-left:10px;color:#334155;text-decoration:none;padding:13px 8px;font-size:14px;font-weight:700">Reschedule or cancel</a>` : ""}</td></tr>` : ""}
       ${kind !== "cancelled" && (appointment.sessionType?.preparationInstructions || appointment.sessionType?.preparationChecklist?.length || (appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON)) ? `<tr><td class="content-pad" style="padding:22px 34px 0"><div style="border-radius:18px;background:#fffbeb;border:1px solid #fde68a;padding:18px"><p style="margin:0;color:#92400e;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em">Before your appointment</p>${appointment.sessionType?.preparationInstructions ? `<p style="margin:9px 0 0;color:#475569;font-size:14px;line-height:1.6">${escapeHtml(appointment.sessionType.preparationInstructions)}</p>` : ""}${appointment.sessionType?.preparationChecklist?.length ? `<ul style="margin:9px 0 0;padding-left:20px;color:#475569;font-size:14px;line-height:1.7">${appointment.sessionType.preparationChecklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}${appointment.sessionType?.parkingInstructions && mode === MEETING_MODES.IN_PERSON ? `<p style="margin:9px 0 0;color:#64748b;font-size:13px;line-height:1.5"><strong>Arrival:</strong> ${escapeHtml(appointment.sessionType.parkingInstructions)}</p>` : ""}</div></td></tr>` : ""}
-      <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : kind === "payment_requested" ? "After payment, we will send a separate confirmation with your calendar file and appointment details." : includeIcs ? "A calendar file is attached so you can add this appointment to your calendar." : "We will send any calendar details separately."}</p></td></tr>
+      <tr><td class="content-pad" style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">${kind === "cancelled" ? "No action is required." : kind === "payment_requested" ? existingConsultationPayment ? "After payment, CaseDesk will record the consultation fee as paid." : "After payment, we will send a separate confirmation with your calendar file and appointment details." : includeIcs ? "A calendar file is attached so you can add this appointment to your calendar." : "We will send any calendar details separately."}</p></td></tr>
       <tr><td class="content-pad" style="padding:23px 34px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;color:#334155;font-size:13px;font-weight:700">${escapeHtml(agencyName)}</p>${agencyContact ? `<p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5">${escapeHtml(agencyContact)}</p>` : ""}${agencyAddress ? `<p style="margin:3px 0 0;color:#94a3b8;font-size:12px;line-height:1.5">${escapeHtml(agencyAddress)}</p>` : ""}</td></tr>
     </table>
     <p style="margin:18px 0 0;color:#94a3b8;font-size:11px">Sent securely by CaseDesk</p>
@@ -308,7 +309,7 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     "",
     `Hi ${contactName},`,
     copy.intro,
-    kind === "payment_requested" ? "Your appointment is not confirmed until payment is completed." : null,
+    kind === "payment_requested" ? existingConsultationPayment ? "This consultation is already recorded. The consultation fee remains due." : "Your appointment is not confirmed until payment is completed." : null,
     kind === "payment_requested" && paymentExpiry ? `Reservation expires: ${paymentExpiry}` : null,
     "",
     subject,
@@ -452,7 +453,9 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
       const smsBody = kind === "cancelled"
         ? `${agencyName}: your appointment "${appointment.subject}" on ${when} has been cancelled.`
         : kind === "payment_requested"
-          ? `${agencyName}: pay${amount ? ` $${Number(amount).toFixed(2)}` : ""} to confirm "${appointment.subject}" (${when}). This is not booked until paid${expiresAt ? `; the hold expires ${new Date(expiresAt).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}` : ""}. ${payNowUrl}`
+          ? appointment.paymentRequestForBookedAppointment
+            ? `${agencyName}: consultation payment${amount ? ` of $${Number(amount).toFixed(2)}` : ""} remains due for "${appointment.subject}" (${when}). Pay securely: ${payNowUrl}`
+            : `${agencyName}: pay${amount ? ` $${Number(amount).toFixed(2)}` : ""} to confirm "${appointment.subject}" (${when}). This is not booked until paid${expiresAt ? `; the hold expires ${new Date(expiresAt).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}` : ""}. ${payNowUrl}`
           : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${smsAccess}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
       await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${deliveryId || dedupeSuffix || appointment.startsAt}` });
@@ -599,6 +602,7 @@ function paymentHoldAppointment(hold) {
     status: hold.status,
     assignedToId: hold.assignedToId,
     assignedTo: hold.assignedTo || null,
+    paymentRequestForBookedAppointment: Boolean(hold.appointmentId),
   };
 }
 

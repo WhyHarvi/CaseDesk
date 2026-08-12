@@ -17,7 +17,7 @@ import api from "../../services/api";
 const pageOptions = [
   ["dashboard", "Dashboard", "Work summary and upcoming priorities"],
   ["leads", "Leads", "Lead pipeline and inquiry records"],
-  ["leadIntake", "Lead intake", "Intake forms and incoming lead tools"],
+  ["leadIntake", "Lead intake settings", "Intake forms and incoming lead tools inside Settings"],
   ["clients", "Clients", "Client list and profile pages"],
   ["cases", "Cases", "Case list and case workspaces"],
   ["followUps", "Follow-ups", "Tasks and follow-up queue"],

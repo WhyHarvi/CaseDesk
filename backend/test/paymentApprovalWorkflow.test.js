@@ -39,10 +39,12 @@ test("pending and rejected cash do not change the CaseDesk invoice balance", () 
 
 test("staff payment validation requires an e-transfer reference but permits an optional cash receipt", () => {
   assert.throws(() => validateStaffPayment({ method: "ETransfer", amount: 100, paymentDate: "2026-08-11" }), /transaction number/i);
+  assert.throws(() => validateStaffPayment({ method: "Cheque", amount: 100, paymentDate: "2026-08-11" }), /reference/i);
+  assert.equal(validateStaffPayment({ method: "Cheque", amount: 100, transactionReference: "CHK-100", paymentDate: "2026-08-11" }).reference, "CHK-100");
   assert.equal(validateStaffPayment({ method: "Cash", amount: 100, paymentDate: "2026-08-11" }).numericAmount, 100);
 });
 
-test("frontdesk payments are approval-gated and cash branches never create a QuickBooks payment", async () => {
+test("frontdesk payments are approval-gated and cash branches use the CaseDesk Cash ledger", async () => {
   const [approvalService, bookingService, invoiceService, bookingController, billingController, routes, paymentsPage, migration] = await Promise.all([
     readFile(new URL("../src/services/paymentApprovalService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
@@ -57,7 +59,9 @@ test("frontdesk payments are approval-gated and cash branches never create a Qui
   assert.match(bookingController, /req\.auth\.role === "frontdesk"[\s\S]*submitPaymentApproval/);
   assert.match(billingController, /req\.auth\.role === "frontdesk" \|\| req\.body\?\.method === "Cash"/);
   assert.match(approvalService, /status: PAYMENT_APPROVAL_STATUSES\.processing/);
-  assert.match(approvalService, /row\.entryType === "new_charge_payment" && row\.method === "Cash"[\s\S]*prisma\.payment\.create/);
+  assert.doesNotMatch(approvalService, /prisma\.payment\.create/);
+  assert.match(approvalService, /accountingProvider: row\.method === "Cash" \? ACCOUNTING_PROVIDERS\.CASH/);
+  assert.match(approvalService, /postApprovedCashTransaction/);
   assert.match(bookingService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return hold;/);
   assert.match(invoiceService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return updated;/);
   assert.match(routes, /approvals\/:id\/approve/);

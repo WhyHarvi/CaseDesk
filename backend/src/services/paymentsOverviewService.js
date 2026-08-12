@@ -3,6 +3,7 @@ import { applyLocalCashToInvoice } from "./paymentApprovalLedgerService.js";
 import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 import { listFeeCategories } from "./feeCategoryService.js";
+import { recordActivity } from "../utils/prismaCrud.js";
 import {
   getQuickBooksCustomer,
   getQuickBooksRefundReceipt,
@@ -14,6 +15,206 @@ import {
 const MAX_ROWS_PER_SOURCE = 1000;
 
 const CASE_INVOICE_TYPE_LABEL = { fees: "Professional fees", disbursement: "Government fee disbursement" };
+
+function cashDayBounds(day) {
+  const text = String(day || new Date().toISOString().slice(0, 10)).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw Object.assign(new Error("Choose a valid cash-closing date."), { statusCode: 400, code: "VALIDATION_ERROR" });
+  const start = new Date(`${text}T00:00:00.000Z`);
+  const end = new Date(`${text}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime())) throw Object.assign(new Error("Choose a valid cash-closing date."), { statusCode: 400, code: "VALIDATION_ERROR" });
+  return { text, start, end };
+}
+
+// A cash closing is a running balance, not a same-day-only total — the
+// point is to check "does what's physically in the drawer match what the
+// system thinks is there," and the drawer doesn't reset to zero every
+// midnight. So "expected" for a given closing date = the opening balance
+// carried forward from the last closed reconciliation (0 if this agency has
+// never closed cash before) + every Posted cash movement between that prior
+// close and the end of the selected day. receiptCount/refundCount cover
+// that same cumulative window, not just the selected calendar day.
+async function cashDayTotals(agencyId, day) {
+  const bounds = cashDayBounds(day);
+  const priorClosing = await prisma.cashReconciliation.findFirst({
+    where: { agencyId, periodEnd: { lt: bounds.start } },
+    orderBy: { periodEnd: "desc" },
+    select: { countedAmount: true, periodEnd: true },
+  });
+  const openingBalance = Math.round(Number(priorClosing?.countedAmount || 0) * 100) / 100;
+  const sinceExclusive = priorClosing?.periodEnd || null;
+  const rows = await prisma.cashTransaction.findMany({
+    where: {
+      agencyId,
+      status: "Posted",
+      occurredAt: { ...(sinceExclusive ? { gt: sinceExclusive } : {}), lte: bounds.end },
+    },
+    select: { type: true, amount: true },
+  });
+  const movement = Math.round(rows.reduce((sum, row) => sum + Number(row.amount), 0) * 100) / 100;
+  return {
+    ...bounds,
+    openingBalance,
+    movement,
+    expectedAmount: Math.round((openingBalance + movement) * 100) / 100,
+    receiptCount: rows.filter((row) => row.type !== "Refund").length,
+    refundCount: rows.filter((row) => row.type === "Refund").length,
+  };
+}
+
+// "Cash on hand" the way an office would actually track a cash drawer: start
+// from the last physically-counted balance (the most recent closed
+// CashReconciliation), then add net Posted cash movement since that count.
+// If cash has never been reconciled yet, this is just the all-time net
+// Posted CashTransaction total.
+export async function getCashOnHand(agencyId) {
+  const lastClosing = await prisma.cashReconciliation.findFirst({
+    where: { agencyId },
+    orderBy: { periodEnd: "desc" },
+    select: { countedAmount: true, periodEnd: true },
+  });
+  const baseline = Number(lastClosing?.countedAmount || 0);
+  const since = lastClosing?.periodEnd || null;
+  const movement = await prisma.cashTransaction.aggregate({
+    where: { agencyId, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
+    _sum: { amount: true },
+  });
+  return Math.round((baseline + Number(movement._sum.amount || 0)) * 100) / 100;
+}
+
+// Detail behind the Cash On Hand KPI: the baseline it's carrying forward
+// from (the last closing, if any) plus every Posted cash movement counted
+// since then — exactly the two numbers getCashOnHand() adds together.
+export async function listCashLedgerActivity(agencyId, { limit = 100 } = {}) {
+  const lastClosing = await prisma.cashReconciliation.findFirst({
+    where: { agencyId },
+    orderBy: { periodEnd: "desc" },
+    select: { countedAmount: true, periodEnd: true, closedAt: true },
+  });
+  const baseline = Math.round(Number(lastClosing?.countedAmount || 0) * 100) / 100;
+  const since = lastClosing?.periodEnd || null;
+  const rows = await prisma.cashTransaction.findMany({
+    where: { agencyId, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
+    include: {
+      client: { select: { fullName: true } },
+      case: { select: { caseType: true } },
+    },
+    orderBy: { occurredAt: "desc" },
+    take: limit,
+  });
+  const movement = Math.round(rows.reduce((sum, row) => sum + Number(row.amount), 0) * 100) / 100;
+  return {
+    baseline,
+    baselineAsOf: lastClosing?.periodEnd || null,
+    baselineClosedAt: lastClosing?.closedAt || null,
+    currentBalance: Math.round((baseline + movement) * 100) / 100,
+    activity: rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      amount: Number(row.amount),
+      occurredAt: row.occurredAt,
+      clientName: row.client?.fullName || null,
+      caseType: row.case?.caseType || null,
+      reference: row.reference,
+      note: row.note,
+    })),
+  };
+}
+
+// Detail behind the QuickBooks Sync Failures KPI — the actual webhook
+// events stuck in status FAILED, with whatever QuickBooks/our worker last
+// reported as the error, so an admin can see what's failing without
+// digging through logs.
+export async function listQuickBooksSyncFailures(agencyId, { limit = 100 } = {}) {
+  const rows = await prisma.quickBooksWebhookEvent.findMany({
+    where: { agencyId, status: "FAILED" },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    entityName: row.entityName,
+    entityId: row.entityId,
+    operation: row.operation,
+    attempts: row.attempts,
+    maxAttempts: row.maxAttempts,
+    lastError: row.lastError,
+    createdAt: row.createdAt,
+    processedAt: row.processedAt,
+  }));
+}
+
+export async function getCashReconciliation(agencyId, day) {
+  const totals = await cashDayTotals(agencyId, day);
+  const closing = await prisma.cashReconciliation.findUnique({
+    where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
+    include: { closedBy: { select: { id: true, fullName: true } } },
+  });
+  return { day: totals.text, openingBalance: totals.openingBalance, movement: totals.movement, expectedAmount: totals.expectedAmount, receiptCount: totals.receiptCount, refundCount: totals.refundCount, closing };
+}
+
+export async function closeCashReconciliation(agencyId, { day, countedAmount, note, actorUserId }) {
+  const totals = await cashDayTotals(agencyId, day);
+  const counted = Math.round(Number(countedAmount) * 100) / 100;
+  if (!Number.isFinite(counted) || counted < 0 || counted > 10_000_000) throw Object.assign(new Error("Enter the physical cash amount counted."), { statusCode: 400, code: "VALIDATION_ERROR" });
+  const closing = await prisma.cashReconciliation.upsert({
+    where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
+    create: {
+      agencyId, periodStart: totals.start, periodEnd: totals.end,
+      expectedAmount: totals.expectedAmount, countedAmount: counted,
+      varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
+      receiptCount: totals.receiptCount, refundCount: totals.refundCount,
+      note: String(note || "").trim().slice(0, 500) || null,
+      closedById: actorUserId,
+    },
+    update: {
+      periodEnd: totals.end, expectedAmount: totals.expectedAmount,
+      countedAmount: counted, varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
+      receiptCount: totals.receiptCount, refundCount: totals.refundCount,
+      note: String(note || "").trim().slice(0, 500) || null,
+      closedById: actorUserId, closedAt: new Date(), status: "Closed",
+    },
+    include: { closedBy: { select: { id: true, fullName: true } } },
+  });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    action: "cash.reconciliation_closed",
+    details: `Cash closing for ${totals.text}: system $${totals.expectedAmount.toFixed(2)}, counted $${counted.toFixed(2)}, variance $${Number(closing.varianceAmount).toFixed(2)}`,
+    entityType: "cashReconciliation",
+    entityId: closing.id,
+  }).catch(() => {});
+  return { day: totals.text, openingBalance: totals.openingBalance, movement: totals.movement, expectedAmount: totals.expectedAmount, receiptCount: totals.receiptCount, refundCount: totals.refundCount, closing };
+}
+
+// Surfaces case-invoice refunds still waiting on QuickBooks so an admin can
+// see and, if it's genuinely stuck (nobody ever finished it in QuickBooks,
+// or the automatic matcher found more than one same-amount candidate and
+// refused to guess — see quickbooksWebhookService.applyCaseInvoiceRefundReceipt),
+// mark it Failed instead of it silently sitting unresolved forever. Cash
+// refunds never appear here — they complete synchronously and never enter
+// the AwaitingQuickBooks state.
+export async function listStuckInvoiceRefunds(agencyId) {
+  const rows = await prisma.invoiceRefund.findMany({
+    where: { agencyId, accountingProvider: "QuickBooks", status: "AwaitingQuickBooks" },
+    include: {
+      invoice: { select: { id: true, invoiceNumber: true, qbInvoiceNumber: true, caseId: true, clientId: true, client: { select: { id: true, fullName: true } } } },
+      requestedBy: { select: { id: true, fullName: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const now = Date.now();
+  return rows.map((row) => ({
+    id: row.id,
+    amount: Number(row.amount),
+    currency: row.currency,
+    reason: row.reason,
+    createdAt: row.createdAt,
+    ageDays: Math.floor((now - new Date(row.createdAt).getTime()) / 86_400_000),
+    invoice: row.invoice ? { id: row.invoice.id, invoiceNumber: row.invoice.invoiceNumber, qbInvoiceNumber: row.invoice.qbInvoiceNumber, caseId: row.invoice.caseId } : null,
+    client: row.invoice?.client || null,
+    requestedBy: row.requestedBy,
+  }));
+}
 
 export async function getConsultationRefundReview(agencyId, refundReceiptId) {
   const refund = await getQuickBooksRefundReceipt(agencyId, refundReceiptId);
@@ -210,8 +411,25 @@ function normalizeLegacyStatus(status) {
 
 export function netCollectedAmount(row) {
   if (row.status === "Voided" || row.status === "Refunded") return 0;
-  return Math.max(0, Number(row.amount) - Number(row.balance));
+  return Math.max(0, Number(row.amount) - Number(row.balance) - Number(row.completedRefundAmount || 0));
 }
+
+function isCashLedgerRow(row) {
+  return row.ledger === "CaseDesk Cash" || (row.source === "booking_payment" && row.paymentMethod === "Cash");
+}
+
+// Every "info box" on the Payments dashboard is a sum/count over some
+// predicate on this same combined row set — a bucket here is just that same
+// predicate, so clicking a box shows exactly the transactions behind its
+// number instead of a filter that only coincidentally lines up.
+const BUCKET_FILTERS = {
+  collected: (row) => !row.transactionOnly && !row.excludedFromTotals && netCollectedAmount(row) > 0,
+  cash_collected: (row) => !row.transactionOnly && !row.excludedFromTotals && netCollectedAmount(row) > 0 && isCashLedgerRow(row),
+  noncash_collected: (row) => !row.transactionOnly && !row.excludedFromTotals && netCollectedAmount(row) > 0 && !isCashLedgerRow(row),
+  outstanding: (row) => row.status !== "Voided" && Number(row.balance) > 0,
+  overdue: (row) => row.status === "Overdue",
+  refunded: (row) => Number(row.completedRefundAmount || 0) > 0 || row.status === "Refunded",
+};
 
 async function fetchCaseInvoiceRows(agencyId, { from, to }) {
   const [rows, categories] = await Promise.all([prisma.caseInvoice.findMany({
@@ -220,6 +438,7 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       client: { select: { fullName: true, email: true } },
       case: { select: { caseType: true } },
       paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+      refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS_PER_SOURCE,
@@ -228,10 +447,14 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
   return rows.map((rawRow) => {
     const row = applyLocalCashToInvoice(rawRow);
     const status = normalizeCaseInvoiceStatus(row.status);
+    const completedRefundAmount = (row.refunds || [])
+      .filter((refund) => refund.status === "Completed")
+      .reduce((total, refund) => total + Number(refund.amount || 0), 0);
     return {
       id: `case_invoice:${row.id}`,
       recordId: row.id,
       source: "case_invoice",
+      ledger: row.accountingProvider === "CaseDeskCash" ? "CaseDesk Cash" : "QuickBooks",
       type: labels.get(row.paymentType) || CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
       description: row.description,
       clientName: row.client?.fullName || "Unknown client",
@@ -241,6 +464,7 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       amount: Number(row.amount),
       balance: Number(row.balance),
       status,
+      invoiceNumber: row.invoiceNumber,
       qbInvoiceNumber: row.qbInvoiceNumber,
       qbInvoiceLink: row.qbInvoiceLink,
       qbRefundUrl: quickBooksAppUrl("invoice", row.qbInvoiceId),
@@ -250,8 +474,85 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       createdAt: row.createdAt,
       paidAt: status === "Paid" ? row.updatedAt : null,
       dueDate: row.dueDate,
+      refunds: row.refunds,
+      completedRefundAmount,
     };
   });
+}
+
+async function fetchCashTransactionRows(agencyId, { from, to }) {
+  const rows = await prisma.cashTransaction.findMany({
+    where: { agencyId, ...(from || to ? { occurredAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
+    include: {
+      client: { select: { fullName: true } },
+      case: { select: { caseType: true } },
+      allocations: { include: { invoice: { select: { invoiceNumber: true, description: true } } } },
+    },
+    orderBy: { occurredAt: "desc" },
+    take: MAX_ROWS_PER_SOURCE,
+  });
+  // A cash payment allocated to a case invoice already shows up as that
+  // invoice's row (its balance/status/lastPaymentMethod already reflect the
+  // payment) — listing the underlying CashTransaction too would show the
+  // same payment twice. Refunds and unallocated cash (client credit, or a
+  // payment not tied to any invoice) have no other row representing them,
+  // so those stay.
+  return rows
+    .filter((row) => !(row.type === "Payment" && row.allocations.length > 0))
+    .map((row) => ({
+    id: `cash_transaction:${row.id}`,
+    recordId: row.id,
+    source: "cash_transaction",
+    ledger: "CaseDesk Cash",
+    type: row.type === "Refund" ? "Cash refund" : "Cash receipt",
+    description: row.allocations[0]?.invoice?.description || row.note || "Cash transaction",
+    clientName: row.client?.fullName || "Unknown client",
+    clientId: row.clientId,
+    caseId: row.caseId,
+    caseType: row.case?.caseType || null,
+    amount: Math.abs(Number(row.amount)),
+    balance: 0,
+    status: row.status === "Posted" ? (row.type === "Refund" ? "Refunded" : "Paid") : row.status,
+    invoiceNumber: row.allocations[0]?.invoice?.invoiceNumber || null,
+    qbInvoiceNumber: null,
+    qbInvoiceLink: null,
+    qbRefundUrl: null,
+    paymentMethod: "Cash",
+    paymentReference: row.reference,
+    createdAt: row.occurredAt,
+    paidAt: row.occurredAt,
+    dueDate: null,
+    transactionOnly: true,
+  }));
+}
+
+async function fetchLegacyManualLedgerRows(agencyId) {
+  const rows = await prisma.caseManualLedgerEntry.findMany({
+    where: { agencyId, migratedAt: null },
+    include: { client: { select: { fullName: true } }, case: { select: { caseType: true } }, lead: { select: { firstName: true, lastName: true, leadNumber: true } } },
+    orderBy: { createdAt: "desc" },
+    take: MAX_ROWS_PER_SOURCE,
+  });
+  return rows.map((row) => ({
+    id: `manual_ledger_review:${row.id}`,
+    recordId: row.id,
+    source: "manual_ledger_review",
+    ledger: "Needs classification",
+    type: "Legacy entry · review required",
+    description: row.label,
+    clientName: row.client?.fullName || [row.lead?.firstName, row.lead?.lastName].filter(Boolean).join(" ") || row.lead?.leadNumber || "Unknown",
+    clientId: row.clientId,
+    caseId: row.caseId,
+    caseType: row.case?.caseType || null,
+    amount: Number(row.amountOwed),
+    balance: Math.max(0, Number(row.amountOwed) - Number(row.amountPaid)),
+    status: "NeedsClassification",
+    paymentMethod: null,
+    createdAt: row.createdAt,
+    paidAt: null,
+    dueDate: null,
+    excludedFromTotals: true,
+  }));
 }
 
 async function fetchBookingPaymentRows(agencyId, { from, to }) {
@@ -430,28 +731,36 @@ async function fetchLegacyPaymentRows(agencyId, { from, to }) {
  * merged/filtered/sorted/paginated in application code — simple and fast
  * enough at single-agency scale, capped per source as a safety valve.
  */
-export async function listAgencyPayments(agencyId, { status, source, query, from, to, page = 1, pageSize = 25 } = {}) {
+export async function listAgencyPayments(agencyId, { status, source, query, from, to, bucket, page = 1, pageSize = 25 } = {}) {
   await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
     logger.warn("payments_overview.refund_reconcile_failed", { agencyId, reason: error.message });
   });
-  const dateRange = { from: from ? new Date(from) : null, to: to ? new Date(to) : null };
-  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments] = await Promise.all([
+  // "to" is a date-only string ("YYYY-MM-DD") from the UI's date/month
+  // pickers. Parsing it bare (`new Date(to)`) lands on UTC midnight, which
+  // would silently exclude every transaction that happened later that same
+  // day — pin it to the end of that day instead so "to" is inclusive.
+  const dateRange = { from: from ? new Date(from) : null, to: to ? new Date(`${to}T23:59:59.999Z`) : null };
+  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments, cashTransactions, legacyManualRows] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, dateRange),
     fetchBookingPaymentRows(agencyId, dateRange),
     fetchMissingAppointmentPaymentRows(agencyId, dateRange),
     fetchLegacyPaymentRows(agencyId, dateRange),
+    fetchCashTransactionRows(agencyId, dateRange),
+    fetchLegacyManualLedgerRows(agencyId),
   ]);
 
-  let combined = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments];
+  let combined = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments, ...cashTransactions, ...legacyManualRows];
   // Voided rows are clutter in the default view (an abandoned checkout, a
   // cancelled invoice draft) — real information, but not something staff
   // need to see mixed into "all payments" by default. Still fully visible
   // by explicitly filtering to it.
   combined = status ? combined.filter((row) => row.status === status) : combined.filter((row) => row.status !== "Voided");
   if (source) combined = combined.filter((row) => row.source === source);
+  if (bucket && BUCKET_FILTERS[bucket]) combined = combined.filter(BUCKET_FILTERS[bucket]);
   if (query) {
     const needle = query.trim().toLowerCase();
     combined = combined.filter((row) => row.clientName.toLowerCase().includes(needle)
+      || (row.invoiceNumber || "").toLowerCase().includes(needle)
       || (row.qbInvoiceNumber || "").toLowerCase().includes(needle)
       || (row.paymentMethod || "").toLowerCase().includes(needle));
   }
@@ -463,7 +772,103 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
   return { rows, total, page: Math.max(1, page), pageSize };
 }
 
-export async function getPaymentsSummary(agencyId) {
+// Bounds for a calendar month. `monthKey` is "YYYY-MM"; falls back to the
+// current month when missing/invalid so the summary always has something
+// sane to compute against.
+function monthBounds(monthKey) {
+  let year;
+  let monthIndex;
+  if (monthKey && /^\d{4}-\d{2}$/.test(monthKey)) {
+    const [yearText, monthText] = monthKey.split("-");
+    year = Number(yearText);
+    monthIndex = Number(monthText) - 1;
+  } else {
+    const now = new Date();
+    year = now.getFullYear();
+    monthIndex = now.getMonth();
+  }
+  const start = new Date(year, monthIndex, 1, 0, 0, 0, 0);
+  const end = new Date(year, monthIndex + 1, 1, 0, 0, 0, 0); // exclusive
+  const key = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`;
+  const label = start.toLocaleDateString("en-CA", { month: "long", year: "numeric" });
+  return { start, end, key, label };
+}
+
+// Trend-chart buckets at three granularities — day (last 30 days), month
+// (last 8 months), year (last 5 years) — built from the same anchor date so
+// switching granularity in the UI is just picking which of the three
+// pre-computed series to render, not a new query.
+function buildTrendSeries(kind, anchor) {
+  const buckets = [];
+  if (kind === "day") {
+    for (let index = 29; index >= 0; index -= 1) {
+      const date = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - index);
+      buckets.push({ key: date.toISOString().slice(0, 10), label: date.toLocaleDateString("en-CA", { month: "short", day: "numeric" }), collected: 0, invoiced: 0 });
+    }
+  } else if (kind === "year") {
+    for (let index = 4; index >= 0; index -= 1) {
+      const date = new Date(anchor.getFullYear() - index, 0, 1);
+      buckets.push({ key: String(date.getFullYear()), label: String(date.getFullYear()), collected: 0, invoiced: 0 });
+    }
+  } else {
+    for (let index = 7; index >= 0; index -= 1) {
+      const date = new Date(anchor.getFullYear(), anchor.getMonth() - index, 1);
+      buckets.push({ key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`, label: date.toLocaleDateString("en-CA", { month: "short" }), collected: 0, invoiced: 0 });
+    }
+  }
+  return buckets;
+}
+function trendKeyOf(kind, value) {
+  const date = new Date(value);
+  if (kind === "day") return date.toISOString().slice(0, 10);
+  if (kind === "year") return String(date.getFullYear());
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+const TREND_KINDS = ["day", "month", "year"];
+
+// Sums "flow" figures (money that moved) for a single calendar-month window
+// — collected/cash/non-cash/refunded/net all "start from zero" every month
+// by definition, unlike a balance such as Cash On Hand. `all` is the same
+// merged row set getPaymentsSummary already builds; this just re-scans it
+// against a different window, so selected-month and comparison-month totals
+// stay perfectly consistent with each other and with the all-time totals.
+function summarizeMonthWindow(all, bounds) {
+  let collected = 0;
+  let cashCollected = 0;
+  let nonCashCollected = 0;
+  let refunded = 0;
+  let transactionCount = 0;
+  for (const row of all) {
+    if (row.transactionOnly || row.excludedFromTotals) continue;
+    if (row.paidAt) {
+      const paidDate = new Date(row.paidAt);
+      if (paidDate >= bounds.start && paidDate < bounds.end) {
+        const paidAmount = netCollectedAmount(row);
+        collected += paidAmount;
+        transactionCount += 1;
+        if (isCashLedgerRow(row)) cashCollected += paidAmount;
+        else nonCashCollected += paidAmount;
+      }
+    }
+    for (const refund of row.refunds || []) {
+      if (refund.status !== "Completed") continue;
+      const refundDate = new Date(refund.createdAt);
+      if (refundDate >= bounds.start && refundDate < bounds.end) refunded += Number(refund.amount || 0);
+    }
+  }
+  return {
+    key: bounds.key,
+    label: bounds.label,
+    collected: Math.round(collected * 100) / 100,
+    cashCollected: Math.round(cashCollected * 100) / 100,
+    nonCashCollected: Math.round(nonCashCollected * 100) / 100,
+    refunded: Math.round(refunded * 100) / 100,
+    net: Math.round((collected - refunded) * 100) / 100,
+    transactionCount,
+  };
+}
+
+export async function getPaymentsSummary(agencyId, { month } = {}) {
   await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
     logger.warn("payments_summary.refund_reconcile_failed", { agencyId, reason: error.message });
   });
@@ -471,41 +876,40 @@ export async function getPaymentsSummary(agencyId) {
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments] = await Promise.all([
+  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments, legacyManualRows, cashOnHand, pendingApprovalCount, quickBooksSyncFailures] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, {}),
     fetchBookingPaymentRows(agencyId, {}),
     fetchMissingAppointmentPaymentRows(agencyId, {}),
     fetchLegacyPaymentRows(agencyId, {}),
+    fetchLegacyManualLedgerRows(agencyId),
+    getCashOnHand(agencyId),
+    prisma.paymentApproval.count({ where: { agencyId, status: { in: ["Pending", "Failed"] } } }),
+    prisma.quickBooksWebhookEvent.count({ where: { agencyId, status: "FAILED" } }),
   ]);
-  const all = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments];
+  const all = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments, ...legacyManualRows];
 
   let totalCollected = 0;
   let outstandingBalance = 0;
   let paidThisMonth = 0;
   let paidLastMonth = 0;
   let overdueCount = 0;
+  let totalRefunded = 0;
   const statusBreakdown = {};
   const typeBreakdown = {};
 
-  // Last 8 calendar months, oldest first, keyed YYYY-MM.
-  const trendMonths = [];
-  for (let index = 7; index >= 0; index -= 1) {
-    const monthDate = new Date(monthStart.getFullYear(), monthStart.getMonth() - index, 1);
-    trendMonths.push({
-      key: `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`,
-      label: monthDate.toLocaleDateString("en-CA", { month: "short" }),
-      collected: 0,
-      invoiced: 0,
-    });
+  // Three trend series (day/month/year), all anchored to today, built in
+  // one pass over `all` below alongside the rest of the totals.
+  const trendAnchor = new Date();
+  const trendSeries = {};
+  const trendByKeyByKind = {};
+  for (const kind of TREND_KINDS) {
+    trendSeries[kind] = buildTrendSeries(kind, trendAnchor);
+    trendByKeyByKind[kind] = new Map(trendSeries[kind].map((item) => [item.key, item]));
   }
-  const trendByKey = new Map(trendMonths.map((item) => [item.key, item]));
-  const monthKeyOf = (value) => {
-    const date = new Date(value);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  };
   const lastMonthStart = new Date(monthStart.getFullYear(), monthStart.getMonth() - 1, 1);
 
   for (const row of all) {
+    if (row.transactionOnly || row.excludedFromTotals) continue;
     const paidAmount = netCollectedAmount(row);
     totalCollected += paidAmount;
     if (row.status !== "Voided") outstandingBalance += row.balance;
@@ -513,36 +917,72 @@ export async function getPaymentsSummary(agencyId) {
       const paidDate = new Date(row.paidAt);
       if (paidDate >= monthStart) paidThisMonth += paidAmount;
       else if (paidDate >= lastMonthStart) paidLastMonth += paidAmount;
-      const bucket = trendByKey.get(monthKeyOf(paidDate));
-      if (bucket) bucket.collected += paidAmount;
+      for (const kind of TREND_KINDS) {
+        const bucket = trendByKeyByKind[kind].get(trendKeyOf(kind, paidDate));
+        if (bucket) bucket.collected += paidAmount;
+      }
     }
     if (row.status === "Overdue") overdueCount += 1;
+    totalRefunded += Number(row.completedRefundAmount || 0);
 
-    const invoicedBucket = trendByKey.get(monthKeyOf(row.createdAt));
-    if (invoicedBucket && row.status !== "Voided" && !row.missingAppointmentPayment) invoicedBucket.invoiced += row.amount;
+    if (row.status !== "Voided" && !row.missingAppointmentPayment) {
+      for (const kind of TREND_KINDS) {
+        const invoicedBucket = trendByKeyByKind[kind].get(trendKeyOf(kind, row.createdAt));
+        if (invoicedBucket) invoicedBucket.invoiced += row.amount;
+      }
+    }
 
     const statusEntry = statusBreakdown[row.status] || { count: 0, amount: 0 };
     statusEntry.count += 1;
     statusEntry.amount += row.amount;
     statusBreakdown[row.status] = statusEntry;
 
-    const typeEntry = typeBreakdown[row.source] || { count: 0, collected: 0, outstanding: 0 };
+    const ledgerKey = row.ledger === "CaseDesk Cash"
+      || (row.source === "booking_payment" && row.paymentMethod === "Cash")
+      ? "casedesk_cash"
+      : row.ledger === "QuickBooks" || row.source === "booking_payment"
+        ? "quickbooks"
+        : row.source;
+    const typeEntry = typeBreakdown[ledgerKey] || { count: 0, collected: 0, outstanding: 0 };
     typeEntry.count += 1;
     typeEntry.collected += paidAmount;
     if (row.status !== "Voided") typeEntry.outstanding += row.balance;
-    typeBreakdown[row.source] = typeEntry;
+    typeBreakdown[ledgerKey] = typeEntry;
   }
+
+  // Selected-month view: defaults to the current month when no filter is
+  // passed, plus the prior calendar month for a like-for-like comparison.
+  // These are independent of the all-time totals above (totalCollected,
+  // cashOnHand, etc. deliberately keep tracking everything since day one).
+  const selectedBounds = monthBounds(month);
+  const priorMonthAnchor = new Date(selectedBounds.start.getFullYear(), selectedBounds.start.getMonth() - 1, 1);
+  const previousBounds = monthBounds(`${priorMonthAnchor.getFullYear()}-${String(priorMonthAnchor.getMonth() + 1).padStart(2, "0")}`);
+  const selectedMonth = summarizeMonthWindow(all, selectedBounds);
+  const previousMonth = summarizeMonthWindow(all, previousBounds);
 
   return {
     totalCollected,
+    cashCollected: typeBreakdown.casedesk_cash?.collected || 0,
+    nonCashCollected: typeBreakdown.quickbooks?.collected || 0,
+    totalRefunded,
     outstandingBalance,
     paidThisMonth,
     paidLastMonth,
     overdueCount,
+    cashOnHand,
+    pendingApprovalCount,
+    quickBooksSyncFailures,
     manualBookingCount: bookingPayments.filter((row) => row.needsManualBooking).length,
+    legacyReviewCount: legacyManualRows.length,
     totalTransactions: all.filter((row) => !row.missingAppointmentPayment).length,
-    monthlyTrend: trendMonths.map(({ key, ...rest }) => rest),
+    trend: {
+      day: trendSeries.day.map(({ key, ...rest }) => rest),
+      month: trendSeries.month.map(({ key, ...rest }) => rest),
+      year: trendSeries.year.map(({ key, ...rest }) => rest),
+    },
     statusBreakdown,
     typeBreakdown,
+    selectedMonth,
+    previousMonth,
   };
 }
