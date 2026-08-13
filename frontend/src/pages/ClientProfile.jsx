@@ -597,7 +597,7 @@ export default function ClientProfile() {
               Add note
             </button>
           ) : null}
-          {["admin", "consultant"].includes(role) ? (
+          {["admin", "consultant", "frontdesk"].includes(role) ? (
             <button
               type="button"
               onClick={() => setEditingClient(true)}

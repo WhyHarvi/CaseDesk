@@ -94,16 +94,15 @@ router.get(
   asyncHandler(getGeneratedAccountStatement),
 );
 router.get("/:id", asyncHandler(getClientById));
-// Creating a client stays open to frontdesk — it's the first step of the
-// front-desk walk-in intake flow. Editing, archiving, or closing an
-// *existing* client is not: frontdesk's data scope now covers every
-// client for lookup/view purposes, and without this guard that would
-// also mean write access to every client's record.
+// Frontdesk can create, edit, archive, and close clients — the same as
+// consultant/admin. Case editing and internal notes stay locked down
+// separately (see caseRoutes.js / noteRoutes.js); this guard is
+// client-record-specific.
 router.post("/", asyncHandler(createClient));
-router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateClient));
+router.patch("/:id", requireRole("admin", "consultant", "frontdesk"), asyncHandler(updateClient));
 router.get("/:id/archive-impact", asyncHandler(getClientArchiveImpact));
-router.patch("/:id/archive", requireRole("admin", "consultant"), asyncHandler(archiveClient));
-router.patch("/:id/close", requireRole("admin", "consultant"), asyncHandler(closeClient));
+router.patch("/:id/archive", requireRole("admin", "consultant", "frontdesk"), asyncHandler(archiveClient));
+router.patch("/:id/close", requireRole("admin", "consultant", "frontdesk"), asyncHandler(closeClient));
 router.post(
   "/:id/quickbooks-sync",
   requireRole("admin", "consultant"),

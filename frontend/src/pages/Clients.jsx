@@ -748,11 +748,7 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 
 export default function Clients() {
   const { role, membership } = useAuth();
-  // Frontdesk can look up and view any client now, but editing, archiving,
-  // or deleting an existing client's record is still admin/consultant only
-  // — the backend enforces this too (clientRoutes.js), this just keeps the
-  // UI from offering an action that would 403.
-  const canManageClients = ["admin", "consultant"].includes(role);
+  const canManageClients = ["admin", "consultant", "frontdesk"].includes(role);
   const navigate = useNavigate();
   const canReassignClients = ["admin", "frontdesk"].includes(role);
   const portalAccess = getPortalAccess(role, membership?.permissions);

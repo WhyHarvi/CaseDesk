@@ -6,7 +6,7 @@ import { caseAccessWhere, clientAccessWhere } from "../src/middleware/authorizat
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
-test("frontdesk defaults to full view access on clients and cases, with edit locked to admin/consultant", () => {
+test("frontdesk defaults to full view access on clients and cases", () => {
   const frontdesk = defaultPortalAccess("frontdesk");
   assert.equal(frontdesk.pages.clients, true);
   assert.equal(frontdesk.pages.cases, true);
@@ -32,16 +32,16 @@ test("an invalid saved data scope for frontdesk falls back to the new all-access
   assert.equal(access.data.cases, "all");
 });
 
-test("client write endpoints (update/archive/close) are admin/consultant only — creating a client stays open for front-desk intake", async () => {
+test("client write endpoints (update/archive/close) are open to admin/consultant/frontdesk — creating a client stays open for front-desk intake", async () => {
   const routes = await source("../src/routes/clientRoutes.js");
 
   // The front-desk walk-in intake flow (Clients.jsx) posts here directly —
   // this must never gain a role guard or that flow breaks.
   assert.match(routes, /router\.post\("\/", asyncHandler\(createClient\)\);/);
 
-  assert.match(routes, /router\.patch\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(updateClient\)\);/);
-  assert.match(routes, /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant"\), asyncHandler\(archiveClient\)\);/);
-  assert.match(routes, /router\.patch\("\/:id\/close", requireRole\("admin", "consultant"\), asyncHandler\(closeClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(updateClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(archiveClient\)\);/);
+  assert.match(routes, /router\.patch\("\/:id\/close", requireRole\("admin", "consultant", "frontdesk"\), asyncHandler\(closeClient\)\);/);
 });
 
 test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are admin/consultant only — creating a case stays open for front-desk intake", async () => {
@@ -84,15 +84,15 @@ test("notes require the internalNotes capability, not just client/case data acce
   assert.match(routes, /router\.use\(requirePortalCapability\("internalNotes"\)\);/);
 });
 
-test("Clients.jsx and ClientProfile.jsx hide edit/archive actions from view-only visitors", async () => {
+test("Clients.jsx and ClientProfile.jsx show edit/archive actions to admin/consultant/frontdesk, hidden only for genuinely view-only visitors", async () => {
   const [listPage, profilePage] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),
     source("../../frontend/src/pages/ClientProfile.jsx"),
   ]);
-  assert.match(listPage, /const canManageClients = \["admin", "consultant"\]\.includes\(role\);/);
+  assert.match(listPage, /const canManageClients = \["admin", "consultant", "frontdesk"\]\.includes\(role\);/);
   assert.match(listPage, /if \(!canManage\) return null;/);
   assert.match(listPage, /canManage=\{canManageClients\}/);
-  assert.match(profilePage, /\{\["admin", "consultant"\]\.includes\(role\) \? \(\s*<button\s*type="button"\s*onClick=\{\(\) => setEditingClient\(true\)\}/);
+  assert.match(profilePage, /\{\["admin", "consultant", "frontdesk"\]\.includes\(role\) \? \(\s*<button\s*type="button"\s*onClick=\{\(\) => setEditingClient\(true\)\}/);
 });
 
 test("Cases.jsx and CaseProfile.jsx hide edit/lifecycle actions from view-only visitors", async () => {
