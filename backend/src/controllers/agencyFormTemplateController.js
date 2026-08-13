@@ -6,8 +6,10 @@ import { normalizeDocumentName } from "../utils/documentNames.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { requireFormPermission } from "../services/formPermissions.js";
+import { regenerateFieldSchemaFromBuffer, listFieldSchema, updateFieldSchema } from "../services/formFieldMappingService.js";
+import { FORM_DATA_SOURCE_PATHS } from "../services/formDataSourceRegistry.js";
 
-const include = { uploadedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, caseForms: true } } };
+const include = { uploadedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, caseForms: true, fieldSchemas: true } } };
 const versionInclude = { createdBy: { select: { id: true, fullName: true } } };
 
 function requireManager(req) {
@@ -66,6 +68,9 @@ export async function createAgencyFormTemplate(req, res) {
   try {
     const data = await prisma.agencyFormTemplate.create({ data: { agencyId: req.user.agencyId, ...metadata, storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size, fileHash, uploadedById: req.user.id, versions: { create: { agencyId: req.user.agencyId, versionNumber: 1, sourceRevision: metadata.sourceRevision, storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size, fileHash, createdById: req.user.id } } }, include });
     await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "agency_form_template.created", details: `${data.title} saved to the agency form library` });
+    // Best-effort: a template that isn't a fillable AcroForm PDF (a scanned
+    // document, say) just gets no field schema — never blocks the upload.
+    try { await regenerateFieldSchemaFromBuffer({ agencyId: req.user.agencyId, agencyFormTemplateId: data.id, buffer: req.file.buffer, mimeType: req.file.mimetype }); } catch { /* non-fatal */ }
     res.status(201).json({ data });
   } catch (error) { await removeFile(storageKey); if (error.code === "P2002") throw createHttpError(409, "A form template with this name or number already exists"); throw error; }
 }
@@ -94,6 +99,7 @@ export async function replaceAgencyFormTemplate(req, res) {
       return tx.agencyFormTemplate.update({ where: { id: existing.id }, data: { ...metadata, storageKey, originalFilename: req.file.originalname, mimeType: req.file.mimetype, fileSize: req.file.size, fileHash, currentVersion: versionNumber, uploadedById: req.user.id }, include });
     });
     await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "agency_form_template.replaced", details: `${data.title} updated to template version ${data.currentVersion}` });
+    try { await regenerateFieldSchemaFromBuffer({ agencyId: req.user.agencyId, agencyFormTemplateId: data.id, buffer: req.file.buffer, mimeType: req.file.mimetype }); } catch { /* non-fatal */ }
     res.json({ data });
   } catch (error) { await removeFile(storageKey); throw error; }
 }
@@ -144,6 +150,31 @@ export async function saveCaseFormAsAgencyTemplate(req, res) {
   req.file = { originalname: form.originalFilename || `${form.title}.pdf`, mimetype: form.mimeType || "application/octet-stream", size: buffer.length, buffer };
   req.body = { ...req.body, title: req.body.title || form.title, formNumber: req.body.formNumber ?? form.formNumber, language: req.body.language || form.language, sourceRevision: req.body.sourceRevision ?? form.sourceRevision };
   return createAgencyFormTemplate(req, res);
+}
+
+export async function getAgencyFormTemplateFieldSchema(req, res) {
+  const template = await prisma.agencyFormTemplate.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { id: true } });
+  if (!template) throw createHttpError(404, "Agency form template not found");
+  const data = await listFieldSchema(template.id);
+  res.json({ data, meta: { sourcePaths: FORM_DATA_SOURCE_PATHS, canManage: req.user.role === "admin" } });
+}
+
+export async function patchAgencyFormTemplateFieldSchema(req, res) {
+  requireManager(req);
+  const template = await prisma.agencyFormTemplate.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { id: true } });
+  if (!template) throw createHttpError(404, "Agency form template not found");
+  const patch = {};
+  if (req.body.label !== undefined) { const label = String(req.body.label).trim(); if (!label) throw createHttpError(400, "Label is required"); patch.label = label; }
+  if (req.body.helpText !== undefined) patch.helpText = req.body.helpText ? String(req.body.helpText).trim() : null;
+  if (req.body.section !== undefined) patch.section = req.body.section ? String(req.body.section).trim() : null;
+  if (req.body.owner !== undefined) { if (!["Client", "Representative", "Case", "Manual"].includes(req.body.owner)) throw createHttpError(400, "Invalid owner"); patch.owner = req.body.owner; }
+  if (req.body.sourcePath !== undefined) { if (req.body.sourcePath && !FORM_DATA_SOURCE_PATHS.includes(req.body.sourcePath)) throw createHttpError(400, "Unknown data source path"); patch.sourcePath = req.body.sourcePath || null; }
+  if (req.body.isRequired !== undefined) patch.isRequired = Boolean(req.body.isRequired);
+  if (req.body.fillableBy !== undefined) { if (!["Consultant", "Client", "Both"].includes(req.body.fillableBy)) throw createHttpError(400, "Invalid fillableBy"); patch.fillableBy = req.body.fillableBy; }
+  if (req.body.condition !== undefined) patch.condition = req.body.condition && typeof req.body.condition === "object" ? req.body.condition : null;
+  const data = await updateFieldSchema({ id: req.params.fieldId, agencyId: req.user.agencyId, patch });
+  if (!data) throw createHttpError(404, "Field mapping not found");
+  res.json({ data });
 }
 
 export async function deleteAgencyFormTemplate(req, res) {

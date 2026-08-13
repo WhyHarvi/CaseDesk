@@ -1,10 +1,12 @@
-import { CheckCircle2, ChevronRight, ClipboardList, Loader2, Lock, Plus, Send, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, ClipboardList, FileText, Loader2, Lock, Plus, Send, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   getPortalQuestionnaires,
   savePortalQuestionnaireAnswers,
   submitPortalQuestionnaire,
+  getPortalCaseFormRequests,
+  submitPortalCaseFormRequest,
   portalErrorMessage,
 } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
@@ -292,6 +294,82 @@ function CollectionStepSheet({ step, initialValues, onClose, onSaved }) {
   );
 }
 
+// A consultant only ever sends the handful of fields still missing on a
+// government form — never the whole thing — so this is one short screen,
+// not a replica of the source PDF. Plain-language labels come straight
+// from the field mapping the consultant confirmed; the client never sees
+// raw AcroForm field names or IRCC's own question numbering.
+function CaseFormRequestSheet({ request, onClose, onSubmitted }) {
+  const [values, setValues] = useState(() => Object.fromEntries(request.fields.map((field) => [field.fieldKey, field.value || ""])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const answeredCount = request.fields.filter((field) => (values[field.fieldKey] || "").trim()).length;
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await submitPortalCaseFormRequest(request.id, values);
+      onSubmitted();
+    } catch (reason) {
+      setError(portalErrorMessage(reason, "Your answers could not be submitted."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SheetShell
+      title={request.formTitle || "Form details"}
+      subtitle={request.formNumber ? `${request.formNumber} · Requested by your consultant` : "Requested by your consultant"}
+      onClose={onClose}
+      footer={
+        <button
+          type="submit"
+          form="case-form-request"
+          disabled={saving || answeredCount < request.fields.length}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-sky-600 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(2,132,199,0.3)] transition-all duration-200 hover:bg-sky-700 active:scale-[0.98] disabled:opacity-40"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {answeredCount < request.fields.length ? `Answer all ${request.fields.length} to submit` : "Submit"}
+        </button>
+      }
+    >
+      <form id="case-form-request" onSubmit={submit} className="space-y-4 pb-2">
+        {request.message ? <p className="rounded-2xl bg-sky-50 px-4 py-3 text-sm leading-5 text-sky-900">{request.message}</p> : null}
+        {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+        <div className="space-y-4 rounded-3xl border border-white/80 bg-white p-4">
+          {request.fields.map((field) => (
+            <label key={field.fieldKey} className="block text-sm font-semibold text-slate-800">
+              {field.label}
+              {field.helpText ? <span className="mt-0.5 block text-xs font-normal leading-5 text-slate-500">{field.helpText}</span> : null}
+              {field.fieldType === "Checkbox" ? (
+                <select
+                  value={values[field.fieldKey] || ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.fieldKey]: event.target.value }))}
+                  className={inputClass}
+                >
+                  <option value="">Select</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              ) : (
+                <input
+                  type={field.fieldType === "Date" ? "date" : "text"}
+                  value={values[field.fieldKey] || ""}
+                  onChange={(event) => setValues((current) => ({ ...current, [field.fieldKey]: event.target.value }))}
+                  className={inputClass}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+      </form>
+    </SheetShell>
+  );
+}
+
 function AssignmentSheet({ assignment, answers, onClose, onOpenStep, onSubmit, submitting }) {
   const steps = useMemo(() => {
     const unique = new Map();
@@ -367,20 +445,23 @@ export default function ClientPortalQuestionnaires() {
   const { overview, refresh } = usePortalData();
   const { showToast } = usePortalToast();
   const [data, setData] = useState(null);
+  const [caseFormRequests, setCaseFormRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openAssignmentId, setOpenAssignmentId] = useState(null);
   const [activeStep, setActiveStep] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [openRequestId, setOpenRequestId] = useState(null);
 
   const load = useCallback(({ silent = false } = {}) => {
     if (!silent) setLoading(true);
-    return getPortalQuestionnaires()
-      .then((result) => { setData(result); setError(""); })
+    return Promise.all([getPortalQuestionnaires(), getPortalCaseFormRequests().catch(() => [])])
+      .then(([questionnaires, requests]) => { setData(questionnaires); setCaseFormRequests(requests || []); setError(""); })
       .catch((reason) => setError(portalErrorMessage(reason, "Your questionnaires could not be loaded.")))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
+  const openRequest = caseFormRequests.find((request) => request.id === openRequestId) || null;
 
   const openAssignment = data?.assignments.find((item) => item.id === openAssignmentId) || null;
 
@@ -413,6 +494,29 @@ export default function ClientPortalQuestionnaires() {
         client={overview?.client}
         agency={overview?.agency}
       />
+
+      {caseFormRequests.length ? (
+        <div className="space-y-3">
+          <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Requested by your consultant</p>
+          {caseFormRequests.map((request) => (
+            <GlassCard key={request.id} onClick={() => setOpenRequestId(request.id)} className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+                    <FileText className="h-[18px] w-[18px]" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{request.formNumber || "Form"}</p>
+                    <h2 className="mt-1 truncate text-[16px] font-semibold tracking-tight text-slate-950">{request.formTitle}</h2>
+                    <p className="mt-1 text-xs text-slate-500">{request.fields.length} detail{request.fields.length === 1 ? "" : "s"} needed{request.dueAt ? ` · Due ${formatPortalDate(request.dueAt)}` : ""}</p>
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-full bg-amber-100/90 px-2.5 py-1 text-[10px] font-semibold text-amber-800">Action needed</span>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+      ) : null}
 
       {error ? (
         <ClientPortalEmptyState
@@ -453,13 +557,13 @@ export default function ClientPortalQuestionnaires() {
             );
           })}
         </div>
-      ) : (
+      ) : !caseFormRequests.length ? (
         <ClientPortalEmptyState
           icon={ClipboardList}
           title="No questionnaires yet"
           copy="When your consultant assigns a questionnaire, it will appear here with everything you need to fill in."
         />
-      )}
+      ) : null}
 
       {openAssignment && !activeStep ? (
         <AssignmentSheet
@@ -494,6 +598,19 @@ export default function ClientPortalQuestionnaires() {
           onSaved={async () => {
             setActiveStep(null);
             showToast("Answers saved.");
+            await load({ silent: true });
+            refresh({ silent: true });
+          }}
+        />
+      ) : null}
+
+      {openRequest ? (
+        <CaseFormRequestSheet
+          request={openRequest}
+          onClose={() => setOpenRequestId(null)}
+          onSubmitted={async () => {
+            setOpenRequestId(null);
+            showToast("Submitted — your consultant will review it.");
             await load({ silent: true });
             refresh({ silent: true });
           }}

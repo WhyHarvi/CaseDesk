@@ -38,11 +38,22 @@ function summarize(fields) {
  * form with no mapping file returns the same empty result every form got
  * before IMM 1294 existed — no regression, just "not yet authored".
  */
-export function buildCaseFormAutofill(item, caseItem, assessment) {
+export function buildCaseFormAutofill(item, caseItem, assessment, extra = {}) {
   const mapping = getFormFieldMapping(item?.formNumber);
   if (!mapping) return { mappingVersion: null, values: {}, warnings: [], fields: [], analysis: null };
 
-  const ctx = { formData: assessment?.formData || {}, client: caseItem?.client || {} };
+  // representative/agency/applicantProfile are optional — only forms that
+  // are actually about a representative (IMM 5476) read them. A form with
+  // no buildPdfValues, or one that only reads ctx.client, works exactly as
+  // before whether or not a caller passes `extra`.
+  const ctx = {
+    formData: assessment?.formData || {},
+    client: caseItem?.client || {},
+    case: caseItem ? { caseType: caseItem.caseType, applicationNumber: caseItem.applicationNumber } : {},
+    representative: extra.representative || null,
+    agency: extra.agency || null,
+    applicantProfile: item?.applicantProfile || null,
+  };
   const fields = [];
   for (const key of mapping.factKeys) {
     const fact = APPLICANT_FACTS[key];

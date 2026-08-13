@@ -29,6 +29,8 @@ import { createPortal } from "react-dom";
 import api from "../../services/api";
 import XfaPdfPreviewOverlay from "./XfaPdfPreviewOverlay";
 import { buildCaseFormAutofill } from "./formAutofillMappings";
+import FormFieldChecklistOverlay from "./FormFieldChecklistOverlay";
+import FormFieldMappingOverlay from "./FormFieldMappingOverlay";
 
 const acceptedTypes = ".pdf,.doc,.docx,.txt,.rtf";
 const statuses = [
@@ -305,6 +307,7 @@ function AddFormsOverlay({
   onAssign,
   onAssignTemplates,
   onCreateCustom,
+  onOpenFieldMapping,
   canManageTemplates,
 }) {
   const [mode, setMode] = useState("suggested");
@@ -585,50 +588,63 @@ function AddFormsOverlay({
                       (form) => form.sourceAgencyFormTemplateId === item.id,
                     );
                     return (
-                      <button
+                      <div
                         key={item.id}
-                        type="button"
-                        disabled={alreadyAssigned}
-                        onClick={() =>
-                          setSelectedTemplates((current) => {
-                            const next = new Set(current);
-                            if (next.has(item.id)) next.delete(item.id);
-                            else next.add(item.id);
-                            return next;
-                          })
-                        }
                         className={`flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 ${alreadyAssigned ? "bg-slate-50 opacity-55" : checked ? "bg-violet-50" : "hover:bg-slate-50"}`}
                       >
-                        <span
-                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300 bg-white"}`}
+                        <button
+                          type="button"
+                          disabled={alreadyAssigned}
+                          onClick={() =>
+                            setSelectedTemplates((current) => {
+                              const next = new Set(current);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              return next;
+                            })
+                          }
+                          className="flex min-w-0 flex-1 items-start gap-3 text-left"
                         >
-                          {checked ? <Check className="h-3 w-3" /> : null}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-bold text-violet-700">
-                              {item.formNumber || item.category}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-semibold text-slate-600">
-                              v{item.currentVersion}
-                            </span>
-                            {alreadyAssigned ? (
-                              <span className="text-[10px] font-semibold text-emerald-600">
-                                Assigned
+                          <span
+                            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300 bg-white"}`}
+                          >
+                            {checked ? <Check className="h-3 w-3" /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-bold text-violet-700">
+                                {item.formNumber || item.category}
                               </span>
-                            ) : null}
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-semibold text-slate-600">
+                                v{item.currentVersion}
+                              </span>
+                              {alreadyAssigned ? (
+                                <span className="text-[10px] font-semibold text-emerald-600">
+                                  Assigned
+                                </span>
+                              ) : null}
+                            </span>
+                            <span className="mt-1 block text-sm font-semibold text-slate-900">
+                              {item.title}
+                            </span>
+                            <span className="mt-1 block text-xs text-slate-500">
+                              {item.category} · {item._count?.caseForms || 0}{" "}
+                              active use{item._count?.caseForms === 1 ? "" : "s"}{" "}
+                              · {item._count?.versions || 1} version
+                              {item._count?.versions === 1 ? "" : "s"}
+                            </span>
                           </span>
-                          <span className="mt-1 block text-sm font-semibold text-slate-900">
-                            {item.title}
-                          </span>
-                          <span className="mt-1 block text-xs text-slate-500">
-                            {item.category} · {item._count?.caseForms || 0}{" "}
-                            active use{item._count?.caseForms === 1 ? "" : "s"}{" "}
-                            · {item._count?.versions || 1} version
-                            {item._count?.versions === 1 ? "" : "s"}
-                          </span>
-                        </span>
-                      </button>
+                        </button>
+                        {canManageTemplates ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenFieldMapping(item)}
+                            className="mt-0.5 shrink-0 rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-violet-700 hover:bg-violet-50"
+                          >
+                            Field mapping
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })
                 : visible.map((item) => {
@@ -1630,28 +1646,41 @@ export default function CaseFormsWorkspace({
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [checklistTarget, setChecklistTarget] = useState(null);
+  const [mappingTarget, setMappingTarget] = useState(null);
   const [auditTarget, setAuditTarget] = useState(null);
   const [auditEvents, setAuditEvents] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState("");
   const [search, setSearch] = useState("");
+  const [agencyProfile, setAgencyProfile] = useState(null);
   const uploadInput = useRef(null);
   const uploadTarget = useRef(null);
+
+  // Representative "business card" block for whichever CaseForm is being
+  // filled — CaseForm.representativeUserId if explicitly picked, otherwise
+  // the case's own assigned consultant, same fallback rule the new
+  // checklist engine uses (see caseFormFillService.js buildFieldContext).
+  function representativeFor(item) {
+    return item?.representativeUser || caseItem?.assignedUser || null;
+  }
 
   async function load() {
     try {
       setLoading(true);
       setError("");
-      const [formsResponse, catalogResponse, templateResponse] =
+      const [formsResponse, catalogResponse, templateResponse, agencyResponse] =
         await Promise.all([
           api.get(`/case-forms?caseId=${caseId}`),
           api.get(`/case-forms/catalog?caseId=${caseId}`),
           api.get("/form-templates?limit=100"),
+          api.get("/settings/agency-profile").catch(() => null),
         ]);
       setForms(formsResponse.data.data || []);
       setPermissions(formsResponse.data.meta?.permissions || {});
       setCatalog(catalogResponse.data.data || null);
       setTemplates(templateResponse.data.data || []);
+      setAgencyProfile(agencyResponse?.data?.data || null);
     } catch (requestError) {
       setError(
         requestError.response?.data?.message || "Unable to load case forms.",
@@ -1681,6 +1710,24 @@ export default function CaseFormsWorkspace({
       ),
     [forms, search],
   );
+
+  const templatesById = useMemo(
+    () => new Map((templates || []).map((entry) => [entry.id, entry])),
+    [templates],
+  );
+  // The checklist pill promises pdf-lib-based auto-fill, which only works
+  // when the source template actually has mapped AcroForm fields (some real
+  // government PDFs — e.g. dynamic XFA forms — have none; pdf-lib can't
+  // read or write them at all). Hide the pill rather than send someone into
+  // an overlay that can only ever say "nothing to fill". If the template
+  // hasn't loaded yet, default to showing it rather than hiding something
+  // that might actually work.
+  function hasMappedFields(item) {
+    if (!item.sourceAgencyFormTemplateId) return false;
+    const template = templatesById.get(item.sourceAgencyFormTemplateId);
+    if (!template) return true;
+    return (template._count?.fieldSchemas ?? 1) > 0;
+  }
 
   async function assign(catalogIds) {
     try {
@@ -2209,7 +2256,10 @@ export default function CaseFormsWorkspace({
       const isPdf = response.data.type === "application/pdf" || likelyPdf;
       if (!download && isPdf) {
         previewWindow?.close();
-        const autofill = buildCaseFormAutofill(item, caseItem, assessment);
+        const autofill = buildCaseFormAutofill(item, caseItem, assessment, {
+          representative: representativeFor(item),
+          agency: agencyProfile,
+        });
         setPdfPreview({ item, blob: response.data, autofill });
         if (
           !item.lockedAt &&
@@ -2459,6 +2509,16 @@ export default function CaseFormsWorkspace({
                       : ""}
                   </button>
                 ) : null}
+                {hasMappedFields(item) ? (
+                  <button
+                    type="button"
+                    onClick={() => setChecklistTarget(item)}
+                    className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Auto-fill checklist
+                  </button>
+                ) : null}
                 <span
                   className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${requirementStyle[item.requirement]}`}
                 >
@@ -2559,6 +2619,7 @@ export default function CaseFormsWorkspace({
             onAssign={assign}
             onAssignTemplates={assignTemplates}
             onCreateCustom={createCustom}
+            onOpenFieldMapping={setMappingTarget}
             canManageTemplates={permissions.canManageTemplates}
           />
         ) : null}
@@ -2569,7 +2630,10 @@ export default function CaseFormsWorkspace({
           blob={pdfPreview.blob}
           autofill={
             pdfPreview.autofill ||
-            buildCaseFormAutofill(pdfPreview.item, caseItem, assessment)
+            buildCaseFormAutofill(pdfPreview.item, caseItem, assessment, {
+              representative: representativeFor(pdfPreview.item),
+              agency: agencyProfile,
+            })
           }
           readOnly={Boolean(pdfPreview.item.lockedAt) || !permissions.canEdit}
           onSaveToCase={
@@ -2635,6 +2699,20 @@ export default function CaseFormsWorkspace({
           onResolve={resolveReviewComment}
           onDelete={deleteReviewComment}
           canEdit={permissions.canReview && !reviewTarget.lockedAt}
+        />
+      ) : null}
+      {checklistTarget ? (
+        <FormFieldChecklistOverlay
+          item={checklistTarget}
+          caseId={caseId}
+          onClose={() => setChecklistTarget(null)}
+          onFormChanged={load}
+        />
+      ) : null}
+      {mappingTarget ? (
+        <FormFieldMappingOverlay
+          template={mappingTarget}
+          onClose={() => setMappingTarget(null)}
         />
       ) : null}
       {auditTarget ? (

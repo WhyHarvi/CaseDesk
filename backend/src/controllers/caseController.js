@@ -33,6 +33,14 @@ const include = {
       fullName: true,
       email: true,
       role: true,
+      // Representative-on-forms fields (IMM 5476 and similar) — assignedUser
+      // is the default representative for a case's forms unless a specific
+      // CaseForm.representativeUserId picks someone else.
+      phone: true,
+      licenseNumber: true,
+      representativeType: true,
+      membershipBody: true,
+      membershipProvince: true,
     },
   },
 };

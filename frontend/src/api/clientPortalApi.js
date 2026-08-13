@@ -65,6 +65,14 @@ export function submitPortalQuestionnaire(assignmentId) {
   return api.post(`/client-portal/questionnaires/${assignmentId}/submit`).then((response) => response.data);
 }
 
+export function getPortalCaseFormRequests() {
+  return api.get("/client-portal/case-form-requests").then((response) => response.data.data);
+}
+
+export function submitPortalCaseFormRequest(requestId, answers) {
+  return api.post(`/client-portal/case-form-requests/${requestId}/submit`, { answers }).then((response) => response.data);
+}
+
 export function getPortalAgreements() {
   return api.get("/client-portal/agreements").then((response) => response.data.data);
 }

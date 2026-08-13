@@ -11,10 +11,12 @@ const emptyForm = {
   phone: "",
   website: "",
   address: "",
+  addressUnit: "",
   city: "",
   province: "",
   country: "",
   postalCode: "",
+  faxNumber: "",
   timezone: "",
   defaultCurrency: "",
   businessNumber: "",
@@ -431,9 +433,14 @@ export default function AgencyProfilePanel() {
                       <TextInput value={form.website} maxLength={200} onChange={set("website")} placeholder="www.company.com" />
                     </Field>
 
-                    <Field label="Office address">
-                      <TextInput value={form.address} maxLength={200} onChange={set("address")} placeholder="100 King Street West, Suite 500" />
-                    </Field>
+                    <div className="grid gap-5 sm:grid-cols-[1fr_auto]">
+                      <Field label="Office address">
+                        <TextInput value={form.address} maxLength={200} onChange={set("address")} placeholder="100 King Street West" />
+                      </Field>
+                      <Field label="Unit / suite">
+                        <TextInput value={form.addressUnit} maxLength={60} onChange={set("addressUnit")} placeholder="Suite 500" />
+                      </Field>
+                    </div>
 
                     <div className="grid gap-5 sm:grid-cols-2">
                       <Field label="City">
@@ -449,6 +456,10 @@ export default function AgencyProfilePanel() {
                         <TextInput value={form.postalCode} maxLength={24} onChange={set("postalCode")} placeholder="M5X 1A9" />
                       </Field>
                     </div>
+
+                    <Field label="Fax number" hint="Used on official forms that request one, e.g. IMM 5476.">
+                      <TextInput value={form.faxNumber} maxLength={40} onChange={set("faxNumber")} placeholder="+1 (416) 555-0100" />
+                    </Field>
 
                     <div className="grid gap-5 sm:grid-cols-2">
                       <Field label="Timezone">

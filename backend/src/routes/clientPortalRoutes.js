@@ -17,6 +17,7 @@ import {
   updatePortalProfile,
 } from "../controllers/clientPortalController.js";
 import { servePortalDocument, uploadPortalDocument } from "../controllers/portalController.js";
+import { getPortalCaseFormRequests, submitPortalCaseFormRequest } from "../controllers/clientPortalCaseFormController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
@@ -37,6 +38,8 @@ router.patch("/profile", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(
 router.get("/questionnaires", asyncHandler(getPortalQuestionnaires));
 router.patch("/questionnaires/answers", rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(savePortalQuestionnaireAnswers));
 router.post("/questionnaires/:assignmentId/submit", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(submitPortalQuestionnaire));
+router.get("/case-form-requests", asyncHandler(getPortalCaseFormRequests));
+router.post("/case-form-requests/:requestId/submit", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(submitPortalCaseFormRequest));
 router.get("/agreements", asyncHandler(getPortalAgreements));
 router.get("/agreements/:id/view", asyncHandler(getPortalAgreementView));
 router.get("/agreements/:id/file", asyncHandler(servePortalAgreementFile));

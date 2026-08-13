@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { addAgencyFormTemplateToCase, createAgencyFormTemplate, deleteAgencyFormTemplate, listAgencyFormTemplates, listAgencyFormTemplateVersions, replaceAgencyFormTemplate, saveCaseFormAsAgencyTemplate, serveAgencyFormTemplate, updateAgencyFormTemplate } from "../controllers/agencyFormTemplateController.js";
+import { addAgencyFormTemplateToCase, createAgencyFormTemplate, deleteAgencyFormTemplate, getAgencyFormTemplateFieldSchema, listAgencyFormTemplates, listAgencyFormTemplateVersions, patchAgencyFormTemplateFieldSchema, replaceAgencyFormTemplate, saveCaseFormAsAgencyTemplate, serveAgencyFormTemplate, updateAgencyFormTemplate } from "../controllers/agencyFormTemplateController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -11,6 +11,8 @@ router.get("/:id/file", asyncHandler(serveAgencyFormTemplate));
 router.get("/:id/versions", asyncHandler(listAgencyFormTemplateVersions));
 router.get("/:id/versions/:versionId/file", asyncHandler(serveAgencyFormTemplate));
 router.post("/:id/add-to-case", asyncHandler(addAgencyFormTemplateToCase));
+router.get("/:id/field-schema", asyncHandler(getAgencyFormTemplateFieldSchema));
+router.patch("/:id/field-schema/:fieldId", asyncHandler(patchAgencyFormTemplateFieldSchema));
 router.post("/:id/replace", receiveDocumentFile, asyncHandler(replaceAgencyFormTemplate));
 router.patch("/:id", asyncHandler(updateAgencyFormTemplate));
 router.delete("/:id", asyncHandler(deleteAgencyFormTemplate));

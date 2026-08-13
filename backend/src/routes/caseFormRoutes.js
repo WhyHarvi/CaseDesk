@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { assignCatalogForms, checkCaseFormVersion, createCaseFormReviewComment, createCustomCaseForm, deleteCaseForm, deleteCaseFormReviewComment, finalizeCaseForm, getCaseFormCatalog, getCurrentFormPermissions, importOfficialCaseForm, listCaseFormAudit, listCaseFormReviewComments, listCaseForms, listCaseFormVersions, recordCaseFormAutofill, restoreCaseFormVersion, saveBrowserCaseFormCopy, serveCaseFormFile, serveCaseFormVersionFile, setCaseFormReviewCommentResolution, unlockCaseForm, updateCaseForm, updateUserFormPermissions, uploadCaseForm } from "../controllers/caseFormController.js";
+import { getChecklist, getClientRequests, listRepresentativeOptions, patchFieldValue, patchReviewClientRequest, postClientRequest, runAutofill, setApplicant, setRepresentative } from "../controllers/caseFormFieldController.js";
+import { generateFilledCaseFormPdf } from "../controllers/caseFormRenderController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -7,6 +9,7 @@ const router = Router();
 router.get("/catalog", asyncHandler(getCaseFormCatalog));
 router.get("/permissions", asyncHandler(getCurrentFormPermissions));
 router.patch("/permissions/:userId", asyncHandler(updateUserFormPermissions));
+router.get("/representative-options", asyncHandler(listRepresentativeOptions));
 router.get("/", asyncHandler(listCaseForms));
 router.post("/assign", asyncHandler(assignCatalogForms));
 router.post("/custom", receiveDocumentFile, asyncHandler(createCustomCaseForm));
@@ -26,6 +29,16 @@ router.post("/:id/review-comments", asyncHandler(createCaseFormReviewComment));
 router.patch("/:id/review-comments/:commentId", asyncHandler(setCaseFormReviewCommentResolution));
 router.delete("/:id/review-comments/:commentId", asyncHandler(deleteCaseFormReviewComment));
 router.get("/:id/file", asyncHandler(serveCaseFormFile));
+// Government-form field auto-fill engine (checklist, autofill, client requests)
+router.get("/:id/checklist", asyncHandler(getChecklist));
+router.post("/:id/checklist/autofill", asyncHandler(runAutofill));
+router.patch("/:id/checklist/fields/:fieldKey", asyncHandler(patchFieldValue));
+router.patch("/:id/representative", asyncHandler(setRepresentative));
+router.patch("/:id/applicant", asyncHandler(setApplicant));
+router.get("/:id/client-requests", asyncHandler(getClientRequests));
+router.post("/:id/client-requests", asyncHandler(postClientRequest));
+router.patch("/:id/client-requests/:requestId/review", asyncHandler(patchReviewClientRequest));
+router.post("/:id/generate-pdf", asyncHandler(generateFilledCaseFormPdf));
 router.patch("/:id", asyncHandler(updateCaseForm));
 router.delete("/:id", asyncHandler(deleteCaseForm));
 export default router;
