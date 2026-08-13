@@ -157,7 +157,7 @@ test("client case actions use the guarded case workspace for front-desk users", 
       source("../../frontend/src/routes/AppRoutes.jsx"),
     ]);
 
-  assert.match(clientProfile, /to=\{`\/app\/cases\/\$\{item\.id\}`\}/);
+  assert.match(clientProfile, /to: `\/app\/cases\/\$\{item\.id\}`/);
   assert.match(clientProfile, /canOpenCases = canAccessPage/);
   assert.match(clientProfile, /action=create&clientId=/);
   assert.match(clientProfile, /Create case/);

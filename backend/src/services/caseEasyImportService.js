@@ -432,11 +432,16 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
   const [contacts, cases, users] = await Promise.all([
     prisma.caseEasyImportContact.findMany({ where: { agencyId } }),
     prisma.caseEasyImportCase.findMany({ where: { agencyId } }),
+    // Case assignees can only ever be admin/consultant (validateCaseAssignee
+    // in caseController.js is the app-wide rule) — front desk is excluded
+    // here so a case never auto-matches to someone who can't actually own
+    // it, which used to surface as a confusing "not active" error later, at
+    // conversion time.
     prisma.user.findMany({
       where: {
         agencyId,
         status: "active",
-        role: { in: ["admin", "consultant", "frontdesk"] },
+        role: { in: ["admin", "consultant"] },
       },
       select: { id: true, fullName: true },
     }),

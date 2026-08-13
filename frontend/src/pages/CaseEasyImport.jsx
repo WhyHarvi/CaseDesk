@@ -535,7 +535,11 @@ export default function CaseEasyImport() {
   }
 
   useEffect(() => { load(); }, [recordType, importStatus, search]);
-  useEffect(() => { api.get("/leads/staff").then((response) => setStaff(response.data.data || [])).catch(() => {}); }, []);
+  // /leads/staff includes front desk (valid for lead ownership), but a case
+  // can only ever be assigned to an admin or consultant (validateCaseAssignee
+  // in caseController.js) — filtering here keeps front desk from ever being
+  // picked or auto-matched as a case assignee during conversion.
+  useEffect(() => { api.get("/leads/staff").then((response) => setStaff((response.data.data || []).filter((person) => ["admin", "consultant"].includes(person.role)))).catch(() => {}); }, []);
 
   const needsReviewTotal = useMemo(
     () => unlinkedCases.length + contacts.reduce((sum, contact) => sum + contact.linkedCases.filter((kase) => kase.needsReviewReason && kase.importStatus !== "converted").length, 0),

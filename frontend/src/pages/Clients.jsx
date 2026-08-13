@@ -21,6 +21,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
+import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
 
 const newClientOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
@@ -693,9 +694,12 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
             {client.initials}
           </div>
           <div>
-            <Link to={`/clients/${client.id}`} className="font-semibold text-slate-900 transition hover:text-sky-700">
-              {client.fullName}
-            </Link>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link to={`/clients/${client.id}`} className="font-semibold text-slate-900 transition hover:text-sky-700">
+                {client.fullName}
+              </Link>
+              {client.caseEasyImportContacts?.length ? <CaseEasyOriginBadge /> : null}
+            </div>
             <p className="text-sm text-slate-500">{client.email || client.phone || "No contact on file"}</p>
             <p className="text-xs text-slate-400">{client.fileNumber}</p>
           </div>
@@ -1411,12 +1415,15 @@ export default function Clients() {
                               {client.initials}
                             </div>
                             <div>
-                              <Link
-                                to={`/clients/${client.id}`}
-                                className="font-semibold text-slate-900 transition hover:text-sky-700"
-                              >
-                                {client.fullName}
-                              </Link>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Link
+                                  to={`/clients/${client.id}`}
+                                  className="font-semibold text-slate-900 transition hover:text-sky-700"
+                                >
+                                  {client.fullName}
+                                </Link>
+                                {client.caseEasyImportContacts?.length ? <CaseEasyOriginBadge /> : null}
+                              </div>
                               <p className="text-slate-500">{client.email || client.phone || "No contact on file"}</p>
                               <p className="text-xs text-slate-400">{client.fileNumber}</p>
                             </div>

@@ -76,6 +76,30 @@ test("Case Easy abbreviated assignees resolve only to one active staff identity"
     resolveCaseEasyAssigneeUserId("Afi M.;Former Staff X.", staff),
     null,
   );
+});
+
+// A case can only ever be assigned to an admin or consultant
+// (validateCaseAssignee in caseController.js is the one app-wide rule) — a
+// front desk staffer showing up here as auto-matchable or pickable used to
+// mean a case would always fail its real assignee check at conversion time
+// with a confusing "not active" error, even though the account was active.
+test("Case Easy assignee resolution and the conversion screen's picker exclude front desk, matching the app-wide case-assignee rule", async () => {
+  const [service, page] = await Promise.all([
+    source("../src/services/caseEasyImportService.js"),
+    source("../../frontend/src/pages/CaseEasyImport.jsx"),
+  ]);
+  assert.match(
+    service,
+    /agencyId,\s*status: "active",\s*role: \{ in: \["admin", "consultant"\] \},/,
+  );
+  assert.doesNotMatch(
+    service.slice(service.indexOf("resolveCaseEasyLinks")),
+    /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/,
+  );
+  assert.match(
+    page,
+    /filter\(\(person\) => \["admin", "consultant"\]\.includes\(person\.role\)\)/,
+  );
   assert.equal(caseEasyAssigneeNameMatches("Simar K.", "Harpreet Kaur"), false);
 });
 

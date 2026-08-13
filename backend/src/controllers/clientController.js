@@ -37,6 +37,9 @@ const include = {
       role: true,
     },
   },
+  // take: 1 is enough to answer "did this client come from a Case Easy
+  // conversion" — the UI only needs a boolean, not the actual staging rows.
+  caseEasyImportContacts: { select: { id: true }, take: 1 },
   cases: {
     where: { deletedAt: null },
     orderBy: { updatedAt: "desc" },
@@ -94,6 +97,7 @@ const clientIdentitySelect = {
   qbSyncedAt: true,
   createdAt: true,
   updatedAt: true,
+  caseEasyImportContacts: { select: { id: true }, take: 1 },
 };
 
 const fields = {

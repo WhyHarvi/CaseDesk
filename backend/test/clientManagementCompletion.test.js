@@ -34,6 +34,33 @@ test("client management stores searchable identity fields and archives without d
   assert.match(profile, /Identification/);
 });
 
+test("clients converted from a Case Easy import are labeled everywhere a client is shown", async () => {
+  const [controller, badge, clientsPage, profile] = await Promise.all([
+    source("../src/controllers/clientController.js"),
+    source("../../frontend/src/components/clients/CaseEasyOriginBadge.jsx"),
+    source("../../frontend/src/pages/Clients.jsx"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+  ]);
+
+  // Both the list endpoint (scopedInclude -> include) and the detail
+  // endpoint (clientIdentitySelect) need this — they're two separate
+  // Prisma query shapes, not one shared select.
+  assert.match(controller, /caseEasyImportContacts: \{ select: \{ id: true \}, take: 1 \}/g);
+  assert.equal(
+    (controller.match(/caseEasyImportContacts: \{ select: \{ id: true \}, take: 1 \}/g) || []).length,
+    2,
+  );
+
+  assert.match(badge, /Case Easy/);
+
+  assert.match(clientsPage, /client\.caseEasyImportContacts\?\.length \? <CaseEasyOriginBadge \/> : null/);
+  assert.equal(
+    (clientsPage.match(/client\.caseEasyImportContacts\?\.length \? <CaseEasyOriginBadge \/> : null/g) || []).length,
+    2,
+  );
+  assert.match(profile, /client\.caseEasyImportContacts\?\.length \? <CaseEasyOriginBadge \/> : null/);
+});
+
 test("front desk client intake separates consultation payments from professional fees", async () => {
   const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet, caseController] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),
