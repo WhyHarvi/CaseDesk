@@ -12,6 +12,7 @@ import {
   hasPortalPageAccess,
 } from "../services/portalAccessService.js";
 import { createHttpError } from "../utils/http.js";
+import { buildCaseEasyContactSearchWhere } from "../services/caseEasySearchService.js";
 
 const RESULT_LIMIT = 6;
 
@@ -125,6 +126,59 @@ async function searchLeads(req, query, digits) {
       ),
       meta: join(inReview ? "Import Review" : null, lead.stage, lead.status),
       url: `${listPath}?search=${encodeURIComponent(lead.leadNumber)}`,
+    };
+  });
+}
+
+async function searchCaseEasyContacts(req, query) {
+  const contacts = await prisma.caseEasyImportContact.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      ...buildCaseEasyContactSearchWhere(query),
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      clientIdentifier: true,
+      recordType: true,
+      importStatus: true,
+      convertedClient: { select: { clientNumber: true } },
+      linkedCases: {
+        select: { caseNumber: true },
+        orderBy: { createdAt: "desc" },
+        take: 2,
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: RESULT_LIMIT,
+  });
+
+  return contacts.map((contact) => {
+    const fullName = [contact.firstName, contact.lastName]
+      .filter(Boolean)
+      .join(" ");
+    const caseNumbers = contact.linkedCases
+      .map((caseItem) => caseItem.caseNumber)
+      .filter(Boolean);
+    return {
+      id: contact.id,
+      type: "case_easy_contact",
+      title: fullName || contact.clientIdentifier || "Imported contact",
+      subtitle: join(
+        contact.clientIdentifier,
+        contact.convertedClient?.clientNumber,
+        contact.email || contact.phone,
+      ),
+      meta: join(
+        "Case Easy",
+        contact.recordType || "Type undetermined",
+        caseNumbers.join(", "),
+        contact.importStatus === "converted" ? "Converted" : "Staged",
+      ),
+      url: `/app/case-easy-import?view=contacts&contact=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(query)}`,
     };
   });
 }
@@ -387,6 +441,7 @@ export async function globalSearch(req, res) {
 
   const digits = query.replace(/\D/g, "");
   const canSearchLeads = hasPortalPageAccess(req, "leads");
+  const canSearchCaseEasy = hasPortalPageAccess(req, "caseEasyImport");
   const canSearchClients = hasPortalPageAccess(req, "clients");
   const canSearchCases = hasPortalPageAccess(req, "cases");
   const canSearchDocuments =
@@ -395,9 +450,12 @@ export async function globalSearch(req, res) {
   const canSearchNotes =
     hasPortalCapability(req, "internalNotes") &&
     (canSearchClients || canSearchCases);
-  const [leadSearch, internal] = await Promise.all([
+  const [leadSearch, caseEasySearch, internal] = await Promise.all([
     searchWhenAllowed(canSearchLeads, req, "leads", () =>
       searchLeads(req, query, digits),
+    ),
+    searchWhenAllowed(canSearchCaseEasy, req, "caseEasyImport", () =>
+      searchCaseEasyContacts(req, query),
     ),
     canSearchClients || canSearchCases || canSearchDocuments || canSearchNotes
       ? searchInternalRecords(req, query, digits, {
@@ -416,11 +474,15 @@ export async function globalSearch(req, res) {
         }),
   ]);
   const leadResults = leadSearch.items;
+  const caseEasyResults = caseEasySearch.items;
   const attemptedSources =
-    internal.attemptedSources + (leadSearch.attempted ? 1 : 0);
+    internal.attemptedSources +
+    (leadSearch.attempted ? 1 : 0) +
+    (caseEasySearch.attempted ? 1 : 0);
   const failedSources = [
     ...internal.failedSources,
     ...(leadSearch.failed ? [leadSearch.source] : []),
+    ...(caseEasySearch.failed ? [caseEasySearch.source] : []),
   ];
   if (attemptedSources > 0 && failedSources.length === attemptedSources) {
     throw createHttpError(
@@ -444,6 +506,9 @@ export async function globalSearch(req, res) {
       : []),
     ...(canSearchLeads
       ? [{ id: "leads", label: "Leads", items: leadResults }]
+      : []),
+    ...(canSearchCaseEasy
+      ? [{ id: "caseEasy", label: "Case Easy imports", items: caseEasyResults }]
       : []),
   ].filter((group) => group.items.length);
 

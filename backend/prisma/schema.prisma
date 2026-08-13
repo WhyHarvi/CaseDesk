@@ -525,6 +525,7 @@ model Agency {
   consultantProfiles             ConsultantProfile[]
   clientUsers                    ClientUser[]
   caseAssignments                CaseAssignment[]
+  caseCollaborationRequests      CaseCollaborationRequest[]
   clients                        Client[]
   cases                          Case[]
   documentTemplates              DocumentTemplate[]
@@ -1378,6 +1379,8 @@ model User {
   clientUsers                          ClientUser[]
   caseAssignments                      CaseAssignment[]                @relation("AssignedConsultant")
   assignedCaseAssignments              CaseAssignment[]                @relation("CaseAssignmentActor")
+  caseCollaborationRequests            CaseCollaborationRequest[]      @relation("CaseCollaborationRequester")
+  reviewedCaseCollaborationRequests    CaseCollaborationRequest[]      @relation("CaseCollaborationReviewer")
   assignedClients                      Client[]                        @relation("AssignedClientUser")
   assignedCases                        Case[]                          @relation("AssignedCaseUser")
   notes                                Note[]                          @relation("AuthoredNotes")
@@ -1594,6 +1597,41 @@ model CaseAssignment {
   @@map("case_assignments")
 }
 
+enum CaseCollaborationRequestStatus {
+  Pending
+  Approved
+  Declined
+  Withdrawn
+}
+
+// A consultant's self-service ask to join a case they don't currently own
+// or collaborate on (Phase 4 of the Team Workload refinement plan). Admin
+// approval creates the actual CaseAssignment row via the existing
+// /cases/:id/permissions contract — this table only tracks the ask itself.
+model CaseCollaborationRequest {
+  id             String                          @id @default(uuid())
+  agencyId       String                          @map("agency_id")
+  caseId         String                          @map("case_id")
+  requestedById  String                          @map("requested_by_id")
+  requestedRole  AssignmentType                  @default(supporting) @map("requested_role")
+  note           String?
+  status         CaseCollaborationRequestStatus  @default(Pending)
+  reviewedById   String?                         @map("reviewed_by_id")
+  reviewedAt     DateTime?                       @map("reviewed_at")
+  reviewNote     String?                         @map("review_note")
+  createdAt      DateTime                        @default(now()) @map("created_at")
+  updatedAt      DateTime                        @updatedAt @map("updated_at")
+  agency         Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case           Case                            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  requestedBy    User                            @relation("CaseCollaborationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewedBy     User?                           @relation("CaseCollaborationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, status])
+  @@index([caseId, status])
+  @@index([requestedById, status])
+  @@map("case_collaboration_requests")
+}
+
 model Client {
   id                         String                       @id @default(uuid())
   agencyId                   String                       @map("agency_id")
@@ -1721,6 +1759,7 @@ model Case {
   caseEasyImportCases          CaseEasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportReportRow[]
   oomaCallSessions             OomaCallSession[]
+  collaborationRequests        CaseCollaborationRequest[]
 
   @@unique([agencyId, creationIdempotencyKey])
   @@index([agencyId])
@@ -4360,6 +4399,7 @@ enum CaseEasyCaseReviewReason {
 }
 
 enum CaseEasyReportType {
+  case_types
   payment_requests
   invoices
   payments
@@ -4381,6 +4421,8 @@ enum CaseEasyReportLinkStatus {
   linked
   unlinked
   ambiguous
+  aggregate
+  source_only
 }
 
 enum CaseEasyReportImportStatus {

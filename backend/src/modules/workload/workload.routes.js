@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
 import { requireRole } from "../../middleware/authorization.js";
-import { getTeamWorkload, pingPortalActivity } from "./workload.controller.js";
+import { getTeamWorkload, pingPortalActivity, getDailyTrend } from "./workload.controller.js";
 
 const router = Router();
 
@@ -9,5 +9,6 @@ const router = Router();
 // activity — this router is mounted behind staffUser in server.js.
 router.post("/activity-ping", asyncHandler(pingPortalActivity));
 router.get("/team", requireRole("admin"), asyncHandler(getTeamWorkload));
+router.get("/team/daily-trend", requireRole("admin"), asyncHandler(getDailyTrend));
 
 export default router;

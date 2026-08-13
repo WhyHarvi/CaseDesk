@@ -11,11 +11,16 @@ import { mapCaseEasyStatus } from "../services/caseEasyStatusMapping.js";
 import { classifyWorkbookHeaders, importCaseEasyExports, readSheetRowsFromWorkbook } from "../services/caseEasyImportService.js";
 import {
   CASE_EASY_REPORT_DEFINITIONS,
+  inferCaseEasyReportTypeFromFileName,
   importCaseEasyReport,
   refreshCaseEasyReportProductionLinks,
 } from "../services/caseEasyReportImportService.js";
 import { calculateCrsScore } from "./caseAssessmentController.js";
 import { normalizeMaritalStatus } from "../services/clientProfileSyncService.js";
+import {
+  buildCaseEasyContactSearchWhere,
+  cleanCaseEasySearch,
+} from "../services/caseEasySearchService.js";
 
 const caseInclude = { resolvedAssignee: { select: { id: true, fullName: true } } };
 const caseDetailInclude = {
@@ -29,7 +34,14 @@ const caseDetailInclude = {
 };
 const CONTACT_IMPORT_STATUSES = new Set(["imported", "reviewed", "converted"]);
 const RECORD_TYPES = new Set(["client", "prospect", "undetermined"]);
-const REPORT_LINK_STATUSES = new Set(["linked", "unlinked", "ambiguous"]);
+const REPORT_LINK_STATUSES = new Set([
+  "linked",
+  "unlinked",
+  "ambiguous",
+  "standalone",
+  "aggregate",
+  "source_only",
+]);
 const CASE_STATUSES = new Set([
   "Open",
   "Active",
@@ -161,6 +173,7 @@ export async function confirmCaseEasyImportUpload(req, res) {
 
 export async function listCaseEasyImportContacts(req, res) {
   const agencyId = req.user.agencyId;
+  const search = cleanCaseEasySearch(req.query.search);
   if (req.query.recordType && !RECORD_TYPES.has(req.query.recordType)) {
     throw createHttpError(400, "recordType is invalid.", "VALIDATION_ERROR");
   }
@@ -181,21 +194,43 @@ export async function listCaseEasyImportContacts(req, res) {
         }
       : {}),
     ...(req.query.importStatus ? { importStatus: req.query.importStatus } : {}),
+    ...(search ? buildCaseEasyContactSearchWhere(search) : {}),
   };
   const contacts = await prisma.caseEasyImportContact.findMany({
     where,
-    include: { linkedCases: { include: caseInclude, orderBy: { createdAt: "asc" } } },
+    include: {
+      convertedClient: { select: { id: true, clientNumber: true } },
+      linkedCases: { include: caseInclude, orderBy: { createdAt: "asc" } },
+    },
     orderBy: [{ importedAt: "desc" }],
   });
   res.json({ data: contacts });
 }
 
 export async function listUnlinkedCaseEasyImportCases(req, res) {
+  const search = cleanCaseEasySearch(req.query.search);
+  const terms = search.split(" ").filter(Boolean).slice(0, 8);
   const cases = await prisma.caseEasyImportCase.findMany({
     where: {
       agencyId: req.user.agencyId,
       linkedContactId: null,
       importStatus: { not: "converted" },
+      ...(terms.length
+        ? {
+            AND: terms.map((term) => ({
+              OR: [
+                { caseNumber: { contains: term, mode: "insensitive" } },
+                { clientIdentifier: { contains: term, mode: "insensitive" } },
+                { firstName: { contains: term, mode: "insensitive" } },
+                { lastName: { contains: term, mode: "insensitive" } },
+                { email: { contains: term, mode: "insensitive" } },
+                { phone: { contains: term, mode: "insensitive" } },
+                { otherEmails: { contains: term, mode: "insensitive" } },
+                { companyName: { contains: term, mode: "insensitive" } },
+              ],
+            })),
+          }
+        : {}),
     },
     include: caseInclude,
     orderBy: [{ importedAt: "desc" }, { createdAt: "desc" }],
@@ -226,16 +261,19 @@ async function readReportSheet(file) {
 }
 
 async function runReportImport(req, apply) {
-  const reportType = String(req.body.reportType || "").trim() || undefined;
+  const reportType =
+    String(req.body.reportType || "").trim() ||
+    inferCaseEasyReportTypeFromFileName(req.file?.originalname) ||
+    undefined;
   if (reportType && !CASE_EASY_REPORT_DEFINITIONS[reportType]) {
     throw createHttpError(400, "reportType is invalid.", "VALIDATION_ERROR");
   }
   try {
     const sheet = await readReportSheet(req.file);
-    if (sheet.rows.length > 10_000) {
+    if (sheet.rows.length > 100_000) {
       throw createHttpError(
         400,
-        "Case Easy report imports are limited to 10,000 rows per file.",
+        "Case Easy report imports are limited to 100,000 rows per file.",
         "REPORT_TOO_LARGE",
       );
     }
@@ -248,6 +286,9 @@ async function runReportImport(req, apply) {
   } catch (error) {
     if (["REPORT_TYPE_REQUIRED", "REPORT_COLUMNS_INVALID", "REPORT_EMPTY"].includes(error.code)) {
       throw createHttpError(422, error.message, error.code);
+    }
+    if (error.code === "REPORT_INCOMPLETE") {
+      throw createHttpError(503, error.message, error.code);
     }
     throw error;
   }
@@ -285,7 +326,13 @@ export async function listCaseEasyReportRows(req, res) {
   const where = {
     agencyId: req.user.agencyId,
     ...(reportType ? { reportType } : {}),
-    ...(linkStatus ? { linkStatus } : {}),
+    ...(linkStatus === "standalone"
+      ? { linkStatus: "unlinked", importStatus: "reviewed" }
+      : linkStatus === "unlinked"
+        ? { linkStatus: "unlinked", importStatus: "imported" }
+        : linkStatus
+          ? { linkStatus }
+          : {}),
   };
   const [rows, total] = await Promise.all([
     prisma.caseEasyImportReportRow.findMany({
@@ -330,7 +377,7 @@ export async function getCaseEasyReportSummary(req, res) {
       _count: { _all: true },
     }),
     prisma.caseEasyImportReportRow.groupBy({
-      by: ["linkStatus"],
+      by: ["linkStatus", "importStatus"],
       where: { agencyId: req.user.agencyId },
       _count: { _all: true },
     }),
@@ -345,9 +392,34 @@ export async function getCaseEasyReportSummary(req, res) {
             byType.find((entry) => entry.reportType === type)?._count._all || 0,
         }),
       ),
-      linkStatuses: Object.fromEntries(
-        byLinkStatus.map((entry) => [entry.linkStatus, entry._count._all]),
-      ),
+      linkStatuses: {
+        linked: byLinkStatus
+          .filter((entry) => entry.linkStatus === "linked")
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+        ambiguous: byLinkStatus
+          .filter((entry) => entry.linkStatus === "ambiguous")
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+        unlinked: byLinkStatus
+          .filter(
+            (entry) =>
+              entry.linkStatus === "unlinked" &&
+              entry.importStatus !== "reviewed",
+          )
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+        standalone: byLinkStatus
+          .filter(
+            (entry) =>
+              entry.linkStatus === "unlinked" &&
+              entry.importStatus === "reviewed",
+          )
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+        aggregate: byLinkStatus
+          .filter((entry) => entry.linkStatus === "aggregate")
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+        sourceOnly: byLinkStatus
+          .filter((entry) => entry.linkStatus === "source_only")
+          .reduce((sum, entry) => sum + entry._count._all, 0),
+      },
     },
   });
 }

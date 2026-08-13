@@ -59,7 +59,141 @@ export function normalizeKey(value) {
 }
 
 function normalizePhoneKey(value) {
-  return String(value || "").replace(/\D/g, "");
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length === 11 && digits.startsWith("1")
+    ? digits.slice(1)
+    : digits;
+}
+
+function normalizeIdentityName(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function nameTokenKey(value) {
+  return normalizeIdentityName(value)
+    .split(" ")
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+function usableFullNameKey(value) {
+  const key = normalizeIdentityName(value);
+  return key.split(" ").filter(Boolean).length >= 2 ? key : null;
+}
+
+function sourceDayKey(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function caseEasyContactSourceDayKeys(value) {
+  if (!value) return [];
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) return [];
+  const sameDay = date.toISOString().slice(0, 10);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return [sameDay, date.toISOString().slice(0, 10)];
+}
+
+function rawEmailKey(value) {
+  return normalizeKey(value);
+}
+
+function extractEmailKeys(...values) {
+  return [
+    ...new Set(
+      values.flatMap((value) =>
+        [...String(value || "").matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)]
+          .map((match) => normalizeKey(match[0]).replace(/_duplicate$/i, "")),
+      ),
+    ),
+  ];
+}
+
+function extractPhoneKeys(...values) {
+  return [
+    ...new Set(
+      values
+        .flatMap((value) => String(value || "").split(/[;,|/]/))
+        .map(normalizePhoneKey)
+        .filter((value) => value.length >= 7),
+    ),
+  ];
+}
+
+function addLookupValue(lookup, key, value) {
+  if (!key) return;
+  if (!lookup.has(key)) lookup.set(key, []);
+  lookup.get(key).push(value);
+}
+
+function uniqueLookupValue(lookup, key) {
+  const values = [...new Map((lookup.get(key) || []).map((item) => [item.id, item])).values()];
+  return values.length === 1 ? values[0] : null;
+}
+
+function uniqueCandidateFromKeys(lookup, keys) {
+  const candidates = [
+    ...new Map(
+      keys
+        .map((key) => uniqueLookupValue(lookup, key))
+        .filter(Boolean)
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function uniqueCandidateAcrossKeys(lookup, keys) {
+  const candidates = [
+    ...new Map(
+      keys
+        .flatMap((key) => lookup.get(key) || [])
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+// Case Easy exports abbreviate assignees ("Gagandeep Singh D.") even
+// though the CaseDesk user has the full name. A token may be exact or a
+// one-letter initial, but token order and count must agree so short/fuzzy
+// names never map to the wrong staff member.
+export function caseEasyAssigneeNameMatches(assigneeName, userFullName) {
+  const source = normalizeIdentityName(assigneeName).split(" ").filter(Boolean);
+  const target = normalizeIdentityName(userFullName).split(" ").filter(Boolean);
+  if (!source.length || source.length !== target.length) return false;
+  return source.every(
+    (token, index) =>
+      token === target[index]
+      || (token.length === 1 && target[index].startsWith(token)),
+  );
+}
+
+export function resolveCaseEasyAssigneeUserId(assignees, users) {
+  const sourceNames = String(assignees || "")
+    .split(/[,;]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (sourceNames.length !== 1) return null;
+  const matches = [
+    ...new Set(
+      sourceNames.flatMap((name) =>
+        users
+          .filter((user) => caseEasyAssigneeNameMatches(name, user.fullName))
+          .map((user) => user.id),
+      ),
+    ),
+  ];
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function parseDateValue(value) {
@@ -298,29 +432,104 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
   const [contacts, cases, users] = await Promise.all([
     prisma.caseEasyImportContact.findMany({ where: { agencyId } }),
     prisma.caseEasyImportCase.findMany({ where: { agencyId } }),
-    prisma.user.findMany({ where: { agencyId }, select: { id: true, fullName: true } }),
+    prisma.user.findMany({
+      where: {
+        agencyId,
+        status: "active",
+        role: { in: ["admin", "consultant", "frontdesk"] },
+      },
+      select: { id: true, fullName: true },
+    }),
   ]);
 
   const contactsByEmail = new Map();
   const contactsByIdentifier = new Map();
   const contactsByNamePhone = new Map();
+  const contactsByPhone = new Map();
+  const contactsByRawEmail = new Map();
+  const contactsByFullName = new Map();
+  const contactsByNameTokens = new Map();
+  const contactsByEmailAndFullName = new Map();
+  const contactsByPhoneAndFullName = new Map();
+  const contactsByPhoneAndNameTokens = new Map();
+  const contactsByFullNameAndSourceDay = new Map();
+  const contactsByNameTokensAndSourceDay = new Map();
+  const contactsByFieldLayoutAndSourceDay = new Map();
   const caseUpdates = new Map();
   const contactRecordTypes = new Map();
   for (const contact of contacts) {
     if (contact.clientIdentifier) {
       const key = normalizeKey(contact.clientIdentifier);
-      if (!contactsByIdentifier.has(key)) contactsByIdentifier.set(key, []);
-      contactsByIdentifier.get(key).push(contact);
+      addLookupValue(contactsByIdentifier, key, contact);
+    }
+    for (const key of extractEmailKeys(contact.email)) {
+      addLookupValue(contactsByEmail, key, contact);
     }
     if (contact.email) {
-      const key = normalizeKey(contact.email);
-      if (!contactsByEmail.has(key)) contactsByEmail.set(key, []);
-      contactsByEmail.get(key).push(contact);
+      addLookupValue(contactsByRawEmail, rawEmailKey(contact.email), contact);
+    }
+    for (const key of extractPhoneKeys(contact.phone)) {
+      addLookupValue(contactsByPhone, key, contact);
     }
     if (contact.firstName && contact.lastName && contact.phone) {
-      const key = `${normalizeKey(contact.firstName)}|${normalizeKey(contact.lastName)}|${normalizePhoneKey(contact.phone)}`;
-      if (!contactsByNamePhone.has(key)) contactsByNamePhone.set(key, []);
-      contactsByNamePhone.get(key).push(contact);
+      const key = `${normalizeIdentityName(contact.firstName)}|${normalizeIdentityName(contact.lastName)}|${normalizePhoneKey(contact.phone)}`;
+      addLookupValue(contactsByNamePhone, key, contact);
+    }
+    const fullNameKey = usableFullNameKey(
+      `${contact.firstName || ""} ${contact.lastName || ""}`,
+    );
+    if (fullNameKey) {
+      addLookupValue(contactsByFullName, fullNameKey, contact);
+      const tokenKey = nameTokenKey(fullNameKey);
+      addLookupValue(
+        contactsByNameTokens,
+        tokenKey,
+        contact,
+      );
+      for (const emailKey of extractEmailKeys(contact.email)) {
+        addLookupValue(
+          contactsByEmailAndFullName,
+          `${emailKey}|${fullNameKey}`,
+          contact,
+        );
+      }
+      for (const phoneKey of extractPhoneKeys(contact.phone)) {
+        addLookupValue(
+          contactsByPhoneAndFullName,
+          `${phoneKey}|${fullNameKey}`,
+          contact,
+        );
+        addLookupValue(
+          contactsByPhoneAndNameTokens,
+          `${phoneKey}|${tokenKey}`,
+          contact,
+        );
+      }
+    }
+    // A one-word placeholder is not safe for a global name match, but it is
+    // useful when paired with Case Easy's own creation date. Contacts export
+    // dates are consistently either the same UTC day as Cases or the next
+    // day because of the source workbook/time-zone conversion.
+    const sourceNameKey = normalizeIdentityName(
+      `${contact.firstName || ""} ${contact.lastName || ""}`,
+    );
+    const sourceDay = sourceDayKey(contact.sourceCreated);
+    if (sourceNameKey && sourceDay) {
+      addLookupValue(
+        contactsByFullNameAndSourceDay,
+        `${sourceNameKey}|${sourceDay}`,
+        contact,
+      );
+      addLookupValue(
+        contactsByNameTokensAndSourceDay,
+        `${nameTokenKey(sourceNameKey)}|${sourceDay}`,
+        contact,
+      );
+      addLookupValue(
+        contactsByFieldLayoutAndSourceDay,
+        `${normalizeIdentityName(contact.firstName)}|${normalizeIdentityName(contact.lastName)}|${sourceDay}`,
+        contact,
+      );
     }
   }
 
@@ -337,17 +546,146 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
       if (!linkedContactId && matches.length === 1) linkedContactId = matches[0].id;
     }
     if (!linkedContactId && kase.firstName && kase.lastName && kase.phone) {
-      const key = `${normalizeKey(kase.firstName)}|${normalizeKey(kase.lastName)}|${normalizePhoneKey(kase.phone)}`;
+      const key = `${normalizeIdentityName(kase.firstName)}|${normalizeIdentityName(kase.lastName)}|${normalizePhoneKey(kase.phone)}`;
       const matches = contactsByNamePhone.get(key) || [];
       if (matches.length === 1) linkedContactId = matches[0].id;
     }
 
-    let resolvedAssigneeUserId = null;
-    const assigneeNames = (kase.assignees || "").split(/[,;]/).map((name) => name.trim()).filter(Boolean);
-    if (assigneeNames.length === 1) {
-      const matches = users.filter((user) => normalizeKey(user.fullName) === normalizeKey(assigneeNames[0]));
-      if (matches.length === 1) resolvedAssigneeUserId = matches[0].id;
+    // Official Case Easy exports can leave the Cases sheet's primary Email
+    // and Client Identifier blank while carrying the same person in Other
+    // Emails/Other Contacts. Use those exported values before considering a
+    // name-only match. Every lookup must resolve to one contact globally.
+    if (!linkedContactId) {
+      const match = uniqueLookupValue(
+        contactsByRawEmail,
+        rawEmailKey(kase.email),
+      );
+      if (match) linkedContactId = match.id;
     }
+    if (!linkedContactId) {
+      const rawExportedNames = [
+        `${kase.firstName || ""} ${kase.lastName || ""}`,
+        kase.firstName,
+        kase.lastName,
+        kase.companyName,
+        String(kase.caseNumber || "").replace(/^[^-]*-/, ""),
+      ];
+      const exportedNames = rawExportedNames
+        .map(usableFullNameKey)
+        .filter(Boolean);
+      const datedExportedNames = rawExportedNames
+        .map(normalizeIdentityName)
+        .filter(Boolean);
+      const emailKeys = extractEmailKeys(kase.email, kase.otherEmails);
+      const phoneKeys = extractPhoneKeys(kase.phone, kase.otherContacts);
+      const sourceDays = caseEasyContactSourceDayKeys(kase.sourceCreated);
+
+      const emailAndNameMatch = uniqueCandidateFromKeys(
+        contactsByEmailAndFullName,
+        emailKeys.flatMap((emailKey) =>
+          exportedNames.map((name) => `${emailKey}|${name}`),
+        ),
+      );
+      const phoneAndNameMatch = uniqueCandidateFromKeys(
+        contactsByPhoneAndFullName,
+        phoneKeys.flatMap((phoneKey) =>
+          exportedNames.map((name) => `${phoneKey}|${name}`),
+        ),
+      );
+      const phoneAndTokenMatch = uniqueCandidateFromKeys(
+        contactsByPhoneAndNameTokens,
+        phoneKeys.flatMap((phoneKey) =>
+          exportedNames.map((name) => `${phoneKey}|${nameTokenKey(name)}`),
+        ),
+      );
+      const datedNameMatch = sourceDays.length
+        ? uniqueCandidateAcrossKeys(
+            contactsByFullNameAndSourceDay,
+            datedExportedNames.flatMap((name) =>
+              sourceDays.map((day) => `${name}|${day}`),
+            ),
+          )
+        : null;
+      const datedTokenMatch = sourceDays.length
+        ? uniqueCandidateAcrossKeys(
+            contactsByNameTokensAndSourceDay,
+            datedExportedNames.flatMap((name) =>
+              sourceDays.map((day) => `${nameTokenKey(name)}|${day}`),
+            ),
+          )
+        : null;
+      const datedFieldLayoutMatch = sourceDays.length
+        ? uniqueCandidateAcrossKeys(
+            contactsByFieldLayoutAndSourceDay,
+            sourceDays.map(
+              (day) =>
+                `${normalizeIdentityName(kase.firstName)}|${normalizeIdentityName(kase.lastName)}|${day}`,
+            ),
+          )
+        : null;
+      const evidenceMatches = [
+        emailAndNameMatch,
+        phoneAndNameMatch,
+        phoneAndTokenMatch,
+        datedNameMatch,
+        datedTokenMatch,
+        datedFieldLayoutMatch,
+      ].filter(Boolean);
+      const evidenceIds = new Set(evidenceMatches.map((item) => item.id));
+      if (evidenceIds.size === 1) {
+        linkedContactId = evidenceMatches[0].id;
+      }
+
+      // If two strong Case Easy fields identify different contacts, do not
+      // let a weaker global email/phone/name fallback choose between them.
+      // This is a real source-data conflict and belongs in review.
+      const hasConflictingEvidence = evidenceIds.size > 1;
+
+      if (!linkedContactId && !hasConflictingEvidence) {
+        const emailMatch = uniqueCandidateFromKeys(
+          contactsByEmail,
+          emailKeys,
+        );
+        if (emailMatch) linkedContactId = emailMatch.id;
+      }
+      if (!linkedContactId && !hasConflictingEvidence) {
+        const phoneMatch = uniqueCandidateFromKeys(
+          contactsByPhone,
+          phoneKeys,
+        );
+        if (phoneMatch) linkedContactId = phoneMatch.id;
+      }
+
+      if (!linkedContactId && !hasConflictingEvidence) {
+        const exactNameMatch = uniqueCandidateFromKeys(
+          contactsByFullName,
+          exportedNames,
+        );
+        const tokenNameMatch = uniqueCandidateFromKeys(
+          contactsByNameTokens,
+          exportedNames.map(nameTokenKey),
+        );
+        // Token matching handles Case Easy rows whose first/last columns were
+        // reversed. If exact and token evidence disagree, leave it in review.
+        if (
+          exactNameMatch
+          && (!tokenNameMatch || exactNameMatch.id === tokenNameMatch.id)
+        ) {
+          linkedContactId = exactNameMatch.id;
+        } else if (tokenNameMatch && !exactNameMatch) {
+          linkedContactId = tokenNameMatch.id;
+        }
+      }
+    }
+
+    const assigneeNames = (kase.assignees || "")
+      .split(/[,;]/)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const resolvedAssigneeUserId = resolveCaseEasyAssigneeUserId(
+      kase.assignees,
+      users,
+    );
 
     const reasons = [];
     if (!linkedContactId) reasons.push("unlinked_contact");

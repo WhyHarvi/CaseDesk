@@ -1,6 +1,6 @@
-import { AlertTriangle, BarChart3, ChevronDown, ExternalLink, Loader2, RefreshCw, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
+import { AlertTriangle, BarChart3, ChevronDown, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import {
   convertCaseEasyImportContact,
@@ -467,6 +467,7 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
 }
 
 export default function CaseEasyImport() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
   const [unlinkedCases, setUnlinkedCases] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -478,14 +479,51 @@ export default function CaseEasyImport() {
   const [convertingContact, setConvertingContact] = useState(null);
   const [notice, setNotice] = useState("");
   const [view, setView] = useState("contacts");
+  const [searchInput, setSearchInput] = useState(
+    searchParams.get("search") || "",
+  );
+  const search = searchParams.get("search") || "";
+
+  useEffect(() => {
+    const requestedView = searchParams.get("view");
+    if (["import", "contacts", "reports"].includes(requestedView)) {
+      setView(requestedView);
+    }
+    const requestedContact = searchParams.get("contact");
+    if (requestedContact) {
+      setExpandedId(requestedContact);
+      setRecordType("");
+      setImportStatus("");
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const normalized = searchInput.trim();
+      if (normalized === search) return;
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        if (normalized) next.set("search", normalized);
+        else next.delete("search");
+        next.set("view", "contacts");
+        next.delete("contact");
+        return next;
+      }, { replace: true });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput, search, setSearchParams]);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
       const [data, unlinked] = await Promise.all([
-        getCaseEasyImportContacts({ recordType: recordType || undefined, importStatus: importStatus || undefined }),
-        getUnlinkedCaseEasyImportCases(),
+        getCaseEasyImportContacts({
+          recordType: recordType || undefined,
+          importStatus: importStatus || undefined,
+          search: search || undefined,
+        }),
+        getUnlinkedCaseEasyImportCases({ search: search || undefined }),
       ]);
       setContacts(data);
       setUnlinkedCases(unlinked);
@@ -496,7 +534,7 @@ export default function CaseEasyImport() {
     }
   }
 
-  useEffect(() => { load(); }, [recordType, importStatus]);
+  useEffect(() => { load(); }, [recordType, importStatus, search]);
   useEffect(() => { api.get("/leads/staff").then((response) => setStaff(response.data.data || [])).catch(() => {}); }, []);
 
   const needsReviewTotal = useMemo(
@@ -529,6 +567,20 @@ export default function CaseEasyImport() {
       <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
 
       <div className="flex flex-wrap items-center gap-3">
+        <label className="relative min-w-[260px] flex-1">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder="Search name, client/case number, email, or phone"
+            className="h-10 w-full rounded-full border border-slate-200 bg-white pl-10 pr-10 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+          />
+          {searchInput ? (
+            <button type="button" onClick={() => setSearchInput("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Clear Case Easy search">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </label>
         <Select value={recordType} onChange={(event) => setRecordType(event.target.value)} className="w-40">
           {RECORD_TYPE_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </Select>
@@ -539,7 +591,7 @@ export default function CaseEasyImport() {
           <RefreshCw className="h-3.5 w-3.5" /> Refresh
         </button>
         <p className="text-xs font-medium text-slate-500">
-          {loading ? "Loading…" : `${contacts.length} contact${contacts.length === 1 ? "" : "s"}${recordType || importStatus ? " matching filters" : ""}`}
+          {loading ? "Loading…" : `${contacts.length} contact${contacts.length === 1 ? "" : "s"}${recordType || importStatus || search ? " matching filters" : ""}`}
         </p>
       </div>
 

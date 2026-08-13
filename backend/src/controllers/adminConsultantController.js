@@ -14,6 +14,11 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { publicAppUrl } from "../utils/publicAppUrl.js";
 import { logger } from "../services/logger.js";
 import { defaultPortalAccess } from "../services/portalAccessService.js";
+import {
+  approveCollaborationRequest,
+  declineCollaborationRequest,
+  listCollaborationRequestsForAdmin,
+} from "../services/caseCollaborationService.js";
 
 const consultantSelect = {
   id: true,
@@ -592,6 +597,40 @@ function addWork(bucket, type, item, owner, now) {
   }
 }
 
+// Same-case (or same-client, when an item has no case — a client-level
+// follow-up or document) items collapse into one row: five pending tasks
+// on Jashandeep Dhaliwal's case become one "Jashandeep Dhaliwal · 5 tasks"
+// row instead of five nearly-identical ones repeating the same name. Built
+// from the already-sorted array so group order matches item order within
+// each group; sliceLimit then caps the number of *groups* shown inline,
+// not raw items, since grouping already did the real compression — a
+// person with 30 tasks spread across 6 cases should see all 6 rows, not
+// get cut off at item #10 mid-case.
+function groupByCase(sortedItems, sliceLimit) {
+  const groups = [];
+  const byKey = new Map();
+  for (const item of sortedItems) {
+    const caseId = item.case?.id || null;
+    const clientId = item.case?.client?.id || item.client?.id || null;
+    const key = caseId ? `case:${caseId}` : clientId ? `client:${clientId}` : `item:${item.id}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        caseId,
+        clientId,
+        clientName: item.case?.client?.fullName || item.client?.fullName || "General",
+        caseType: item.case?.caseType || null,
+        items: [],
+      };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.items.push(item);
+  }
+  return groups.slice(0, sliceLimit).map((group) => ({ ...group, count: group.items.length }));
+}
+
 // sliceLimit caps how many items each category shows inline on the main
 // workload page (10, matching the original behavior). The drill-down
 // endpoint below (consultantWorkloadCategory) calls this with
@@ -626,6 +665,14 @@ function finalizeBucket(bucket, capacity = null, sliceLimit = 10) {
     capacity === null
       ? null
       : Math.round((bucket.activeCases / Math.max(capacity, 1)) * 100);
+
+  const pendingTasksSorted = bucket.pendingTaskItems.sort(byDueDate);
+  const overdueTasksSorted = bucket.overdueTaskItems.sort(byDueDate);
+  const followUpsSorted = bucket.followUpItems.sort(byDueDate);
+  const overdueFollowUpsSorted = bucket.overdueFollowUpItems.sort(byDueDate);
+  const documentReviewSorted = bucket.documentReviewItems.sort(byUpdatedAt);
+  const documentWaitingSorted = bucket.documentWaitingItems.sort(byUpdatedAt);
+
   return {
     ...bucket,
     ...(capacity === null
@@ -642,19 +689,23 @@ function finalizeBucket(bucket, capacity = null, sliceLimit = 10) {
     collaboratingCaseItems: bucket.collaboratingCaseItems
       .sort(byUpdatedAt)
       .slice(0, sliceLimit),
-    pendingTaskItems: bucket.pendingTaskItems.sort(byDueDate).slice(0, sliceLimit),
-    overdueTaskItems: bucket.overdueTaskItems.sort(byDueDate).slice(0, sliceLimit),
-    documentReviewItems: bucket.documentReviewItems
-      .sort(byUpdatedAt)
-      .slice(0, sliceLimit),
-    documentWaitingItems: bucket.documentWaitingItems
-      .sort(byUpdatedAt)
-      .slice(0, sliceLimit),
-    followUpItems: bucket.followUpItems.sort(byDueDate).slice(0, sliceLimit),
-    overdueFollowUpItems: bucket.overdueFollowUpItems
-      .sort(byDueDate)
-      .slice(0, sliceLimit),
+    pendingTaskItems: pendingTasksSorted.slice(0, sliceLimit),
+    overdueTaskItems: overdueTasksSorted.slice(0, sliceLimit),
+    documentReviewItems: documentReviewSorted.slice(0, sliceLimit),
+    documentWaitingItems: documentWaitingSorted.slice(0, sliceLimit),
+    followUpItems: followUpsSorted.slice(0, sliceLimit),
+    overdueFollowUpItems: overdueFollowUpsSorted.slice(0, sliceLimit),
     appointmentItems: bucket.appointmentItems.sort(byDueDate).slice(0, sliceLimit),
+    // Grouped views — additive, alongside the flat *Items arrays above
+    // (which the drill-down "view all" drawer still paginates flat).
+    // sliceLimit here bounds group *count*, so it's intentionally not
+    // reused for the drill-down call (Infinity there means "all groups").
+    pendingTaskGroups: groupByCase(pendingTasksSorted, sliceLimit),
+    overdueTaskGroups: groupByCase(overdueTasksSorted, sliceLimit),
+    followUpGroups: groupByCase(followUpsSorted, sliceLimit),
+    overdueFollowUpGroups: groupByCase(overdueFollowUpsSorted, sliceLimit),
+    documentReviewGroups: groupByCase(documentReviewSorted, sliceLimit),
+    documentWaitingGroups: groupByCase(documentWaitingSorted, sliceLimit),
   };
 }
 
@@ -751,6 +802,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
           description: true,
           priority: true,
           dueAt: true,
+          createdAt: true,
           assignedTo: { select: ownershipUserSelect },
           case: { select: workloadCaseSelect },
         },
@@ -890,6 +942,25 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
   const activeConsultantIds = new Set(
     staffMembers.map((member) => member.user.id),
   );
+  // Cheap name lookup for decorating case rows with who else is on them
+  // (Team Workload's "who's collaborating" indicator) — every consultant's
+  // fullName is already in memory from the roster query above, so this
+  // needs no extra round trip.
+  const nameById = new Map(staffMembers.map((member) => [member.user.id, member.user.fullName]));
+  // Case staleness ("last touched") — the most recent ActivityLog entry per
+  // case, not case.updatedAt, since plenty of real progress (notes, tasks,
+  // documents, appointments) never mutates the case row itself. Falls back
+  // to case.updatedAt for cases with no logged activity yet rather than
+  // showing nothing.
+  const caseIdsForActivity = cases.map((item) => item.id);
+  const lastActivityRows = caseIdsForActivity.length
+    ? await prisma.activityLog.groupBy({
+        by: ["caseId"],
+        where: { agencyId, caseId: { in: caseIdsForActivity } },
+        _max: { createdAt: true },
+      })
+    : [];
+  const lastActivityByCaseId = new Map(lastActivityRows.map((row) => [row.caseId, row._max.createdAt]));
   const buckets = new Map(
     staffMembers.map((member) => [member.user.id, emptyWorkloadBucket()]),
   );
@@ -919,9 +990,20 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
     ),
   );
   cases.forEach((item) => {
+    // Who else has active access to this case, by name — carried on the
+    // case row itself (not queried separately) so the frontend can show a
+    // collaborator avatar stack without a second request.
+    const collaborators = (item.assignments || [])
+      .filter((assignment) => activeConsultantIds.has(assignment.consultant.id))
+      .map((assignment) => ({
+        id: assignment.consultant.id,
+        fullName: nameById.get(assignment.consultant.id) || "Team member",
+        assignmentType: assignment.assignmentType,
+      }));
+    const decoratedCase = { ...item, collaborators, lastActivityAt: lastActivityByCaseId.get(item.id) || item.updatedAt };
     route(
       "case",
-      item,
+      decoratedCase,
       resolveWorkOwner({ agencyId, activeConsultantIds, caseItem: item }),
     );
     // Second, parallel pass: supporting/reviewer consultants get their own
@@ -937,7 +1019,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
         const bucket = buckets.get(assignment.consultant.id);
         bucket.collaboratingCases += 1;
         bucket.collaboratingCaseItems.push({
-          ...item,
+          ...decoratedCase,
           assignmentSource: assignment.assignmentType,
         });
       });
@@ -1208,4 +1290,27 @@ export async function reassignWorkloadItem(req, res) {
   req.params.id = itemId;
   req.body = { assignedUserId: newOwnerUserId };
   return updateFollowUp(req, res);
+}
+
+// Admin-side queue for the consultant self-service "request to join a case"
+// workflow (Team Workload refinement plan, Phase 4). The actual grant still
+// runs through the same ownership model /cases/:id/permissions uses —
+// approveCollaborationRequest() just does it on the requester's behalf and
+// records who approved it.
+export async function listCollaborationRequestsHandler(req, res) {
+  const status = typeof req.query.status === "string" ? req.query.status.trim() : "Pending";
+  const data = await listCollaborationRequestsForAdmin(req.auth.agencyId, { status });
+  res.json({ success: true, data });
+}
+
+export async function approveCollaborationRequestHandler(req, res) {
+  const reviewNote = typeof req.body?.reviewNote === "string" ? req.body.reviewNote : "";
+  const data = await approveCollaborationRequest(req.auth.agencyId, req.auth.userId, req.params.id, { reviewNote });
+  res.json({ success: true, data, message: "Access granted." });
+}
+
+export async function declineCollaborationRequestHandler(req, res) {
+  const reviewNote = typeof req.body?.reviewNote === "string" ? req.body.reviewNote : "";
+  const data = await declineCollaborationRequest(req.auth.agencyId, req.auth.userId, req.params.id, { reviewNote });
+  res.json({ success: true, data, message: "Request declined." });
 }

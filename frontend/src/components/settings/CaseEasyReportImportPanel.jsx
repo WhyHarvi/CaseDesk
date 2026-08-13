@@ -14,6 +14,7 @@ import Select from "../ui/Select";
 const REPORT_TYPES = [
   ["", "Auto-detect report"],
   ["client_listing", "Client Listing — import this first"],
+  ["case_types", "Case Types"],
   ["payment_requests", "Payment Requests"],
   ["invoices", "Invoices"],
   ["payments", "Payments"],
@@ -71,6 +72,7 @@ export default function CaseEasyReportImportPanel() {
       const response = await api.post(
         `/case-easy-import/reports/${mode === "preview" ? "preview" : "upload"}`,
         formData(),
+        { timeout: 300_000 },
       );
       if (mode === "preview") {
         setPreview(response.data.data);
@@ -102,7 +104,7 @@ export default function CaseEasyReportImportPanel() {
         <div>
           <h3 className="text-lg font-semibold text-slate-950">Case Easy reports</h3>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-            Import client, billing, trust, activity, time, milestone, employer, and e-signature reports. CaseDesk keeps every source column and maps each row to the matching staged and converted client.
+            Import case-type summaries plus client, billing, trust, activity, time, milestone, employer, and e-signature reports. CaseDesk keeps every source column and maps client-specific rows to the matching staged and converted client.
           </p>
         </div>
       </div>
@@ -114,7 +116,7 @@ export default function CaseEasyReportImportPanel() {
             {result.reportLabel} imported
           </p>
           <p className="mt-1 text-sm text-emerald-700">
-            {result.stats.created} added, {result.stats.updated} updated · {result.stats.linked} linked, {result.stats.unlinked} unlinked, {result.stats.ambiguous} ambiguous.
+            All {result.stats.stored} source rows verified · {result.stats.created} added, {result.stats.updated} updated · {result.stats.aggregate || 0} aggregate, {result.stats.source_only || 0} source-only, {result.stats.linked} linked, {result.stats.standalone || 0} standalone companies, {result.stats.unlinked} unlinked, {result.stats.ambiguous} ambiguous.
           </p>
           <button type="button" onClick={reset} className="mt-3 rounded-full border border-emerald-200 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-800">
             Import another report
@@ -207,6 +209,12 @@ export default function CaseEasyReportImportPanel() {
               <p className="mt-1 text-xs text-slate-500">
                 {preview.rowCount} row{preview.rowCount === 1 ? "" : "s"} recognized. Nothing has been stored yet.
               </p>
+              {preview.warnings?.map((warning) => (
+                <p key={warning.code} className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {warning.message}
+                </p>
+              ))}
               {preview.preview.length ? (
                 <div className="mt-3 space-y-1.5">
                   {preview.preview.map((row) => (

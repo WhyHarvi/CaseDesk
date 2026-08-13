@@ -93,6 +93,10 @@ import {
   startLeadStaleOutreachWorker,
   stopLeadStaleOutreachWorker,
 } from "./modules/leads/lead.staleOutreach.worker.js";
+import {
+  startWorkloadZeroActivityWorker,
+  stopWorkloadZeroActivityWorker,
+} from "./modules/workload/workload.zeroActivity.worker.js";
 import portalRoutes from "./routes/portalRoutes.js";
 import clientPortalRoutes from "./routes/clientPortalRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
@@ -455,6 +459,7 @@ function onListening() {
   startLeadIntakeWorker();
   startLeadReactivationWorker();
   startLeadStaleOutreachWorker();
+  startWorkloadZeroActivityWorker();
   startBookingReminderWorker();
   startPaymentScheduleWorker();
   startPaymentHoldExpiryWorker();
@@ -501,6 +506,7 @@ async function shutdown(signal) {
   stopLeadIntakeWorker();
   stopLeadReactivationWorker();
   stopLeadStaleOutreachWorker();
+  stopWorkloadZeroActivityWorker();
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();
   stopPaymentHoldExpiryWorker();

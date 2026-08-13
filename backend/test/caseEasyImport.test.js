@@ -6,8 +6,10 @@ import {
   CASE_HEADER_MAP,
   CONTACT_DATE_FIELDS,
   CONTACT_HEADER_MAP,
+  caseEasyAssigneeNameMatches,
   classifyWorkbookHeaders,
   mapRow,
+  resolveCaseEasyAssigneeUserId,
 } from "../src/services/caseEasyImportService.js";
 
 const source = (relativePath) =>
@@ -48,6 +50,44 @@ test("Case Easy raw fields preserve UCI and marital status for conversion", () =
   assert.deepEqual(errors, []);
 });
 
+test("Case Easy abbreviated assignees resolve only to one active staff identity", () => {
+  const staff = [
+    { id: "afi", fullName: "Afi Mariam" },
+    { id: "gagan", fullName: "Gagandeep Singh Dhillon" },
+    { id: "harpreet", fullName: "Harpreet Kaur" },
+  ];
+  assert.equal(caseEasyAssigneeNameMatches("Afi M.", "Afi Mariam"), true);
+  assert.equal(
+    caseEasyAssigneeNameMatches(
+      "Gagandeep Singh D.",
+      "Gagandeep Singh Dhillon",
+    ),
+    true,
+  );
+  assert.equal(
+    resolveCaseEasyAssigneeUserId("Harpreet  K.", staff),
+    "harpreet",
+  );
+  assert.equal(
+    resolveCaseEasyAssigneeUserId("Afi M.;Gagandeep Singh D.", staff),
+    null,
+  );
+  assert.equal(
+    resolveCaseEasyAssigneeUserId("Afi M.;Former Staff X.", staff),
+    null,
+  );
+  assert.equal(caseEasyAssigneeNameMatches("Simar K.", "Harpreet Kaur"), false);
+});
+
+test("Case Easy link resolution uses secondary export fields without fuzzy contact guessing", async () => {
+  const service = await source("../src/services/caseEasyImportService.js");
+  assert.match(service, /extractEmailKeys\(kase\.email, kase\.otherEmails\)/);
+  assert.match(service, /extractPhoneKeys\(kase\.phone, kase\.otherContacts\)/);
+  assert.match(service, /contactsByNameTokens/);
+  assert.match(service, /exactNameMatch\.id === tokenNameMatch\.id/);
+  assert.match(service, /values\.length === 1 \? values\[0\] : null/);
+});
+
 test("Case Easy conversion writes assessment paths and validates agency staff", async () => {
   const controller = await source(
     "../src/controllers/caseEasyImportController.js",
@@ -70,7 +110,11 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
 });
 
 test("Case Easy staging UI exposes unresolved cases and all raw source fields", async () => {
-  const page = await source("../../frontend/src/pages/CaseEasyImport.jsx");
+  const [page, controller, searchService] = await Promise.all([
+    source("../../frontend/src/pages/CaseEasyImport.jsx"),
+    source("../src/controllers/caseEasyImportController.js"),
+    source("../src/services/caseEasySearchService.js"),
+  ]);
   assert.match(page, /Cases without a matched contact/);
   assert.match(page, /View all raw Case Easy fields/);
   for (const field of [
@@ -85,6 +129,11 @@ test("Case Easy staging UI exposes unresolved cases and all raw source fields", 
   }
   assert.match(page, /Convert to CaseDesk Client/);
   assert.match(page, /CaseEasyReportsBrowser/);
+  assert.match(page, /Search name, client\/case number, email, or phone/);
+  assert.match(page, /searchParams\.get\("contact"\)/);
+  assert.match(controller, /buildCaseEasyContactSearchWhere\(search\)/);
+  assert.match(searchService, /linkedCases:[\s\S]*caseNumber/);
+  assert.match(searchService, /convertedClient:[\s\S]*clientNumber/);
 });
 
 test("Case Easy staging data remains tenant scoped for every internal staff role", async () => {

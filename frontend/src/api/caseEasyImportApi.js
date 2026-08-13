@@ -15,8 +15,9 @@ export async function convertCaseEasyImportContact(id, payload) {
   return response.data.data;
 }
 
-export async function getUnlinkedCaseEasyImportCases() {
+export async function getUnlinkedCaseEasyImportCases(params) {
   const response = await api.get("/case-easy-import/unlinked-cases", {
+    params,
     cache: false,
   });
   return response.data.data;

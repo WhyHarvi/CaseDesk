@@ -54,6 +54,11 @@ export async function getTeamWorkloadReport(req, db = prisma, now = new Date()) 
         (SELECT COALESCE(SUM(pa."active_seconds"), 0)::int FROM "user_portal_activity" pa
           WHERE pa."agency_id" = ${agencyId} AND pa."user_id" = u.id
             AND pa."activity_date" >= ${from}::date AND pa."activity_date" <= ${to}::date) AS "portalActiveSeconds",
+        -- All-time (not period-bound) most recent heartbeat — the online/
+        -- last-active indicator needs "have they pinged recently at all",
+        -- not "did they ping within whatever period filter is selected".
+        (SELECT MAX(pa."last_ping_at") FROM "user_portal_activity" pa
+          WHERE pa."agency_id" = ${agencyId} AND pa."user_id" = u.id) AS "lastActiveAt",
         (
           (SELECT COUNT(*)::int FROM "follow_ups" f
             WHERE f."agency_id" = ${agencyId} AND f."assigned_user_id" = u.id
@@ -85,6 +90,7 @@ export async function getTeamWorkloadReport(req, db = prisma, now = new Date()) 
       activityCount: Number(metrics.activityCount || 0),
       moneyCollected: Number(metrics.moneyCollected || 0),
       portalActiveSeconds: Number(metrics.portalActiveSeconds || 0),
+      lastActiveAt: metrics.lastActiveAt || null,
       // "Overdue" is free from the roster call (already computed by
       // addWork() from the same FollowUp/LeadFollowUp/CaseWorkflowStep
       // models); only "due soon" needed a new query.
@@ -118,5 +124,89 @@ export async function getTeamWorkloadReport(req, db = prisma, now = new Date()) 
     summary,
     members,
     unassigned: roster.unassigned,
+  };
+}
+
+// Day-by-day series for the roster (or a specific subset — the Compare
+// view passes 2-4 userIds), reusing the exact same five sources as the
+// period-summed report above, just grouped by calendar day instead of
+// summed once across the whole window. This is what makes "how did today
+// compare to yesterday" answerable at all — everything elsewhere on this
+// page only ever shows one number per person per period.
+export async function getWorkloadDailyTrend(req, db = prisma, now = new Date()) {
+  const agencyId = req.auth.agencyId;
+  const days = Math.min(60, Math.max(1, Number.parseInt(req.query?.days, 10) || 14));
+  const requestedIds = String(req.query?.userIds || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const from = new Date(to.getTime() - (days - 1) * 24 * 60 * 60_000);
+
+  const rows = await db.$queryRaw(Prisma.sql`
+    WITH days AS (
+      SELECT generate_series(${from}::date, ${to}::date, interval '1 day')::date AS day
+    ),
+    roster AS (
+      SELECT u.id, u.full_name AS "fullName"
+      FROM "users" u
+      JOIN "agency_members" m ON m."user_id" = u.id AND m."agency_id" = ${agencyId}
+        AND m."is_active" = true AND m.role::text IN ('admin', 'consultant', 'frontdesk')
+      WHERE u."agency_id" = ${agencyId} AND u.status::text = 'active'
+        ${requestedIds.length ? Prisma.sql`AND u.id IN (${Prisma.join(requestedIds)})` : Prisma.empty}
+    )
+    SELECT
+      r.id AS "userId",
+      r."fullName",
+      d.day,
+      COALESCE(pa.active_seconds, 0)::int AS "activeSeconds",
+      COALESCE(ap.cnt, 0)::int AS "appointmentsBooked",
+      COALESCE(oc.cnt, 0)::int AS "callsHandled",
+      COALESCE(ct.amt, 0) AS "moneyCollected",
+      COALESCE(al.cnt, 0)::int AS "activityCount"
+    FROM roster r
+    CROSS JOIN days d
+    LEFT JOIN "user_portal_activity" pa
+      ON pa.user_id = r.id AND pa.agency_id = ${agencyId} AND pa.activity_date = d.day
+    LEFT JOIN (
+      SELECT created_by_id AS user_id, created_at::date AS day, COUNT(*) AS cnt
+      FROM "appointments" WHERE agency_id = ${agencyId} GROUP BY created_by_id, created_at::date
+    ) ap ON ap.user_id = r.id AND ap.day = d.day
+    LEFT JOIN (
+      SELECT handled_by_user_id AS user_id, started_at::date AS day, COUNT(*) AS cnt
+      FROM "ooma_call_sessions" WHERE agency_id = ${agencyId} GROUP BY handled_by_user_id, started_at::date
+    ) oc ON oc.user_id = r.id AND oc.day = d.day
+    LEFT JOIN (
+      SELECT created_by_id AS user_id, occurred_at::date AS day, SUM(amount) AS amt
+      FROM "cash_transactions" WHERE status = 'Posted' AND type = 'Payment' GROUP BY created_by_id, occurred_at::date
+    ) ct ON ct.user_id = r.id AND ct.day = d.day
+    LEFT JOIN (
+      SELECT user_id, created_at::date AS day, COUNT(*) AS cnt
+      FROM "activity_logs" WHERE agency_id = ${agencyId} AND action NOT IN ('USER_LOGIN', 'USER_LOGOUT') GROUP BY user_id, created_at::date
+    ) al ON al.user_id = r.id AND al.day = d.day
+    ORDER BY r.id, d.day
+  `);
+
+  const byUser = new Map();
+  for (const row of rows) {
+    if (!byUser.has(row.userId)) {
+      byUser.set(row.userId, { userId: row.userId, fullName: row.fullName, days: [] });
+    }
+    byUser.get(row.userId).days.push({
+      day: row.day.toISOString().slice(0, 10),
+      activeSeconds: Number(row.activeSeconds || 0),
+      appointmentsBooked: Number(row.appointmentsBooked || 0),
+      callsHandled: Number(row.callsHandled || 0),
+      moneyCollected: Number(row.moneyCollected || 0),
+      activityCount: Number(row.activityCount || 0),
+    });
+  }
+
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+    members: [...byUser.values()],
   };
 }

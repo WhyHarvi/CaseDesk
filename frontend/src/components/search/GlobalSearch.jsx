@@ -6,6 +6,7 @@ import {
   StickyNote,
   UserRound,
   UsersRound,
+  Database,
   X,
 } from "lucide-react";
 import {
@@ -25,6 +26,7 @@ const groupIcons = {
   documents: FileText,
   notes: StickyNote,
   leads: UsersRound,
+  caseEasy: Database,
 };
 
 function Highlight({ children, query }) {
@@ -300,8 +302,8 @@ export default function GlobalSearch() {
                   </p>
                   <p className="mt-1 text-xs leading-5 text-slate-500">
                     {role === "frontdesk"
-                      ? "Find assigned leads by name, number, phone, or email."
-                      : "Find clients, cases, documents, notes, and leads."}
+                      ? "Find leads and Case Easy imports by name, number, phone, or email."
+                      : "Find clients, cases, documents, notes, leads, and Case Easy imports."}
                   </p>
                 </div>
               ) : !flatResults.length ? (

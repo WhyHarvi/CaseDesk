@@ -66,6 +66,11 @@ test("record searches retain agency, assignment, and deleted-record scopes", asy
   assert.match(controller, /searchWhenAllowed\(access\.cases/);
   assert.match(controller, /searchWhenAllowed\(access\.documents/);
   assert.match(controller, /searchWhenAllowed\(access\.notes/);
+  assert.match(controller, /hasPortalPageAccess\(req, "caseEasyImport"\)/);
+  assert.match(controller, /searchWhenAllowed\(canSearchCaseEasy/);
+  assert.match(controller, /prisma\.caseEasyImportContact\.findMany/);
+  assert.match(controller, /label: "Case Easy imports"/);
+  assert.match(controller, /view=contacts&contact=/);
   assert.match(controller, /global_search\.source_failed/);
   assert.match(controller, /SEARCH_UNAVAILABLE/);
 
@@ -105,6 +110,7 @@ test("global search UI uses an unclipped portal and opens every result", async (
   assert.match(search, /event\.key === "Enter"/);
   assert.match(search, /280/);
   assert.match(search, /response\.data\.data\?\.warning/);
+  assert.match(search, /caseEasy: Database/);
   assert.match(caseProfile, /overlay"\) === "notes"/);
   assert.match(caseProfile, /highlightNoteId=\{highlightedNoteId\}/);
   assert.match(clientProfile, /useFadingHighlight\(highlightedNoteId/);

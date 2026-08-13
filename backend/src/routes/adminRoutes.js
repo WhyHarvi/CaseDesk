@@ -1,10 +1,13 @@
 import { Router } from "express";
 import {
   agencyWorkloads,
+  approveCollaborationRequestHandler,
   consultantWorkloadCategory,
   createConsultant,
+  declineCollaborationRequestHandler,
   disableConsultant,
   getConsultant,
+  listCollaborationRequestsHandler,
   listConsultants,
   reassignWorkloadItem,
   resetConsultantPassword,
@@ -50,6 +53,15 @@ router.post("/consultants/workload/reassign", asyncHandler(reassignWorkloadItem)
 router.get(
   "/consultants/workload/:consultantKey/:category",
   asyncHandler(consultantWorkloadCategory),
+);
+router.get("/consultants/collaboration-requests", asyncHandler(listCollaborationRequestsHandler));
+router.post(
+  "/consultants/collaboration-requests/:id/approve",
+  asyncHandler(approveCollaborationRequestHandler),
+);
+router.post(
+  "/consultants/collaboration-requests/:id/decline",
+  asyncHandler(declineCollaborationRequestHandler),
 );
 router.post(
   "/consultants",

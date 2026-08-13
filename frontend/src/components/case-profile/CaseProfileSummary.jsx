@@ -2,6 +2,7 @@ import {
   ArrowUpRight,
   BriefcaseBusiness,
   Clock3,
+  Handshake,
   History,
   Mail,
   MessageSquareText,
@@ -127,7 +128,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems.filter((item) => (item !== "Manage Permissions" || canManagePermissions) && (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Archive", "Delete", "Close"].includes(item)))}
+            items={caseOptionItems.filter((item) => (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Archive", "Delete", "Close"].includes(item)))}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
@@ -135,7 +136,6 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
             onSelect={(item) => {
               if (item === "Download application") onDownloadApplication?.();
               if (item === "Applicants") onOpenApplicants();
-              if (item === "Manage Permissions") onOpenPermissions?.();
               if (item === "E-Sign") onOpenESign?.();
               if (item === "Archive") onArchiveCase?.();
               if (item === "Close") onCloseCase?.();
@@ -147,6 +147,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <SimpleActionPill icon={History} label="Activities" onClick={onOpenActivities} />
           {onOpenStatement ? <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} /> : null}
           <SimpleActionPill icon={Clock3} label="Time entries" />
+          {canManagePermissions ? <SimpleActionPill icon={Handshake} label="Collaboration" onClick={onOpenPermissions} /> : null}
           <SimpleActionPill icon={BriefcaseBusiness} label="Workflow" onClick={onOpenWorkflow} />
         </div>
       </div>

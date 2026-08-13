@@ -21,6 +21,9 @@ const LINK_OPTIONS = [
   ["linked", "Linked"],
   ["unlinked", "Unlinked"],
   ["ambiguous", "Ambiguous"],
+  ["standalone", "Standalone companies"],
+  ["aggregate", "Aggregate rows"],
+  ["source_only", "Source-only rows"],
 ];
 
 function prettyHeader(value) {
@@ -31,22 +34,42 @@ function prettyHeader(value) {
 
 function ReportRow({ row }) {
   const [expanded, setExpanded] = useState(false);
+  const standalone =
+    row.linkStatus === "unlinked" && row.importStatus === "reviewed";
+  const aggregate = row.linkStatus === "aggregate";
+  const sourceOnly = row.linkStatus === "source_only";
+  const displayStatus = standalone
+    ? "Standalone company"
+    : aggregate
+      ? "Aggregate"
+      : sourceOnly
+        ? "Source-only"
+      : prettyHeader(row.linkStatus);
+  const statusClass = row.linkStatus === "linked"
+    ? "bg-emerald-50 text-emerald-700"
+    : aggregate
+      ? "bg-violet-50 text-violet-700"
+    : sourceOnly
+      ? "bg-slate-100 text-slate-600"
+    : standalone
+      ? "bg-sky-50 text-sky-700"
+      : "bg-amber-50 text-amber-700";
   const clientName = row.linkedContact
     ? [row.linkedContact.firstName, row.linkedContact.lastName]
         .filter(Boolean)
         .join(" ")
     : null;
   return (
-    <article className={`rounded-2xl border bg-white ${row.linkStatus === "linked" ? "border-slate-200" : "border-amber-200"}`}>
+    <article className={`rounded-2xl border bg-white ${row.linkStatus === "linked" || sourceOnly ? "border-slate-200" : aggregate ? "border-violet-200" : standalone ? "border-sky-200" : "border-amber-200"}`}>
       <div className="flex items-center gap-2 px-4 py-3">
         <button type="button" onClick={() => setExpanded((value) => !value)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-sm font-semibold text-slate-900">
-                {row.fullName || row.clientIdentifier || row.caseNumber || "Unidentified report row"}
+                {row.fullName || row.companyName || row.clientIdentifier || row.caseNumber || row.caseType || "Unidentified report row"}
               </p>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${row.linkStatus === "linked" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                {prettyHeader(row.linkStatus)}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}`}>
+                {displayStatus}
               </span>
             </div>
             <p className="mt-1 truncate text-xs text-slate-500">
@@ -72,7 +95,7 @@ function ReportRow({ row }) {
       {expanded ? (
         <div className="border-t border-slate-100 px-4 py-4">
           {row.linkReason ? (
-            <p className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <p className={`mb-3 flex items-start gap-2 rounded-xl px-3 py-2 text-xs ${standalone ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`}>
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               {row.linkReason}
             </p>
@@ -135,11 +158,14 @@ export default function CaseEasyReportsBrowser() {
 
   return (
     <div className="space-y-5">
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         {[
           ["Report rows", summary?.reportTypes.reduce((sum, item) => sum + item.count, 0) || 0],
           ["Linked", summary?.linkStatuses.linked || 0],
           ["Needs matching", (summary?.linkStatuses.unlinked || 0) + (summary?.linkStatuses.ambiguous || 0)],
+          ["Standalone companies", summary?.linkStatuses.standalone || 0],
+          ["Aggregate rows", summary?.linkStatuses.aggregate || 0],
+          ["Source-only rows", summary?.linkStatuses.sourceOnly || 0],
         ].map(([label, value]) => (
           <div key={label} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
             <p className="text-xs font-medium text-slate-500">{label}</p>
