@@ -12,9 +12,10 @@ import prisma from "./prisma/client.js";
 // (Date, 0 days after signing); a second/third staged payment tied to an
 // invitation (Express Entry / OINP) is seeded as a Date trigger 30 days
 // after signing — a placeholder, since the real invitation date isn't known
-// in advance; anything described as "on submission" uses the Stage trigger
-// pointing at the "Submitted" case stage, which fires automatically once a
-// case reaches that stage, alongside its government/biometric fee(s).
+// in advance; anything labeled "Payment due upon submission" uses the
+// Stage trigger pointing at the "Submitted" case stage, which fires
+// automatically once a case reaches that stage, alongside its
+// government/biometric fee(s).
 const D0 = { triggerType: "Date", triggerDaysAfterSigning: 0 };
 const D30 = { triggerType: "Date", triggerDaysAfterSigning: 30 };
 const SUBMITTED = { triggerType: "Stage", triggerStage: "Submitted" };
@@ -33,7 +34,7 @@ export const defaultBillingTemplates = [
     caseTags: ["visitor visa", "visitor record", "super visa"],
     installments: [
       fee("Initial payment", 200, D0),
-      fee("On submission", 300, SUBMITTED),
+      fee("Payment due upon submission", 300, SUBMITTED),
       govt("Government fee", 100, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -44,7 +45,7 @@ export const defaultBillingTemplates = [
     caseTags: ["study permit inside canada", "study permit"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 500, SUBMITTED),
+      fee("Payment due upon submission", 500, SUBMITTED),
       govt("Government fee", 150, SUBMITTED),
     ],
   },
@@ -54,7 +55,7 @@ export const defaultBillingTemplates = [
     caseTags: ["study permit outside canada"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 1000, SUBMITTED),
+      fee("Payment due upon submission", 1000, SUBMITTED),
       govt("Government fee", 150, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -65,7 +66,7 @@ export const defaultBillingTemplates = [
     caseTags: ["pgwp", "post-graduation work permit"],
     installments: [
       fee("Initial payment", 100, D0),
-      fee("On submission", 200, SUBMITTED),
+      fee("Payment due upon submission", 200, SUBMITTED),
     ],
   },
   {
@@ -74,7 +75,7 @@ export const defaultBillingTemplates = [
     caseTags: ["spousal open work permit", "sowp"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 1000, SUBMITTED),
+      fee("Payment due upon submission", 1000, SUBMITTED),
       govt("Government fee (work permit — $100 instead if open work permit)", 155, SUBMITTED),
     ],
   },
@@ -84,7 +85,7 @@ export const defaultBillingTemplates = [
     caseTags: ["sowp extension", "spousal open work permit extension"],
     installments: [
       fee("Initial payment", 250, D0),
-      fee("On submission", 500, SUBMITTED),
+      fee("Payment due upon submission", 500, SUBMITTED),
       govt("Government fee (work permit — $100 instead if open work permit)", 155, SUBMITTED),
     ],
   },
@@ -94,7 +95,7 @@ export const defaultBillingTemplates = [
     caseTags: ["sowp outside canada", "spousal open work permit outside canada"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 2000, SUBMITTED),
+      fee("Payment due upon submission", 2000, SUBMITTED),
       govt("Government fee (work permit — $100 instead if open work permit)", 155, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -105,7 +106,7 @@ export const defaultBillingTemplates = [
     caseTags: ["lmia work permit", "lmia based work permit"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 2000, SUBMITTED),
+      fee("Payment due upon submission", 2000, SUBMITTED),
       govt("Government fee", 155, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -116,7 +117,7 @@ export const defaultBillingTemplates = [
     caseTags: ["vulnerable owp", "vulnerable open work permit"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 2000, SUBMITTED),
+      fee("Payment due upon submission", 2000, SUBMITTED),
     ],
   },
   {
@@ -125,7 +126,7 @@ export const defaultBillingTemplates = [
     caseTags: ["pnp work permit", "pnp based work permit"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("On submission", 500, SUBMITTED),
+      fee("Payment due upon submission", 500, SUBMITTED),
       govt("Government fee", 155, SUBMITTED),
     ],
   },
@@ -154,8 +155,8 @@ export const defaultBillingTemplates = [
     caseTags: ["express entry", "pr express entry"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("Invitation", 500, D30),
-      fee("On submission", 1000, SUBMITTED),
+      fee("Payment due upon receiving invitation", 500, D30),
+      fee("Payment due upon submission", 1000, SUBMITTED),
       govt("Government fee", 1590, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -166,8 +167,8 @@ export const defaultBillingTemplates = [
     caseTags: ["express entry spousal", "express entry with spouse", "pr express entry spousal"],
     installments: [
       fee("Initial payment", 750, D0),
-      fee("Invitation", 1250, D30),
-      fee("On submission", 1500, SUBMITTED),
+      fee("Payment due upon receiving invitation", 1250, D30),
+      fee("Payment due upon submission", 1500, SUBMITTED),
       govt("Government fee", 1260, SUBMITTED),
       govt("Biometrics", 85, SUBMITTED),
     ],
@@ -178,8 +179,8 @@ export const defaultBillingTemplates = [
     caseTags: ["oinp", "ontario pnp", "pr pnp", "oinp pnp"],
     installments: [
       fee("Initial payment", 500, D0),
-      fee("Invitation", 1000, D30),
-      fee("On submission", 1000, SUBMITTED),
+      fee("Payment due upon receiving invitation", 1000, D30),
+      fee("Payment due upon submission", 1000, SUBMITTED),
     ],
   },
   {
@@ -188,7 +189,7 @@ export const defaultBillingTemplates = [
     caseTags: ["spousal sponsorship", "family sponsorship"],
     installments: [
       fee("Initial payment", 1000, D0),
-      fee("On submission", 1500, SUBMITTED),
+      fee("Payment due upon submission", 1500, SUBMITTED),
     ],
   },
 ];

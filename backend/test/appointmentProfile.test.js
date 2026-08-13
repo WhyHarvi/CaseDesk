@@ -24,6 +24,20 @@ test("calendar client identity opens the connected client profile", async () => 
   assert.match(profile, /`\/app\/clients\/\$\{appointment\.client\.id\}`/);
 });
 
+test("a client's appointments card defaults to All, with Upcoming/History alongside it, and every row keeps its status badge", async () => {
+  const [card, controller] = await Promise.all([
+    source("../../frontend/src/components/appointments/ClientAppointmentsCard.jsx"),
+    source("../src/controllers/clientController.js"),
+  ]);
+
+  assert.match(card, /useState\("all"\)/);
+  assert.match(card, /\[\["all", "All"\], \["upcoming", "Upcoming"\], \["history", "History"\]\]/);
+  assert.match(card, /statusTone\[item\.status\]/);
+  // scope=all is also the backend's own fallback, so a card that forgets to
+  // send scope at all still shows everything rather than silently filtering.
+  assert.match(controller, /const scope = \["upcoming", "history", "all"\]\.includes\(String\(req\.query\.scope\)\)\s*\? String\(req\.query\.scope\)\s*: "all";/);
+});
+
 test("appointment notes show the client query before an explicit note composer", async () => {
   const profile = await source(
     "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",

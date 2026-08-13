@@ -481,28 +481,25 @@ export async function createQuickBooksInvoice(agencyId, {
   }
 }
 
-// Consultation pricing is displayed to the visitor as one final amount.
-// Keep that advertised total unchanged while still assigning the agency's
-// real QBO sales-tax code so QuickBooks records the included tax instead of
-// silently treating the entire consultation as non-taxable.
+// Consultation pricing is displayed to the visitor as one final amount —
+// e.g. exactly $100 — and that's what gets invoiced, non-taxable, same as
+// every other CaseDesk-created QuickBooks invoice before tax-code mapping
+// was attempted here. Assigning a real QBO sales-tax code so the tax
+// portion of that total is recorded correctly is real, worthwhile future
+// work, but requiring it up front was blocking public booking outright for
+// any agency that hasn't (or can't, e.g. QuickBooks' Automated Sales Tax
+// mode doesn't expose a manual tax-code list at all) picked one — so this
+// no longer hard-requires it. See QuickBooksMappingCard.jsx for the
+// now-optional tax-code picker this used to require.
 export async function createQuickBooksConsultationInvoice(agencyId, values) {
   const settings = await prisma.agencyQuickBooksSettings.findUnique({
     where: { agencyId },
-    select: { status: true, taxableTaxCodeId: true },
+    select: { status: true },
   });
   if (!settings || settings.status !== "connected") {
     throw createHttpError(409, "Connect QuickBooks in Settings before creating consultation invoices.", "QBO_NOT_CONNECTED");
   }
-  if (!settings.taxableTaxCodeId) {
-    throw createHttpError(409, "Choose the QuickBooks HST/GST code in Settings before creating consultation invoices.", "QBO_TAX_MAPPING_REQUIRED");
-  }
-  return createQuickBooksInvoice(agencyId, {
-    ...values,
-    taxableTaxCodeId: settings.taxableTaxCodeId,
-    expectedTotal: Number(values.amount),
-    globalTaxCalculation: "TaxInclusive",
-    lines: [{ itemId: values.itemId, description: values.description, amount: Number(values.amount), taxable: true }],
-  });
+  return createQuickBooksInvoice(agencyId, values);
 }
 
 export async function listQuickBooksTaxCodes(agencyId) {

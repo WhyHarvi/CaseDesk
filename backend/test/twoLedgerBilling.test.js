@@ -18,14 +18,20 @@ test("billing schema separates QuickBooks from CaseDesk Cash and supports daily 
   assert.match(migration, /cash_reconciliations_staff/);
 });
 
-test("QuickBooks invoices are tax-coded and fail closed when totals disagree", async () => {
+test("consultation invoices go out at the advertised amount, non-taxable, without requiring a QuickBooks tax-code mapping", async () => {
   const [quickBooks, booking] = await Promise.all([
     read("src/services/quickbooksService.js"),
     read("src/services/bookingPaymentHoldService.js"),
   ]);
-  assert.match(quickBooks, /GlobalTaxCalculation: globalTaxCalculation/);
+  // Requiring a tax-code mapping before any consultation invoice could be
+  // created (QBO_TAX_MAPPING_REQUIRED) blocked public booking outright for
+  // any agency that hasn't picked one — including agencies whose QuickBooks
+  // company uses Automated Sales Tax, which doesn't expose a manual
+  // tax-code list at all. Reverted to the original behavior: a plain,
+  // non-taxable invoice at exactly the advertised amount.
+  assert.doesNotMatch(quickBooks, /QBO_TAX_MAPPING_REQUIRED/);
   assert.match(quickBooks, /QBO_INVOICE_TOTAL_MISMATCH/);
-  assert.match(quickBooks, /globalTaxCalculation: "TaxInclusive"/);
+  assert.match(quickBooks, /return createQuickBooksInvoice\(agencyId, values\);/);
   assert.match(booking, /createQuickBooksConsultationInvoice/);
   assert.doesNotMatch(booking, /createQuickBooksInvoice/);
 });
