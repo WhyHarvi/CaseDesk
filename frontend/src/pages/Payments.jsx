@@ -84,6 +84,20 @@ const STATUS_TONE = {
   Voided: "bg-slate-100 text-slate-400 ring-slate-200",
 };
 const STATUS_COLOR = { Paid: "#10B981", Refunded: "#8B5CF6", PartiallyPaid: "#F59E0B", Open: "#94A3B8", Overdue: "#F43F5E", Voided: "#CBD5E1" };
+// Exception flags a row can carry alongside its primary status — these are
+// call-to-action detail, not a second status, so they render as a smaller,
+// quieter line stacked under the status pill rather than a second pill
+// competing with it for attention.
+const STATUS_FLAGS = [
+  { key: "paymentFailed", label: "Recording failed", Icon: ShieldAlert, tone: "text-rose-600", title: (row) => row.paymentError || "The payment could not be recorded in QuickBooks. Open the appointment and retry." },
+  { key: "missingAppointmentPayment", label: "Payment not recorded", Icon: Wallet, tone: "text-amber-700", title: () => "The consultation is scheduled, but no payment or payment method has been recorded. Open the appointment to record it." },
+  { key: "eTransferPaymentPending", label: "E-transfer pending", Icon: Wallet, tone: "text-amber-700", title: () => "The appointment is booked, but this e-transfer has not been recorded. Open the appointment and add its transaction number after payment is received." },
+  { key: "transactionReferenceMissing", label: "Transaction # missing", Icon: Wallet, tone: "text-amber-700", title: () => "QuickBooks shows this consultation as paid, but the e-transfer transaction number is missing. Open the appointment to add it." },
+  { key: "refundOwed", label: "Refund owed", Icon: ShieldAlert, tone: "text-rose-600", title: () => "The consultation was cancelled after this payment was collected — QuickBooks does not refund automatically, this needs to be actioned manually." },
+  { key: "needsManualBooking", label: "Needs manual booking", Icon: ShieldAlert, tone: "text-amber-600", title: () => "Urgent: acknowledge within 10 minutes, confirm the QuickBooks payment, then arrange a new appointment or refund the client and record the resolution." },
+  { key: "appointmentNotCancelled", label: "Still scheduled", Icon: ShieldAlert, tone: "text-violet-600", title: () => "This payment was refunded in QuickBooks, but the appointment is still scheduled — decide whether to cancel it." },
+  { key: "balanceMismatch", label: "Payment reversed in QuickBooks", Icon: ShieldAlert, tone: "text-rose-600", title: () => "This shows as Paid, but the QuickBooks invoice no longer has a zero balance — usually means the payment was deleted in QuickBooks instead of refunded. Check and refund or re-collect as needed." },
+];
 const SOURCE_LABEL = { quickbooks: "QuickBooks", casedesk_cash: "CaseDesk Cash", case_invoice: "Invoices", booking_payment: "Consultation bookings", cash_transaction: "Cash ledger", legacy_payment: "Legacy retainers", manual_ledger_review: "Needs classification" };
 const SOURCE_ROW_LABEL = { case_invoice: "Invoice", booking_payment: "Consultation booking", cash_transaction: "Cash transaction", legacy_payment: "Legacy retainer", manual_ledger_review: "Legacy entry review" };
 const SOURCE_ICON = { case_invoice: Banknote, booking_payment: CalendarClock, cash_transaction: HandCoins, legacy_payment: Landmark, manual_ledger_review: ShieldAlert };
@@ -1580,85 +1594,30 @@ export default function Payments() {
                         <td className="border-t border-slate-100 px-4 py-3.5 tabular-nums text-slate-600">{paymentBalanceLabel(row)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5 text-slate-500">{formatDate(row.createdAt)}</td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
-                          <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex min-w-[148px] flex-col items-start gap-1">
                             <span className={cx("inline-flex h-7 items-center rounded-full px-3 text-[11px] font-semibold ring-1", STATUS_TONE[row.status] || STATUS_TONE.Open)}>
                               {STATUS_LABEL[row.status] || row.status}
                             </span>
-                            {row.paymentFailed ? (
-                              <span
-                                title={row.paymentError || "The payment could not be recorded in QuickBooks. Open the appointment and retry."}
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
-                              >
-                                <ShieldAlert className="h-3 w-3" /> Recording failed
-                              </span>
-                            ) : null}
-                            {row.missingAppointmentPayment ? (
-                              <span
-                                title="The consultation is scheduled, but no payment or payment method has been recorded. Open the appointment to record it."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-                              >
-                                <Wallet className="h-3 w-3" /> Payment not recorded
-                              </span>
-                            ) : null}
-                            {row.eTransferPaymentPending ? (
-                              <span
-                                title="The appointment is booked, but this e-transfer has not been recorded. Open the appointment and add its transaction number after payment is received."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-                              >
-                                <Wallet className="h-3 w-3" /> E-transfer pending
-                              </span>
-                            ) : null}
-                            {row.transactionReferenceMissing ? (
-                              <span
-                                title="QuickBooks shows this consultation as paid, but the e-transfer transaction number is missing. Open the appointment to add it."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-                              >
-                                <Wallet className="h-3 w-3" /> Transaction # missing
-                              </span>
-                            ) : null}
-                            {row.refundOwed ? (
-                              <span
-                                title="The consultation was cancelled after this payment was collected — QuickBooks does not refund automatically, this needs to be actioned manually."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
-                              >
-                                <ShieldAlert className="h-3 w-3" /> Refund owed
-                              </span>
-                            ) : null}
-                            {row.needsManualBooking ? (
-                              <span
-                                title="Urgent: acknowledge within 10 minutes, confirm the QuickBooks payment, then arrange a new appointment or refund the client and record the resolution."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-amber-50 px-3 text-[11px] font-semibold text-amber-600 ring-1 ring-amber-100"
-                              >
-                                <ShieldAlert className="h-3 w-3" /> Needs manual booking
-                              </span>
-                            ) : null}
-                            {row.appointmentNotCancelled ? (
-                              <span
-                                title="This payment was refunded in QuickBooks, but the appointment is still scheduled — decide whether to cancel it."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-violet-50 px-3 text-[11px] font-semibold text-violet-600 ring-1 ring-violet-100"
-                              >
-                                <ShieldAlert className="h-3 w-3" /> Still scheduled
-                              </span>
-                            ) : null}
-                            {row.balanceMismatch ? (
-                              <span
-                                title="This shows as Paid, but the QuickBooks invoice no longer has a zero balance — usually means the payment was deleted in QuickBooks instead of refunded. Check and refund or re-collect as needed."
-                                className="inline-flex h-7 items-center gap-1 rounded-full bg-rose-50 px-3 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-100"
-                              >
-                                <ShieldAlert className="h-3 w-3" /> Payment reversed in QuickBooks
-                              </span>
-                            ) : null}
-                            {row.status === "Paid" && row.qbRefundUrl ? (
-                              <a
-                                href={row.qbRefundUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(event) => event.stopPropagation()}
-                                title="Opens the transaction directly in QuickBooks — CaseDesk doesn't process the refund itself, this just skips the search."
-                                className="inline-flex h-7 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-600 transition hover:border-sky-200 hover:text-sky-700"
-                              >
-                                <ExternalLink className="h-3 w-3" /> Refund in QuickBooks
-                              </a>
+                            {STATUS_FLAGS.filter((flag) => row[flag.key]).length || (row.status === "Paid" && row.qbRefundUrl) ? (
+                              <div className="mt-0.5 flex flex-col items-start gap-1 border-l-2 border-slate-100 pl-2">
+                                {STATUS_FLAGS.filter((flag) => row[flag.key]).map((flag) => (
+                                  <span key={flag.key} title={flag.title(row)} className={cx("inline-flex items-center gap-1 text-[10.5px] font-semibold leading-tight", flag.tone)}>
+                                    <flag.Icon className="h-3 w-3 shrink-0" /> {flag.label}
+                                  </span>
+                                ))}
+                                {row.status === "Paid" && row.qbRefundUrl ? (
+                                  <a
+                                    href={row.qbRefundUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(event) => event.stopPropagation()}
+                                    title="Opens the transaction directly in QuickBooks — CaseDesk doesn't process the refund itself, this just skips the search."
+                                    className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-sky-700 underline decoration-sky-200 underline-offset-2 transition hover:text-sky-800 hover:decoration-sky-400"
+                                  >
+                                    <ExternalLink className="h-3 w-3 shrink-0" /> Refund in QuickBooks
+                                  </a>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
                         </td>
