@@ -653,8 +653,11 @@ export default function ChatsPage() {
     }
   }
 
+  // Confirmation happens in ChatMessageBubble's own popover before this is
+  // ever called — not a native window.confirm(), which browsers can
+  // silently suppress after repeated use (no dialog, no error, the delete
+  // just silently no-ops), making the button look broken.
   async function deleteMessage(message) {
-    if (!window.confirm("Delete this message? This can't be undone.")) return;
     setError("");
     try {
       if (selectedKind === "internal") {

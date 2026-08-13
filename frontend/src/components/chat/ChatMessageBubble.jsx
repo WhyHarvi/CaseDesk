@@ -78,6 +78,28 @@ function ReactionPicker({ onPick, onClose }) {
   );
 }
 
+// A native window.confirm() is what this used before — browsers silently
+// suppress repeated confirm()/alert() dialogs on a page (no dialog, no
+// error, the call just returns false), which made delete look like it
+// did nothing at all. An inline popover, matching the reaction picker's
+// pattern right below, can't be suppressed and looks intentional.
+function DeleteConfirmPopover({ onConfirm, onCancel }) {
+  return (
+    <div
+      className="absolute bottom-full z-20 mb-1.5 flex items-center gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-[0_8px_24px_rgba(15,23,42,0.14)]"
+      onMouseLeave={onCancel}
+    >
+      <span className="font-medium text-slate-600">Delete this message?</span>
+      <button type="button" onClick={onCancel} className="rounded-full px-2 py-1 font-semibold text-slate-500 transition hover:bg-slate-100">
+        Cancel
+      </button>
+      <button type="button" onClick={onConfirm} className="rounded-full bg-rose-600 px-2.5 py-1 font-semibold text-white transition hover:bg-rose-700">
+        Delete
+      </button>
+    </div>
+  );
+}
+
 function groupReactions(reactions, myUserId) {
   const groups = new Map();
   for (const reaction of reactions || []) {
@@ -126,6 +148,7 @@ export default function ChatMessageBubble({
 }) {
   const reduceMotion = useReducedMotion();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const attachments = message.attachmentRecords || [];
   const failed = Boolean(message.failed);
   const Container = failed ? "button" : "div";
@@ -219,9 +242,25 @@ export default function ChatMessageBubble({
               </button>
             ) : null}
             {canDelete ? (
-              <button type="button" onClick={() => onDeleteMessage?.(message)} aria-label="Delete" className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600">
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete((current) => !current)}
+                  aria-label="Delete"
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+                {confirmingDelete ? (
+                  <DeleteConfirmPopover
+                    onConfirm={() => {
+                      setConfirmingDelete(false);
+                      onDeleteMessage?.(message);
+                    }}
+                    onCancel={() => setConfirmingDelete(false)}
+                  />
+                ) : null}
+              </>
             ) : null}
           </div>
         ) : null}

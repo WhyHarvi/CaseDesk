@@ -266,3 +266,19 @@ test("ChatsPage wires real group avatars and opens GroupProfilePanel from the gr
   assert.match(page, /<GroupProfilePanel\s/);
   assert.match(page, /groupProfileOpen && activeDetail\?\.kind === "internal" && activeDetail\.isGroup/);
 });
+
+test("message delete uses an in-app confirm popover, not window.confirm (which browsers silently suppress after repeated use)", async () => {
+  const [bubble, page] = await Promise.all([
+    source("../../frontend/src/components/chat/ChatMessageBubble.jsx"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+  ]);
+  assert.match(bubble, /function DeleteConfirmPopover\(\{ onConfirm, onCancel \}\)/);
+  assert.match(bubble, /const \[confirmingDelete, setConfirmingDelete\] = useState\(false\);/);
+  // The trash button opens the popover; onDeleteMessage only fires from the
+  // popover's own Delete button, once the user has explicitly confirmed.
+  const deleteBlock = bubble.slice(bubble.indexOf("{canDelete ? ("), bubble.indexOf("            ) : null}\n          </div>"));
+  assert.match(deleteBlock, /onClick={\(\) => setConfirmingDelete\(\(current\) => !current\)}/);
+  assert.match(deleteBlock, /onConfirm={\(\) => {\s*setConfirmingDelete\(false\);\s*onDeleteMessage\?\.\(message\);/);
+  assert.doesNotMatch(bubble, /onClick={\(\) => onDeleteMessage\?\.\(message\)}/);
+  assert.doesNotMatch(page, /window\.confirm\("Delete this message/);
+});
