@@ -54,7 +54,11 @@ export function normalizePhone(value) {
 export function parseCreateLead(body = {}) {
   const phone = text(body.phone, "phone", { required: true, max: 40 });
   const email = text(body.email, "email", { max: 320 });
-  const ownerUserId = text(body.ownerUserId, "ownerUserId", { required: true, max: 100 });
+  // Optional: when omitted, createLead() tries to resolve an owner from the
+  // agency's routing rules before falling back to today's hard-required
+  // error. Manual creation (QuickAddLeadSheet.jsx) always supplies one, so
+  // this only changes behavior for callers that deliberately leave it out.
+  const ownerUserId = text(body.ownerUserId, "ownerUserId", { max: 100 });
   const originalSourceId = text(body.originalSourceId, "originalSourceId", { required: true, max: 100 });
   const nextActionDescription = text(body.nextActionDescription, "nextActionDescription", { required: true, max: 500 });
   const nextActionAt = dateValue(body.nextActionAt, "nextActionAt", { required: true });
@@ -315,6 +319,14 @@ export function parseLeadAssignment(body = {}) {
     // every routine transfer.
     reason: text(body.reason, "reason", { max: 500 }),
   };
+}
+
+export function parseBulkReassignment(body = {}) {
+  const leadIds = [...new Set((Array.isArray(body.leadIds) ? body.leadIds : []).filter((id) => typeof id === "string" && id))].slice(0, 500);
+  const targetUserIds = [...new Set((Array.isArray(body.targetUserIds) ? body.targetUserIds : []).filter((id) => typeof id === "string" && id))].slice(0, 50);
+  if (!leadIds.length) throw createHttpError(400, "Select at least one lead to reassign.", "VALIDATION_ERROR");
+  if (!targetUserIds.length) throw createHttpError(400, "Select at least one team member to receive leads.", "VALIDATION_ERROR");
+  return { leadIds, targetUserIds };
 }
 
 export function parseLeadNurture(body = {}) {

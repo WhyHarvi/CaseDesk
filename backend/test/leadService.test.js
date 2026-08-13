@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, requestLeadTransfer, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -76,7 +76,7 @@ test("lead creation writes its operational foundation in one transaction", async
   assert.equal(created.find(([kind]) => kind === "lead")[1].agencyId, "agency-1");
 });
 
-test("admin transfers a lead to a consultant in one action with an automatic audit reason", async () => {
+test("admin transfers a lead to front desk in one action with an automatic audit reason", async () => {
   const calls = [];
   const lead = {
     id: "lead-1",
@@ -95,7 +95,7 @@ test("admin transfers a lead to a consultant in one action with an automatic aud
         return {
           ...lead,
           ...data,
-          ownerUserId: "consultant-2",
+          ownerUserId: "frontdesk-1",
           stage: "ASSIGNED",
           updatedAt: new Date("2026-08-11T12:00:00Z"),
         };
@@ -103,12 +103,16 @@ test("admin transfers a lead to a consultant in one action with an automatic aud
     },
     user: {
       findFirst: async ({ where }) => {
-        calls.push(["consultantLookup", where]);
-        return { id: "consultant-2", fullName: "Manpreet Kaur" };
+        calls.push(["ownerLookup", where]);
+        return { id: "frontdesk-1", fullName: "Manpreet Kaur" };
       },
     },
     leadFollowUp: {
       updateMany: async ({ data }) => calls.push(["followUps", data]),
+    },
+    leadTransferRequest: {
+      findMany: async () => [],
+      updateMany: async ({ data }) => calls.push(["staleRequests", data]),
     },
     leadAssignmentHistory: {
       create: async ({ data }) => calls.push(["assignment", data]),
@@ -124,26 +128,26 @@ test("admin transfers a lead to a consultant in one action with an automatic aud
   const req = {
     auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" },
     params: { id: "lead-1" },
-    body: { ownerUserId: "consultant-2" },
+    body: { ownerUserId: "frontdesk-1" },
   };
 
   const result = await assignLead(req, db);
 
   const automaticReason = "Transferred by an administrator to Manpreet Kaur";
-  assert.equal(result.ownerUserId, "consultant-2");
+  assert.equal(result.ownerUserId, "frontdesk-1");
   assert.equal(result.stage, "ASSIGNED");
-  assert.equal(calls.find(([kind]) => kind === "lead")[1].nextActionOwnerId, "consultant-2");
-  assert.equal(calls.find(([kind]) => kind === "followUps")[1].assignedUserId, "consultant-2");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].nextActionOwnerId, "frontdesk-1");
+  assert.equal(calls.find(([kind]) => kind === "followUps")[1].assignedUserId, "frontdesk-1");
   assert.equal(calls.find(([kind]) => kind === "assignment")[1].reason, automaticReason);
   assert.equal(calls.find(([kind]) => kind === "activity")[1].description, automaticReason);
   assert.match(calls.find(([kind]) => kind === "audit")[1].details, new RegExp(automaticReason));
-  assert.equal(
-    calls.find(([kind]) => kind === "consultantLookup")[1].memberships.some.role,
-    "consultant",
+  assert.deepEqual(
+    calls.find(([kind]) => kind === "ownerLookup")[1].memberships.some.role.in,
+    ["admin", "consultant", "frontdesk"],
   );
 });
 
-test("lead transfers reject targets who are not active consultants", async () => {
+test("lead transfers reject targets who are not active lead team members", async () => {
   const tx = {
     lead: {
       findFirst: async () => ({
@@ -158,13 +162,79 @@ test("lead transfers reject targets who are not active consultants", async () =>
   const req = {
     auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" },
     params: { id: "lead-1" },
-    body: { ownerUserId: "frontdesk-1" },
+    body: { ownerUserId: "inactive-user-1" },
   };
 
   await assert.rejects(
     () => assignLead(req, db),
-    (error) => error.code === "INVALID_LEAD_OWNER" && /active consultant/i.test(error.message),
+    (error) => error.code === "INVALID_LEAD_OWNER" && /active lead team member/i.test(error.message),
   );
+});
+
+test("an owning consultant requests a transfer without changing lead ownership", async () => {
+  const calls = [];
+  const lead = { id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", ownerUserId: "consultant-1" };
+  const tx = {
+    lead: { findFirst: async () => lead },
+    user: { findFirst: async () => ({ id: "frontdesk-1", fullName: "Front Desk" }) },
+    leadTransferRequest: {
+      findFirst: async () => null,
+      create: async ({ data }) => {
+        calls.push(["request", data]);
+        return { id: "request-1", ...data, status: "PENDING", lead, fromOwner: { id: "consultant-1", fullName: "Consultant One" }, toOwner: { id: "frontdesk-1", fullName: "Front Desk" }, requestedBy: { id: "consultant-1", fullName: "Consultant One" }, reviewedBy: null };
+      },
+    },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const request = await requestLeadTransfer({ auth: { role: "consultant", agencyId: "agency-1", userId: "consultant-1" }, params: { id: "lead-1" }, body: { ownerUserId: "frontdesk-1" } }, db);
+
+  assert.equal(request.status, "PENDING");
+  assert.equal(calls.find(([kind]) => kind === "request")[1].fromOwnerId, "consultant-1");
+  assert.equal(calls.some(([kind]) => kind === "lead"), false);
+  assert.match(calls.find(([kind]) => kind === "activity")[1].description, /administrator approval/i);
+});
+
+test("approving a consultant transfer moves the lead and pending follow-ups atomically", async () => {
+  const calls = [];
+  const lead = { id: "lead-1", leadNumber: "LD-2026-000001", status: "OPEN", stage: "CONTACTING", priority: "NORMAL", ownerUserId: "consultant-1", nextActionOwnerId: "consultant-1" };
+  const transfer = { id: "request-1", agencyId: "agency-1", leadId: "lead-1", fromOwnerId: "consultant-1", toOwnerId: "frontdesk-1", requestedById: "consultant-1", status: "PENDING", lead, fromOwner: { id: "consultant-1", fullName: "Consultant One" }, toOwner: { id: "frontdesk-1", fullName: "Front Desk" }, requestedBy: { id: "consultant-1", fullName: "Consultant One" }, reviewedBy: null };
+  const tx = {
+    leadTransferRequest: {
+      findFirst: async () => transfer,
+      updateMany: async () => ({ count: 1 }),
+      findUnique: async () => ({ ...transfer, status: "APPROVED" }),
+    },
+    lead: {
+      findFirst: async () => lead,
+      update: async ({ data }) => { calls.push(["lead", data]); return { ...lead, ...data, ownerUserId: "frontdesk-1", updatedAt: new Date() }; },
+    },
+    user: { findFirst: async () => ({ id: "frontdesk-1", fullName: "Front Desk" }) },
+    leadFollowUp: { updateMany: async ({ data }) => calls.push(["followUps", data]) },
+    leadAssignmentHistory: { create: async ({ data }) => calls.push(["assignment", data]) },
+    leadActivity: { create: async ({ data }) => calls.push(["activity", data]) },
+    activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const result = await approveLeadTransferRequest({ auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" }, params: { requestId: "request-1" } }, db);
+
+  assert.equal(result.lead.ownerUserId, "frontdesk-1");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].nextActionOwnerId, "frontdesk-1");
+  assert.equal(calls.find(([kind]) => kind === "followUps")[1].assignedUserId, "frontdesk-1");
+  assert.match(calls.find(([kind]) => kind === "assignment")[1].reason, /approved by an administrator/i);
+});
+
+test("a stale transfer approval closes the request without changing ownership", async () => {
+  const transfer = { id: "request-1", agencyId: "agency-1", leadId: "lead-1", fromOwnerId: "consultant-1", toOwnerId: "consultant-2", requestedById: "consultant-1", status: "PENDING", lead: { id: "lead-1", leadNumber: "LD-2026-000001", ownerUserId: "consultant-2" }, fromOwner: { id: "consultant-1", fullName: "One" }, toOwner: { id: "consultant-2", fullName: "Two" }, requestedBy: { id: "consultant-1", fullName: "One" }, reviewedBy: null };
+  let leadUpdated = false;
+  const tx = {
+    leadTransferRequest: { findFirst: async () => transfer, updateMany: async () => ({ count: 1 }), findUnique: async () => ({ ...transfer, status: "STALE" }) },
+    lead: { findFirst: async () => ({ id: "lead-1", status: "OPEN", ownerUserId: "consultant-2" }), update: async () => { leadUpdated = true; } },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  await assert.rejects(() => approveLeadTransferRequest({ auth: { role: "admin", agencyId: "agency-1", userId: "admin-1" }, params: { requestId: "request-1" } }, db), (error) => error.code === "TRANSFER_REQUEST_STALE");
+  assert.equal(leadUpdated, false);
 });
 
 test("qualified outcome advances an earlier lead and records history atomically", async () => {

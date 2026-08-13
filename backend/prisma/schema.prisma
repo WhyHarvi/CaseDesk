@@ -386,6 +386,13 @@ enum LeadAssignmentType {
   SYSTEM
 }
 
+enum LeadTransferRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  STALE
+}
+
 enum LeadLostReason {
   NO_RESPONSE
   NOT_INTERESTED
@@ -618,6 +625,8 @@ model Agency {
   leadMessageDeliveries          LeadMessageDelivery[]
   leadStageHistory               LeadStageHistory[]
   leadAssignmentHistory          LeadAssignmentHistory[]
+  leadTransferRequests           LeadTransferRequest[]
+  leadRoutingRules               LeadRoutingRule[]
   leadFollowUps                  LeadFollowUp[]
   leadLostDetails                LeadLostDetail[]
   leadConversions                LeadConversion[]
@@ -1444,6 +1453,13 @@ model User {
   previousLeadAssignments              LeadAssignmentHistory[]         @relation("LeadPreviousOwnerUser")
   newLeadAssignments                   LeadAssignmentHistory[]         @relation("LeadNewOwnerUser")
   assignedLeadChanges                  LeadAssignmentHistory[]         @relation("LeadAssignmentActorUser")
+  requestedLeadTransfers               LeadTransferRequest[]           @relation("LeadTransferRequester")
+  reviewedLeadTransfers                LeadTransferRequest[]           @relation("LeadTransferReviewer")
+  previousOwnerLeadTransfers           LeadTransferRequest[]           @relation("LeadTransferFromOwner")
+  proposedOwnerLeadTransfers           LeadTransferRequest[]           @relation("LeadTransferToOwner")
+  targetedLeadRoutingRules             LeadRoutingRule[]               @relation("LeadRoutingRuleTargetUser")
+  createdLeadRoutingRules              LeadRoutingRule[]               @relation("CreatedLeadRoutingRuleUser")
+  updatedLeadRoutingRules              LeadRoutingRule[]               @relation("UpdatedLeadRoutingRuleUser")
   assignedLeadFollowUps                LeadFollowUp[]                  @relation("LeadFollowUpAssigneeUser")
   completedLeadFollowUps               LeadFollowUp[]                  @relation("LeadFollowUpCompleterUser")
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
@@ -1609,22 +1625,22 @@ enum CaseCollaborationRequestStatus {
 // approval creates the actual CaseAssignment row via the existing
 // /cases/:id/permissions contract — this table only tracks the ask itself.
 model CaseCollaborationRequest {
-  id             String                          @id @default(uuid())
-  agencyId       String                          @map("agency_id")
-  caseId         String                          @map("case_id")
-  requestedById  String                          @map("requested_by_id")
-  requestedRole  AssignmentType                  @default(supporting) @map("requested_role")
-  note           String?
-  status         CaseCollaborationRequestStatus  @default(Pending)
-  reviewedById   String?                         @map("reviewed_by_id")
-  reviewedAt     DateTime?                       @map("reviewed_at")
-  reviewNote     String?                         @map("review_note")
-  createdAt      DateTime                        @default(now()) @map("created_at")
-  updatedAt      DateTime                        @updatedAt @map("updated_at")
-  agency         Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case           Case                            @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  requestedBy    User                            @relation("CaseCollaborationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
-  reviewedBy     User?                           @relation("CaseCollaborationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  id            String                         @id @default(uuid())
+  agencyId      String                         @map("agency_id")
+  caseId        String                         @map("case_id")
+  requestedById String                         @map("requested_by_id")
+  requestedRole AssignmentType                 @default(supporting) @map("requested_role")
+  note          String?
+  status        CaseCollaborationRequestStatus @default(Pending)
+  reviewedById  String?                        @map("reviewed_by_id")
+  reviewedAt    DateTime?                      @map("reviewed_at")
+  reviewNote    String?                        @map("review_note")
+  createdAt     DateTime                       @default(now()) @map("created_at")
+  updatedAt     DateTime                       @updatedAt @map("updated_at")
+  agency        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case          Case                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  requestedBy   User                           @relation("CaseCollaborationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewedBy    User?                          @relation("CaseCollaborationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@index([agencyId, status])
   @@index([caseId, status])
@@ -3640,20 +3656,23 @@ model AgencyClientSequence {
 }
 
 model LeadSettings {
-  id                        String    @id @default(uuid())
-  agencyId                  String    @unique @map("agency_id")
+  id                         String    @id @default(uuid())
+  agencyId                   String    @unique @map("agency_id")
   // Sent once, right after a genuinely fresh inbound lead is created
   // (website chat widget, connectors, public forms) — not for CSV
   // imports or leads created from a booking that already happened.
-  welcomeEmailEnabled       Boolean   @default(true) @map("welcome_email_enabled")
-  staleOutreachEnabled      Boolean   @default(false) @map("stale_outreach_enabled")
-  staleOutreachDays         Int       @default(14) @map("stale_outreach_days")
-  staleOutreachEmailEnabled Boolean   @default(true) @map("stale_outreach_email_enabled")
-  staleOutreachSmsEnabled   Boolean   @default(true) @map("stale_outreach_sms_enabled")
-  staleOutreachLastRunAt    DateTime? @map("stale_outreach_last_run_at")
-  createdAt                 DateTime  @default(now()) @map("created_at")
-  updatedAt                 DateTime  @updatedAt @map("updated_at")
-  agency                    Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  welcomeEmailEnabled        Boolean   @default(true) @map("welcome_email_enabled")
+  staleOutreachEnabled       Boolean   @default(false) @map("stale_outreach_enabled")
+  staleOutreachDays          Int       @default(14) @map("stale_outreach_days")
+  staleOutreachEmailEnabled  Boolean   @default(true) @map("stale_outreach_email_enabled")
+  staleOutreachSmsEnabled    Boolean   @default(true) @map("stale_outreach_sms_enabled")
+  staleOutreachLastRunAt     DateTime? @map("stale_outreach_last_run_at")
+  overdueAlertEnabled        Boolean   @default(false) @map("overdue_alert_enabled")
+  overdueAlertAdminThreshold Int       @default(5) @map("overdue_alert_admin_threshold")
+  overdueAlertLastRunAt      DateTime? @map("overdue_alert_last_run_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+  agency                     Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@map("lead_settings")
 }
@@ -3772,6 +3791,7 @@ model Lead {
   messageDeliveries        LeadMessageDelivery[]
   stageHistory             LeadStageHistory[]
   assignmentHistory        LeadAssignmentHistory[]
+  transferRequests         LeadTransferRequest[]
   followUps                LeadFollowUp[]
   lostDetail               LeadLostDetail?
   conversion               LeadConversion?
@@ -3890,6 +3910,62 @@ model LeadAssignmentHistory {
   @@index([agencyId, leadId, createdAt])
   @@index([agencyId, newOwnerId, createdAt])
   @@map("lead_assignment_history")
+}
+
+// Consultants request an owner change; an administrator must approve it
+// before the lead and its pending work move to the proposed owner.
+model LeadTransferRequest {
+  id            String                    @id @default(uuid())
+  agencyId      String                    @map("agency_id")
+  leadId        String                    @map("lead_id")
+  fromOwnerId   String                    @map("from_owner_id")
+  toOwnerId     String                    @map("to_owner_id")
+  requestedById String                    @map("requested_by_id")
+  status        LeadTransferRequestStatus @default(PENDING)
+  reviewedById  String?                   @map("reviewed_by_id")
+  reviewedAt    DateTime?                 @map("reviewed_at")
+  reviewNote    String?                   @map("review_note")
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  updatedAt     DateTime                  @updatedAt @map("updated_at")
+  agency        Agency                    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead          Lead                      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromOwner     User                      @relation("LeadTransferFromOwner", fields: [fromOwnerId], references: [id], onDelete: Restrict)
+  toOwner       User                      @relation("LeadTransferToOwner", fields: [toOwnerId], references: [id], onDelete: Restrict)
+  requestedBy   User                      @relation("LeadTransferRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy    User?                     @relation("LeadTransferReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, status, createdAt])
+  @@index([leadId, status])
+  @@index([requestedById, status])
+  @@map("lead_transfer_requests")
+}
+
+model LeadRoutingRule {
+  id            String    @id @default(uuid())
+  agencyId      String    @map("agency_id")
+  name          String
+  isActive      Boolean   @default(true) @map("is_active")
+  sortOrder     Int       @default(0) @map("sort_order")
+  // Ordered array of {field, value}, AND'ed together. field is one of:
+  // "initialMessage" | "immigrationInterest" (substring match) |
+  // "province" | "preferredLanguage" | "priority" | "originalSourceType"
+  // (exact match). See matchLeadRoutingRules() for exact semantics.
+  conditions    Json      @default("[]")
+  targetUserId  String    @map("target_user_id")
+  lastMatchedAt DateTime? @map("last_matched_at")
+  matchCount    Int       @default(0) @map("match_count")
+  createdById   String    @map("created_by_id")
+  updatedById   String    @map("updated_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  agency        Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  targetUser    User      @relation("LeadRoutingRuleTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  createdBy     User      @relation("CreatedLeadRoutingRuleUser", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy     User      @relation("UpdatedLeadRoutingRuleUser", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@unique([agencyId, name])
+  @@index([agencyId, isActive, sortOrder])
+  @@map("lead_routing_rules")
 }
 
 model LeadFollowUp {

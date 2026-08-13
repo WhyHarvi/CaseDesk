@@ -7,6 +7,7 @@ import { logger } from "../../services/logger.js";
 import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../services/notificationService.js";
 import { invalidateDashboardCache } from "../../services/dashboardCache.js";
 import { leadWelcomeEmailEligible, sendLeadWelcomeEmail } from "./lead.welcomeEmail.service.js";
+import { resolveRoutedOwner } from "./lead.routing.service.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_INTAKE_POLL_MS) || 2000, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.LEAD_INTAKE_BATCH_SIZE) || 10, 1), 50);
@@ -47,7 +48,7 @@ async function findDuplicates(tx, event, normalized) {
 
 export async function processClaimed(eventId) {
   const result = await prisma.$transaction(async (tx) => {
-    const event = await tx.leadIncomingEvent.findUnique({ where: { id: eventId }, include: { intakeForm: true, importBatch: true, sourceConnection: true } });
+    const event = await tx.leadIncomingEvent.findUnique({ where: { id: eventId }, include: { intakeForm: true, importBatch: true, sourceConnection: true, source: { select: { type: true } } } });
     if (!event || event.status !== "PROCESSING") return;
     const settings = event.importBatch?.settings && typeof event.importBatch.settings === "object" ? event.importBatch.settings : {};
     const mapping = event.channel === "CSV_IMPORT" ? settings.mapping : null;
@@ -74,7 +75,16 @@ export async function processClaimed(eventId) {
       return { duplicate: true, agencyId: event.agencyId, eventId: event.id };
     }
 
-    const ownerUserId = event.intakeForm?.ownerUserId || event.sourceConnection?.ownerUserId || settings.ownerUserId;
+    // A routing rule match outranks the intake stream's static owner — that
+    // static owner is just today's fallback for when nothing more specific
+    // matches, not an intentional per-lead choice the way a rule is.
+    const routed = await resolveRoutedOwner(tx, event.agencyId, {
+      initialMessage: normalized.data.initialMessage,
+      immigrationInterest: normalized.data.immigrationInterest,
+      province: normalized.data.province,
+      preferredLanguage: normalized.data.preferredLanguage,
+    }, event.source?.type);
+    const ownerUserId = routed?.ownerUserId || event.intakeForm?.ownerUserId || event.sourceConnection?.ownerUserId || settings.ownerUserId;
     if (!ownerUserId) throw new Error("No lead owner is configured for this intake stream.");
     const firstResponseMinutes = event.intakeForm?.firstResponseMinutes || event.sourceConnection?.firstResponseMinutes || Number(settings.firstResponseMinutes) || 15;
     const nextActionAt = new Date(Date.now() + firstResponseMinutes * 60_000);
@@ -100,7 +110,7 @@ export async function processClaimed(eventId) {
     const activityChannel = event.channel === "WHATSAPP_BUSINESS" ? "WHATSAPP" : event.channel === "EMAIL_INTAKE" ? "EMAIL" : event.channel === "PHONE_PROVIDER" ? "PHONE" : ["PUBLIC_FORM", "WEBSITE_CONNECTOR", "META_LEAD_FORM", "GOOGLE_ADS_LEAD_FORM"].includes(event.channel) ? "WEBSITE" : "OTHER";
     await tx.leadActivity.create({ data: { agencyId: event.agencyId, leadId: lead.id, activityType: "LEAD_CREATED", direction: "INTERNAL", channel: activityChannel, title: `Lead created from ${event.sourceConnection?.provider || (event.channel === "PUBLIC_FORM" ? "public intake" : "CSV import")}`, description: normalized.data.initialMessage, metadata: { incomingEventId: event.id, sourceConnectionId: event.sourceConnectionId } } });
     await tx.leadStageHistory.create({ data: { agencyId: event.agencyId, leadId: lead.id, newStage: "NEW", reason: "Created by intake pipeline" } });
-    await tx.leadAssignmentHistory.create({ data: { agencyId: event.agencyId, leadId: lead.id, newOwnerId: ownerUserId, assignmentType: "SYSTEM", reason: "Intake stream owner" } });
+    await tx.leadAssignmentHistory.create({ data: { agencyId: event.agencyId, leadId: lead.id, newOwnerId: ownerUserId, assignmentType: routed ? "RULE_BASED" : "SYSTEM", reason: routed ? `Routed by rule "${routed.ruleName}"` : "Intake stream owner" } });
     await tx.leadFollowUp.create({ data: { agencyId: event.agencyId, leadId: lead.id, assignedUserId: ownerUserId, type: "CALL", description: "Contact the new lead", dueAt: nextActionAt } });
     await tx.activityLog.create({ data: { agencyId: event.agencyId, action: "lead.intake_processed", details: `Created ${leadNumber} from ${event.channel}`, entityType: "lead", entityId: lead.id, metadata: { incomingEventId: event.id, importBatchId: event.importBatchId } } });
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });

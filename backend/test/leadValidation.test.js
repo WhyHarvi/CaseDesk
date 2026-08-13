@@ -8,10 +8,20 @@ test("lead input normalizes email and common phone formatting", () => {
   assert.equal(normalizePhone("+1 (416) 555-0100"), "+14165550100");
 });
 
-test("an open lead requires an owner, source, and next action", () => {
-  assert.throws(() => parseCreateLead({ phone: "+14165550100" }), /ownerUserId is required/);
+test("an open lead requires a source and next action; the owner is optional at parse time", () => {
+  assert.throws(() => parseCreateLead({ phone: "+14165550100" }), /originalSourceId is required/);
   assert.throws(() => parseCreateLead({ phone: "+14165550100", ownerUserId: "user-1" }), /originalSourceId is required/);
   assert.throws(() => parseCreateLead({ phone: "+14165550100", ownerUserId: "user-1", originalSourceId: "source-1" }), /nextActionDescription is required/);
+});
+
+// ownerUserId itself isn't enforced here — createLead() in lead.service.js
+// requires it after trying to resolve one from the agency's routing rules,
+// so a caller that omits it isn't rejected until routing has had a chance
+// to fill it in. See leadRouting.test.js for that fallback behavior.
+test("ownerUserId is optional at the parse layer, so routing rules get a chance to fill it in", () => {
+  const result = parseCreateLead({ phone: "+14165550100", originalSourceId: "source-1", nextActionType: "CALL", nextActionDescription: "Call the lead", nextActionAt: "2026-07-15T14:00:00Z" });
+  assert.equal(result.ownerUserId, null);
+  assert.equal(result.nextActionOwnerId, null);
 });
 
 test("valid intake produces canonical foundation values", () => {

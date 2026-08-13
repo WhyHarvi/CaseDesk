@@ -1,13 +1,15 @@
+import { randomUUID } from "node:crypto";
 import prisma from "../../services/prisma/client.js";
 import { createHttpError } from "../../utils/http.js";
 import { nextClientNumber } from "../../services/clientNumberService.js";
 import { assertLeadWorkflowEditable, canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadReactivation, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
+import { parseBulkReassignment, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadReactivation, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
+import { resolveRoutedOwner } from "./lead.routing.service.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
-import { notifyUsers } from "../../services/notificationService.js";
+import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../services/notificationService.js";
 import {
   assertSlotAvailable,
   availabilityForRange,
@@ -79,6 +81,7 @@ export async function createLead(req, db = prisma) {
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
 
+  let routed = null;
   const result = await db.$transaction(async (tx) => {
     await lockAgencyContactIntake(tx, agencyId);
     await assertNoContactDuplicate(tx, {
@@ -86,6 +89,19 @@ export async function createLead(req, db = prisma) {
       phoneNormalized: values.phoneNormalized,
       emailNormalized: values.emailNormalized,
     });
+    if (!values.ownerUserId) {
+      const source = await tx.leadSource.findFirst({ where: { id: values.originalSourceId, agencyId }, select: { type: true } });
+      routed = await resolveRoutedOwner(tx, agencyId, {
+        initialMessage: values.initialMessage,
+        immigrationInterest: values.immigrationInterest,
+        province: values.province,
+        preferredLanguage: values.preferredLanguage,
+        priority: values.priority,
+      }, source?.type);
+      if (!routed) throw createHttpError(400, "ownerUserId is required.", "VALIDATION_ERROR");
+      values.ownerUserId = routed.ownerUserId;
+      values.nextActionOwnerId = values.nextActionOwnerId || values.ownerUserId;
+    }
     await validateReferences(tx, agencyId, values);
     const leadNumber = await nextLeadNumber(tx, agencyId);
     const lead = await tx.lead.create({
@@ -94,7 +110,7 @@ export async function createLead(req, db = prisma) {
     });
     await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "LEAD_CREATED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead created", description: lead.initialMessage, performedById: actorId } });
     await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, newStage: "NEW", changedById: actorId, reason: "Lead created" } });
-    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: "MANUAL", reason: "Initial assignment" } });
+    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: routed ? "RULE_BASED" : "MANUAL", reason: routed ? `Routed by rule "${routed.ruleName}"` : "Initial assignment" } });
     await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId: values.nextActionOwnerId, type: values.nextActionType, description: values.nextActionDescription, dueAt: values.nextActionAt } });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.created", details: `Created ${leadNumber}`, entityType: "lead", entityId: lead.id, metadata: { leadNumber, sourceId: values.originalSourceId, ownerUserId: values.ownerUserId } } });
     return lead;
@@ -205,6 +221,15 @@ export async function getLead(req) {
       activities: { orderBy: { occurredAt: "desc" }, take: 100 },
       stageHistory: { orderBy: { createdAt: "desc" } },
       assignmentHistory: { orderBy: { createdAt: "desc" } },
+      transferRequests: {
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        include: {
+          toOwner: { select: { id: true, fullName: true, role: true } },
+          requestedBy: { select: { id: true, fullName: true } },
+        },
+      },
       followUps: { orderBy: { dueAt: "asc" } },
       messageDeliveries: {
         orderBy: { createdAt: "desc" },
@@ -317,7 +342,7 @@ export async function getStaleLeadOutreachOverview(req) {
 
 export async function updateLeadSettings(req) {
   const data = {};
-  for (const field of ["welcomeEmailEnabled", "staleOutreachEnabled", "staleOutreachEmailEnabled", "staleOutreachSmsEnabled"]) {
+  for (const field of ["welcomeEmailEnabled", "staleOutreachEnabled", "staleOutreachEmailEnabled", "staleOutreachSmsEnabled", "overdueAlertEnabled"]) {
     if (req.body?.[field] !== undefined) {
       if (typeof req.body[field] !== "boolean") throw createHttpError(400, `${field} must be true or false.`, "VALIDATION_ERROR");
       data[field] = req.body[field];
@@ -327,6 +352,11 @@ export async function updateLeadSettings(req) {
     const days = Number(req.body.staleOutreachDays);
     if (!Number.isInteger(days) || days < 3 || days > 180) throw createHttpError(400, "staleOutreachDays must be between 3 and 180.", "VALIDATION_ERROR");
     data.staleOutreachDays = days;
+  }
+  if (req.body?.overdueAlertAdminThreshold !== undefined) {
+    const threshold = Number(req.body.overdueAlertAdminThreshold);
+    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 100) throw createHttpError(400, "overdueAlertAdminThreshold must be between 1 and 100.", "VALIDATION_ERROR");
+    data.overdueAlertAdminThreshold = threshold;
   }
   if (!Object.keys(data).length) throw createHttpError(400, "No lead setting was provided.", "VALIDATION_ERROR");
   if (["staleOutreachEnabled", "staleOutreachEmailEnabled", "staleOutreachSmsEnabled"].some((field) => data[field] !== undefined)) {
@@ -343,41 +373,66 @@ export async function updateLeadSettings(req) {
   });
 }
 
-async function requireLeadStaff(tx, agencyId, userId) {
+export async function requireLeadStaff(tx, agencyId, userId) {
   const user = await tx.user.findFirst({
     where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: { in: ["admin", "consultant", "frontdesk"] } } } },
-    select: { id: true },
+    select: { id: true, fullName: true },
   });
   if (!user) throw createHttpError(400, "Select an active lead team member.", "INVALID_LEAD_OWNER");
   return user;
 }
 
-async function requireLeadConsultant(tx, agencyId, userId) {
-  const user = await tx.user.findFirst({
-    where: {
-      id: userId,
-      agencyId,
-      status: "active",
-      memberships: {
-        some: { agencyId, isActive: true, role: "consultant" },
-      },
-    },
-    select: { id: true, fullName: true },
-  });
-  if (!user) {
-    throw createHttpError(
-      400,
-      "Select an active consultant.",
-      "INVALID_LEAD_OWNER",
-    );
-  }
-  return user;
+async function lockLeadTransfer(tx, agencyId, leadId) {
+  if (typeof tx.$executeRaw !== "function") return;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-transfer:${agencyId}:${leadId}`}, 0))`;
 }
 
 async function syncLeadNextAction(tx, leadId) {
   const next = await tx.leadFollowUp.findFirst({ where: { leadId, status: "PENDING" }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }] });
   await tx.lead.update({ where: { id: leadId }, data: { nextActionType: next?.type || null, nextActionDescription: next?.description || null, nextActionAt: next?.dueAt || null, nextActionOwnerId: next?.assignedUserId || null, version: { increment: 1 } } });
   return next;
+}
+
+async function moveLeadOwnership(tx, { agencyId, lead, ownerUserId, actorId, reason, assignmentType = "REASSIGNMENT" }) {
+  const updated = await tx.lead.update({
+    where: { id: lead.id },
+    data: {
+      ownerUserId,
+      ...(lead.nextActionOwnerId === lead.ownerUserId ? { nextActionOwnerId: ownerUserId } : {}),
+      stage: lead.stage === "NEW" ? "ASSIGNED" : lead.stage,
+      version: { increment: 1 },
+    },
+    include: leadInclude,
+  });
+  await tx.leadFollowUp.updateMany({
+    where: { agencyId, leadId: lead.id, status: "PENDING" },
+    data: { assignedUserId: ownerUserId },
+  });
+  await tx.leadAssignmentHistory.create({
+    data: {
+      agencyId,
+      leadId: lead.id,
+      previousOwnerId: lead.ownerUserId,
+      newOwnerId: ownerUserId,
+      assignedById: actorId,
+      assignmentType,
+      reason,
+    },
+  });
+  await tx.leadActivity.create({
+    data: {
+      agencyId,
+      leadId: lead.id,
+      activityType: "ASSIGNMENT_CHANGED",
+      direction: "INTERNAL",
+      channel: "SYSTEM",
+      title: "Lead reassigned",
+      description: reason,
+      performedById: actorId,
+      metadata: { previousOwnerId: lead.ownerUserId, ownerUserId },
+    },
+  });
+  return updated;
 }
 
 export async function supersedePendingFollowUps(tx, agencyId, leadId, actorId, outcome) {
@@ -450,6 +505,7 @@ export async function createLeadFollowUp(req, db = prisma) {
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
   const result = await db.$transaction(async (tx) => {
+    await lockLeadTransfer(tx, agencyId, req.params.id);
     const lead = await requireLead(tx, req, req.params.id);
     if (["CONVERTED", "LOST", "ARCHIVED"].includes(lead.status)) throw createHttpError(409, "This lead no longer accepts follow-ups.", "LEAD_CLOSED");
     await requireLeadStaff(tx, agencyId, values.assignedUserId);
@@ -526,20 +582,139 @@ export async function assignLead(req, db = prisma) {
   const actorId = req.auth.userId;
   const result = await db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);
-    const consultant = await requireLeadConsultant(tx, agencyId, values.ownerUserId);
+    const owner = await requireLeadStaff(tx, agencyId, values.ownerUserId);
     if (lead.ownerUserId === values.ownerUserId) throw createHttpError(409, "This team member already owns the lead.", "NO_ASSIGNMENT_CHANGE");
-    const assignmentReason = values.reason || `Transferred by an administrator to ${consultant.fullName}`;
-    const updated = await tx.lead.update({ where: { id: lead.id }, data: { ownerUserId: values.ownerUserId, ...(lead.nextActionOwnerId === lead.ownerUserId ? { nextActionOwnerId: values.ownerUserId } : {}), stage: lead.stage === "NEW" ? "ASSIGNED" : lead.stage, version: { increment: 1 } }, include: leadInclude });
-    await tx.leadFollowUp.updateMany({ where: { agencyId, leadId: lead.id, status: "PENDING" }, data: { assignedUserId: values.ownerUserId } });
-    await tx.leadAssignmentHistory.create({ data: { agencyId, leadId: lead.id, previousOwnerId: lead.ownerUserId, newOwnerId: values.ownerUserId, assignedById: actorId, assignmentType: "REASSIGNMENT", reason: assignmentReason } });
-    await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "ASSIGNMENT_CHANGED", direction: "INTERNAL", channel: "SYSTEM", title: "Lead reassigned", description: assignmentReason, performedById: actorId, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
+    const assignmentReason = values.reason || `Transferred by an administrator to ${owner.fullName}`;
+    const updated = await moveLeadOwnership(tx, { agencyId, lead, ownerUserId: values.ownerUserId, actorId, reason: assignmentReason });
+    const pendingRequests = await tx.leadTransferRequest.findMany({ where: { agencyId, leadId: lead.id, status: "PENDING" }, select: { id: true } });
+    await tx.leadTransferRequest.updateMany({
+      where: { agencyId, leadId: lead.id, status: "PENDING" },
+      data: { status: "STALE", reviewedById: actorId, reviewedAt: new Date(), reviewNote: "Lead was transferred directly by an administrator." },
+    });
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.assigned", details: `${lead.leadNumber}: ${assignmentReason}`, entityType: "lead", entityId: lead.id, metadata: { previousOwnerId: lead.ownerUserId, ownerUserId: values.ownerUserId } } });
-    return { updated, assignmentReason };
+    return { updated, assignmentReason, staleRequestIds: pendingRequests.map((item) => item.id) };
   }, leadTransactionOptions);
   if (db === prisma) {
+    await Promise.all(result.staleRequestIds.map((id) => resolveNotifications({ agencyId, entityType: "leadTransferRequest", entityId: id, types: ["lead.transfer_approval_required"] })));
     await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead reassigned: ${result.updated.leadNumber}`, body: result.assignmentReason, severity: result.updated.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.updated.id, actionUrl: "/leads", dedupeKey: `lead:${result.updated.id}:assigned:${values.ownerUserId}:${result.updated.updatedAt.toISOString()}` });
   }
   return result.updated;
+}
+
+const transferRequestInclude = {
+  lead: {
+    select: {
+      id: true,
+      leadNumber: true,
+      firstName: true,
+      lastName: true,
+      status: true,
+      ownerUserId: true,
+    },
+  },
+  fromOwner: { select: { id: true, fullName: true, role: true } },
+  toOwner: { select: { id: true, fullName: true, role: true } },
+  requestedBy: { select: { id: true, fullName: true } },
+  reviewedBy: { select: { id: true, fullName: true } },
+};
+
+export async function requestLeadTransfer(req, db = prisma) {
+  const values = parseLeadAssignment(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  let request;
+  try {
+    request = await db.$transaction(async (tx) => {
+      await lockLeadTransfer(tx, agencyId, req.params.id);
+      const lead = await requireLead(tx, req, req.params.id);
+      if (!["OPEN", "NURTURE"].includes(lead.status)) throw createHttpError(409, "Only an open or nurturing lead can be transferred.", "LEAD_NOT_WORKABLE");
+      if (lead.ownerUserId !== actorId) throw createHttpError(403, "Only the consultant who owns this lead can request its transfer.", "FORBIDDEN");
+      const target = await requireLeadStaff(tx, agencyId, values.ownerUserId);
+      if (lead.ownerUserId === values.ownerUserId) throw createHttpError(409, "This team member already owns the lead.", "NO_ASSIGNMENT_CHANGE");
+      const existing = await tx.leadTransferRequest.findFirst({ where: { agencyId, leadId: lead.id, status: "PENDING" }, include: transferRequestInclude });
+      if (existing) throw createHttpError(409, `A transfer to ${existing.toOwner.fullName} is already waiting for approval.`, "TRANSFER_ALREADY_PENDING");
+      const created = await tx.leadTransferRequest.create({
+        data: { agencyId, leadId: lead.id, fromOwnerId: lead.ownerUserId, toOwnerId: target.id, requestedById: actorId },
+        include: transferRequestInclude,
+      });
+      await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Lead transfer requested", description: `${created.requestedBy.fullName} requested transfer to ${target.fullName}. Waiting for administrator approval.`, performedById: actorId, metadata: { transferRequestId: created.id, toOwnerId: target.id } } });
+      await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.transfer_requested", details: `${lead.leadNumber}: requested transfer to ${target.fullName}`, entityType: "leadTransferRequest", entityId: created.id, metadata: { leadId: lead.id, fromOwnerId: lead.ownerUserId, toOwnerId: target.id } } });
+      return created;
+    }, leadTransactionOptions);
+  } catch (error) {
+    if (error?.code === "P2002") throw createHttpError(409, "A transfer request for this lead is already waiting for approval.", "TRANSFER_ALREADY_PENDING");
+    throw error;
+  }
+  if (db === prisma) {
+    const adminIds = await adminRecipientIds(agencyId);
+    await notifyUsers({ agencyId, recipientIds: adminIds, actorUserId: actorId, type: "lead.transfer_approval_required", category: "leads", title: "Lead transfer needs approval", body: `${request.requestedBy.fullName} wants to transfer ${request.lead.leadNumber} to ${request.toOwner.fullName}.`, severity: "warning", entityType: "leadTransferRequest", entityId: request.id, actionUrl: "/leads", destinationKey: "leads", dedupeKey: `lead-transfer:${request.id}:pending`, attentionLevel: "action_required" }).catch(() => {});
+  }
+  return request;
+}
+
+export async function listLeadTransferRequests(req, db = prisma) {
+  const requestedStatus = String(req.query?.status || "PENDING").toUpperCase();
+  const status = ["PENDING", "APPROVED", "REJECTED", "STALE"].includes(requestedStatus) ? requestedStatus : "PENDING";
+  return db.leadTransferRequest.findMany({ where: { agencyId: req.auth.agencyId, status }, include: transferRequestInclude, orderBy: { createdAt: "asc" }, take: 100 });
+}
+
+export async function approveLeadTransferRequest(req, db = prisma) {
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  const result = await db.$transaction(async (tx) => {
+    const requestSummary = await tx.leadTransferRequest.findFirst({ where: { id: req.params.requestId, agencyId }, select: { leadId: true } });
+    if (!requestSummary) throw createHttpError(404, "Lead transfer request was not found.", "NOT_FOUND");
+    await lockLeadTransfer(tx, agencyId, requestSummary.leadId);
+    const request = await tx.leadTransferRequest.findFirst({ where: { id: req.params.requestId, agencyId }, include: transferRequestInclude });
+    if (!request) throw createHttpError(404, "Lead transfer request was not found.", "NOT_FOUND");
+    if (request.status !== "PENDING") throw createHttpError(409, "This lead transfer request has already been reviewed.", "TRANSFER_ALREADY_REVIEWED");
+    const lead = await tx.lead.findFirst({ where: { id: request.leadId, agencyId, deletedAt: null } });
+    if (!lead || lead.ownerUserId !== request.fromOwnerId || !["OPEN", "NURTURE"].includes(lead.status)) {
+      const closed = await tx.leadTransferRequest.updateMany({ where: { id: request.id, status: "PENDING" }, data: { status: "STALE", reviewedById: actorId, reviewedAt: new Date(), reviewNote: "The lead owner or status changed before review." } });
+      if (closed.count !== 1) throw createHttpError(409, "This lead transfer request has already been reviewed.", "TRANSFER_ALREADY_REVIEWED");
+      const stale = await tx.leadTransferRequest.findUnique({ where: { id: request.id }, include: transferRequestInclude });
+      return { stale: true, request: stale, updated: null };
+    }
+    const target = await requireLeadStaff(tx, agencyId, request.toOwnerId);
+    const assignmentReason = `Transfer requested by ${request.requestedBy.fullName} and approved by an administrator for ${target.fullName}`;
+    const claimed = await tx.leadTransferRequest.updateMany({ where: { id: request.id, status: "PENDING" }, data: { status: "APPROVED", reviewedById: actorId, reviewedAt: new Date() } });
+    if (claimed.count !== 1) throw createHttpError(409, "This lead transfer request has already been reviewed.", "TRANSFER_ALREADY_REVIEWED");
+    const updated = await moveLeadOwnership(tx, { agencyId, lead, ownerUserId: target.id, actorId, reason: assignmentReason });
+    const approved = await tx.leadTransferRequest.findUnique({ where: { id: request.id }, include: transferRequestInclude });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.transfer_approved", details: `${lead.leadNumber}: ${assignmentReason}`, entityType: "leadTransferRequest", entityId: request.id, metadata: { leadId: lead.id, fromOwnerId: lead.ownerUserId, toOwnerId: target.id } } });
+    return { stale: false, request: approved, updated };
+  }, leadTransactionOptions);
+  if (db === prisma) await resolveNotifications({ agencyId, entityType: "leadTransferRequest", entityId: req.params.requestId, types: ["lead.transfer_approval_required"] }).catch(() => {});
+  if (result.stale) throw createHttpError(409, "The lead changed after this request was submitted. The request was closed without transferring it.", "TRANSFER_REQUEST_STALE");
+  if (db === prisma) {
+    await notifyUsers({ agencyId, recipientIds: [...new Set([result.request.requestedById, result.request.toOwnerId])], actorUserId: actorId, type: "lead.transfer_approved", category: "leads", title: `Lead transfer approved: ${result.updated.leadNumber}`, body: `${result.request.toOwner.fullName} is now responsible for this lead and its pending follow-ups.`, severity: "info", entityType: "lead", entityId: result.updated.id, actionUrl: "/leads", destinationKey: "leads", dedupeKey: `lead-transfer:${result.request.id}:approved` }).catch(() => {});
+  }
+  return { request: result.request, lead: result.updated };
+}
+
+export async function rejectLeadTransferRequest(req, db = prisma) {
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  const reviewNote = String(req.body?.reviewNote || "").trim().slice(0, 500) || null;
+  const request = await db.$transaction(async (tx) => {
+    const requestSummary = await tx.leadTransferRequest.findFirst({ where: { id: req.params.requestId, agencyId }, select: { leadId: true } });
+    if (!requestSummary) throw createHttpError(404, "Lead transfer request was not found.", "NOT_FOUND");
+    await lockLeadTransfer(tx, agencyId, requestSummary.leadId);
+    const current = await tx.leadTransferRequest.findFirst({ where: { id: req.params.requestId, agencyId }, include: transferRequestInclude });
+    if (!current) throw createHttpError(404, "Lead transfer request was not found.", "NOT_FOUND");
+    if (current.status !== "PENDING") throw createHttpError(409, "This lead transfer request has already been reviewed.", "TRANSFER_ALREADY_REVIEWED");
+    const claimed = await tx.leadTransferRequest.updateMany({ where: { id: current.id, status: "PENDING" }, data: { status: "REJECTED", reviewedById: actorId, reviewedAt: new Date(), reviewNote } });
+    if (claimed.count !== 1) throw createHttpError(409, "This lead transfer request has already been reviewed.", "TRANSFER_ALREADY_REVIEWED");
+    const updated = await tx.leadTransferRequest.findUnique({ where: { id: current.id }, include: transferRequestInclude });
+    await tx.leadActivity.create({ data: { agencyId, leadId: current.leadId, activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Lead transfer declined", description: reviewNote || "An administrator declined the transfer request.", performedById: actorId, metadata: { transferRequestId: current.id } } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.transfer_rejected", details: `${current.lead.leadNumber}: transfer to ${current.toOwner.fullName} rejected`, entityType: "leadTransferRequest", entityId: current.id, metadata: { leadId: current.leadId, reviewNote } } });
+    return updated;
+  }, leadTransactionOptions);
+  if (db === prisma) {
+    await resolveNotifications({ agencyId, entityType: "leadTransferRequest", entityId: request.id, types: ["lead.transfer_approval_required"] }).catch(() => {});
+    await notifyUsers({ agencyId, recipientIds: [request.requestedById], actorUserId: actorId, type: "lead.transfer_rejected", category: "leads", title: `Lead transfer not approved: ${request.lead.leadNumber}`, body: reviewNote || `The requested transfer to ${request.toOwner.fullName} was declined.`, severity: "info", entityType: "lead", entityId: request.leadId, actionUrl: "/leads", destinationKey: "leads", dedupeKey: `lead-transfer:${request.id}:rejected` }).catch(() => {});
+  }
+  return request;
 }
 
 export async function moveLeadToNurture(req, db = prisma) {
@@ -636,6 +811,95 @@ export async function bulkPromoteLeadsToPipeline(req, db = prisma) {
     }
   }
   return { promoted, skipped };
+}
+
+// Least-loaded-first distribution: seeded from each target's real current
+// open-lead count, then updated in memory as the batch is worked through —
+// this is what actually corrects an existing imbalance (one person holding
+// most of the pipeline) rather than just spreading new leads evenly the way
+// plain round-robin would. Sequential per-lead transactions, matching
+// bulkPromoteLeadsToPipeline exactly: this DB's connection pool is sized to
+// a single connection, so concurrent $transaction calls would only queue
+// behind each other anyway, and one bad lead should never roll back the
+// rest of the batch.
+export async function bulkReassignLeads(req, db = prisma) {
+  const { leadIds, targetUserIds } = parseBulkReassignment(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  const runId = randomUUID();
+
+  for (const targetUserId of targetUserIds) await requireLeadStaff(db, agencyId, targetUserId);
+
+  const grouped = await db.lead.groupBy({
+    by: ["ownerUserId"],
+    where: { agencyId, ownerUserId: { in: targetUserIds }, status: "OPEN" },
+    _count: true,
+  });
+  const counts = new Map(targetUserIds.map((id) => [id, 0]));
+  for (const row of grouped) counts.set(row.ownerUserId, row._count);
+
+  const reassigned = [];
+  const skipped = [];
+  for (const id of leadIds) {
+    const targetUserId = [...counts.entries()].sort(
+      (a, b) => a[1] - b[1] || targetUserIds.indexOf(a[0]) - targetUserIds.indexOf(b[0]),
+    )[0][0];
+    try {
+      let succeeded = false;
+      await db.$transaction(async (tx) => {
+        const lead = await requireLead(tx, req, id);
+        if (lead.ownerUserId === targetUserId) {
+          skipped.push({ id, leadNumber: lead.leadNumber, reason: "Already owned by the selected team member." });
+          return;
+        }
+        const updated = await moveLeadOwnership(tx, {
+          agencyId,
+          lead,
+          ownerUserId: targetUserId,
+          actorId,
+          reason: "Bulk rebalance",
+          assignmentType: "ROUND_ROBIN",
+        });
+        await tx.activityLog.create({
+          data: {
+            agencyId,
+            userId: actorId,
+            action: "lead.bulk_reassigned",
+            details: `${lead.leadNumber} rebalanced to a new owner`,
+            entityType: "lead",
+            entityId: lead.id,
+            metadata: { runId, previousOwnerId: lead.ownerUserId, ownerUserId: targetUserId },
+          },
+        });
+        reassigned.push({ id, leadNumber: updated.leadNumber, ownerUserId: targetUserId });
+        succeeded = true;
+      }, leadTransactionOptions);
+      if (succeeded) counts.set(targetUserId, (counts.get(targetUserId) || 0) + 1);
+    } catch (error) {
+      skipped.push({ id, reason: error.message || "Could not be reassigned." });
+    }
+  }
+
+  if (db === prisma) {
+    const byOwner = new Map();
+    for (const item of reassigned) byOwner.set(item.ownerUserId, (byOwner.get(item.ownerUserId) || 0) + 1);
+    for (const [ownerUserId, count] of byOwner) {
+      await notifyUsers({
+        agencyId,
+        recipientIds: [ownerUserId],
+        actorUserId: actorId,
+        type: "lead.bulk_reassigned",
+        category: "leads",
+        title: `${count} lead${count === 1 ? "" : "s"} reassigned to you`,
+        body: "Rebalanced from another team member's queue.",
+        severity: "info",
+        actionUrl: "/leads",
+        dedupeKey: `lead-bulk-reassign:${runId}:${ownerUserId}`,
+      });
+    }
+  }
+
+  return { reassigned, skipped };
 }
 
 export async function changeLeadStage(req, db = prisma) {

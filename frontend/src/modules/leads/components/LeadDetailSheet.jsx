@@ -109,6 +109,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [prioritySaving, setPrioritySaving] = useState(false);
   const [ownerSaving, setOwnerSaving] = useState(false);
   const [workflowError, setWorkflowError] = useState("");
+  const [workflowNotice, setWorkflowNotice] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
@@ -195,11 +196,17 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     try {
       setOwnerSaving(true);
       setWorkflowError("");
-      const response = await api.post(`/leads/${lead.id}/assign`, {
-        ownerUserId,
-      });
-      setLead((current) => ({ ...current, ...response.data.data }));
-      onChanged();
+      setWorkflowNotice("");
+      if (role === "admin") {
+        const response = await api.post(`/leads/${lead.id}/assign`, { ownerUserId });
+        setLead((current) => ({ ...current, ...response.data.data, transferRequests: [] }));
+        setWorkflowNotice("Lead transferred.");
+        onChanged();
+      } else {
+        const response = await api.post(`/leads/${lead.id}/transfer-requests`, { ownerUserId });
+        setLead((current) => ({ ...current, transferRequests: [response.data.data] }));
+        setWorkflowNotice("Transfer request sent for administrator approval. Ownership has not changed yet.");
+      }
     } catch (requestError) {
       setWorkflowError(
         requestError.response?.data?.message ||
@@ -235,12 +242,14 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   ].sort((left, right) => new Date(right.sentAt || right.failedAt || right.createdAt).getTime() - new Date(left.sentAt || left.failedAt || left.createdAt).getTime()), [lead.appointments, lead.messageDeliveries]);
   const isWorkable = ["OPEN", "NURTURE"].includes(lead.status);
   const ownsLead = lead.ownerUserId === appUser?.id;
-  // Owner changes are admin-only; stage and priority are also open to the
-  // consultant currently assigned to this lead. Frontdesk gets neither —
-  // they triage the incoming queue, they don't drive the pipeline.
+  // Owner changes are admin-only and may target any active lead-team member,
+  // including front desk. Stage and priority remain editable only by an admin
+  // or the consultant currently responsible for the lead.
   const canReassign = isWorkable && role === "admin";
-  const consultantOwners = staff.filter(
-    (person) => person.role === "consultant",
+  const canRequestTransfer = isWorkable && role === "consultant" && ownsLead;
+  const pendingTransfer = lead.transferRequests?.[0] || null;
+  const leadOwners = staff.filter(
+    (person) => ["admin", "consultant", "frontdesk"].includes(person.role),
   );
   const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
   const canCloseFollowUp = (item) => item.status === "PENDING" && (!isFrontdesk || item.assignedUserId === appUser?.id);
@@ -329,6 +338,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
                   <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
                     {workflowError ? <p className="mb-3 text-xs font-medium text-rose-600">{workflowError}</p> : null}
+                    {workflowNotice ? <p className="mb-3 text-xs font-medium text-emerald-700">{workflowNotice}</p> : null}
+                    {pendingTransfer ? <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><p className="text-xs font-semibold text-amber-900">Transfer to {pendingTransfer.toOwner?.fullName || "the selected team member"} is waiting for administrator approval.</p><p className="mt-0.5 text-[11px] text-amber-700">The current owner and pending work stay unchanged until it is approved.</p></div> : null}
                     <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-4">
                       <SummaryValue
                         label="Stage"
@@ -339,18 +350,21 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       <SummaryValue
                         label="Owner"
                         value={lead.owner?.fullName || "Unassigned"}
-                        select={canReassign ? {
+                        select={canReassign || canRequestTransfer ? {
                           value: lead.ownerUserId || "",
-                          disabled: ownerSaving,
+                          disabled: ownerSaving || Boolean(pendingTransfer),
                           onChange: updateOwner,
                           options: [
                             ...(!lead.ownerUserId
-                              ? [{ value: "", label: "Select consultant" }]
+                              ? [{ value: "", label: "Select team member" }]
                               : []),
-                            ...(!consultantOwners.some((person) => person.id === lead.ownerUserId) && lead.ownerUserId
+                            ...(!leadOwners.some((person) => person.id === lead.ownerUserId) && lead.ownerUserId
                               ? [{ value: lead.ownerUserId, label: lead.owner?.fullName || "Current owner" }]
                               : []),
-                            ...consultantOwners.map((person) => ({ value: person.id, label: person.fullName })),
+                            ...leadOwners.map((person) => ({
+                              value: person.id,
+                              label: `${person.fullName} · ${person.role === "frontdesk" ? "Front desk" : humanize(person.role)}`,
+                            })),
                           ],
                         } : null}
                       />

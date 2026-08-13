@@ -94,6 +94,10 @@ import {
   stopLeadStaleOutreachWorker,
 } from "./modules/leads/lead.staleOutreach.worker.js";
 import {
+  startLeadOverdueAlertWorker,
+  stopLeadOverdueAlertWorker,
+} from "./modules/leads/lead.overdueAlert.worker.js";
+import {
   startWorkloadZeroActivityWorker,
   stopWorkloadZeroActivityWorker,
 } from "./modules/workload/workload.zeroActivity.worker.js";
@@ -459,6 +463,7 @@ function onListening() {
   startLeadIntakeWorker();
   startLeadReactivationWorker();
   startLeadStaleOutreachWorker();
+  startLeadOverdueAlertWorker();
   startWorkloadZeroActivityWorker();
   startBookingReminderWorker();
   startPaymentScheduleWorker();
@@ -506,6 +511,7 @@ async function shutdown(signal) {
   stopLeadIntakeWorker();
   stopLeadReactivationWorker();
   stopLeadStaleOutreachWorker();
+  stopLeadOverdueAlertWorker();
   stopWorkloadZeroActivityWorker();
   stopBookingReminderWorker();
   stopPaymentScheduleWorker();

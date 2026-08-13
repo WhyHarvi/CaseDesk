@@ -68,6 +68,22 @@ export async function listLeadStaff(req, res) {
   res.json({ data: await service.listLeadStaff(req) });
 }
 
+export async function requestLeadTransfer(req, res) {
+  res.status(202).json({ data: await service.requestLeadTransfer(req) });
+}
+
+export async function listLeadTransferRequests(req, res) {
+  res.json({ data: await service.listLeadTransferRequests(req) });
+}
+
+export async function approveLeadTransferRequest(req, res) {
+  res.json({ data: await service.approveLeadTransferRequest(req) });
+}
+
+export async function rejectLeadTransferRequest(req, res) {
+  res.json({ data: await service.rejectLeadTransferRequest(req) });
+}
+
 export async function listLeadImmigrationInterests(req, res) {
   res.json({ data: await service.listLeadImmigrationInterests(req) });
 }
@@ -151,6 +167,10 @@ export async function promoteLeadToPipeline(req, res) {
 
 export async function bulkPromoteLeadsToPipeline(req, res) {
   res.json({ data: await service.bulkPromoteLeadsToPipeline(req) });
+}
+
+export async function bulkReassignLeads(req, res) {
+  res.json({ data: await service.bulkReassignLeads(req) });
 }
 
 export async function changeLeadStage(req, res) {

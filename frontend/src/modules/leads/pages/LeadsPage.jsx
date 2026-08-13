@@ -1,10 +1,13 @@
-import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, FilterX, Layers3, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
+import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, ClipboardCheck, FilterX, Layers3, Loader2, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
+import { useAuth } from "../../../auth/AuthContext";
 import QuickAddLeadSheet from "../components/QuickAddLeadSheet";
 import LeadFilterMenu from "../components/LeadFilterMenu";
 import LeadDetailSheet from "../components/LeadDetailSheet";
+import LeadTransferApprovalDrawer from "../components/LeadTransferApprovalDrawer";
+import BulkReassignLeadsModal from "../components/BulkReassignLeadsModal";
 import { formatDueDate, humanize, initials, leadName, LEAD_STAGES, LEAD_STATUSES, PAYMENT_READY_VALUES, RETAINER_READY_VALUES, statusTone } from "../leadPresentation";
 
 function ListSkeleton() {
@@ -35,6 +38,7 @@ const SEGMENT_COPY = {
 };
 
 export default function LeadsPage({ segment = "STANDARD" }) {
+  const { role } = useAuth();
   const copy = SEGMENT_COPY[segment] || SEGMENT_COPY.STANDARD;
   const [params, setParams] = useSearchParams();
   const [leads, setLeads] = useState([]);
@@ -50,9 +54,17 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   const [selectedLead, setSelectedLead] = useState(null);
   const requestedLeadId = params.get("lead") || "";
   const canBulkPromote = segment === "IMPORT_REVIEW";
+  const canBulkReassign = segment === "STANDARD" && role === "admin";
+  const canBulkSelect = canBulkPromote || canBulkReassign;
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkPromoting, setBulkPromoting] = useState(false);
   const [bulkResult, setBulkResult] = useState(null);
+  const [reassignModalOpen, setReassignModalOpen] = useState(false);
+  const [transferRequests, setTransferRequests] = useState([]);
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [transferBusyId, setTransferBusyId] = useState("");
+  const [transferDrawerOpen, setTransferDrawerOpen] = useState(false);
 
   // segment is a route-level prop (which sidebar page you're on), not a
   // user-toggleable filter, so it rides along on every fetch without ever
@@ -118,6 +130,31 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       })
       .catch((requestError) => setSupportingDataError(requestError.response?.data?.message || "Lead sources and employees could not be loaded."));
   }, []);
+
+  const loadTransferRequests = useCallback(async () => {
+    if (role !== "admin" || segment !== "STANDARD") return;
+    try {
+      setTransferLoading(true);
+      const response = await api.get("/leads/transfer-requests?status=PENDING");
+      setTransferRequests(response.data.data || []);
+      setTransferError("");
+    } catch (requestError) {
+      setTransferError(requestError.response?.data?.message || "Lead transfer approvals could not be loaded.");
+    } finally {
+      setTransferLoading(false);
+    }
+  }, [role, segment]);
+
+  useEffect(() => {
+    loadTransferRequests();
+    if (role !== "admin" || segment !== "STANDARD") return undefined;
+    const interval = window.setInterval(loadTransferRequests, 30_000);
+    window.addEventListener("focus", loadTransferRequests);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", loadTransferRequests);
+    };
+  }, [loadTransferRequests, role, segment]);
   useEffect(() => {
     api
       .get("/leads/immigration-interests")
@@ -201,6 +238,32 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     }
   }
 
+  function handleReassigned(result) {
+    setReassignModalOpen(false);
+    setBulkResult({ reassigned: result.reassigned, skipped: result.skipped });
+    setSelectedIds(new Set());
+    loadLeads();
+  }
+
+  async function reviewTransfer(request, decision) {
+    try {
+      setTransferBusyId(request.id);
+      setTransferError("");
+      const response = await api.post(`/leads/transfer-requests/${request.id}/${decision}`);
+      setTransferRequests((current) => current.filter((item) => item.id !== request.id));
+      if (decision === "approve") {
+        const updatedLead = response.data.data?.lead;
+        if (updatedLead) setSelectedLead((current) => current?.id === updatedLead.id ? { ...current, ...updatedLead } : current);
+        await loadLeads();
+      }
+    } catch (requestError) {
+      setTransferError(requestError.response?.data?.message || `Transfer could not be ${decision === "approve" ? "approved" : "rejected"}.`);
+      await loadTransferRequests();
+    } finally {
+      setTransferBusyId("");
+    }
+  }
+
   return (
     <section className="space-y-5 pb-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -209,7 +272,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">{copy.title}</h1>
           <p className="mt-1.5 max-w-xl text-sm text-slate-500">{copy.description}</p>
         </div>
-        {segment === "STANDARD" ? <button type="button" disabled={Boolean(supportingDataError) || !sources.length || !staff.length} onClick={() => setQuickAddOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(73,104,149,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"><CirclePlus className="h-4 w-4" />Quick add</button> : null}
+        {segment === "STANDARD" ? <div className="flex flex-wrap items-center gap-2">{role === "admin" ? <button type="button" onClick={() => setTransferDrawerOpen(true)} className="relative inline-flex h-11 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:text-brand-700"><ClipboardCheck className="h-4 w-4" />Transfers{transferLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" /> : transferRequests.length ? <span className="min-w-5 rounded-full bg-brand-600 px-1.5 py-0.5 text-center text-[10px] font-bold text-white">{transferRequests.length}</span> : null}</button> : null}<button type="button" disabled={Boolean(supportingDataError) || !sources.length || !staff.length} onClick={() => setQuickAddOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(73,104,149,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"><CirclePlus className="h-4 w-4" />Quick add</button></div> : null}
       </header>
 
       {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{supportingDataError} Refresh the page before adding a lead.</div> : null}
@@ -234,18 +297,24 @@ export default function LeadsPage({ segment = "STANDARD" }) {
           </div>
         </div>
 
-        {canBulkPromote && selectedIds.size > 0 ? (
+        {canBulkSelect && selectedIds.size > 0 ? (
           <div className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3">
             <p className="text-sm font-semibold text-brand-900">{selectedIds.size} lead{selectedIds.size === 1 ? "" : "s"} selected</p>
             <div className="flex items-center gap-2">
               <button type="button" onClick={() => setSelectedIds(new Set())} className="text-xs font-semibold text-brand-700 hover:underline">Clear</button>
-              <button type="button" disabled={bulkPromoting} onClick={promoteSelected} className="inline-flex h-9 items-center justify-center rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60">{bulkPromoting ? "Promoting…" : `Promote ${selectedIds.size} to pipeline`}</button>
+              {canBulkPromote ? <button type="button" disabled={bulkPromoting} onClick={promoteSelected} className="inline-flex h-9 items-center justify-center rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60">{bulkPromoting ? "Promoting…" : `Promote ${selectedIds.size} to pipeline`}</button> : null}
+              {canBulkReassign ? <button type="button" onClick={() => setReassignModalOpen(true)} className="inline-flex h-9 items-center justify-center rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700">{`Reassign ${selectedIds.size} lead${selectedIds.size === 1 ? "" : "s"}`}</button> : null}
             </div>
           </div>
         ) : null}
         {bulkResult ? (
           <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 text-sm ${bulkResult.error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
-            {bulkResult.error ? bulkResult.error : (
+            {bulkResult.error ? bulkResult.error : bulkResult.reassigned ? (
+              <>
+                <p className="font-semibold">{bulkResult.reassigned.length} lead{bulkResult.reassigned.length === 1 ? "" : "s"} reassigned.</p>
+                {bulkResult.skipped.length ? <p className="mt-1 text-xs text-emerald-800">{bulkResult.skipped.length} skipped (see below for reasons).</p> : null}
+              </>
+            ) : (
               <>
                 <p className="font-semibold">{bulkResult.promoted.length} lead{bulkResult.promoted.length === 1 ? "" : "s"} promoted to the active pipeline.</p>
                 {bulkResult.skipped.length ? <p className="mt-1 text-xs text-emerald-800">{bulkResult.skipped.length} skipped (already promoted or no longer accessible).</p> : null}
@@ -261,12 +330,12 @@ export default function LeadsPage({ segment = "STANDARD" }) {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-left">
-              <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{canBulkPromote ? <th className="w-10 px-5 py-3"><SelectAllCheckbox checked={selectedIds.size > 0 && selectedIds.size === leads.length} indeterminate={selectedIds.size > 0 && selectedIds.size < leads.length} onChange={toggleSelectAll} /></th> : null}<th className="px-5 py-3">Lead</th><th className="px-4 py-3">Source and interest</th><th className="px-4 py-3">Progress</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Next action</th></tr></thead>
+              <thead><tr className="border-b border-slate-200 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{canBulkSelect ? <th className="w-10 px-5 py-3"><SelectAllCheckbox checked={selectedIds.size > 0 && selectedIds.size === leads.length} indeterminate={selectedIds.size > 0 && selectedIds.size < leads.length} onChange={toggleSelectAll} /></th> : null}<th className="px-5 py-3">Lead</th><th className="px-4 py-3">Source and interest</th><th className="px-4 py-3">Progress</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Next action</th></tr></thead>
               <tbody>{groupedLeads.map((group) => (
                 <Fragment key={group.key ?? "all"}>
-                  {group.label ? <tr><td colSpan={canBulkPromote ? 6 : 5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
+                  {group.label ? <tr><td colSpan={canBulkSelect ? 6 : 5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
                   {group.items.map((lead) => { const due = formatDueDate(lead.nextActionAt); const blockedOnConversion = lead.status === "OPEN" && lead.stage === "READY_TO_CONVERT" && !(RETAINER_READY_VALUES.includes(lead.retainerStatus) && PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus)); return <tr key={lead.id} role="button" tabIndex={0} onClick={() => setSelectedLead(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLead(lead); } }} className="cursor-pointer border-b border-slate-100 text-sm outline-none transition last:border-0 hover:bg-brand-50/45 focus:bg-brand-50/70">
-                    {canBulkPromote ? <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelected(lead.id)} className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" aria-label={`Select ${leadName(lead)}`} /></td> : null}
+                    {canBulkSelect ? <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelected(lead.id)} className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" aria-label={`Select ${leadName(lead)}`} /></td> : null}
                     <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div></div></td>
                     <td className="px-4 py-4"><p className="font-medium text-slate-700">{lead.originalSource?.name || "Unknown source"}</p><p className="mt-0.5 max-w-[190px] truncate text-xs text-slate-400">{lead.immigrationInterest || "Interest not specified"}</p></td>
                     <td className="px-4 py-4"><div className="flex items-center gap-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusTone[lead.status] || statusTone.ARCHIVED}`}>{humanize(lead.status)}</span><span className="text-xs font-medium text-slate-600">{humanize(lead.stage)}</span>{blockedOnConversion ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-100" title="Ready to Convert, but retainer or payment isn't confirmed yet">Blocked</span> : null}</div><p className="mt-1.5 text-xs text-slate-400">{humanize(lead.temperature)} · {humanize(lead.priority)}</p></td>
@@ -285,6 +354,8 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       </div>
 
       <QuickAddLeadSheet open={quickAddOpen} sources={sources} staff={staff} immigrationInterests={immigrationInterests} onClose={() => setQuickAddOpen(false)} onCreated={() => { setQuickAddOpen(false); setParams({}); loadLeads(); }} />
+      <LeadTransferApprovalDrawer open={transferDrawerOpen} requests={transferRequests} loading={transferLoading} error={transferError} busyId={transferBusyId} onClose={() => setTransferDrawerOpen(false)} onReload={loadTransferRequests} onReview={reviewTransfer} />
+      <BulkReassignLeadsModal open={reassignModalOpen} leadCount={selectedIds.size} leadIds={[...selectedIds]} staff={staff} onClose={() => setReassignModalOpen(false)} onDone={handleReassigned} />
       {selectedLead ? <LeadDetailSheet lead={selectedLead} staff={staff} onClose={() => {
         setSelectedLead(null);
         if (requestedLeadId) {

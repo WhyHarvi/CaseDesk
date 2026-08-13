@@ -51,11 +51,13 @@ test("stage, priority, and owner each have a real endpoint with the right role g
   // All three are inline selectors. Admin owner transfers save immediately
   // without opening a reason form, while the API stays admin-only.
   assert.match(leadDetail, /canReassign = isWorkable && role === "admin"/);
+  assert.match(leadDetail, /canRequestTransfer = isWorkable && role === "consultant" && ownsLead/);
   assert.match(leadDetail, /canEditWorkflow = isWorkable && \(role === "admin" \|\| \(role === "consultant" && ownsLead\)\)/);
-  assert.match(leadDetail, /consultantOwners = staff\.filter/);
-  assert.match(leadDetail, /person\.role === "consultant"/);
-  assert.match(leadDetail, /select=\{canReassign \? \{/);
-  assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/assign`, \{\s*ownerUserId,\s*\}\)/);
+  assert.match(leadDetail, /leadOwners = staff\.filter/);
+  assert.match(leadDetail, /\["admin", "consultant", "frontdesk"\]\.includes\(person\.role\)/);
+  assert.match(leadDetail, /select=\{canReassign \|\| canRequestTransfer \? \{/);
+  assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/assign`, \{\s*ownerUserId\s*\}\)/);
+  assert.match(leadDetail, /api\.post\(`\/leads\/\$\{lead\.id\}\/transfer-requests`, \{ ownerUserId \}\)/);
   assert.doesNotMatch(leadDetail, /ReassignLeadSheet/);
   assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.stage, disabled: stageSaving, onChange: updateStage,/);
   assert.match(leadDetail, /select=\{canEditWorkflow \? \{ value: lead\.priority, disabled: prioritySaving, onChange: updatePriority,/);
@@ -152,6 +154,26 @@ test("lead RLS is agency scoped and no client policy is granted", async () => {
   assert.match(sql, /leads_read[\s\S]*"agency_id" = current_agency_id\(\)/);
   assert.match(sql, /current_user_role\(\) = 'consultant'/);
   assert.doesNotMatch(sql, /current_user_role\(\) = 'client'[\s\S]*leads/);
+});
+
+test("consultant lead transfers are approval-gated and have an admin review UI", async () => {
+  const [routes, service, page, drawer, migration] = await Promise.all([
+    readFile(new URL("../src/modules/leads/lead.routes.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/leads/lead.service.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/modules/leads/pages/LeadsPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/modules/leads/components/LeadTransferApprovalDrawer.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../prisma/migrations/20260813180000_lead_transfer_approvals/migration.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(routes, /router\.post\("\/:id\/transfer-requests", requireRole\("consultant"\)/);
+  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/approve", requireRole\("admin"\)/);
+  assert.match(routes, /router\.post\("\/transfer-requests\/:requestId\/reject", requireRole\("admin"\)/);
+  assert.match(service, /Only the consultant who owns this lead can request its transfer/);
+  assert.match(service, /status: "PENDING"/);
+  assert.match(page, /Lead transfer approvals/);
+  assert.match(page, /LeadTransferApprovalDrawer/);
+  assert.match(drawer, /Approve transfer/);
+  assert.match(migration, /lead_transfer_requests_one_pending_per_lead_idx/);
+  assert.match(migration, /current_user_role\(\) IN \('admin', 'consultant'\)/);
 });
 
 test("lead history tables reject in-place updates", async () => {
