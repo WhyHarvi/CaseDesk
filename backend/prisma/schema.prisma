@@ -167,7 +167,7 @@ enum FormFieldFillableBy {
 
 enum FormFieldValueStatus {
   Unset
-  AutoFilled       @map("Auto-filled")
+  AutoFilled        @map("Auto-filled")
   ConsultantEntered @map("Consultant Entered")
   ClientEntered     @map("Client Entered")
 }
@@ -607,6 +607,7 @@ model Agency {
   formTemplateFieldSchemas       FormTemplateFieldSchema[]
   caseFormFieldValues            CaseFormFieldValue[]
   caseFormClientRequests         CaseFormClientRequest[]
+  caseFormSignatureRequests      CaseFormSignatureRequest[]
   correspondenceTemplates        CorrespondenceTemplate[]
   correspondenceTemplateVersions CorrespondenceTemplateVersion[]
   appointments                   Appointment[]
@@ -1437,6 +1438,11 @@ model User {
   representativeType                   String?                         @map("representative_type")
   membershipBody                       String?                         @map("membership_body")
   membershipProvince                   String?                         @map("membership_province")
+  // Drawn signature this licensed staff member has personally saved for
+  // government forms. It belongs to the user, never to the agency.
+  formSignatureImage                   String?                         @map("form_signature_image") @db.Text
+  formSignatureStrokes                 Json?                           @map("form_signature_strokes")
+  formSignatureUpdatedAt               DateTime?                       @map("form_signature_updated_at")
   createdAt                            DateTime                        @default(now()) @map("created_at")
   updatedAt                            DateTime                        @updatedAt @map("updated_at")
   agency                               Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1474,9 +1480,11 @@ model User {
   formPermission                       FormPermission?
   lockedCaseForms                      CaseForm[]                      @relation("LockedCaseFormUser")
   representedCaseForms                 CaseForm[]                      @relation("CaseFormRepresentativeUser")
+  representedCaseFormSignatures        CaseFormSignatureRequest[]      @relation("CaseFormSignatureRepresentative")
   filledCaseFormFieldValues            CaseFormFieldValue[]            @relation("CaseFormFieldValueFiller")
   reviewedCaseFormClientRequests       CaseFormClientRequest[]         @relation("CaseFormClientRequestReviewer")
   caseFormAuditEvents                  CaseFormAuditEvent[]
+  formSignatureRequestsCreated         CaseFormSignatureRequest[]      @relation("CaseFormSignatureRequestCreator")
   assignedCaseTasks                    CaseWorkflowStep[]              @relation("AssignedCaseTaskUser")
   createdCorrespondenceTemplates       CorrespondenceTemplate[]        @relation("CreatedCorrespondenceTemplateUser")
   updatedCorrespondenceTemplates       CorrespondenceTemplate[]        @relation("UpdatedCorrespondenceTemplateUser")
@@ -1715,8 +1723,8 @@ model Client {
   fullName                   String                       @map("full_name")
   // Structured name split, mirroring ImmigrationProfile — most IRCC forms
   // (IMM 5476 included) want family/given name separately, not one string.
-  // Nullable + backfilled from fullName once; fullName remains the display
-  // value everywhere else.
+  // Nullable for legacy/guest-created records; fullName remains the display
+  // value everywhere else. Staff confirm the structured split when editing.
   familyName                 String?                      @map("family_name")
   givenNames                 String?                      @map("given_names")
   // Unique Client Identifier — IRCC's own ID, requested on nearly every
@@ -1771,6 +1779,7 @@ model Client {
   clientInformationProfiles  ClientInformationProfile[]
   caseInformationProfiles    CaseInformationProfile[]
   caseFormClientRequests     CaseFormClientRequest[]
+  caseFormSignatureRequests  CaseFormSignatureRequest[]
   caseInvoices               CaseInvoice[]
   caseManualLedgerEntries    CaseManualLedgerEntry[]
   paymentSchedules           CasePaymentSchedule[]
@@ -1840,6 +1849,7 @@ model Case {
   caseInformationProfiles      CaseInformationProfile[]
   caseInformationSectionStates CaseInformationSectionState[]
   caseFormClientRequests       CaseFormClientRequest[]
+  caseFormSignatureRequests    CaseFormSignatureRequest[]
   caseInvoices                 CaseInvoice[]
   caseManualLedgerEntries      CaseManualLedgerEntry[]
   paymentSchedule              CasePaymentSchedule?
@@ -3183,62 +3193,63 @@ model DocumentFolder {
 }
 
 model CaseForm {
-  id                         String                  @id @default(uuid())
-  agencyId                   String                  @map("agency_id")
-  clientId                   String                  @map("client_id")
-  caseId                     String                  @map("case_id")
-  catalogId                  String?                 @map("catalog_id")
-  sourceAgencyFormTemplateId String?                 @map("source_agency_form_template_id")
+  id                         String                     @id @default(uuid())
+  agencyId                   String                     @map("agency_id")
+  clientId                   String                     @map("client_id")
+  caseId                     String                     @map("case_id")
+  catalogId                  String?                    @map("catalog_id")
+  sourceAgencyFormTemplateId String?                    @map("source_agency_form_template_id")
   // Which person on the case this specific copy is for — null means the
   // primary case client. Lets one case produce a separate IMM 5476 (or any
   // other form) per dependent/co-applicant via ImmigrationProfile, without
   // requiring every case to have one.
-  applicantProfileId         String?                 @map("applicant_profile_id")
+  applicantProfileId         String?                    @map("applicant_profile_id")
   // Who is acting as the representative on this submission. Representative
   // status isn't tied to a role — an admin or a consultant can both be the
   // named representative, so this is a free pick of any staff user, not
   // derived from Case.assignedUserId. Defaults to the assigned consultant
   // when left unset by the caller.
-  representativeUserId       String?                 @map("representative_user_id")
-  formNumber                 String?                 @map("form_number")
+  representativeUserId       String?                    @map("representative_user_id")
+  formNumber                 String?                    @map("form_number")
   title                      String
-  normalizedName             String                  @map("normalized_name")
-  source                     FormSource              @default(Custom)
-  requirement                FormRequirement         @default(Required)
-  selectionReason            String?                 @map("selection_reason")
-  officialUrl                String?                 @map("official_url")
-  sourceRevision             String?                 @map("source_revision")
-  language                   String                  @default("English")
-  fileHash                   String?                 @map("file_hash")
-  sourceDownloadedAt         DateTime?               @map("source_downloaded_at")
-  mappingVersion             String?                 @map("mapping_version")
-  versionStatus              FormVersionStatus       @default(Unverified) @map("version_status")
-  currentCopyType            FormCopyType            @default(Original) @map("current_copy_type")
-  availableRevision          String?                 @map("available_revision")
-  lastVersionCheckedAt       DateTime?               @map("last_version_checked_at")
-  status                     FormStatus              @default(Assigned)
-  storageKey                 String?                 @map("storage_key")
-  originalFilename           String?                 @map("original_filename")
-  mimeType                   String?                 @map("mime_type")
-  fileSize                   Int?                    @map("file_size")
-  uploadedById               String?                 @map("uploaded_by_id")
-  lockedAt                   DateTime?               @map("locked_at")
-  lockedById                 String?                 @map("locked_by_id")
-  createdAt                  DateTime                @default(now()) @map("created_at")
-  updatedAt                  DateTime                @updatedAt @map("updated_at")
-  agency                     Agency                  @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client                     Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  case                       Case                    @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  applicantProfile           ImmigrationProfile?     @relation("CaseFormApplicantProfile", fields: [applicantProfileId], references: [id], onDelete: SetNull)
-  representativeUser         User?                   @relation("CaseFormRepresentativeUser", fields: [representativeUserId], references: [id], onDelete: SetNull)
-  uploadedBy                 User?                   @relation("UploadedCaseFormUser", fields: [uploadedById], references: [id], onDelete: SetNull)
-  lockedBy                   User?                   @relation("LockedCaseFormUser", fields: [lockedById], references: [id], onDelete: SetNull)
+  normalizedName             String                     @map("normalized_name")
+  source                     FormSource                 @default(Custom)
+  requirement                FormRequirement            @default(Required)
+  selectionReason            String?                    @map("selection_reason")
+  officialUrl                String?                    @map("official_url")
+  sourceRevision             String?                    @map("source_revision")
+  language                   String                     @default("English")
+  fileHash                   String?                    @map("file_hash")
+  sourceDownloadedAt         DateTime?                  @map("source_downloaded_at")
+  mappingVersion             String?                    @map("mapping_version")
+  versionStatus              FormVersionStatus          @default(Unverified) @map("version_status")
+  currentCopyType            FormCopyType               @default(Original) @map("current_copy_type")
+  availableRevision          String?                    @map("available_revision")
+  lastVersionCheckedAt       DateTime?                  @map("last_version_checked_at")
+  status                     FormStatus                 @default(Assigned)
+  storageKey                 String?                    @map("storage_key")
+  originalFilename           String?                    @map("original_filename")
+  mimeType                   String?                    @map("mime_type")
+  fileSize                   Int?                       @map("file_size")
+  uploadedById               String?                    @map("uploaded_by_id")
+  lockedAt                   DateTime?                  @map("locked_at")
+  lockedById                 String?                    @map("locked_by_id")
+  createdAt                  DateTime                   @default(now()) @map("created_at")
+  updatedAt                  DateTime                   @updatedAt @map("updated_at")
+  agency                     Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                     Client                     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  case                       Case                       @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  applicantProfile           ImmigrationProfile?        @relation("CaseFormApplicantProfile", fields: [applicantProfileId], references: [id], onDelete: SetNull)
+  representativeUser         User?                      @relation("CaseFormRepresentativeUser", fields: [representativeUserId], references: [id], onDelete: SetNull)
+  uploadedBy                 User?                      @relation("UploadedCaseFormUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  lockedBy                   User?                      @relation("LockedCaseFormUser", fields: [lockedById], references: [id], onDelete: SetNull)
   versions                   CaseFormVersion[]
   reviewComments             CaseFormReviewComment[]
-  sourceAgencyFormTemplate   AgencyFormTemplate?     @relation(fields: [sourceAgencyFormTemplateId], references: [id], onDelete: Restrict)
+  sourceAgencyFormTemplate   AgencyFormTemplate?        @relation(fields: [sourceAgencyFormTemplateId], references: [id], onDelete: Restrict)
   auditEvents                CaseFormAuditEvent[]
   fieldValues                CaseFormFieldValue[]
   clientRequests             CaseFormClientRequest[]
+  signatureRequests          CaseFormSignatureRequest[]
 
   @@unique([caseId, normalizedName])
   @@index([agencyId])
@@ -3250,6 +3261,60 @@ model CaseForm {
   @@index([applicantProfileId])
   @@index([representativeUserId])
   @@map("case_forms")
+}
+
+enum CaseFormSignatureRequestStatus {
+  Sent
+  Signing
+  Signed
+  Cancelled
+}
+
+enum CaseFormSubmissionChannel {
+  PortalOrSecureAccount
+  OutsidePortal
+}
+
+// A signature request is intentionally separate from the generic missing-
+// field request. The client can only draw in the portal; the rest of the
+// government form is never exposed as editable input.
+model CaseFormSignatureRequest {
+  id                             String                         @id @default(uuid())
+  agencyId                       String                         @map("agency_id")
+  caseFormId                     String                         @map("case_form_id")
+  caseId                         String                         @map("case_id")
+  clientId                       String                         @map("client_id")
+  representativeUserId           String                         @map("representative_user_id")
+  sourceStorageKey               String                         @map("source_storage_key")
+  sourceFileHash                 String?                        @map("source_file_hash")
+  status                         CaseFormSignatureRequestStatus @default(Sent)
+  submissionChannel              CaseFormSubmissionChannel      @default(PortalOrSecureAccount) @map("submission_channel")
+  message                        String?
+  applicantNameSnapshot          String                         @map("applicant_name_snapshot")
+  representativeNameSnapshot     String                         @map("representative_name_snapshot")
+  representativeLicenceSnapshot  String                         @map("representative_licence_snapshot")
+  representativeSignatureImage   String                         @map("representative_signature_image") @db.Text
+  representativeSignatureStrokes Json                           @map("representative_signature_strokes")
+  applicantSignatureImage        String?                        @map("applicant_signature_image") @db.Text
+  applicantSignatureStrokes      Json?                          @map("applicant_signature_strokes")
+  consentedAt                    DateTime?                      @map("consented_at")
+  signedAt                       DateTime?                      @map("signed_at")
+  signerIp                       String?                        @map("signer_ip")
+  signerUserAgent                String?                        @map("signer_user_agent")
+  createdById                    String                         @map("created_by_id")
+  createdAt                      DateTime                       @default(now()) @map("created_at")
+  updatedAt                      DateTime                       @updatedAt @map("updated_at")
+  agency                         Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseForm                       CaseForm                       @relation(fields: [caseFormId], references: [id], onDelete: Cascade)
+  case                           Case                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client                         Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  representativeUser             User                           @relation("CaseFormSignatureRepresentative", fields: [representativeUserId], references: [id], onDelete: Restrict)
+  createdBy                      User                           @relation("CaseFormSignatureRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, status])
+  @@index([caseFormId, status])
+  @@index([clientId, status])
+  @@map("case_form_signature_requests")
 }
 
 model CaseFormVersion {
@@ -3412,19 +3477,19 @@ model CaseFormAuditEvent {
 // registry in code (client.*, consultant.*, agency.*, case.*) rather than
 // arbitrary lookup, so a bad mapping can never leak unrelated data.
 model FormTemplateFieldSchema {
-  id                   String               @id @default(uuid())
-  agencyId             String               @map("agency_id")
-  agencyFormTemplateId String               @map("agency_form_template_id")
-  fieldKey             String               @map("field_key")
-  fieldType            FormFieldType        @default(Text) @map("field_type")
+  id                   String              @id @default(uuid())
+  agencyId             String              @map("agency_id")
+  agencyFormTemplateId String              @map("agency_form_template_id")
+  fieldKey             String              @map("field_key")
+  fieldType            FormFieldType       @default(Text) @map("field_type")
   page                 Int?
   section              String?
-  sortIndex            Int                  @default(0) @map("sort_index")
+  sortIndex            Int                 @default(0) @map("sort_index")
   label                String
-  helpText             String?              @map("help_text")
-  owner                FormFieldOwner       @default(Manual)
-  sourcePath           String?              @map("source_path")
-  isRequired           Boolean              @default(false) @map("is_required")
+  helpText             String?             @map("help_text")
+  owner                FormFieldOwner      @default(Manual)
+  sourcePath           String?             @map("source_path")
+  isRequired           Boolean             @default(false) @map("is_required")
   // { "requiredWhen": { "fieldKey": "purpose", "in": ["appointing"] } } —
   // lets one field's applicability depend on another field's value (e.g.
   // IMM 5476's Section B only applies when the top "purpose" selector is
@@ -3432,10 +3497,10 @@ model FormTemplateFieldSchema {
   // checklist and completeness check — no form-specific code.
   condition            Json?
   fillableBy           FormFieldFillableBy @default(Consultant) @map("fillable_by")
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
-  agency               Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  agencyFormTemplate   AgencyFormTemplate   @relation(fields: [agencyFormTemplateId], references: [id], onDelete: Cascade)
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  agency               Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agencyFormTemplate   AgencyFormTemplate  @relation(fields: [agencyFormTemplateId], references: [id], onDelete: Cascade)
 
   @@unique([agencyFormTemplateId, fieldKey])
   @@index([agencyId])
@@ -3474,26 +3539,26 @@ model CaseFormFieldValue {
 // counterpart of QuestionnaireAssignment, scoped to a CaseForm's still-
 // missing Client-owned fields instead of a whole questionnaire.
 model CaseFormClientRequest {
-  id                 String                       @id @default(uuid())
-  agencyId           String                       @map("agency_id")
-  caseFormId         String                       @map("case_form_id")
-  caseId             String                       @map("case_id")
-  clientId           String                       @map("client_id")
-  requestedFieldKeys Json                         @default("[]") @map("requested_field_keys")
-  status             CaseFormClientRequestStatus  @default(Sent)
+  id                 String                      @id @default(uuid())
+  agencyId           String                      @map("agency_id")
+  caseFormId         String                      @map("case_form_id")
+  caseId             String                      @map("case_id")
+  clientId           String                      @map("client_id")
+  requestedFieldKeys Json                        @default("[]") @map("requested_field_keys")
+  status             CaseFormClientRequestStatus @default(Sent)
   message            String?
-  dueAt              DateTime?                    @map("due_at")
-  sentAt             DateTime                     @default(now()) @map("sent_at")
-  submittedAt        DateTime?                    @map("submitted_at")
-  reviewedAt         DateTime?                    @map("reviewed_at")
-  reviewedById       String?                      @map("reviewed_by_id")
-  createdAt          DateTime                     @default(now()) @map("created_at")
-  updatedAt          DateTime                     @updatedAt @map("updated_at")
-  agency             Agency                       @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  caseForm           CaseForm                     @relation(fields: [caseFormId], references: [id], onDelete: Cascade)
-  case               Case                         @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client             Client                       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  reviewedBy         User?                        @relation("CaseFormClientRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  dueAt              DateTime?                   @map("due_at")
+  sentAt             DateTime                    @default(now()) @map("sent_at")
+  submittedAt        DateTime?                   @map("submitted_at")
+  reviewedAt         DateTime?                   @map("reviewed_at")
+  reviewedById       String?                     @map("reviewed_by_id")
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  agency             Agency                      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseForm           CaseForm                    @relation(fields: [caseFormId], references: [id], onDelete: Cascade)
+  case               Case                        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client             Client                      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  reviewedBy         User?                       @relation("CaseFormClientRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@index([agencyId, status])
   @@index([caseFormId])

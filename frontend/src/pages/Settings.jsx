@@ -5,6 +5,7 @@ import {
   BellRing,
   CalendarDays,
   FileText,
+  FileSignature,
   History,
   Lock,
   Mail,
@@ -38,6 +39,7 @@ import AutomatedRemindersSettingsPanel from "../components/settings/AutomatedRem
 import SecuritySettingsPanel from "../components/settings/SecuritySettingsPanel";
 import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettingsPanel";
 import PortalAccessSettingsPanel from "../components/settings/PortalAccessSettingsPanel";
+import GovernmentFormSignaturePanel from "../components/settings/GovernmentFormSignaturePanel";
 
 const LeadIntakeSettingsPanel = lazy(
   () => import("../modules/leads/pages/LeadIntakePage"),
@@ -60,6 +62,13 @@ const adminSettingsItems = [
     title: "Workspace Profile",
     subtitle:
       "Update your workspace identity, contact details, and regional settings.",
+  },
+  {
+    id: "form-signature",
+    label: "Form Signature",
+    icon: FileSignature,
+    title: "Government-form signature",
+    subtitle: "Save your personal representative signature for official forms.",
   },
   {
     id: "personal-email",
@@ -178,6 +187,13 @@ const consultantSettingsItems = [
       "Review the account and workspace details attached to your login.",
   },
   {
+    id: "form-signature",
+    label: "Form Signature",
+    icon: FileSignature,
+    title: "Government-form signature",
+    subtitle: "Save your personal representative signature for official forms.",
+  },
+  {
     id: "personal-email",
     label: "My Mailbox",
     icon: Mail,
@@ -209,6 +225,9 @@ const consultantSettingsItems = [
 ];
 
 const personalSettingsItems = consultantSettingsItems.filter(
+  (item) => !["lead-intake", "form-signature"].includes(item.id),
+);
+const consultantPersonalSettingsItems = consultantSettingsItems.filter(
   (item) => item.id !== "lead-intake",
 );
 
@@ -795,11 +814,12 @@ export default function Settings() {
   const canAccessLeadIntake =
     isAdmin ||
     getPortalAccess(role, membership?.permissions).pages.leadIntake === true;
-  const settingsItems = isAdmin
-    ? adminSettingsItems
+  const staffSettingsItems = isAdmin ? adminSettingsItems : consultantSettingsItems;
+  const settingsItems = role === "frontdesk"
+    ? personalSettingsItems
     : canAccessLeadIntake
-      ? consultantSettingsItems
-      : personalSettingsItems;
+      ? staffSettingsItems
+      : consultantPersonalSettingsItems;
   const defaultSection = isAdmin ? "agency-profile" : "personal-profile";
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSection = searchParams.get("section");
@@ -936,6 +956,8 @@ export default function Settings() {
                     )
                   ) : activeSection === "security" ? (
                     <SecuritySettingsPanel />
+                  ) : activeSection === "form-signature" ? (
+                    <GovernmentFormSignaturePanel />
                   ) : activeSection === "activity-logs" ? (
                     <ActivityLogsSettingsPanel />
                   ) : activeSection === "personal-email" ? (

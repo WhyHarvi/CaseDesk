@@ -126,6 +126,18 @@ test("conversion requires a client identity, case type, and first action", () =>
   assert.throws(() => parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit" }), /caseNextAction is required/);
 });
 
+test("conversion composes the display name from verified structured names", () => {
+  const conversion = parseLeadConversion({
+    givenNames: "Avery Marie",
+    familyName: "Van Singh",
+    caseType: "Work Permit",
+    caseNextAction: "Collect identity documents",
+  });
+  assert.equal(conversion.givenNames, "Avery Marie");
+  assert.equal(conversion.familyName, "Van Singh");
+  assert.equal(conversion.fullName, "Avery Marie Van Singh");
+});
+
 test("conversion rejects a case stage outside the real pipeline vocabulary", () => {
   assert.throws(
     () => parseLeadConversion({ fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents", caseStage: "Intake Jan" }),

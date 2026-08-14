@@ -52,6 +52,10 @@ const emptyForm = {
   specializations: "",
   masteryLevel: "",
   maximumActiveCases: 20,
+  licenseNumber: "",
+  representativeType: "Paid",
+  membershipBody: "College of Immigration and Citizenship Consultants (CICC)",
+  membershipProvince: "",
 };
 
 function formFromMember(member) {
@@ -66,6 +70,10 @@ function formFromMember(member) {
     specializations: (profile?.specializations || []).join(", "),
     masteryLevel: profile?.masteryLevel || "",
     maximumActiveCases: profile?.maximumActiveCases ?? 20,
+    licenseNumber: member.licenseNumber || "",
+    representativeType: member.representativeType || "Paid",
+    membershipBody: member.membershipBody || "College of Immigration and Citizenship Consultants (CICC)",
+    membershipProvince: member.membershipProvince || "",
   };
 }
 
@@ -82,6 +90,10 @@ function memberPayload(form, { creating = false } = {}) {
           specializations: form.specializations.split(",").map((item) => item.trim()).filter(Boolean),
           masteryLevel: form.masteryLevel,
           maximumActiveCases: Number(form.maximumActiveCases),
+          licenseNumber: form.licenseNumber,
+          representativeType: form.representativeType,
+          membershipBody: form.membershipBody,
+          membershipProvince: form.membershipProvince,
         }
       : {}),
   };
@@ -128,6 +140,25 @@ function MemberFormFields({ form, update, creating }) {
           </FormField>
           <FormField label="Specializations" hint="Comma separated">
             <input className={fieldClass} value={form.specializations} onChange={update("specializations")} placeholder="Express Entry, Work Permits" />
+          </FormField>
+          <div className="sm:col-span-2 border-t border-slate-100 pt-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Government-form representative profile</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Only consultants with a licence number appear in the IMM 5476 representative dropdown.</p>
+          </div>
+          <FormField label="Licence / membership ID" hint="Required to appear in IMM 5476">
+            <input className={fieldClass} value={form.licenseNumber} onChange={update("licenseNumber")} placeholder="R123456" />
+          </FormField>
+          <FormField label="Representative type">
+            <Select className="w-full" value={form.representativeType} onChange={update("representativeType")}>
+              <option value="Paid">Paid</option>
+              <option value="Unpaid">Unpaid</option>
+            </Select>
+          </FormField>
+          <FormField label="Membership body">
+            <input className={fieldClass} value={form.membershipBody} onChange={update("membershipBody")} placeholder="CICC" />
+          </FormField>
+          <FormField label="Province / territory" hint="If applicable">
+            <input className={fieldClass} value={form.membershipProvince} onChange={update("membershipProvince")} />
           </FormField>
         </>
       ) : null}

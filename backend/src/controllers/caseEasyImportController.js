@@ -588,11 +588,17 @@ export async function convertCaseEasyImportContact(req, res) {
     }
   }
 
-  let fullName, dateOfBirth, contactNormalized;
+  let fullName, givenNames, familyName, dateOfBirth, contactNormalized;
   let clientInput = {};
   if (!alreadyConverted) {
     clientInput = isPlainObject(req.body.client) ? req.body.client : {};
-    fullName = String(clientInput.fullName || `${contact.firstName || ""} ${contact.lastName || ""}`).trim();
+    const structuredNameProvided = Object.hasOwn(clientInput, "givenNames") || Object.hasOwn(clientInput, "familyName");
+    const explicitFullName = String(clientInput.fullName || "").trim();
+    givenNames = structuredNameProvided ? String(clientInput.givenNames || "").trim() || null : explicitFullName ? null : String(contact.firstName || "").trim() || null;
+    familyName = structuredNameProvided ? String(clientInput.familyName || "").trim() || null : explicitFullName ? null : String(contact.lastName || "").trim() || null;
+    fullName = structuredNameProvided
+      ? [givenNames, familyName].filter(Boolean).join(" ")
+      : explicitFullName || [givenNames, familyName].filter(Boolean).join(" ");
     if (!fullName) throw createHttpError(400, "Client full name is required.", "VALIDATION_ERROR");
 
     dateOfBirth = clientInput.dateOfBirth ? new Date(clientInput.dateOfBirth) : contact.dateOfBirth;
@@ -651,6 +657,8 @@ export async function convertCaseEasyImportContact(req, res) {
             agencyId,
             clientNumber,
             fullName,
+            givenNames,
+            familyName,
             ...contactNormalized,
             dateOfBirth,
             maritalStatus: importedMaritalStatus,

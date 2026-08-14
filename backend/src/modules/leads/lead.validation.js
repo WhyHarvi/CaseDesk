@@ -251,8 +251,19 @@ export function parseLeadReactivation(body = {}) {
 }
 
 export function parseLeadConversion(body = {}) {
+  const structuredNameProvided = Object.hasOwn(body, "givenNames") || Object.hasOwn(body, "familyName");
+  const givenNames = text(body.givenNames, "givenNames", { max: 200 });
+  const familyName = text(body.familyName, "familyName", { max: 200 });
+  if (structuredNameProvided && !givenNames && !familyName) {
+    throw createHttpError(400, "Enter at least a given name or family name.", "VALIDATION_ERROR");
+  }
+  const fullName = structuredNameProvided
+    ? [givenNames, familyName].filter(Boolean).join(" ")
+    : text(body.fullName, "fullName", { required: true, max: 200 });
   const conversion = {
-    fullName: text(body.fullName, "fullName", { required: true, max: 200 }),
+    givenNames,
+    familyName,
+    fullName,
     caseType: canonicalCaseType(text(body.caseType, "caseType", { required: true, max: 200 })),
     caseStage: enumValue(body.caseStage, "caseStage", CASE_STAGES, "Documents Pending"),
     caseNextAction: text(body.caseNextAction, "caseNextAction", { required: true, max: 500 }),

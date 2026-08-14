@@ -79,6 +79,8 @@ const clientIdentitySelect = {
   id: true,
   clientNumber: true,
   fullName: true,
+  familyName: true,
+  givenNames: true,
   phone: true,
   email: true,
   dateOfBirth: true,
@@ -102,6 +104,8 @@ const clientIdentitySelect = {
 
 const fields = {
   fullName: fieldParsers.stringField,
+  familyName: fieldParsers.stringField,
+  givenNames: fieldParsers.stringField,
   phone: fieldParsers.stringField,
   email: fieldParsers.stringField,
   dateOfBirth: fieldParsers.dateField,
@@ -707,8 +711,36 @@ export async function listClients(req, res) {
   res.json({ data: enriched, meta: { page, limit, total } });
 }
 
-function clientPayload(body, existing = null) {
-  const fullName = String(body.fullName ?? existing?.fullName ?? "").trim();
+export function clientPayload(body, existing = null) {
+  const structuredNameProvided =
+    Object.hasOwn(body, "givenNames") || Object.hasOwn(body, "familyName");
+  const legacyFullNameProvided =
+    !structuredNameProvided && Object.hasOwn(body, "fullName");
+  const namePart = (field, label) => {
+    const value = Object.hasOwn(body, field)
+      ? String(body[field] || "").trim().replace(/\s+/g, " ") || null
+      : legacyFullNameProvided
+        ? null
+        : existing?.[field] || null;
+    if (value && value.length > 200)
+      throw createHttpError(
+        400,
+        `${label} must be 200 characters or fewer.`,
+        "VALIDATION_ERROR",
+      );
+    return value;
+  };
+  const givenNames = namePart("givenNames", "Given name(s)");
+  const familyName = namePart("familyName", "Family name");
+  if (structuredNameProvided && !givenNames && !familyName)
+    throw createHttpError(
+      400,
+      "Enter at least a given name or family name.",
+      "VALIDATION_ERROR",
+    );
+  const fullName = structuredNameProvided
+    ? [givenNames, familyName].filter(Boolean).join(" ")
+    : String(body.fullName ?? existing?.fullName ?? "").trim().replace(/\s+/g, " ");
   if (!fullName || fullName.length > 200)
     throw createHttpError(
       400,
@@ -768,6 +800,8 @@ function clientPayload(body, existing = null) {
     );
   return {
     fullName,
+    familyName,
+    givenNames,
     ...contact,
     dateOfBirth,
     maritalStatus,

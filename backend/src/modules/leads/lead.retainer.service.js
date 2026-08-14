@@ -77,6 +77,8 @@ export async function ensureRetainerClientForLead(appointment, { db = prisma, wr
     const client = await tx.client.create({
       data: {
         agencyId, clientNumber, fullName: leadDisplayName(freshLead),
+        givenNames: freshLead.firstName || null,
+        familyName: freshLead.lastName || null,
         phone: freshLead.phone, phoneNormalized: freshLead.phoneNormalized,
         email: freshLead.email, emailNormalized: freshLead.emailNormalized,
         preferredLanguage: freshLead.preferredLanguage, status: "Active",

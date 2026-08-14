@@ -66,9 +66,14 @@ export const APPLICANT_FACTS = {
     editTarget: { tab: "APPLICANT DETAILS" },
     read: (ctx) => {
       const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
+      const explicitFamily = applicantIdentity.familyName || ctx.client.familyName || "";
+      const explicitGiven = applicantIdentity.givenNames || ctx.client.givenNames || "";
+      if (!explicitFamily && explicitGiven) {
+        return { value: explicitGiven, status: "review", note: "No family name was recorded. IRCC requires all given names in the family-name field; verify against the passport." };
+      }
       const inferred = splitApplicantName(ctx.client.fullName);
-      const value = applicantIdentity.familyName || inferred.familyName;
-      const wasInferred = !applicantIdentity.familyName && Boolean(inferred.familyName);
+      const value = explicitFamily || inferred.familyName;
+      const wasInferred = !explicitFamily && Boolean(inferred.familyName);
       return { value, status: wasInferred && value ? "review" : undefined, note: wasInferred ? "Inferred from the client full name; verify against the passport." : "" };
     },
   },
@@ -78,9 +83,14 @@ export const APPLICANT_FACTS = {
     editTarget: { tab: "APPLICANT DETAILS" },
     read: (ctx) => {
       const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
+      const explicitFamily = applicantIdentity.familyName || ctx.client.familyName || "";
+      const explicitGiven = applicantIdentity.givenNames || ctx.client.givenNames || "";
+      if (!explicitFamily && explicitGiven) {
+        return { value: "", status: "review", note: "Left blank under IRCC's single-name rule; the given name is placed in the family-name field." };
+      }
       const inferred = splitApplicantName(ctx.client.fullName);
-      const value = applicantIdentity.givenNames || inferred.givenNames;
-      const wasInferred = !applicantIdentity.givenNames && Boolean(inferred.givenNames);
+      const value = explicitGiven || inferred.givenNames;
+      const wasInferred = !explicitGiven && Boolean(inferred.givenNames);
       return { value, status: wasInferred && value ? "review" : undefined, note: wasInferred ? "Inferred from the client full name; verify against the passport." : "" };
     },
   },

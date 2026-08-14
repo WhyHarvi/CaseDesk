@@ -101,7 +101,9 @@ export default function XfaPdfPreviewOverlay({
         let applied = 0;
         for (const [id, value] of Object.entries(autofill?.values || {})) {
           if (value === "" || value === null || value === undefined) continue;
-          pdfDocument.annotationStorage.setValue(id, { value: String(value) });
+          pdfDocument.annotationStorage.setValue(id, {
+            value: typeof value === "boolean" ? value : String(value),
+          });
           applied += 1;
         }
         pdfDocument.annotationStorage.resetModified();
@@ -160,6 +162,9 @@ export default function XfaPdfPreviewOverlay({
     try {
       setSaving(true);
       setError("");
+      // IMM 5476 in CaseDesk is the appointment workflow. Preserve the
+      // first "I am" choice even if a PDF viewer interaction cleared it.
+      if (autofill?.values?.["547R"] === true) pdfDocument.annotationStorage.setValue("547R", { value: true });
       const bytes = await pdfDocument.saveDocument();
       const base = String(
         item.originalFilename || item.formNumber || item.title || "form",
@@ -190,6 +195,7 @@ export default function XfaPdfPreviewOverlay({
       setError("");
       setSavedMessage("");
       if (automatic) setAutosaveLabel("Autosaving…");
+      if (autofill?.values?.["547R"] === true) pdfDocument.annotationStorage.setValue("547R", { value: true });
       const bytes = await pdfDocument.saveDocument();
       await onSaveToCase(
         new Blob([bytes], { type: "application/pdf" }),

@@ -1657,11 +1657,11 @@ export default function CaseFormsWorkspace({
   const uploadInput = useRef(null);
   const uploadTarget = useRef(null);
 
-  // Representative "business card" block for whichever CaseForm is being
-  // filled — CaseForm.representativeUserId if explicitly picked, otherwise
-  // the case's own assigned consultant, same fallback rule the new
-  // checklist engine uses (see caseFormFillService.js buildFieldContext).
   function representativeFor(item) {
+    const normalizedNumber = String(item?.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    // IMM 5476 is a legal appointment. Never silently substitute the case
+    // assignee: staff must explicitly choose a licensed representative.
+    if (normalizedNumber === "IMM5476") return item?.representativeUser || null;
     return item?.representativeUser || caseItem?.assignedUser || null;
   }
 
@@ -1715,6 +1715,9 @@ export default function CaseFormsWorkspace({
     () => new Map((templates || []).map((entry) => [entry.id, entry])),
     [templates],
   );
+  function isImm5476Form(item) {
+    return String(item?.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
+  }
   // The checklist pill promises pdf-lib-based auto-fill, which only works
   // when the source template actually has mapped AcroForm fields (some real
   // government PDFs — e.g. dynamic XFA forms — have none; pdf-lib can't
@@ -2509,14 +2512,18 @@ export default function CaseFormsWorkspace({
                       : ""}
                   </button>
                 ) : null}
-                {hasMappedFields(item) ? (
+                {hasMappedFields(item) || isImm5476Form(item) ? (
                   <button
                     type="button"
                     onClick={() => setChecklistTarget(item)}
                     className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700 transition hover:bg-violet-100"
                   >
                     <Sparkles className="h-3 w-3" />
-                    Auto-fill checklist
+                    {isImm5476Form(item)
+                      ? item.representativeUserId
+                        ? "Change representative"
+                        : "Select representative"
+                      : "Auto-fill checklist"}
                   </button>
                 ) : null}
                 <span

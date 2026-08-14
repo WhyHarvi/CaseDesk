@@ -64,11 +64,15 @@ export function buildCaseFormAutofill(item, caseItem, assessment, extra = {}) {
 
   const nameWasInferred = fields.some((entry) => (entry.key === "familyName" || entry.key === "givenNames") && entry.status === "review");
   const values = mapping.buildPdfValues ? mapping.buildPdfValues(ctx) : {};
+  const mappingWarnings = mapping.getWarnings ? mapping.getWarnings(ctx) : [];
 
   return {
     mappingVersion: mapping.mappingVersion,
     values: Object.fromEntries(Object.entries(values).filter(([, value]) => value !== "")),
-    warnings: nameWasInferred ? ["Family and given names were inferred from the client's full name. Verify them against the passport."] : [],
+    warnings: [
+      ...(nameWasInferred ? ["Family and given names were inferred from the client's full name. Verify them against the passport."] : []),
+      ...mappingWarnings,
+    ],
     fields,
     analysis: summarize(fields),
   };

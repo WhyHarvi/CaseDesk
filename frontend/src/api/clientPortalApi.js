@@ -73,6 +73,10 @@ export function submitPortalCaseFormRequest(requestId, answers) {
   return api.post(`/client-portal/case-form-requests/${requestId}/submit`, { answers }).then((response) => response.data);
 }
 
+export function signPortalCaseFormRequest(requestId, { consent, signatureImage, signatureStrokes }) {
+  return api.post(`/client-portal/case-form-signature-requests/${requestId}/sign`, { consent, signatureImage, signatureStrokes }).then((response) => response.data);
+}
+
 export function getPortalAgreements() {
   return api.get("/client-portal/agreements").then((response) => response.data.data);
 }

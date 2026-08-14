@@ -1,4 +1,4 @@
-import { isoParts, splitApplicantName } from "../applicantFactCatalog";
+import { splitApplicantName } from "../applicantFactCatalog";
 
 // IMM 5476 — Use of a Representative. Unlike IMM 1294 (all applicant
 // biodata), most of this form is about the REPRESENTATIVE: their name,
@@ -19,25 +19,25 @@ import { isoParts, splitApplicantName } from "../applicantFactCatalog";
 // change), these may need re-extracting via pdfjs-dist's
 // getFieldObjects().
 //
-// Deliberately NOT auto-filled: the "I am:" purpose checkboxes, the
-// paid/unpaid representative-type radio buttons + membership ID fields
-// (question 6/7's radio groups), and every signature/date-signed field.
-// Those are legal elections and signatures — a human should make them
-// explicitly, not have them silently pre-selected.
+// This workflow is specifically used to appoint a representative, so the
+// first "I am" choice is intentionally selected. Paid/unpaid membership
+// choices and signatures remain separate legal steps.
 export default {
   formNumber: "IMM5476",
-  mappingVersion: "IMM5476.ENU.11-2025.v1",
+  mappingVersion: "IMM5476.ENU.11-2025.v2",
   factKeys: ["familyName", "givenNames", "dateOfBirth", "email", "uci"],
   buildPdfValues(ctx) {
     const client = ctx.client || {};
     const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
     const canadianStatus = ctx.formData.profileQuestionnaires?.canadianStatus || {};
-    const inferredApplicant = splitApplicantName(client.fullName);
-    const applicantFamilyName = applicantIdentity.familyName || inferredApplicant.familyName;
-    const applicantGivenNames = applicantIdentity.givenNames || inferredApplicant.givenNames;
+    const applicantName = normalizeIrccName({
+      familyName: applicantIdentity.familyName || client.familyName,
+      givenNames: applicantIdentity.givenNames || client.givenNames,
+      fullName: client.fullName,
+    });
 
     const representative = ctx.representative || {};
-    const inferredRep = splitApplicantName(representative.fullName);
+    const representativeName = normalizeIrccName({ fullName: representative.fullName });
 
     const agency = ctx.agency || {};
     const street = splitStreetAddress(agency.address);
@@ -46,9 +46,13 @@ export default {
     const fax = splitPhone(agency.faxNumber, defaultCountryCode);
 
     return {
+      // "I am appointing a representative. Complete Sections A, B and E."
+      // pdf.js expects a boolean for an individual radio widget id.
+      "547R": true,
+
       // Section A — applicant (the client)
-      "553R": applicantFamilyName,
-      "554R": applicantGivenNames,
+      "553R": applicantName.familyName,
+      "554R": applicantName.givenNames,
       "555R": String(client.dateOfBirth || "").slice(0, 10),
       "556R": client.email || "",
       "557R": client.email ? "" : client.phone || "",
@@ -57,8 +61,15 @@ export default {
       "560R": canadianStatus.uci || "",
 
       // Section B — representative's name
-      "561R": inferredRep.familyName,
-      "562R": inferredRep.givenNames,
+      "561R": representativeName.familyName,
+      "562R": representativeName.givenNames,
+
+      // Section B, question 7 — licensed representative category. Paid
+      // RCICs use the first paid option; the remaining regulator variants
+      // remain profile-driven rather than guessed.
+      ...(String(representative.representativeType || "").toLowerCase() === "paid" && /CICC|Immigration Consultants/i.test(representative.membershipBody || "")
+        ? { "97R": true, "94R": representative.licenseNumber || "" }
+        : {}),
 
       // Section B, question 7 — representative's firm/mailing address & contact
       "90R": agency.name || "",
@@ -76,7 +87,35 @@ export default {
       "76R": representative.email || agency.email || "",
     };
   },
+  getWarnings(ctx) {
+    const client = ctx.client || {};
+    const applicantIdentity = ctx.formData.profileQuestionnaires?.applicantIdentity || {};
+    const applicantName = normalizeIrccName({
+      familyName: applicantIdentity.familyName || client.familyName,
+      givenNames: applicantIdentity.givenNames || client.givenNames,
+      fullName: client.fullName,
+    });
+    return applicantName.singleName
+      ? ["This applicant has no family name. Their given name was moved to the family-name field and the given-name field was left blank, following IRCC's single-name rule. Verify it against the passport before saving."]
+      : [];
+  },
 };
+
+// IRCC's single-name rule: when the identity document has given name(s) but
+// no family name, put every given name in the family-name box and leave the
+// given-name box empty. Never invent a surname from the last word.
+function normalizeIrccName({ familyName, givenNames, fullName }) {
+  const explicitFamily = String(familyName || "").trim();
+  const explicitGiven = String(givenNames || "").trim();
+  if (explicitFamily) return { familyName: explicitFamily, givenNames: explicitGiven, singleName: false };
+  if (explicitGiven) return { familyName: explicitGiven, givenNames: "", singleName: true };
+
+  const inferred = splitApplicantName(fullName);
+  if (!inferred.familyName && inferred.givenNames) {
+    return { familyName: inferred.givenNames, givenNames: "", singleName: true };
+  }
+  return { familyName: inferred.familyName, givenNames: inferred.givenNames, singleName: false };
+}
 
 // "100 King Street West" -> { streetNo: "100", streetName: "King Street West" }.
 // Agency.address is one freeform string; this form wants street number and

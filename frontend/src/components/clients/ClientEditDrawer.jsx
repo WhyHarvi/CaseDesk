@@ -2,10 +2,12 @@ import { Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
+import { clientNameParts, composePersonFullName } from "../../utils/personName";
 import { maritalStatusOptions } from "../case-profile/applicantProfileOptions";
 
 const defaultFormState = {
-  fullName: "",
+  givenNames: "",
+  familyName: "",
   email: "",
   phone: "",
   dateOfBirth: "",
@@ -26,8 +28,10 @@ function formatDateForInput(value) {
 }
 
 function clientToFormState(client) {
+  const names = clientNameParts(client);
   return {
-    fullName: client.fullName || "",
+    givenNames: names.givenNames,
+    familyName: names.familyName,
     email: client.email || "",
     phone: client.phone || "",
     dateOfBirth: formatDateForInput(client.dateOfBirth),
@@ -55,6 +59,7 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEditing);
   const [formError, setFormError] = useState("");
+  const [nameNeedsReview, setNameNeedsReview] = useState(false);
 
   useEffect(() => {
     api.get("/leads/staff").then((response) => setUsers(response.data.data || [])).catch(() => setUsers([]));
@@ -68,7 +73,12 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
     // fetch the authoritative full record so saving never silently blanks
     // out a field this drawer never actually loaded.
     api.get(`/clients/${client.id}`)
-      .then((response) => { if (active) setFormState(clientToFormState(response.data.data.client)); })
+      .then((response) => {
+        if (!active) return;
+        const loadedClient = response.data.data.client;
+        setFormState(clientToFormState(loadedClient));
+        setNameNeedsReview(clientNameParts(loadedClient).needsReview);
+      })
       .catch((reason) => { if (active) setFormError(reason.response?.data?.message || "Could not load this client's full details."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -85,13 +95,21 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
       setSaving(true);
       setFormError("");
 
+      if (!formState.givenNames.trim() && !formState.familyName.trim()) {
+        setFormError("Enter at least a given name or family name.");
+        return;
+      }
+
       const payload = {
         ...formState,
+        givenNames: formState.givenNames.trim(),
+        familyName: formState.familyName.trim(),
         email: formState.email.trim(),
         phone: formState.phone.trim(),
         address: formState.address.trim(),
         assignedUserId: formState.assignedUserId || "",
       };
+      delete payload.fullName;
       if (!payload.email) delete payload.email;
       if (!payload.phone) delete payload.phone;
       if (!payload.address) delete payload.address;
@@ -151,14 +169,22 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                   <h3 className="text-sm font-semibold text-slate-950">Client details</h3>
                   <p className="mt-1 text-sm text-slate-500">Basic identity and contact information.</p>
                 </div>
-                <div className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 sm:block">Required *</div>
+                <div className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 sm:block">At least one name required</div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="block md:col-span-2">
-                  <span className="mb-2 block text-sm font-medium text-slate-700">Full name *</span>
-                  <input required name="fullName" value={formState.fullName} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Enter client name" />
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Given name(s)</span>
+                  <input name="givenNames" value={formState.givenNames} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="As shown on passport" />
                 </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Family name</span>
+                  <input name="familyName" value={formState.familyName} onChange={handleInputChange} className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Leave blank only if none" />
+                </label>
+                <div className={`md:col-span-2 rounded-2xl px-4 py-3 text-xs leading-5 ${nameNeedsReview ? "border border-amber-200 bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-500"}`}>
+                  {nameNeedsReview ? "These name parts were suggested from the old Full name. Verify them against the passport before saving. " : "Enter names exactly as shown on the passport. At least one name is required. "}
+                  <span className="font-semibold">CRM display name: {composePersonFullName(formState.givenNames, formState.familyName) || "—"}</span>
+                </div>
 
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">Email</span>

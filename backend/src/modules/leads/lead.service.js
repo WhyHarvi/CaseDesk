@@ -1330,7 +1330,10 @@ export async function convertLead(req, db = prisma) {
     let client;
     let caseItem;
     if (lead.earlyClientId && lead.earlyCaseId) {
-      client = await tx.client.update({ where: { id: lead.earlyClientId }, data: { fullName: values.fullName } });
+      client = await tx.client.update({
+        where: { id: lead.earlyClientId },
+        data: { fullName: values.fullName, givenNames: values.givenNames, familyName: values.familyName },
+      });
       caseItem = await tx.case.update({
         where: { id: lead.earlyCaseId },
         data: { caseType: values.caseType, stage: values.caseStage, nextAction: values.caseNextAction, studyIntakeMonth: values.studyIntakeMonth },
@@ -1345,7 +1348,7 @@ export async function convertLead(req, db = prisma) {
       });
       const clientNumber = await nextClientNumber(tx, agencyId);
       client = await tx.client.create({
-        data: { agencyId, clientNumber, fullName: values.fullName, phone: lead.phone, phoneNormalized: lead.phoneNormalized, email: lead.email, emailNormalized: lead.emailNormalized, preferredLanguage: lead.preferredLanguage, status: "Active", assignedUserId: lead.ownerUserId },
+        data: { agencyId, clientNumber, fullName: values.fullName, givenNames: values.givenNames, familyName: values.familyName, phone: lead.phone, phoneNormalized: lead.phoneNormalized, email: lead.email, emailNormalized: lead.emailNormalized, preferredLanguage: lead.preferredLanguage, status: "Active", assignedUserId: lead.ownerUserId },
       });
       caseItem = await tx.case.create({
         data: { agencyId, clientId: client.id, assignedUserId: lead.ownerUserId, caseType: values.caseType, stage: values.caseStage, status: "Active", nextAction: values.caseNextAction, studyIntakeMonth: values.studyIntakeMonth },

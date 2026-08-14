@@ -2,6 +2,7 @@ import { Router } from "express";
 import { assignCatalogForms, checkCaseFormVersion, createCaseFormReviewComment, createCustomCaseForm, deleteCaseForm, deleteCaseFormReviewComment, finalizeCaseForm, getCaseFormCatalog, getCurrentFormPermissions, importOfficialCaseForm, listCaseFormAudit, listCaseFormReviewComments, listCaseForms, listCaseFormVersions, recordCaseFormAutofill, restoreCaseFormVersion, saveBrowserCaseFormCopy, serveCaseFormFile, serveCaseFormVersionFile, setCaseFormReviewCommentResolution, unlockCaseForm, updateCaseForm, updateUserFormPermissions, uploadCaseForm } from "../controllers/caseFormController.js";
 import { getChecklist, getClientRequests, listRepresentativeOptions, patchFieldValue, patchReviewClientRequest, postClientRequest, runAutofill, setApplicant, setRepresentative } from "../controllers/caseFormFieldController.js";
 import { generateFilledCaseFormPdf } from "../controllers/caseFormRenderController.js";
+import { listFormSignatureRequests, sendFormSignatureRequest } from "../controllers/caseFormSignatureController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -38,6 +39,8 @@ router.patch("/:id/applicant", asyncHandler(setApplicant));
 router.get("/:id/client-requests", asyncHandler(getClientRequests));
 router.post("/:id/client-requests", asyncHandler(postClientRequest));
 router.patch("/:id/client-requests/:requestId/review", asyncHandler(patchReviewClientRequest));
+router.get("/:id/signature-requests", asyncHandler(listFormSignatureRequests));
+router.post("/:id/signature-requests", asyncHandler(sendFormSignatureRequest));
 router.post("/:id/generate-pdf", asyncHandler(generateFilledCaseFormPdf));
 router.patch("/:id", asyncHandler(updateCaseForm));
 router.delete("/:id", asyncHandler(deleteCaseForm));

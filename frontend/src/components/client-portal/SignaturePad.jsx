@@ -4,9 +4,11 @@ import { RotateCcw } from "lucide-react";
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 300;
 
-export default function SignaturePad({ disabled = false, onChange }) {
+export default function SignaturePad({ disabled = false, onChange, onStrokesChange }) {
   const canvasRef = useRef(null);
   const drawingRef = useRef(false);
+  const strokesRef = useRef([]);
+  const activeStrokeRef = useRef(null);
   const [hasSignature, setHasSignature] = useState(false);
 
   useEffect(() => {
@@ -36,6 +38,7 @@ export default function SignaturePad({ disabled = false, onChange }) {
     const point = pointFor(event);
     canvas.setPointerCapture?.(event.pointerId);
     drawingRef.current = true;
+    activeStrokeRef.current = [[point.x / CANVAS_WIDTH, point.y / CANVAS_HEIGHT]];
     context.beginPath();
     context.moveTo(point.x, point.y);
     // A dot makes a tap count as a visible signature stroke.
@@ -48,6 +51,7 @@ export default function SignaturePad({ disabled = false, onChange }) {
     event.preventDefault();
     const context = canvasRef.current.getContext("2d");
     const point = pointFor(event);
+    activeStrokeRef.current?.push([point.x / CANVAS_WIDTH, point.y / CANVAS_HEIGHT]);
     context.lineTo(point.x, point.y);
     context.stroke();
   }
@@ -56,15 +60,21 @@ export default function SignaturePad({ disabled = false, onChange }) {
     if (!drawingRef.current) return;
     drawingRef.current = false;
     canvasRef.current.releasePointerCapture?.(event.pointerId);
+    if (activeStrokeRef.current?.length) strokesRef.current.push(activeStrokeRef.current);
+    activeStrokeRef.current = null;
     setHasSignature(true);
     onChange?.(canvasRef.current.toDataURL("image/png"));
+    onStrokesChange?.(strokesRef.current.map((stroke) => stroke.map((point) => [...point])));
   }
 
   function clear() {
     const canvas = canvasRef.current;
     canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    strokesRef.current = [];
+    activeStrokeRef.current = null;
     setHasSignature(false);
     onChange?.("");
+    onStrokesChange?.([]);
   }
 
   return (

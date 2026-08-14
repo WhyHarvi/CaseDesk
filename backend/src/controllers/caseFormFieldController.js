@@ -48,8 +48,16 @@ export async function setRepresentative(req, res) {
   await requireFormPermission(req, "canEdit");
   const representativeUserId = req.body.representativeUserId ? String(req.body.representativeUserId) : null;
   if (representativeUserId) {
-    const user = await prisma.user.findFirst({ where: { id: representativeUserId, agencyId: req.user.agencyId, role: { in: ["admin", "consultant"] } } });
-    if (!user) throw createHttpError(400, "The representative must be an admin or consultant at this agency");
+    const user = await prisma.user.findFirst({
+      where: {
+        id: representativeUserId,
+        agencyId: req.user.agencyId,
+        role: { in: ["admin", "consultant"] },
+        status: "active",
+        licenseNumber: { not: null },
+      },
+    });
+    if (!user?.licenseNumber?.trim()) throw createHttpError(400, "Choose an active licensed representative from this agency");
   }
   const data = await prisma.caseForm.update({ where: { id: form.id }, data: { representativeUserId } });
   res.json({ data });
@@ -72,11 +80,21 @@ export async function setApplicant(req, res) {
 
 export async function listRepresentativeOptions(req, res) {
   const data = await prisma.user.findMany({
-    where: { agencyId: req.user.agencyId, role: { in: ["admin", "consultant"] }, status: "active" },
-    select: { id: true, fullName: true, role: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true },
+    where: {
+      agencyId: req.user.agencyId,
+      role: { in: ["admin", "consultant"] },
+      status: "active",
+      licenseNumber: { not: null },
+    },
+    select: { id: true, fullName: true, role: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
     orderBy: { fullName: "asc" },
   });
-  res.json({ data });
+  res.json({
+    data: data.filter((user) => user.licenseNumber?.trim()).map(({ formSignatureImage, formSignatureStrokes, ...user }) => ({
+      ...user,
+      hasFormSignature: Boolean(formSignatureImage && Array.isArray(formSignatureStrokes)),
+    })),
+  });
 }
 
 export async function getClientRequests(req, res) {
@@ -95,7 +113,7 @@ export async function postClientRequest(req, res) {
   const schema = await prisma.formTemplateFieldSchema.findMany({ where: { agencyFormTemplateId: form.sourceAgencyFormTemplateId || "", fieldKey: { in: fieldKeys } } });
   const invalid = fieldKeys.filter((key) => {
     const field = schema.find((row) => row.fieldKey === key);
-    return !field || field.fillableBy === "Consultant";
+    return !field || field.fillableBy === "Consultant" || field.fieldType === "Signature";
   });
   if (invalid.length) throw createHttpError(400, "One or more selected fields cannot be sent to the client");
 

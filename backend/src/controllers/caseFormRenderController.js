@@ -6,7 +6,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
-import { stampPdfFormValues } from "../services/pdfFormRenderService.js";
+import { stampPdfFormValues, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
 
 const include = { uploadedBy: { select: { id: true, fullName: true } }, lockedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, reviewComments: true } } };
 
@@ -41,7 +41,10 @@ export async function generateFilledCaseFormPdf(req, res) {
   }
 
   const fields = schema.map((field) => ({ fieldKey: field.fieldKey, fieldType: field.fieldType, value: valuesByKey.get(field.fieldKey)?.value ?? null }));
-  const filledBuffer = await stampPdfFormValues(sourceBuffer, fields);
+  const isImm5476 = String(existing.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
+  const filledBuffer = isImm5476
+    ? await stampXfaPdfFormValues(sourceBuffer, fields, { "547R": true })
+    : await stampPdfFormValues(sourceBuffer, fields);
   const fileHash = hashBuffer(filledBuffer);
   const baseName = (existing.originalFilename || `${existing.title}.pdf`).replace(/\.pdf$/i, "");
   const originalFilename = `${baseName}-filled.pdf`;

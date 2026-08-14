@@ -20,6 +20,8 @@ const include = {
     select: {
       id: true,
       fullName: true,
+      familyName: true,
+      givenNames: true,
       phone: true,
       email: true,
       dateOfBirth: true,

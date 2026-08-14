@@ -6,13 +6,20 @@ import api from "../../../services/api";
 import { caseStagesForType } from "../../../constants/caseStages";
 import { isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue } from "../../../utils/studyIntake";
 import { leadName } from "../leadPresentation";
+import { clientNameParts, composePersonFullName } from "../../../utils/personName";
 
 const fieldClass = "mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-4 focus:ring-brand-100";
 
 export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
   const initialCaseType = String(lead.immigrationInterest || "").trim();
-  const [form, setForm] = useState({
+  const initialNames = clientNameParts({
+    givenNames: lead.firstName,
+    familyName: lead.lastName,
     fullName: leadName(lead) === "Unnamed lead" ? "" : leadName(lead),
+  });
+  const [form, setForm] = useState({
+    givenNames: initialNames.givenNames,
+    familyName: initialNames.familyName,
     caseType: initialCaseType,
     // A converted lead has already been through Lead/Consultation/Retainer —
     // the real next step is gathering intake documents, so that's the
@@ -89,7 +96,9 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
           <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">This closes the lead, cancels its open follow-ups, and creates the first case action. The operation is completed as one transaction.</div>
           {error ? <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="sm:col-span-2 text-sm font-medium text-slate-700">Client name<input required name="fullName" value={form.fullName} onChange={update} className={fieldClass} /></label>
+            <label className="text-sm font-medium text-slate-700">Given name(s)<input name="givenNames" value={form.givenNames} onChange={update} className={fieldClass} placeholder="As shown on passport" /></label>
+            <label className="text-sm font-medium text-slate-700">Family name<input name="familyName" value={form.familyName} onChange={update} className={fieldClass} placeholder="Leave blank only if none" /></label>
+            <p className="sm:col-span-2 rounded-xl bg-slate-50 px-3.5 py-2.5 text-xs text-slate-500">At least one name is required. CRM display name: <span className="font-semibold text-slate-700">{composePersonFullName(form.givenNames, form.familyName) || "—"}</span></p>
             <label className="text-sm font-medium text-slate-700">
               Case type
               <div className="mt-1.5">

@@ -22,11 +22,13 @@ import { useAuth } from "../auth/AuthContext";
 import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
 import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
+import { clientNameParts, composePersonFullName } from "../utils/personName";
 
 const newClientOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
 const defaultFormState = {
-  fullName: "",
+  givenNames: "",
+  familyName: "",
   email: "",
   phone: "",
   dateOfBirth: "",
@@ -246,6 +248,7 @@ function ClientDrawer({
   frontDeskIntake,
   onFrontDeskIntakeChange,
   canRecordProfessionalFee,
+  nameNeedsReview,
 }) {
   return (
     <div
@@ -309,24 +312,41 @@ function ClientDrawer({
                 </div>
 
                 <div className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 sm:block">
-                  Required *
+                  At least one name required
                 </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="block md:col-span-2">
+                <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">
-                    Full name *
+                    Given name(s)
                   </span>
                   <input
-                    required
-                    name="fullName"
-                    value={formState.fullName}
+                    name="givenNames"
+                    value={formState.givenNames}
                     onChange={onChange}
                     className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                    placeholder="Enter client name"
+                    placeholder="As shown on passport"
                   />
                 </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">
+                    Family name
+                  </span>
+                  <input
+                    name="familyName"
+                    value={formState.familyName}
+                    onChange={onChange}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    placeholder="Leave blank only if none"
+                  />
+                </label>
+
+                <div className={`md:col-span-2 rounded-2xl px-4 py-3 text-xs leading-5 ${nameNeedsReview ? "border border-amber-200 bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-500"}`}>
+                  {nameNeedsReview ? "These name parts were suggested from the old Full name. Verify them against the passport before saving. " : "Enter names exactly as shown on the passport. At least one name is required. "}
+                  <span className="font-semibold">CRM display name: {composePersonFullName(formState.givenNames, formState.familyName) || "—"}</span>
+                </div>
 
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">
@@ -767,7 +787,7 @@ export default function Clients() {
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(() => Boolean(readClientDraft()));
   const [editingClient, setEditingClient] = useState(() => readClientDraft()?.editingClient || null);
-  const [formState, setFormState] = useState(() => readClientDraft()?.formState || defaultFormState);
+  const [formState, setFormState] = useState(() => ({ ...defaultFormState, ...(readClientDraft()?.formState || {}) }));
   const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
   const [clientCreateIdempotencyKey, setClientCreateIdempotencyKey] = useState(() => readClientDraft()?.clientCreateIdempotencyKey || newClientOperationKey());
   const [formError, setFormError] = useState("");
@@ -974,8 +994,10 @@ export default function Clients() {
     setActiveActionMenuId(null);
     setEditingClient(client);
     setFrontDeskIntake(defaultFrontDeskIntakeState);
+    const names = clientNameParts(client);
     setFormState({
-      fullName: client.fullName || "",
+      givenNames: names.givenNames,
+      familyName: names.familyName,
       email: client.email || "",
       phone: client.phone || "",
       dateOfBirth: formatDateForInput(client.dateOfBirth),
@@ -1007,14 +1029,22 @@ export default function Clients() {
       setSaving(true);
       setFormError("");
 
+      if (!formState.givenNames.trim() && !formState.familyName.trim()) {
+        setFormError("Enter at least a given name or family name.");
+        return;
+      }
+
       const payload = {
         ...formState,
+        givenNames: formState.givenNames.trim(),
+        familyName: formState.familyName.trim(),
         email: formState.email.trim(),
         phone: formState.phone.trim(),
         address: formState.address.trim(),
         assignedUserId: formState.assignedUserId || "",
         ...(!isEditing ? { idempotencyKey: clientCreateIdempotencyKey } : {}),
       };
+      delete payload.fullName;
 
       if (!payload.email) {
         delete payload.email;
@@ -1596,6 +1626,7 @@ export default function Clients() {
           frontDeskIntake={frontDeskIntake}
           onFrontDeskIntakeChange={(patch) => setFrontDeskIntake((current) => ({ ...current, ...patch }))}
           canRecordProfessionalFee={canRecordProfessionalFee}
+          nameNeedsReview={Boolean(isEditing && clientNameParts(editingClient).needsReview)}
         />
       ) : null}
     </section>

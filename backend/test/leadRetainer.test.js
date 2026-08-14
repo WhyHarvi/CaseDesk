@@ -69,6 +69,8 @@ test("ensureRetainerClientForLead creates a client, case, and issued retainer do
   assert.equal(result.caseItem.id, "case-1");
   assert.equal(calls.find(([kind]) => kind === "case")[1].stage, "Retainer Pending");
   assert.equal(calls.find(([kind]) => kind === "client")[1].fullName, "Avery Singh");
+  assert.equal(calls.find(([kind]) => kind === "client")[1].givenNames, "Avery");
+  assert.equal(calls.find(([kind]) => kind === "client")[1].familyName, "Singh");
   assert.equal(calls.filter(([kind]) => kind === "lead").find((entry) => entry[1].earlyClientId)[1].earlyClientId, "client-1");
   assert.equal(calls.filter(([kind]) => kind === "lead").find((entry) => entry[1].retainerStatus)[1].retainerStatus, "SENT");
   assert.equal(calls.find(([kind]) => kind === "writtenDocument")[1].correspondenceStatus, "Issued");

@@ -1,7 +1,22 @@
 import prisma from "./prisma/client.js";
 import { resolveSourcePath } from "./formDataSourceRegistry.js";
+import { createHttpError } from "../utils/http.js";
 
 const representativeSelect = { fullName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true };
+
+function irccApplicantName(client) {
+  if (!client) return client;
+  const familyName = String(client.familyName || "").trim();
+  const givenNames = String(client.givenNames || "").trim();
+  if (!familyName && givenNames) return { ...client, familyName: givenNames, givenNames: null };
+  const tokens = String(client.fullName || "").trim().split(/\s+/).filter(Boolean);
+  if (!familyName && !givenNames && tokens.length === 1) return { ...client, familyName: tokens[0], givenNames: null };
+  return client;
+}
+
+function isImm5476(caseForm) {
+  return String(caseForm?.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
+}
 
 // The data a CaseForm's fields resolve against. "representative" is
 // whichever admin or consultant is picked on CaseForm.representativeUserId
@@ -19,7 +34,7 @@ export async function buildFieldContext(caseForm) {
         })
       : null,
   ]);
-  const representativeId = caseForm.representativeUserId || caseItem?.assignedUserId || null;
+  const representativeId = caseForm.representativeUserId || (isImm5476(caseForm) ? null : caseItem?.assignedUserId) || null;
   const representative = representativeId
     ? await prisma.user.findUnique({ where: { id: representativeId }, select: representativeSelect })
     : null;
@@ -41,7 +56,7 @@ export async function buildFieldContext(caseForm) {
         clientNumber: applicantProfile.applicationNumber,
       }
     : null;
-  return { case: caseItem, client: applicantAsClient || client, representative, agency };
+  return { case: caseItem, client: irccApplicantName(applicantAsClient || client), representative, agency };
 }
 
 // requiredWhen: { fieldKey, equals } | { fieldKey, in: [...] } — evaluated
@@ -63,6 +78,9 @@ function evaluateCondition(condition, valuesByKey) {
 export async function autofillCaseForm({ caseFormId, agencyId }) {
   const caseForm = await prisma.caseForm.findFirst({ where: { id: caseFormId, agencyId } });
   if (!caseForm) return null;
+  if (isImm5476(caseForm) && !caseForm.representativeUserId) {
+    throw createHttpError(409, "Select a licensed representative before auto-filling IMM 5476");
+  }
   if (!caseForm.sourceAgencyFormTemplateId) return { available: false, filled: 0, total: 0 };
 
   const schema = await prisma.formTemplateFieldSchema.findMany({ where: { agencyFormTemplateId: caseForm.sourceAgencyFormTemplateId } });
@@ -98,7 +116,7 @@ export async function getCaseFormChecklist({ caseFormId, agencyId }) {
   const caseForm = await prisma.caseForm.findFirst({ where: { id: caseFormId, agencyId } });
   if (!caseForm) return null;
   if (!caseForm.sourceAgencyFormTemplateId) {
-    return { available: false, reason: "This form isn't linked to a mapped template. Add it from the agency form library to get the auto-fill checklist.", fields: [], progress: { complete: 0, total: 0 } };
+    return { available: false, representativeUserId: caseForm.representativeUserId, applicantProfileId: caseForm.applicantProfileId, reason: "This form isn't linked to a mapped template. Add it from the agency form library to get the auto-fill checklist.", fields: [], progress: { complete: 0, total: 0 } };
   }
 
   const [schema, values] = await Promise.all([
@@ -106,7 +124,7 @@ export async function getCaseFormChecklist({ caseFormId, agencyId }) {
     prisma.caseFormFieldValue.findMany({ where: { caseFormId } }),
   ]);
   if (!schema.length) {
-    return { available: false, reason: "This template has no mapped fields yet — map it from the agency form library first.", fields: [], progress: { complete: 0, total: 0 } };
+    return { available: false, representativeUserId: caseForm.representativeUserId, applicantProfileId: caseForm.applicantProfileId, reason: "This template has no mapped fields yet — map it from the agency form library first.", fields: [], progress: { complete: 0, total: 0 } };
   }
 
   const valuesByKey = new Map(values.map((row) => [row.fieldKey, row]));

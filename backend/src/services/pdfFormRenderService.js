@@ -1,4 +1,5 @@
 import { PDFDocument } from "pdf-lib";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const TRUE_VALUES = new Set(["true", "1", "yes", "on", "checked", "x"]);
 
@@ -40,4 +41,24 @@ export async function stampPdfFormValues(sourceBuffer, fields) {
   }
 
   return Buffer.from(await pdfDoc.save());
+}
+
+// IRCC's current IMM 5476 is a hybrid XFA PDF with malformed classic page
+// references that pdf-lib cannot safely parse. PDF.js is already CaseDesk's
+// browser renderer for this form and can persist the XFA widget values
+// without flattening or rebuilding the official document.
+export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues = {}) {
+  const task = pdfjs.getDocument({ data: new Uint8Array(sourceBuffer), enableXfa: true });
+  try {
+    const document = await task.promise;
+    for (const { fieldKey, fieldType, value } of fields) {
+      if (value === null || value === undefined || value === "") continue;
+      const isBooleanField = fieldType === "Checkbox" || fieldType === "Radio";
+      document.annotationStorage.setValue(fieldKey, { value: isBooleanField ? TRUE_VALUES.has(String(value).toLowerCase()) : String(value) });
+    }
+    for (const [fieldKey, value] of Object.entries(forcedValues)) document.annotationStorage.setValue(fieldKey, { value });
+    return Buffer.from(await document.saveDocument());
+  } finally {
+    await task.destroy().catch(() => {});
+  }
 }

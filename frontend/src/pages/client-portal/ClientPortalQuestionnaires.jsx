@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronRight, ClipboardList, FileText, Loader2, Lock, Plus, Send, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, ClipboardList, FileSignature, FileText, Loader2, Lock, Plus, Send, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -7,11 +7,13 @@ import {
   submitPortalQuestionnaire,
   getPortalCaseFormRequests,
   submitPortalCaseFormRequest,
+  signPortalCaseFormRequest,
   portalErrorMessage,
 } from "../../api/clientPortalApi";
 import ClientPortalHeader from "../../components/client-portal/ClientPortalHeader";
 import ClientPortalSkeleton, { GlassCard } from "../../components/client-portal/ClientPortalSkeleton";
 import ClientPortalEmptyState from "../../components/client-portal/ClientPortalEmptyState";
+import SignaturePad from "../../components/client-portal/SignaturePad";
 import { usePortalData } from "../../components/client-portal/ClientPortalLayout";
 import { usePortalToast } from "../../components/client-portal/ClientPortalToast";
 import { formatPortalDate } from "../../components/client-portal/ClientStatusCard";
@@ -370,6 +372,60 @@ function CaseFormRequestSheet({ request, onClose, onSubmitted }) {
   );
 }
 
+function CaseFormSignatureSheet({ request, onClose, onSubmitted }) {
+  const [signatureImage, setSignatureImage] = useState("");
+  const [signatureStrokes, setSignatureStrokes] = useState([]);
+  const [consent, setConsent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await signPortalCaseFormRequest(request.id, { consent, signatureImage, signatureStrokes });
+      onSubmitted();
+    } catch (reason) {
+      setError(portalErrorMessage(reason, "Your signature could not be applied."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SheetShell
+      title={`Sign ${request.formNumber || request.formTitle || "form"}`}
+      subtitle="Secure draw-only signature request"
+      onClose={onClose}
+      footer={
+        <button type="submit" form="case-form-signature" disabled={saving || !consent || !signatureImage || !signatureStrokes.length} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(124,58,237,0.3)] transition hover:bg-violet-700 active:scale-[0.98] disabled:opacity-40">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
+          {saving ? "Applying signature…" : "Sign and submit"}
+        </button>
+      }
+    >
+      <form id="case-form-signature" onSubmit={submit} className="space-y-4 pb-2">
+        {request.message ? <p className="rounded-2xl bg-violet-50 px-4 py-3 text-sm leading-5 text-violet-900">{request.message}</p> : null}
+        {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+        <section className="rounded-3xl border border-white/80 bg-white p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Form declaration</p>
+          <p className="mt-2 text-sm leading-6 text-slate-700">I declare that the information in this form is truthful, complete and correct. I understand that I am appointing <strong>{request.representativeName}</strong> (licence {request.representativeLicence}) as my representative.</p>
+          <p className="mt-2 text-xs leading-5 text-slate-500">The rest of the form is locked. This screen can only add your drawing to the applicant signature box.</p>
+        </section>
+        <section className="rounded-3xl border border-white/80 bg-white p-4">
+          <p className="mb-2 text-sm font-semibold text-slate-800">Draw {request.applicantName}'s signature</p>
+          <SignaturePad disabled={saving} onChange={setSignatureImage} onStrokesChange={setSignatureStrokes} />
+        </section>
+        <label className="flex items-start gap-3 rounded-2xl border border-white/80 bg-white px-4 py-3.5 text-sm font-medium leading-5 text-slate-800">
+          <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} className="mt-0.5 h-5 w-5 rounded border-slate-300 text-violet-600 focus:ring-violet-200" />
+          I confirm this is my signature and I consent to it being applied to this IMM 5476 for submission through an IRCC portal or secure account.
+        </label>
+      </form>
+    </SheetShell>
+  );
+}
+
 function AssignmentSheet({ assignment, answers, onClose, onOpenStep, onSubmit, submitting }) {
   const steps = useMemo(() => {
     const unique = new Map();
@@ -503,12 +559,12 @@ export default function ClientPortalQuestionnaires() {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
-                    <FileText className="h-[18px] w-[18px]" />
+                    {request.requestType === "Signature" ? <FileSignature className="h-[18px] w-[18px]" /> : <FileText className="h-[18px] w-[18px]" />}
                   </span>
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{request.formNumber || "Form"}</p>
                     <h2 className="mt-1 truncate text-[16px] font-semibold tracking-tight text-slate-950">{request.formTitle}</h2>
-                    <p className="mt-1 text-xs text-slate-500">{request.fields.length} detail{request.fields.length === 1 ? "" : "s"} needed{request.dueAt ? ` · Due ${formatPortalDate(request.dueAt)}` : ""}</p>
+                    <p className="mt-1 text-xs text-slate-500">{request.requestType === "Signature" ? "Drawn signature needed" : `${request.fields.length} detail${request.fields.length === 1 ? "" : "s"} needed${request.dueAt ? ` · Due ${formatPortalDate(request.dueAt)}` : ""}`}</p>
                   </div>
                 </div>
                 <span className="shrink-0 rounded-full bg-amber-100/90 px-2.5 py-1 text-[10px] font-semibold text-amber-800">Action needed</span>
@@ -604,7 +660,18 @@ export default function ClientPortalQuestionnaires() {
         />
       ) : null}
 
-      {openRequest ? (
+      {openRequest?.requestType === "Signature" ? (
+        <CaseFormSignatureSheet
+          request={openRequest}
+          onClose={() => setOpenRequestId(null)}
+          onSubmitted={async () => {
+            setOpenRequestId(null);
+            showToast("Signed — your completed IMM 5476 is now with your consultant.");
+            await load({ silent: true });
+            refresh({ silent: true });
+          }}
+        />
+      ) : openRequest ? (
         <CaseFormRequestSheet
           request={openRequest}
           onClose={() => setOpenRequestId(null)}

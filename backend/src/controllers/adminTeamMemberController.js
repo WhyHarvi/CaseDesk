@@ -29,6 +29,10 @@ const teamMemberSelect = {
   status: true,
   phone: true,
   jobTitle: true,
+  licenseNumber: true,
+  representativeType: true,
+  membershipBody: true,
+  membershipProvince: true,
   createdAt: true,
   updatedAt: true,
   consultantProfiles: {
@@ -99,6 +103,10 @@ function memberPayload(body, { creating = false } = {}) {
     jobTitle:
       optionalText(body.jobTitle, 120) ||
       (role === "frontdesk" ? "Front Desk" : "Consultant"),
+    licenseNumber: role === "consultant" ? optionalText(body.licenseNumber, 80) : null,
+    representativeType: role === "consultant" ? optionalText(body.representativeType, 80) : null,
+    membershipBody: role === "consultant" ? optionalText(body.membershipBody, 160) : null,
+    membershipProvince: role === "consultant" ? optionalText(body.membershipProvince, 80) : null,
     consultantProfile:
       role === "consultant"
         ? {
@@ -248,6 +256,10 @@ export async function createTeamMember(req, res) {
         mustChangePassword: false,
         phone: input.phone,
         jobTitle: input.jobTitle,
+        licenseNumber: input.licenseNumber,
+        representativeType: input.representativeType,
+        membershipBody: input.membershipBody,
+        membershipProvince: input.membershipProvince,
         memberships: {
           create: {
             agencyId: req.auth.agencyId,
@@ -450,6 +462,10 @@ export async function updateTeamMember(req, res) {
       fullName: input.fullName,
       phone: input.phone,
       jobTitle: input.jobTitle,
+      licenseNumber: input.licenseNumber,
+      representativeType: input.representativeType,
+      membershipBody: input.membershipBody,
+      membershipProvince: input.membershipProvince,
       ...(input.consultantProfile
         ? {
             consultantProfiles: {
