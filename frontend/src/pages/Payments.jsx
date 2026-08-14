@@ -585,18 +585,23 @@ function CountUp({ value, format = (v) => moneyWhole.format(v) }) {
   return <motion.span>{text}</motion.span>;
 }
 
-function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote, onClick }) {
+// `pending`/`failed` are distinct from a real value of 0 — a KPI that
+// hasn't loaded yet, or failed to, must never render as if the API
+// affirmatively returned zero (CD-032/CD-036: a loading or failed summary
+// silently rendering "$0" is what made these numbers look non-deterministic
+// and untrustworthy).
+function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote, onClick, pending = false, failed = false }) {
   return (
     <motion.article
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...spring, delay }}
       whileHover={{ y: -3, boxShadow: "0 26px 60px rgba(15,23,42,0.12)" }}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}
-      className={cx(glass, "min-w-0 p-5", onClick ? "cursor-pointer" : "cursor-default")}
+      onClick={pending ? undefined : onClick}
+      role={onClick && !pending ? "button" : undefined}
+      tabIndex={onClick && !pending ? 0 : undefined}
+      onKeyDown={onClick && !pending ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } } : undefined}
+      className={cx(glass, "min-w-0 p-5", onClick && !pending ? "cursor-pointer" : "cursor-default")}
     >
       <div className="flex min-w-0 items-center gap-4">
         <motion.div whileHover={{ scale: 1.08, rotate: -4 }} transition={spring} className={cx("flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1", tint)}>
@@ -604,10 +609,20 @@ function KpiCard({ label, value, format, icon: Icon, tint, delay = 0, footnote, 
         </motion.div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[12px] font-semibold text-slate-500">{label}</p>
-          <p className="mt-1 truncate text-[22px] font-semibold tracking-[-0.03em] text-slate-950 tabular-nums">
-            <CountUp value={value} format={format} />
-          </p>
-          {footnote ? <p className="mt-0.5 truncate text-[11px] font-medium text-slate-400">{footnote}</p> : null}
+          {pending ? (
+            <span className="mt-1.5 block h-[22px] w-20 animate-pulse rounded-md bg-slate-100" />
+          ) : failed ? (
+            <p className="mt-1 truncate text-[22px] font-semibold tracking-[-0.03em] text-slate-300">—</p>
+          ) : (
+            <p className="mt-1 truncate text-[22px] font-semibold tracking-[-0.03em] text-slate-950 tabular-nums">
+              <CountUp value={value} format={format} />
+            </p>
+          )}
+          {failed ? (
+            <p className="mt-0.5 truncate text-[11px] font-medium text-rose-500">Couldn't load — retry</p>
+          ) : footnote ? (
+            <p className="mt-0.5 truncate text-[11px] font-medium text-slate-400">{footnote}</p>
+          ) : null}
         </div>
       </div>
     </motion.article>
@@ -1274,6 +1289,8 @@ export default function Payments() {
   const [syncFailuresOpen, setSyncFailuresOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const tableRef = useRef(null);
 
@@ -1292,8 +1309,23 @@ export default function Payments() {
     requestAnimationFrame(() => tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
+  // `active` guards against a stale response clobbering a newer one — two
+  // overlapping requests (e.g. a quick month change, or refreshKey firing
+  // mid-flight) previously had no ordering guarantee, so an older, slower
+  // response landing last could silently overwrite correct, newer data
+  // (CD-032). This mirrors the same guard the table-rows effect below
+  // already had. A failed/empty response no longer falls back to a bare
+  // `null` that renders as "$0" — it sets summaryError instead, which
+  // KpiCard renders as an explicit "Couldn't load — retry" state.
   useEffect(() => {
-    getPaymentsOverviewSummary(month).catch(() => null).then((data) => data && setSummary(data));
+    let active = true;
+    setSummaryLoading(true);
+    setSummaryError(false);
+    getPaymentsOverviewSummary(month)
+      .then((data) => { if (!active) return; setSummary(data); })
+      .catch(() => { if (active) setSummaryError(true); })
+      .finally(() => { if (active) setSummaryLoading(false); });
+    return () => { active = false; };
   }, [refreshKey, month]);
 
   // Selecting a month scopes the transaction list to that month too, using
@@ -1360,7 +1392,11 @@ export default function Payments() {
   const monthDelta = useMemo(() => {
     if (!summary?.selectedMonth) return null;
     const { selectedMonth, previousMonth } = summary;
-    if (!previousMonth?.collected) return selectedMonth.collected > 0 ? "First collections this month" : null;
+    // A growth badge next to a zero/unavailable current-period value is
+    // meaningless (e.g. "+5400%" beside a card that hasn't loaded) — only
+    // show it once we actually have a non-zero current figure to compare.
+    if (!selectedMonth.collected) return null;
+    if (!previousMonth?.collected) return "First collections this month";
     const change = ((selectedMonth.collected - previousMonth.collected) / previousMonth.collected) * 100;
     return `${change >= 0 ? "+" : ""}${Math.round(change)}% vs ${previousMonth.label}`;
   }, [summary]);
@@ -1452,17 +1488,26 @@ export default function Payments() {
         ) : null}
 
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <KpiCard label="Total Collected (all-time)" value={summary?.totalCollected ?? 0} icon={HandCoins} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} onClick={() => applyBucket("collected", { resetDates: true })} />
-          <KpiCard label="Outstanding Balance" value={summary?.outstandingBalance ?? 0} icon={Wallet} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.1} onClick={() => applyBucket("outstanding", { resetDates: true })} />
-          <KpiCard label={`Collected · ${summary?.selectedMonth?.label || "This month"}`} value={summary?.selectedMonth?.collected ?? 0} icon={TrendingUp} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.15} footnote={monthDelta} onClick={() => applyBucket("collected")} />
-          <KpiCard label="Overdue Invoices" value={summary?.overdueCount ?? 0} format={(v) => String(Math.round(v))} icon={ShieldAlert} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.2} onClick={() => applyBucket("overdue", { resetDates: true })} />
+          <KpiCard label="Total Collected (all-time)" value={summary?.totalCollected ?? 0} icon={HandCoins} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} onClick={() => applyBucket("collected", { resetDates: true })} pending={summaryLoading && !summary} failed={summaryError && !summary} />
+          <KpiCard label="Outstanding Balance" value={summary?.outstandingBalance ?? 0} icon={Wallet} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.1} onClick={() => applyBucket("outstanding", { resetDates: true })} pending={summaryLoading && !summary} failed={summaryError && !summary} />
+          <KpiCard label={`Collected · ${summary?.selectedMonth?.label || "This month"}`} value={summary?.selectedMonth?.collected ?? 0} icon={TrendingUp} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.15} footnote={monthDelta} onClick={() => applyBucket("collected")} pending={summaryLoading && !summary} failed={summaryError && !summary} />
+          <KpiCard label="Overdue Invoices" value={summary?.overdueCount ?? 0} format={(v) => String(Math.round(v))} icon={ShieldAlert} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.2} onClick={() => applyBucket("overdue", { resetDates: true })} pending={summaryLoading && !summary} failed={summaryError && !summary} />
         </div>
 
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
-          <KpiCard label="Cash On Hand" value={summary?.cashOnHand ?? 0} icon={Banknote} tint="bg-violet-50 text-violet-500 ring-violet-100" delay={0.22} footnote="Since last cash closing · click for detail" onClick={() => setCashLedgerOpen(true)} />
-          <KpiCard label="Pending Approval" value={summary?.pendingApprovalCount ?? 0} format={(v) => String(Math.round(v))} icon={ClipboardCheck} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.26} onClick={() => setView("approvals")} />
-          <KpiCard label="QuickBooks Sync Failures" value={summary?.quickBooksSyncFailures ?? 0} format={(v) => String(Math.round(v))} icon={RefreshCw} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.3} onClick={() => setSyncFailuresOpen(true)} />
+          <KpiCard label="Cash On Hand" value={summary?.cashOnHand ?? 0} icon={Banknote} tint="bg-violet-50 text-violet-500 ring-violet-100" delay={0.22} footnote="Since last cash closing · click for detail" onClick={() => setCashLedgerOpen(true)} pending={summaryLoading && !summary} failed={summaryError && !summary} />
+          <KpiCard label="Pending Approval" value={summary?.pendingApprovalCount ?? 0} format={(v) => String(Math.round(v))} icon={ClipboardCheck} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.26} onClick={() => setView("approvals")} pending={summaryLoading && !summary} failed={summaryError && !summary} />
+          <KpiCard label="QuickBooks Sync Failures" value={summary?.quickBooksSyncFailures ?? 0} format={(v) => String(Math.round(v))} icon={RefreshCw} tint="bg-rose-50 text-rose-500 ring-rose-100" delay={0.3} onClick={() => setSyncFailuresOpen(true)} pending={summaryLoading && !summary} failed={summaryError && !summary} />
         </div>
+        {summaryError && !summary ? (
+          <button
+            type="button"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            className="self-start rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Payments summary failed to load — retry
+          </button>
+        ) : null}
 
         <MonthComparisonPanel summary={summary} delay={0.34} onSelectBucket={(nextBucket) => applyBucket(nextBucket)} />
 

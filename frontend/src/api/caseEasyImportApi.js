@@ -15,6 +15,11 @@ export async function convertCaseEasyImportContact(id, payload) {
   return response.data.data;
 }
 
+export async function bulkConvertCaseEasyImportContacts(contactIds) {
+  const response = await api.post("/case-easy-import/contacts/bulk-convert", { contactIds }, { timeout: 60_000 });
+  return response.data.data;
+}
+
 export async function getUnlinkedCaseEasyImportCases(params) {
   const response = await api.get("/case-easy-import/unlinked-cases", {
     params,

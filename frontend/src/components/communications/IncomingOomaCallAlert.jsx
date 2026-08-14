@@ -19,11 +19,22 @@ export default function IncomingOomaCallAlert() {
   useEffect(() => {
     if (!enabled) return undefined;
     let active = true;
+    let timer = null;
     const check = async () => {
       try {
         const response = await api.get("/ooma-calls/attention", { timeout: 8_000 });
-        const next = response.data.data || null;
         if (!active) return;
+        // Agencies that have never actually connected Ooma still get a
+        // settings row with enabled/callsEnabled defaulted to true, so the
+        // backend tells us explicitly whether there's a real integration to
+        // poll for. Once we learn there isn't, stop polling entirely instead
+        // of hitting this endpoint every 5s forever for nothing.
+        if (response.data.configured === false) {
+          setCall(null);
+          if (timer) { window.clearInterval(timer); timer = null; }
+          return;
+        }
+        const next = response.data.data || null;
         const dismissed = next ? window.sessionStorage.getItem("dismissedOomaCall") : null;
         setCall(next && dismissed !== next.id ? next : null);
       } catch {
@@ -31,8 +42,8 @@ export default function IncomingOomaCallAlert() {
       }
     };
     check();
-    const timer = window.setInterval(check, 5_000);
-    return () => { active = false; window.clearInterval(timer); };
+    timer = window.setInterval(check, 5_000);
+    return () => { active = false; if (timer) window.clearInterval(timer); };
   }, [enabled]);
 
   if (!call) return null;

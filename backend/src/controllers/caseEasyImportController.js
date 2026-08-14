@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { lockAgencyContactIntake } from "../services/contactDuplicateService.js";
+import { assertNoContactDuplicate, lockAgencyContactIntake } from "../services/contactDuplicateService.js";
 import { normalizeEmail, normalizePhone } from "../modules/leads/lead.validation.js";
 import { parseCsv } from "../modules/leads/lead.csv.js";
 import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
@@ -651,6 +651,18 @@ export async function convertCaseEasyImportContact(req, res) {
         if (!client) throw createHttpError(409, "The client this contact was converted to no longer exists.", "CLIENT_NOT_FOUND");
       } else {
         await lockAgencyContactIntake(tx, agencyId);
+        // Converting a Case Easy contact previously had no duplicate check
+        // at all against Clients (only an incidental P2002 catch on the DB
+        // unique constraint, after the insert already failed) and none
+        // whatsoever against Leads. Run the same phone/email dedup every
+        // other client-creation path in the app already runs, so converting
+        // at volume doesn't multiply the duplicates CD-002/CD-013 already
+        // flagged elsewhere.
+        await assertNoContactDuplicate(tx, {
+          agencyId,
+          phoneNormalized: contactNormalized.phoneNormalized,
+          emailNormalized: contactNormalized.emailNormalized,
+        });
         const clientNumber = await nextClientNumber(tx, agencyId);
         client = await tx.client.create({
           data: {
@@ -757,4 +769,179 @@ export async function convertCaseEasyImportContact(req, res) {
     if (error.code === "P2002") throw createHttpError(409, "A client with this phone or email already exists in CaseDesk.", "DUPLICATE_CONTACT");
     throw error;
   }
+}
+
+function caseEasyContactDisplayName(contact) {
+  return [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.email || contact.phone || contact.id;
+}
+
+// One-at-a-time-only conversion was the largest gap the QA report flagged
+// (3,793 legacy records, no bulk path). This is deliberately NOT a shared
+// refactor of convertCaseEasyImportContact above — it's a separate,
+// fully-automatic path that always takes CaseDesk's suggested stage/status
+// (mapCaseEasyStatus) for every unconverted linked case rather than
+// per-case manual overrides, since a human isn't reviewing each one. Every
+// contact converts (or fails) independently inside its own transaction, so
+// one bad record in a batch never blocks the rest — the response is a
+// results summary, not a single pass/fail.
+export async function bulkConvertCaseEasyImportContacts(req, res) {
+  const agencyId = req.user.agencyId;
+  const contactIds = [...new Set(Array.isArray(req.body.contactIds) ? req.body.contactIds.map(String).filter(Boolean) : [])].slice(0, 200);
+  if (!contactIds.length) throw createHttpError(400, "Select at least one contact to convert.", "VALIDATION_ERROR");
+
+  const contacts = await prisma.caseEasyImportContact.findMany({
+    where: { id: { in: contactIds }, agencyId },
+    include: {
+      linkedCases: {
+        include: { reportRows: { where: { uci: { not: null } }, select: { uci: true }, orderBy: { importedAt: "desc" }, take: 1 } },
+      },
+    },
+  });
+  const foundIds = new Set(contacts.map((contact) => contact.id));
+
+  const results = [];
+  for (const contactId of contactIds) {
+    if (!foundIds.has(contactId)) {
+      results.push({ contactId, name: contactId, status: "failed", message: "Import contact not found." });
+    }
+  }
+
+  for (const contact of contacts) {
+    const name = caseEasyContactDisplayName(contact);
+    if (contact.importStatus === "converted") {
+      results.push({ contactId: contact.id, name, status: "already_converted" });
+      continue;
+    }
+
+    const unconvertedCases = contact.linkedCases.filter((stagingCase) => stagingCase.importStatus !== "converted");
+    const plannedCases = unconvertedCases
+      .map((stagingCase) => {
+        const caseType = String(stagingCase.caseType || "").trim();
+        const suggested = mapCaseEasyStatus(stagingCase.status);
+        return { stagingCase, caseType, stage: suggested.stage, status: suggested.status, archived: suggested.archived };
+      })
+      .filter((planned) => planned.caseType && CASE_STAGES.includes(planned.stage) && isCaseStageAllowedForType(planned.caseType, planned.stage) && CASE_STATUSES.has(planned.status));
+    const skippedCaseCount = unconvertedCases.length - plannedCases.length;
+
+    if (!name.trim()) {
+      results.push({ contactId: contact.id, name, status: "failed", message: "No name on file — needs manual review before conversion." });
+      continue;
+    }
+
+    const contactNormalized = normalizeContactForConversion({ phone: contact.phone, email: contact.email });
+    const maritalStatus = normalizeMaritalStatus(contact.maritalStatus) || null;
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT "id"
+          FROM "case_easy_import_contacts"
+          WHERE "id" = ${contact.id} AND "agency_id" = ${agencyId}
+          FOR UPDATE
+        `;
+        const lockedContact = await tx.caseEasyImportContact.findUnique({ where: { id: contact.id }, select: { importStatus: true } });
+        if (!lockedContact) throw createHttpError(404, "Import contact not found.", "NOT_FOUND");
+        if (lockedContact.importStatus === "converted") throw createHttpError(409, "This contact has already been converted.", "ALREADY_CONVERTED");
+
+        await lockAgencyContactIntake(tx, agencyId);
+        await assertNoContactDuplicate(tx, {
+          agencyId,
+          phoneNormalized: contactNormalized.phoneNormalized,
+          emailNormalized: contactNormalized.emailNormalized,
+        });
+
+        const clientNumber = await nextClientNumber(tx, agencyId);
+        const client = await tx.client.create({
+          data: {
+            agencyId,
+            clientNumber,
+            fullName: name,
+            givenNames: contact.firstName || null,
+            familyName: contact.lastName || null,
+            ...contactNormalized,
+            dateOfBirth: contact.dateOfBirth,
+            maritalStatus,
+            status: "Active",
+          },
+        });
+
+        const createdCases = [];
+        for (const planned of plannedCases) {
+          const lockedStagingCase = await tx.caseEasyImportCase.findUnique({ where: { id: planned.stagingCase.id }, select: { importStatus: true } });
+          if (lockedStagingCase?.importStatus === "converted") continue;
+
+          const newCase = await tx.case.create({
+            data: {
+              agencyId,
+              clientId: client.id,
+              caseType: planned.caseType,
+              stage: planned.stage,
+              status: planned.status,
+              priority: "Normal",
+              assignedUserId: planned.stagingCase.resolvedAssigneeUserId || null,
+              nextAction: TERMINAL_CASE_STATUSES.has(planned.status) ? null : "Review imported case",
+              submittedAt: planned.stagingCase.submitted,
+              decisionAt: planned.stagingCase.approved || planned.stagingCase.refused || null,
+              archivedAt: planned.archived ? new Date() : null,
+            },
+          });
+
+          const uci = planned.stagingCase.reportRows?.[0]?.uci || contact.uci;
+          const formData = {};
+          if (uci) formData.profileQuestionnaires = { canadianStatus: { uci } };
+          if (maritalStatus) formData.profile = { maritalStatus };
+          const { score, breakdown } = calculateCrsScore(formData);
+          await tx.caseAssessment.create({ data: { agencyId, clientId: client.id, caseId: newCase.id, formData, crsScore: score, crsBreakdown: breakdown } });
+
+          await tx.caseEasyImportCase.update({ where: { id: planned.stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id } });
+          await tx.caseEasyImportReportRow.updateMany({
+            where: { agencyId, linkedImportCaseId: planned.stagingCase.id },
+            data: { linkedCaseId: newCase.id, linkedClientId: client.id },
+          });
+          createdCases.push(newCase);
+        }
+
+        await tx.caseEasyImportContact.update({ where: { id: contact.id }, data: { importStatus: "converted", convertedClientId: client.id } });
+        await tx.caseEasyImportReportRow.updateMany({ where: { agencyId, linkedContactId: contact.id }, data: { linkedClientId: client.id } });
+
+        return { client, cases: createdCases };
+      });
+
+      await recordActivity({
+        agencyId,
+        userId: req.user.id,
+        clientId: result.client.id,
+        action: "case_easy_import.converted",
+        details: `${result.client.fullName} converted from Case Easy import data (bulk, ${result.cases.length} case${result.cases.length === 1 ? "" : "s"})`,
+      });
+
+      results.push({
+        contactId: contact.id,
+        name,
+        status: "converted",
+        clientId: result.client.id,
+        casesConverted: result.cases.length,
+        casesSkipped: skippedCaseCount,
+      });
+    } catch (error) {
+      const duplicate = error.code === "DUPLICATE_CLIENT" || error.code === "DUPLICATE_LEAD" || error.code === "P2002";
+      results.push({
+        contactId: contact.id,
+        name,
+        status: duplicate ? "skipped_duplicate" : "failed",
+        message: error.message || "Conversion failed.",
+      });
+    }
+  }
+
+  res.json({
+    data: {
+      requested: contactIds.length,
+      converted: results.filter((row) => row.status === "converted").length,
+      skippedDuplicate: results.filter((row) => row.status === "skipped_duplicate").length,
+      alreadyConverted: results.filter((row) => row.status === "already_converted").length,
+      failed: results.filter((row) => row.status === "failed").length,
+      results,
+    },
+  });
 }

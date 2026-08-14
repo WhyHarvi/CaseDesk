@@ -1507,9 +1507,14 @@ export default function Cases() {
     const activeCases = enrichedCases.filter(isActiveCase).length;
     const readyForSubmission =
       enrichedCases.filter(isReadyForSubmission).length;
-    const overdueFollowUps = enrichedCases.filter((item) => item.urgent).length;
+    // Despite the old name, this counts cases flagged by isUrgentAction()
+    // (missing documents, an outstanding balance, or a next action that
+    // reads as a submission/payment reminder) — not follow-ups that are
+    // actually past their due date. Renamed to match what it measures;
+    // see CD-035 in the QA report.
+    const needsAttentionCases = enrichedCases.filter((item) => item.urgent).length;
 
-    return { totalCases, activeCases, readyForSubmission, overdueFollowUps };
+    return { totalCases, activeCases, readyForSubmission, needsAttentionCases };
   }, [enrichedCases]);
 
   function resetFormState() {
@@ -1897,9 +1902,9 @@ export default function Cases() {
               />
               <StatCard
                 icon={CalendarClock}
-                label="Overdue Follow-ups"
-                value={summary.overdueFollowUps}
-                helper="Cases needing attention today"
+                label="Needs Attention"
+                value={summary.needsAttentionCases}
+                helper="Missing documents, unpaid balance, or a pending submission/payment action"
                 accent="rose"
               />
             </section>
@@ -2054,12 +2059,22 @@ export default function Cases() {
                                   <select
                                     value={item.stage}
                                     disabled={!canManageCases || registerView !== "active"}
-                                    onChange={(event) =>
-                                      handleStageChange(
-                                        item,
-                                        event.target.value,
-                                      )
-                                    }
+                                    onChange={(event) => {
+                                      const nextStage = event.target.value;
+                                      // Stage changes drive case workflow state (default next
+                                      // action, downstream automations) — same weight as a
+                                      // delete, so it gets the same window.confirm guard the
+                                      // rest of the app already uses for destructive actions,
+                                      // rather than firing straight from a table-row select.
+                                      if (
+                                        nextStage !== item.stage &&
+                                        !window.confirm(`Change this case's stage from "${item.stage}" to "${nextStage}"?`)
+                                      ) {
+                                        event.target.value = item.stage;
+                                        return;
+                                      }
+                                      handleStageChange(item, nextStage);
+                                    }}
                                     className="h-10 w-[190px] rounded-xl border border-slate-200 bg-white/80 px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20 disabled:bg-slate-100 disabled:text-slate-500"
                                   >
                                     {caseStagesForType(item.caseType).map((stage) => (
@@ -2149,7 +2164,15 @@ export default function Cases() {
                           item={item}
                           onEdit={openEditForm}
                           onDelete={handleDelete}
-                          onStageChange={handleStageChange}
+                          onStageChange={(caseItem, nextStage) => {
+                            if (
+                              nextStage !== caseItem.stage &&
+                              !window.confirm(`Change this case's stage from "${caseItem.stage}" to "${nextStage}"?`)
+                            ) {
+                              return;
+                            }
+                            handleStageChange(caseItem, nextStage);
+                          }}
                           onToggleMenu={setActiveActionMenuId}
                           isMenuOpen={activeActionMenuId === item.id}
                           deletingId={deletingId}

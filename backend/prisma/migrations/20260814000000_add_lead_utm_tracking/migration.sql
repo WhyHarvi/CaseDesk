@@ -1,0 +1,6 @@
+ALTER TABLE "leads"
+  ADD COLUMN IF NOT EXISTS "utm_source" TEXT,
+  ADD COLUMN IF NOT EXISTS "utm_medium" TEXT,
+  ADD COLUMN IF NOT EXISTS "utm_campaign" TEXT,
+  ADD COLUMN IF NOT EXISTS "utm_term" TEXT,
+  ADD COLUMN IF NOT EXISTS "utm_content" TEXT;

@@ -29,6 +29,23 @@ const FOLLOW_UP_STATUSES = ["Pending", "Completed", "Cancelled"];
 const TERMINAL_FOLLOW_UP_STATUSES = new Set(["Completed", "Cancelled"]);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
 
+// "Overdue" used to mean an exact `now` cutoff in this file but a
+// start-of-today cutoff on the Dashboard and Lead Dashboard, so the same
+// follow-up could read as overdue on one screen and not-yet-overdue on
+// another. This resolves the same start-of-day-in-agency-timezone cutoff
+// those surfaces already use, so "Overdue" means the same thing everywhere.
+// See CD-003/CD-035.
+async function resolveOverdueCutoff(req) {
+  const agency = await prisma.agency.findUnique({
+    where: { id: req.auth.agencyId },
+    select: { timezone: true },
+  });
+  const timezone = agency?.timezone || "America/Toronto";
+  const now = new Date();
+  const { todayStart, tomorrowStart, weekStart } = reportingBounds(now, timezone);
+  return { now, todayStart, tomorrowStart, weekStart, timezone };
+}
+
 async function resolveFollowUpNotificationsSafely({ agencyId, entityId, context }) {
   try {
     await resolveNotifications({ agencyId, entityType: "follow_up", entityId });
@@ -263,16 +280,19 @@ const controller = createCrudController({
 });
 
 export async function getFollowUpById(req, res) {
-  const item = await prisma.followUp.findFirst({
-    where: {
-      id: req.params.id,
-      agencyId: req.auth.agencyId,
-      ...followUpAccessWhere(req),
-    },
-    include,
-  });
+  const [item, { todayStart }] = await Promise.all([
+    prisma.followUp.findFirst({
+      where: {
+        id: req.params.id,
+        agencyId: req.auth.agencyId,
+        ...followUpAccessWhere(req),
+      },
+      include,
+    }),
+    resolveOverdueCutoff(req),
+  ]);
   if (!item) throw createHttpError(404, "Follow-up not found.", "NOT_FOUND");
-  res.json({ data: normalizeCaseFollowUp(item, req) });
+  res.json({ data: normalizeCaseFollowUp(item, req, todayStart) });
 }
 
 function pagination(query) {
@@ -309,8 +329,8 @@ function leadStatusFilter(status, now) {
   return null;
 }
 
-function buildCaseListWhere(req, { combined = false } = {}) {
-  const now = new Date();
+function buildCaseListWhere(req, { combined = false, cutoff } = {}) {
+  const now = cutoff || new Date();
   const clauses = [followUpAccessWhere(req)];
   const view = String(req.query.view || (combined ? "my_open" : "")).toLowerCase();
   const explicitStatus = String(req.query.status || "");
@@ -344,8 +364,8 @@ function buildCaseListWhere(req, { combined = false } = {}) {
   return { agencyId: req.auth.agencyId, AND: clauses };
 }
 
-function buildLeadListWhere(req, { combined = false } = {}) {
-  const now = new Date();
+function buildLeadListWhere(req, { combined = false, cutoff } = {}) {
+  const now = cutoff || new Date();
   // Import-review work is intentionally isolated to the Import Review tab.
   // It must not inflate or leak into the shared operational follow-up queue.
   const clauses = [leadFollowUpAccessWhere(req), { lead: leadSegmentWhere() }];
@@ -498,14 +518,15 @@ async function caseCandidates(where, take, query) {
 
 export async function listFollowUps(req, res) {
   const { page, limit, take } = pagination(req.query);
-  const where = buildCaseListWhere(req);
+  const { todayStart } = await resolveOverdueCutoff(req);
+  const where = buildCaseListWhere(req, { cutoff: todayStart });
   const [items, total, uniqueClients] = await Promise.all([
     prisma.followUp.findMany({ where, include, orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }], skip: (page - 1) * limit, take: limit }),
     prisma.followUp.count({ where }),
     prisma.followUp.findMany({ where: { ...where, clientId: { not: null } }, distinct: ["clientId"], select: { clientId: true } }),
   ]);
   res.json({
-    data: items.map((item) => normalizeCaseFollowUp(item, req)),
+    data: items.map((item) => normalizeCaseFollowUp(item, req, todayStart)),
     meta: { page, limit, total, uniqueClients: uniqueClients.length, hasMore: page * limit < total, requested: take },
   });
 }
@@ -514,14 +535,9 @@ export async function listMyWork(req, res) {
   const { page, limit, take } = pagination(req.query);
   const includeCases = req.query.source !== "lead";
   const includeLeads = req.query.source !== "case";
-  const caseWhere = buildCaseListWhere(req, { combined: true });
-  const leadWhere = buildLeadListWhere(req, { combined: true });
-  const agency = await prisma.agency.findUnique({
-    where: { id: req.auth.agencyId },
-    select: { timezone: true },
-  });
-  const now = new Date();
-  const { todayStart, tomorrowStart, weekStart } = reportingBounds(now, agency?.timezone || "America/Toronto");
+  const { timezone, todayStart, tomorrowStart, weekStart } = await resolveOverdueCutoff(req);
+  const caseWhere = buildCaseListWhere(req, { combined: true, cutoff: todayStart });
+  const leadWhere = buildLeadListWhere(req, { combined: true, cutoff: todayStart });
   const andCase = (condition) => ({ agencyId: req.auth.agencyId, AND: [caseWhere, condition] });
   const andLead = (condition) => ({ agencyId: req.auth.agencyId, AND: [leadWhere, condition] });
   const [
@@ -537,8 +553,8 @@ export async function listMyWork(req, res) {
     includeLeads ? prisma.leadFollowUp.findMany({ where: leadWhere, distinct: ["leadId"], select: { leadId: true } }) : [],
     includeCases ? prisma.followUp.count({ where: andCase({ status: "Pending", dueDate: { gte: todayStart, lt: tomorrowStart } }) }) : 0,
     includeLeads ? prisma.leadFollowUp.count({ where: andLead({ status: "PENDING", dueAt: { gte: todayStart, lt: tomorrowStart } }) }) : 0,
-    includeCases ? prisma.followUp.count({ where: andCase({ status: "Pending", dueDate: { lt: now } }) }) : 0,
-    includeLeads ? prisma.leadFollowUp.count({ where: andLead({ status: "PENDING", dueAt: { lt: now } }) }) : 0,
+    includeCases ? prisma.followUp.count({ where: andCase({ status: "Pending", dueDate: { lt: todayStart } }) }) : 0,
+    includeLeads ? prisma.leadFollowUp.count({ where: andLead({ status: "PENDING", dueAt: { lt: todayStart } }) }) : 0,
     includeCases ? prisma.followUp.count({ where: andCase({ status: "Pending" }) }) : 0,
     includeLeads ? prisma.leadFollowUp.count({ where: andLead({ status: "PENDING" }) }) : 0,
     includeCases ? prisma.followUp.count({ where: andCase({ status: "Completed", completedAt: { gte: weekStart, lt: tomorrowStart } }) }) : 0,
@@ -550,8 +566,8 @@ export async function listMyWork(req, res) {
     }) : [],
   ]);
   const merged = [
-    ...caseFollowUps.map((item) => normalizeCaseFollowUp(item, req, now)),
-    ...leadFollowUps.map((item) => normalizeLeadFollowUp(item, req, now)),
+    ...caseFollowUps.map((item) => normalizeCaseFollowUp(item, req, todayStart)),
+    ...leadFollowUps.map((item) => normalizeLeadFollowUp(item, req, todayStart)),
   ].sort((left, right) => compareFollowUps(left, right, req.query));
   const total = caseTotal + leadTotal;
   const data = merged.slice((page - 1) * limit, page * limit);
@@ -564,7 +580,7 @@ export async function listMyWork(req, res) {
       hasMore: page * limit < total,
       uniqueClients: caseClients.length + leadClients.length,
       sourceTotals: { case: caseTotal, lead: leadTotal },
-      timezone: agency?.timezone || "America/Toronto",
+      timezone,
       summary: {
         dueToday: caseDueToday + leadDueToday,
         overdue: caseOverdue + leadOverdue,

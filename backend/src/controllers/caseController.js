@@ -289,6 +289,30 @@ export async function createCase(req, res) {
       throw createHttpError(404, "Client not found");
     }
 
+    // Case had no guard against creating two open cases of the same type
+    // for the same client — the only de-dupe was an opt-in idempotency key
+    // that a retried/double-clicked create-case request may never send.
+    // Block on an existing non-closed, non-deleted case of the same type,
+    // same convention contactDuplicateService already uses for Client/Lead:
+    // point at the existing record instead of silently creating a twin.
+    const duplicateCase = await tx.case.findFirst({
+      where: {
+        agencyId: req.user.agencyId,
+        clientId: payload.clientId,
+        caseType: payload.caseType,
+        deletedAt: null,
+        status: { not: "Closed" },
+      },
+      select: { id: true, status: true, stage: true },
+    });
+    if (duplicateCase) {
+      throw createHttpError(
+        409,
+        `This client already has an open ${payload.caseType} case (${duplicateCase.stage}). Open the existing case instead of creating another.`,
+        "DUPLICATE_CASE",
+      );
+    }
+
     const data = await tx.case.create({
       data: {
         ...payload,

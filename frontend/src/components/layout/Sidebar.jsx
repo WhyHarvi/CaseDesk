@@ -62,6 +62,10 @@ const adminNavigation = [
     description: "Inquiry pipeline",
     disabled: false,
     badgeKey: "leads",
+    // This badge is an unread-notification count, not the size of the lead
+    // pipeline — worth spelling out since "Leads" reads like it could be
+    // either. See CD-027.
+    badgeNoun: "unread lead notification",
   },
   {
     label: "Calls",
@@ -158,7 +162,7 @@ const memberNavigation = [
     icon: LayoutDashboard,
     accessKey: "dashboard",
   },
-  { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads" },
+  { label: "Leads", to: "/leads", icon: ContactRound, accessKey: "leads", badgeKey: "leads", badgeNoun: "unread lead notification" },
   { label: "Calls", to: "/calls", icon: PhoneCall, accessKey: "leads", badgeKey: "calls" },
   { label: "Chats", to: "/app/chats", icon: MessagesSquare, badgeKey: "chats" },
   { label: "Import Review", to: "/leads/review", icon: Inbox, accessKey: "leads", badgeKey: "importReview" },
@@ -214,11 +218,11 @@ const memberNavigation = [
   { label: "Settings", to: "/app/settings", icon: Settings, badgeKey: "settings" },
 ];
 
-function UpdateBadge({ count, collapsed = false }) {
+function UpdateBadge({ count, collapsed = false, noun = "unread item" }) {
   if (!count?.total) return null;
   const needsAction = count.actions > 0;
   const value = count.total > 99 ? "99+" : count.total;
-  const title = `${count.total} unread ${count.total === 1 ? "item" : "items"}${count.actions ? ` · ${count.actions} require action` : ""}${count.focus?.title ? ` · Latest: ${count.focus.title}` : ""}`;
+  const title = `${count.total} ${count.total === 1 ? noun : `${noun}s`}${count.actions ? ` · ${count.actions} require action` : ""}${count.focus?.title ? ` · Latest: ${count.focus.title}` : ""}`;
   return (
     <span
       title={title}
@@ -298,7 +302,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
             ].join(" ")}
           >
             <Icon className="h-5 w-5" />
-            {collapsed ? <UpdateBadge count={item.badge} collapsed /> : null}
+            {collapsed ? <UpdateBadge count={item.badge} collapsed noun={item.badgeNoun} /> : null}
           </div>
           <div
             className={[
@@ -317,7 +321,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
             >
               {item.label}
             </p>
-            {!collapsed ? <UpdateBadge count={item.badge} /> : null}
+            {!collapsed ? <UpdateBadge count={item.badge} noun={item.badgeNoun} /> : null}
             </div>
           </div>
         </>

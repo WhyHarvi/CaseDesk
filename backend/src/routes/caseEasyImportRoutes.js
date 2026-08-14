@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  bulkConvertCaseEasyImportContacts,
   confirmCaseEasyImportUpload,
   confirmCaseEasyReportUpload,
   convertCaseEasyImportContact,
@@ -40,5 +41,8 @@ router.get("/reports", asyncHandler(listCaseEasyReportRows));
 router.get("/clients/:clientId/reports", asyncHandler(getCaseEasyReportsForClient));
 router.get("/contacts/:id", asyncHandler(getCaseEasyImportContact));
 router.post("/contacts/:id/convert", rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(convertCaseEasyImportContact));
+// Heavier per-call weight than a single convert (up to 200 client creations
+// in one request), so a tighter window than the single-convert route above.
+router.post("/contacts/bulk-convert", rateLimit({ windowMs: 60_000, max: 5 }), asyncHandler(bulkConvertCaseEasyImportContacts));
 
 export default router;

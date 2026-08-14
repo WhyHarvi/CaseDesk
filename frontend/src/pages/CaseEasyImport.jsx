@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import {
+  bulkConvertCaseEasyImportContacts,
   convertCaseEasyImportContact,
   getCaseEasyImportContact,
   getCaseEasyImportContacts,
@@ -122,7 +123,7 @@ function CaseBadge({ kase }) {
   return <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">Linked</span>;
 }
 
-function ContactRow({ contact, expanded, onToggle, onConvert }) {
+function ContactRow({ contact, expanded, onToggle, onConvert, selected, onToggleSelect }) {
   const needsReviewCount = contact.linkedCases.filter((kase) => kase.needsReviewReason && kase.importStatus !== "converted").length;
   const converted = contact.importStatus === "converted";
   // A contact converted in an earlier import can still gain new cases from
@@ -131,8 +132,20 @@ function ContactRow({ contact, expanded, onToggle, onConvert }) {
   const pendingCases = contact.linkedCases.filter((kase) => kase.importStatus !== "converted");
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <div className={`rounded-3xl border bg-white shadow-sm ${selected ? "border-sky-300 ring-2 ring-sky-100" : "border-slate-200"}`}>
       <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+        {!converted ? (
+          <input
+            type="checkbox"
+            checked={Boolean(selected)}
+            onChange={(event) => { event.stopPropagation(); onToggleSelect(contact.id); }}
+            onClick={(event) => event.stopPropagation()}
+            className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 sm:mt-0"
+            aria-label={`Select ${contact.firstName} ${contact.lastName} for bulk convert`}
+          />
+        ) : (
+          <span className="hidden h-4 w-4 shrink-0 sm:block" />
+        )}
         <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left">
           <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -478,6 +491,10 @@ export default function CaseEasyImport() {
   const [expandedId, setExpandedId] = useState(null);
   const [convertingContact, setConvertingContact] = useState(null);
   const [notice, setNotice] = useState("");
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkConverting, setBulkConverting] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const [bulkError, setBulkError] = useState("");
   const [view, setView] = useState("contacts");
   const [searchInput, setSearchInput] = useState(
     searchParams.get("search") || "",
@@ -535,6 +552,68 @@ export default function CaseEasyImport() {
   }
 
   useEffect(() => { load(); }, [recordType, importStatus, search]);
+  // Selection is scoped to whatever's currently visible — changing a filter
+  // implicitly changes the working set, so stale ids from a previous filter
+  // shouldn't silently carry into the next bulk convert.
+  useEffect(() => { setSelectedIds(new Set()); }, [recordType, importStatus, search]);
+
+  const convertibleContacts = useMemo(() => contacts.filter((contact) => contact.importStatus !== "converted"), [contacts]);
+  const allVisibleSelected = convertibleContacts.length > 0 && convertibleContacts.every((contact) => selectedIds.has(contact.id));
+
+  function toggleSelect(contactId) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(contactId)) next.delete(contactId);
+      else next.add(contactId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((current) => {
+      if (allVisibleSelected) return new Set();
+      return new Set(convertibleContacts.map((contact) => contact.id));
+    });
+  }
+
+  async function runBulkConvert() {
+    if (!selectedIds.size) return;
+    if (
+      !window.confirm(
+        `Convert ${selectedIds.size} selected contact${selectedIds.size === 1 ? "" : "s"} to CaseDesk clients? Every linked case will use CaseDesk's suggested stage/status automatically — review individual records afterward if anything looks off.`,
+      )
+    ) {
+      return;
+    }
+    setBulkConverting(true);
+    setBulkError("");
+    setBulkResult(null);
+    try {
+      const idsToConvert = [...selectedIds];
+      // The backend caps a single call at 200 to keep each transaction batch
+      // bounded — chunk larger selections client-side rather than raising
+      // that cap, so one huge selection can't tie up a single request.
+      const chunkSize = 100;
+      const combined = { requested: 0, converted: 0, skippedDuplicate: 0, alreadyConverted: 0, failed: 0, results: [] };
+      for (let index = 0; index < idsToConvert.length; index += chunkSize) {
+        const chunk = idsToConvert.slice(index, index + chunkSize);
+        const result = await bulkConvertCaseEasyImportContacts(chunk);
+        combined.requested += result.requested;
+        combined.converted += result.converted;
+        combined.skippedDuplicate += result.skippedDuplicate;
+        combined.alreadyConverted += result.alreadyConverted;
+        combined.failed += result.failed;
+        combined.results.push(...result.results);
+      }
+      setBulkResult(combined);
+      setSelectedIds(new Set());
+      load();
+    } catch (reason) {
+      setBulkError(reason.response?.data?.message || "Bulk conversion failed.");
+    } finally {
+      setBulkConverting(false);
+    }
+  }
   // /leads/staff includes front desk (valid for lead ownership), but a case
   // can only ever be assigned to an admin or consultant (validateCaseAssignee
   // in caseController.js) — filtering here keeps front desk from ever being
@@ -630,6 +709,33 @@ export default function CaseEasyImport() {
         </section>
       ) : null}
 
+      {bulkError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{bulkError}</div> : null}
+      {bulkResult ? (
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-950">Bulk convert results</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {bulkResult.converted} converted · {bulkResult.skippedDuplicate} skipped as likely duplicates · {bulkResult.alreadyConverted} already converted · {bulkResult.failed} failed, of {bulkResult.requested} selected.
+              </p>
+            </div>
+            <button type="button" onClick={() => setBulkResult(null)} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Dismiss results">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {bulkResult.skippedDuplicate || bulkResult.failed ? (
+            <div className="mt-3 max-h-56 space-y-1.5 overflow-y-auto rounded-2xl bg-slate-50 p-3">
+              {bulkResult.results.filter((row) => row.status === "skipped_duplicate" || row.status === "failed").map((row) => (
+                <p key={row.contactId} className="text-xs text-slate-600">
+                  <span className="font-semibold text-slate-800">{row.name}</span> — {row.status === "skipped_duplicate" ? "possible duplicate: " : "failed: "}
+                  {row.message}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="space-y-3">{[0, 1, 2].map((key) => <div key={key} className="h-20 animate-pulse rounded-3xl bg-slate-100" />)}</div>
       ) : contacts.length === 0 ? (
@@ -637,17 +743,43 @@ export default function CaseEasyImport() {
           No imported Case Easy contacts match this filter. Run the import script to bring data in.
         </div>
       ) : (
-        <div className="space-y-3">
-          {contacts.map((contact) => (
-            <ContactRow
-              key={contact.id}
-              contact={contact}
-              expanded={expandedId === contact.id}
-              onToggle={() => setExpandedId((current) => (current === contact.id ? null : contact.id))}
-              onConvert={setConvertingContact}
-            />
-          ))}
-        </div>
+        <>
+          {convertibleContacts.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-2.5">
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} className="h-4 w-4 rounded border-slate-300" />
+                Select all {convertibleContacts.length} unconverted contact{convertibleContacts.length === 1 ? "" : "s"} shown
+              </label>
+              {selectedIds.size > 0 ? (
+                <>
+                  <span className="text-xs text-slate-400">{selectedIds.size} selected</span>
+                  <button
+                    type="button"
+                    onClick={runBulkConvert}
+                    disabled={bulkConverting}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {bulkConverting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5" />}
+                    {bulkConverting ? "Converting…" : `Convert ${selectedIds.size} selected`}
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="space-y-3">
+            {contacts.map((contact) => (
+              <ContactRow
+                key={contact.id}
+                contact={contact}
+                expanded={expandedId === contact.id}
+                onToggle={() => setExpandedId((current) => (current === contact.id ? null : contact.id))}
+                onConvert={setConvertingContact}
+                selected={selectedIds.has(contact.id)}
+                onToggleSelect={toggleSelect}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {convertingContact ? (

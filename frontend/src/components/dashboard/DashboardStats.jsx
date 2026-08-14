@@ -5,11 +5,13 @@ import {
   CircleAlert,
   FileClock,
   ListChecks,
+  UsersRound,
   Users,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 function getStats(dashboard, { onOpenDrawer, onFocusScheduling }) {
+  const caseEasyImportPending = dashboard?.stats?.caseEasyImportPending ?? 0;
   return [
     {
       label: "Total Clients",
@@ -81,6 +83,25 @@ function getStats(dashboard, { onOpenDrawer, onFocusScheduling }) {
       helper: "scheduled calls and meetings",
       onClick: onFocusScheduling,
     },
+    // Previously invisible anywhere outside /app/case-easy-import itself —
+    // only rendered once there's actually an unconverted queue, so an
+    // agency with nothing to migrate doesn't carry a permanent empty tile.
+    ...(caseEasyImportPending > 0
+      ? [
+          {
+            label: "Case Easy Records Pending",
+            value: String(caseEasyImportPending),
+            icon: UsersRound,
+            iconClass: "bg-rose-50 text-rose-600",
+            badge: "Legacy",
+            badgeClass: "bg-rose-100 text-rose-700",
+            helper: dashboard?.stats?.caseEasyImportNeedsReview
+              ? `${dashboard.stats.caseEasyImportNeedsReview} need manual review`
+              : "not yet converted to clients",
+            to: "/app/case-easy-import",
+          },
+        ]
+      : []),
   ];
 }
 

@@ -63,7 +63,10 @@ export async function getLeadDashboard(req, db = prisma, now = new Date()) {
     db.lead.count({ where: openLeadWhere }),
     db.lead.count({ where: { ...openLeadWhere, firstContactAt: null, firstContactDueAt: { lt: now } } }),
     db.leadFollowUp.count({ where: { agencyId, status: "PENDING", dueAt: { gte: todayStart, lt: tomorrowStart }, lead: relatedLeadWhere } }),
-    db.leadFollowUp.count({ where: { agencyId, status: "PENDING", dueAt: { lt: now }, lead: relatedLeadWhere } }),
+    // Aligned to todayStart (not exact "now") so this count agrees with the
+    // Dashboard's overdue follow-up count, which uses the same day-boundary
+    // cutoff — see CD-003/CD-035.
+    db.leadFollowUp.count({ where: { agencyId, status: "PENDING", dueAt: { lt: todayStart }, lead: relatedLeadWhere } }),
     db.leadConsultation.count({ where: { agencyId, startAt: { gte: todayStart, lt: tomorrowStart }, status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] }, lead: relatedLeadWhere } }),
     db.lead.count({ where: { ...baseLeadWhere, status: "CONVERTED", convertedAt: { gte: weekStart, lt: tomorrowStart } } }),
     db.lead.count({ where: { ...baseLeadWhere, status: "LOST", lostAt: { gte: weekStart, lt: tomorrowStart } } }),
@@ -159,7 +162,8 @@ export async function getLeadDashboardDrilldown(req, db = prisma, now = new Date
   const relatedLeadWhere = { agencyId, deletedAt: null, ...access, ...leadSegmentWhere() };
 
   if (metric === "followUpsDueToday" || metric === "overdueFollowUps") {
-    const dueAt = metric === "followUpsDueToday" ? { gte: todayStart, lt: tomorrowStart } : { lt: now };
+    // Mirrors the todayStart cutoff used for the summary count above.
+    const dueAt = metric === "followUpsDueToday" ? { gte: todayStart, lt: tomorrowStart } : { lt: todayStart };
     const rows = await db.leadFollowUp.findMany({
       where: { agencyId, status: "PENDING", dueAt, lead: relatedLeadWhere },
       orderBy: { dueAt: "asc" },

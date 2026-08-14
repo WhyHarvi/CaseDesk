@@ -110,13 +110,29 @@ export async function listOomaCalls(req, res) {
 }
 
 export async function getOomaCallAttention(req, res) {
+  // Ooma settings default to enabled:true/callsEnabled:true even when no
+  // real integration has ever been connected, so those flags alone can't
+  // tell a live agency apart from one that's never touched this feature.
+  // webhookTokenHash is only ever set once an actual webhook has been
+  // provisioned, so its presence is a reasonable proxy for "really wired up".
+  // We only ever return a boolean here (never the settings row itself) so
+  // this stays safe to call from the non-admin roles this alert is shown to.
+  const settings = await prisma.agencyOomaSettings.findUnique({
+    where: { agencyId: req.auth.agencyId },
+    select: { enabled: true, callsEnabled: true, webhookTokenHash: true },
+  });
+  const configured = Boolean(settings?.enabled && settings?.callsEnabled && settings?.webhookTokenHash);
+  if (!configured) {
+    res.json({ data: null, configured: false });
+    return;
+  }
   const recent = new Date(Date.now() - 15 * 60_000);
   const data = await prisma.oomaCallSession.findFirst({
     where: { agencyId: req.auth.agencyId, direction: "INBOUND", status: { in: ["RINGING", "ANSWERED"] }, lastEventAt: { gte: recent }, ...callAccessWhere(req) },
     include: callInclude,
     orderBy: { lastEventAt: "desc" },
   });
-  res.json({ data });
+  res.json({ data, configured: true });
 }
 
 export async function getOomaCall(req, res) {

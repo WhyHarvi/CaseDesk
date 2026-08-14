@@ -1588,8 +1588,17 @@ export async function buildSchedulingAnalytics(req, query) {
   const range = query.range == null ? null : String(query.range);
   let dateWhere;
   if (range !== null) {
-    if (!["7", "30", "all"].includes(range)) throw createHttpError(400, "Choose a valid analytics range.", "VALIDATION_ERROR");
-    dateWhere = range === "all" ? {} : { startsAt: { gte: new Date(Date.now() - Number(range) * 86_400_000) } };
+    if (!["today", "7", "30", "all"].includes(range)) throw createHttpError(400, "Choose a valid analytics range.", "VALIDATION_ERROR");
+    if (range === "today") {
+      // The Dashboard's scheduling widget defaults to this range on every
+      // load ("Today" is its initial filter state, not just an option a
+      // user can pick) — it was 400ing unconditionally because "today" was
+      // never in the accepted set, only "7"/"30"/"all".
+      const todayKey = localDateKey(new Date(), settings.timezone);
+      dateWhere = { startsAt: { gte: localDateTimeToUtc(todayKey, 0, settings.timezone), lt: localDateTimeToUtc(todayKey, 24 * 60, settings.timezone) } };
+    } else {
+      dateWhere = range === "all" ? {} : { startsAt: { gte: new Date(Date.now() - Number(range) * 86_400_000) } };
+    }
   } else {
     const todayKey = localDateKey(new Date(), settings.timezone);
     const monthKey = `${todayKey.slice(0, 8)}01`;

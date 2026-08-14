@@ -52,6 +52,12 @@ export async function processClaimed(eventId) {
     if (!event || event.status !== "PROCESSING") return;
     const settings = event.importBatch?.settings && typeof event.importBatch.settings === "object" ? event.importBatch.settings : {};
     const mapping = event.channel === "CSV_IMPORT" ? settings.mapping : null;
+    // Public form submissions stash utm_source/medium/campaign/term/content
+    // (captured from the query string in lead.intake.service.js) under
+    // rawPayload.tracking. Read it off the event's original payload, before
+    // any provider adapter has a chance to reshape or drop it, so it lands
+    // on the Lead record instead of being buried in the JSON blob forever.
+    const tracking = event.rawPayload && typeof event.rawPayload.tracking === "object" && event.rawPayload.tracking ? event.rawPayload.tracking : {};
     const enrichedPayload = event.sourceConnection ? await enrichProviderPayload(event.sourceConnection, event.rawPayload) : event.rawPayload;
     const rawPayload = event.sourceConnection ? adaptProviderPayload(event.sourceConnection.provider, enrichedPayload) : event.rawPayload;
     // Website contact forms commonly collect only an email (or only a
@@ -99,6 +105,8 @@ export async function processClaimed(eventId) {
       consentGivenAt: rawPayload.consent === true ? new Date() : null,
       currentImmigrationStatus: normalized.data.currentImmigrationStatus, immigrationInterest: normalized.data.immigrationInterest,
       ownerUserId, originalSourceId: event.sourceId, campaignId: event.campaignId, initialMessage: normalized.data.initialMessage,
+      utmSource: tracking.utm_source || null, utmMedium: tracking.utm_medium || null, utmCampaign: tracking.utm_campaign || null,
+      utmTerm: tracking.utm_term || null, utmContent: tracking.utm_content || null,
       // Every adapter output flows through normalizeIncomingLead, which has
       // no concept of temperature — a provider adapter (currently only
       // WEBSITE) can still set it by attaching a `temperature` field to its
