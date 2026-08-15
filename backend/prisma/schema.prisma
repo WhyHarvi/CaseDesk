@@ -904,6 +904,7 @@ model CashTransaction {
   caseId                String?           @map("case_id")
   appointmentId         String?           @map("appointment_id")
   paymentApprovalId     String?           @unique @map("payment_approval_id")
+  idempotencyKey        String?           @map("idempotency_key")
   type                  String            @default("Payment")
   amount                Decimal           @db.Decimal(10, 2)
   currency              String            @default("CAD")
@@ -927,6 +928,7 @@ model CashTransaction {
   invoiceRefund         InvoiceRefund?
 
   @@unique([agencyId, reference])
+  @@unique([agencyId, idempotencyKey])
   @@index([agencyId, occurredAt])
   @@index([clientId, occurredAt])
   @@index([caseId, occurredAt])

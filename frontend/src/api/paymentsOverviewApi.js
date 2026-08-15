@@ -45,6 +45,11 @@ export async function closeCashLedger(values) {
   return response.data.data;
 }
 
+export async function withdrawCashLedger(values) {
+  const response = await api.post("/payments-overview/cash-withdrawals", values);
+  return response.data.data;
+}
+
 export async function getStuckInvoiceRefunds() {
   const response = await api.get("/payments-overview/invoice-refunds/stuck", { cache: false });
   return response.data.data;

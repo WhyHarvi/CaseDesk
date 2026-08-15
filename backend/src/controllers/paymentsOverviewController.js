@@ -3,6 +3,7 @@ import {
   getPaymentsSummary,
   getCashReconciliation,
   closeCashReconciliation,
+  withdrawCash,
   listAgencyPayments,
   listStuckInvoiceRefunds,
   listCashLedgerActivity,
@@ -13,7 +14,7 @@ import { approvePaymentApproval, listPaymentApprovals, rejectPaymentApproval } f
 import { markInvoiceRefundFailed } from "../services/caseInvoiceService.js";
 
 function requireAdmin(req) {
-  if (req.auth.role !== "admin") throw createHttpError(403, "Only an administrator can review staff-entered payments.", "FORBIDDEN");
+  if (req.auth.role !== "admin") throw createHttpError(403, "Only an administrator can access this financial operation.", "FORBIDDEN");
 }
 
 export async function getPaymentsList(req, res) {
@@ -44,6 +45,21 @@ export async function getCashClosing(req, res) {
 export async function closeCash(req, res) {
   requireAdmin(req);
   res.json({ data: await closeCashReconciliation(req.auth.agencyId, { day: req.body?.day, countedAmount: req.body?.countedAmount, note: req.body?.note, actorUserId: req.auth.userId }) });
+}
+
+export async function postCashWithdrawal(req, res) {
+  requireAdmin(req);
+  const data = await withdrawCash(req.auth.agencyId, {
+    day: req.body?.day,
+    amount: req.body?.amount,
+    reference: req.body?.reference,
+    note: req.body?.note,
+    idempotencyKey: req.body?.idempotencyKey,
+    actorUserId: req.auth.userId,
+  });
+  res.status(data.reused ? 200 : 201).json({
+    data,
+  });
 }
 
 export async function getRefundReview(req, res) {

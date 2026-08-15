@@ -8,6 +8,7 @@ import {
   rejectPayment,
   getCashClosing,
   closeCash,
+  postCashWithdrawal,
   getStuckInvoiceRefunds,
   failInvoiceRefund,
   getCashLedgerActivity,
@@ -20,6 +21,7 @@ router.get("/", asyncHandler(getPaymentsList));
 router.get("/summary", asyncHandler(getPaymentsSummaryOverview));
 router.get("/cash-closing", asyncHandler(getCashClosing));
 router.post("/cash-closing", asyncHandler(closeCash));
+router.post("/cash-withdrawals", asyncHandler(postCashWithdrawal));
 router.get("/approvals", asyncHandler(getPaymentApprovals));
 router.post("/approvals/:id/approve", asyncHandler(approvePayment));
 router.post("/approvals/:id/reject", asyncHandler(rejectPayment));

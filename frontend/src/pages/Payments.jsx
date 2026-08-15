@@ -33,6 +33,7 @@ import {
   rejectPaymentApproval,
   getCashClosing,
   closeCashLedger,
+  withdrawCashLedger,
   getStuckInvoiceRefunds,
   failInvoiceRefund,
   getCashLedgerActivity,
@@ -72,7 +73,7 @@ function cx(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Overdue: "Overdue", Voided: "Voided", NeedsClassification: "Needs classification" };
+const STATUS_LABEL = { Open: "Open", PartiallyPaid: "Partially paid", Paid: "Paid", Refunded: "Refunded", PartiallyRefunded: "Partially refunded", Withdrawn: "Withdrawn", Overdue: "Overdue", Voided: "Voided", NeedsClassification: "Needs classification" };
 const STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600 ring-slate-200",
   PartiallyPaid: "bg-amber-50 text-amber-600 ring-amber-100",
@@ -80,6 +81,7 @@ const STATUS_TONE = {
   Refunded: "bg-violet-50 text-violet-600 ring-violet-100",
   PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-600 ring-fuchsia-100",
   NeedsClassification: "bg-orange-50 text-orange-700 ring-orange-200",
+  Withdrawn: "bg-amber-50 text-amber-700 ring-amber-200",
   Overdue: "bg-rose-50 text-rose-600 ring-rose-100",
   Voided: "bg-slate-100 text-slate-400 ring-slate-200",
 };
@@ -114,6 +116,18 @@ const ORPHANED_PAYMENT_RUNBOOK = [
 function formatDate(value) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function localInputDate(value = new Date()) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function newCashWithdrawalKey() {
+  if (globalThis.crypto?.randomUUID) return `cash-withdrawal:${globalThis.crypto.randomUUID()}`;
+  return `cash-withdrawal:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 }
 
 // "What this payment is about" — a consultation-booking hold points at the
@@ -506,13 +520,14 @@ function CashLedgerDrawer({ onClose }) {
                 <div key={row.id} className="rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-900">{row.clientName || "No client linked"}</p>
-                      <p className="mt-1 text-xs text-slate-500">{row.type === "Refund" ? "Cash refund" : "Cash receipt"} · {formatDate(row.occurredAt)}</p>
+                      <p className="truncate text-sm font-semibold text-slate-900">{row.clientName || (row.type === "Withdrawal" ? "Cash drawer" : "No client linked")}</p>
+                      <p className="mt-1 text-xs text-slate-500">{row.type === "Withdrawal" ? "Cash withdrawal" : row.type === "Refund" ? "Cash refund" : "Cash receipt"} · {formatDate(row.occurredAt)}</p>
                       {row.note ? <p className="mt-1 text-[11px] text-slate-400">{row.note}</p> : null}
                       {row.reference ? <p className="mt-1 text-[11px] text-slate-400">Ref #{row.reference}</p> : null}
+                      {row.createdByName ? <p className="mt-1 text-[11px] text-slate-400">Recorded by {row.createdByName}</p> : null}
                     </div>
-                    <p className={cx("shrink-0 text-sm font-semibold tabular-nums", row.type === "Refund" ? "text-rose-600" : "text-emerald-600")}>
-                      {row.type === "Refund" ? "-" : "+"}{money.format(Math.abs(row.amount))}
+                    <p className={cx("shrink-0 text-sm font-semibold tabular-nums", Number(row.amount) < 0 ? "text-rose-600" : "text-emerald-600")}>
+                      {Number(row.amount) < 0 ? "-" : "+"}{money.format(Math.abs(row.amount))}
                     </p>
                   </div>
                 </div>
@@ -1071,16 +1086,22 @@ function ImportReviewLedgerSection() {
 }
 
 function CashClosingSection({ onChanged }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localInputDate();
   const [day, setDay] = useState(today);
   const [data, setData] = useState(null);
   const [countedAmount, setCountedAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [withdrawalBusy, setWithdrawalBusy] = useState(false);
+  const [withdrawalKey, setWithdrawalKey] = useState(newCashWithdrawalKey);
+  const [withdrawal, setWithdrawal] = useState({ amount: "", reference: "", note: "", confirmed: false });
 
   async function load(value = day) {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNotice(""); setData(null); setCountedAmount(""); setNote("");
+    setWithdrawal({ amount: "", reference: "", note: "", confirmed: false });
+    setWithdrawalKey(newCashWithdrawalKey());
     try {
       const next = await getCashClosing(value);
       setData(next); setCountedAmount(next.closing ? String(Number(next.closing.countedAmount)) : ""); setNote(next.closing?.note || "");
@@ -1090,22 +1111,71 @@ function CashClosingSection({ onChanged }) {
   useEffect(() => { load(day); }, [day]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function closeDay(event) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
       setData(await closeCashLedger({ day, countedAmount, note }));
+      setNotice("Cash closing saved.");
       onChanged?.();
     }
     catch (reason) { setError(reason.response?.data?.message || "Cash closing could not be saved."); }
     finally { setBusy(false); }
   }
 
-  const variance = Number(countedAmount || 0) - Number(data?.expectedAmount || 0);
+  async function postWithdrawal(event) {
+    event.preventDefault(); setWithdrawalBusy(true); setError(""); setNotice("");
+    try {
+      const next = await withdrawCashLedger({
+        day,
+        amount: withdrawal.amount,
+        reference: withdrawal.reference,
+        note: withdrawal.note,
+        idempotencyKey: withdrawalKey,
+      });
+      setData(next);
+      setWithdrawal({ amount: "", reference: "", note: "", confirmed: false });
+      setWithdrawalKey(newCashWithdrawalKey());
+      setNotice(next.reused ? "This withdrawal was already recorded; no duplicate was created." : "Withdrawal recorded and cash on hand updated.");
+      onChanged?.();
+    }
+    catch (reason) { setError(reason.response?.data?.message || "Cash withdrawal could not be recorded."); }
+    finally { setWithdrawalBusy(false); }
+  }
+
+  const hasCountedAmount = countedAmount !== "";
+  const variance = hasCountedAmount ? Number(countedAmount) - Number(data?.expectedAmount || 0) : null;
+  const withdrawalAmount = Number(withdrawal.amount);
+  const availableCash = Number(data?.expectedAmount || 0);
+  const withdrawalDisabled = withdrawalBusy
+    || !data
+    || Boolean(data.closing)
+    || !withdrawal.confirmed
+    || !withdrawal.note.trim()
+    || !Number.isFinite(withdrawalAmount)
+    || withdrawalAmount <= 0
+    || withdrawalAmount > availableCash;
+
   return <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className={cx(glass, "overflow-hidden p-5 sm:p-7")}>
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><Scale className="h-5 w-5 text-emerald-600" /><h2 className="text-lg font-semibold text-slate-950">CaseDesk Cash closing</h2></div><p className="mt-1 text-sm text-slate-500">Compare the physical cash count with posted cash receipts and refunds.</p></div><input type="date" max={today} value={day} onChange={(event) => setDay(event.target.value)} className={filterControl} /></div>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><Scale className="h-5 w-5 text-emerald-600" /><h2 className="text-lg font-semibold text-slate-950">CaseDesk Cash closing</h2></div><p className="mt-1 text-sm text-slate-500">Track receipts, refunds, withdrawals, and the physical cash balance.</p></div><input type="date" max={today} value={day} onChange={(event) => setDay(event.target.value)} className={filterControl} /></div>
     {error ? <p className="mt-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
+    {notice ? <p className="mt-4 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p> : null}
     <p className="mt-4 text-xs text-slate-400">Opening balance carries forward from your last closing (or $0 if you've never closed cash before) — "System cash" is what should be in the drawer right now, not just what moved today.</p>
-    <div className="mt-3 grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Opening balance</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(Number(data?.openingBalance || 0))}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">System cash (running total)</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(Number(data?.expectedAmount || 0))}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Receipts</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.receiptCount || 0}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Cash refunds</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.refundCount || 0}</p></div></div>
-    <form onSubmit={closeDay} className="mt-5 grid gap-4 rounded-[1.4rem] border border-emerald-100 bg-emerald-50/60 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="text-xs font-semibold text-slate-600">Physical cash counted<input required type="number" min="0" step="0.01" value={countedAmount} onChange={(event) => setCountedAmount(event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><label className="text-xs font-semibold text-slate-600">Closing note<input value={note} onChange={(event) => setNote(event.target.value)} maxLength="500" placeholder="Optional context for a variance" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><button type="submit" disabled={busy || countedAmount === ""} className="flex h-11 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{data?.closing ? "Update closing" : "Close cash"}</button><p className={`text-xs font-semibold sm:col-span-3 ${Math.abs(variance) < 0.01 ? "text-emerald-700" : "text-amber-700"}`}>Current variance: {money.format(variance)}{data?.closing?.closedBy?.fullName ? ` · last closed by ${data.closing.closedBy.fullName}` : ""}</p></form>
+    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Opening balance</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(Number(data?.openingBalance || 0))}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">System cash (running total)</p><p className="mt-1 text-xl font-semibold text-slate-950">{money.format(availableCash)}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Receipts</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.receiptCount || 0}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Cash refunds</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.refundCount || 0}</p></div><div className="rounded-2xl bg-slate-50 p-4"><p className="text-xs font-semibold text-slate-400">Withdrawals</p><p className="mt-1 text-xl font-semibold text-slate-950">{data?.withdrawalCount || 0}</p></div></div>
+
+    <form onSubmit={postWithdrawal} className="mt-5 rounded-[1.4rem] border border-amber-100 bg-amber-50/60 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><div className="flex items-center gap-2"><Landmark className="h-4 w-4 text-amber-700" /><h3 className="text-sm font-semibold text-slate-900">Withdraw cash</h3></div><p className="mt-1 text-xs text-slate-500">For a bank deposit or other physical cash removal. This immediately reduces cash on hand and remains in history.</p></div><p className="shrink-0 text-xs font-semibold text-amber-800">Available: {money.format(availableCash)}</p></div>
+      {data?.closing ? <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-xs text-amber-800">This date is closed. Choose the next open cash date to record a withdrawal.</p> : null}
+      <div className="mt-4 grid gap-3 lg:grid-cols-[0.65fr_1fr_1.5fr]">
+        <label className="text-xs font-semibold text-slate-600">Amount<input required type="number" min="0.01" max={Math.max(0, availableCash)} step="0.01" value={withdrawal.amount} onChange={(event) => setWithdrawal((value) => ({ ...value, amount: event.target.value }))} placeholder="0.00" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-amber-100" /></label>
+        <label className="text-xs font-semibold text-slate-600">Deposit / receipt reference <span className="font-normal text-slate-400">(optional)</span><input value={withdrawal.reference} onChange={(event) => setWithdrawal((value) => ({ ...value, reference: event.target.value }))} maxLength="100" placeholder="Bank deposit slip or receipt #" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-amber-100" /></label>
+        <label className="text-xs font-semibold text-slate-600">Reason<input required value={withdrawal.note} onChange={(event) => setWithdrawal((value) => ({ ...value, note: event.target.value }))} maxLength="500" placeholder="Example: Deposited cash into business bank account" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-amber-100" /></label>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><label className="flex items-start gap-2 text-xs leading-5 text-slate-600"><input type="checkbox" checked={withdrawal.confirmed} onChange={(event) => setWithdrawal((value) => ({ ...value, confirmed: event.target.checked }))} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-200" /><span>I confirm this cash has physically left the drawer.</span></label><button type="submit" disabled={withdrawalDisabled} className="flex h-11 items-center justify-center gap-2 rounded-full bg-amber-600 px-5 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40">{withdrawalBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Landmark className="h-4 w-4" />}Post withdrawal</button></div>
+      {withdrawal.amount && withdrawalAmount > availableCash ? <p className="mt-2 text-xs font-semibold text-rose-600">Withdrawal cannot exceed the available cash balance.</p> : null}
+    </form>
+
+    {data?.withdrawals?.length ? <div className="mt-5"><h3 className="text-sm font-semibold text-slate-900">Withdrawals on {formatDate(`${day}T12:00:00`)}</h3><div className="mt-2 space-y-2">{data.withdrawals.map((row) => <div key={row.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white/80 p-4 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-semibold text-slate-900">{row.note}</p><p className="mt-1 text-xs text-slate-500">{row.reference ? `Reference ${row.reference} · ` : ""}Recorded by {row.createdBy?.fullName || "Unknown user"}</p></div><p className="shrink-0 text-sm font-semibold tabular-nums text-rose-600">-{money.format(Number(row.amount))}</p></div>)}</div></div> : null}
+
+    <form onSubmit={closeDay} className="mt-5 grid gap-4 rounded-[1.4rem] border border-emerald-100 bg-emerald-50/60 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="text-xs font-semibold text-slate-600">Physical cash counted<input required type="number" min="0" step="0.01" value={countedAmount} onChange={(event) => setCountedAmount(event.target.value)} className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><label className="text-xs font-semibold text-slate-600">Closing note<input value={note} onChange={(event) => setNote(event.target.value)} maxLength="500" placeholder="Optional context for a variance" className="mt-2 h-11 w-full rounded-2xl border border-white bg-white px-3.5 text-sm outline-none focus:ring-4 focus:ring-emerald-100" /></label><button type="submit" disabled={busy || !data || countedAmount === ""} className="flex h-11 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{data?.closing ? "Update closing" : "Close cash"}</button>{variance === null ? <p className="text-xs font-medium text-slate-500 sm:col-span-3">Enter the physical cash count to calculate the variance.</p> : <p className={`text-xs font-semibold sm:col-span-3 ${Math.abs(variance) < 0.01 ? "text-emerald-700" : "text-amber-700"}`}>Current variance: {money.format(variance)}{data?.closing?.closedBy?.fullName ? ` · last closed by ${data.closing.closedBy.fullName}` : ""}</p>}</form>
   </motion.section>;
 }
 

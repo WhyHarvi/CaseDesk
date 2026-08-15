@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { reconcileAgencyBookingRefunds } from "./quickbooksWebhookService.js";
 import { listFeeCategories } from "./feeCategoryService.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { localDateKey } from "./bookingAvailabilityService.js";
 import {
   getQuickBooksCustomer,
   getQuickBooksRefundReceipt,
@@ -21,8 +22,33 @@ function cashDayBounds(day) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw Object.assign(new Error("Choose a valid cash-closing date."), { statusCode: 400, code: "VALIDATION_ERROR" });
   const start = new Date(`${text}T00:00:00.000Z`);
   const end = new Date(`${text}T23:59:59.999Z`);
-  if (Number.isNaN(start.getTime())) throw Object.assign(new Error("Choose a valid cash-closing date."), { statusCode: 400, code: "VALIDATION_ERROR" });
+  if (Number.isNaN(start.getTime()) || start.toISOString().slice(0, 10) !== text) throw Object.assign(new Error("Choose a valid cash-closing date."), { statusCode: 400, code: "VALIDATION_ERROR" });
   return { text, start, end };
+}
+
+function cashError(message, code = "VALIDATION_ERROR", statusCode = 400) {
+  return Object.assign(new Error(message), { statusCode, code });
+}
+
+async function assertCashDateIsOpen(agencyId, bounds, db = prisma, { allowLatestClosing = false } = {}) {
+  const [agency, latestClosing] = await Promise.all([
+    db.agency.findUnique({ where: { id: agencyId }, select: { timezone: true } }),
+    db.cashReconciliation.findFirst({ where: { agencyId }, orderBy: { periodEnd: "desc" }, select: { periodStart: true, periodEnd: true } }),
+  ]);
+  if (!agency) throw cashError("Workspace not found.", "NOT_FOUND", 404);
+  const today = localDateKey(new Date(), agency.timezone || "America/Toronto");
+  if (bounds.text > today) throw cashError("Cash activity cannot be recorded in the future.");
+  if (!latestClosing) return;
+  const isLatestClosing = latestClosing.periodStart.getTime() === bounds.start.getTime();
+  if (bounds.start < latestClosing.periodStart || (!allowLatestClosing && isLatestClosing)) {
+    throw cashError(
+      allowLatestClosing
+        ? "An earlier cash closing cannot be changed after a later closing has been completed."
+        : "This cash date is already closed. Record the withdrawal on the next open cash date.",
+      "CASH_PERIOD_CLOSED",
+      409,
+    );
+  }
 }
 
 // A cash closing is a running balance, not a same-day-only total — the
@@ -33,16 +59,16 @@ function cashDayBounds(day) {
 // never closed cash before) + every Posted cash movement between that prior
 // close and the end of the selected day. receiptCount/refundCount cover
 // that same cumulative window, not just the selected calendar day.
-async function cashDayTotals(agencyId, day) {
+async function cashDayTotals(agencyId, day, db = prisma) {
   const bounds = cashDayBounds(day);
-  const priorClosing = await prisma.cashReconciliation.findFirst({
+  const priorClosing = await db.cashReconciliation.findFirst({
     where: { agencyId, periodEnd: { lt: bounds.start } },
     orderBy: { periodEnd: "desc" },
     select: { countedAmount: true, periodEnd: true },
   });
   const openingBalance = Math.round(Number(priorClosing?.countedAmount || 0) * 100) / 100;
   const sinceExclusive = priorClosing?.periodEnd || null;
-  const rows = await prisma.cashTransaction.findMany({
+  const rows = await db.cashTransaction.findMany({
     where: {
       agencyId,
       status: "Posted",
@@ -56,8 +82,9 @@ async function cashDayTotals(agencyId, day) {
     openingBalance,
     movement,
     expectedAmount: Math.round((openingBalance + movement) * 100) / 100,
-    receiptCount: rows.filter((row) => row.type !== "Refund").length,
+    receiptCount: rows.filter((row) => row.type === "Payment").length,
     refundCount: rows.filter((row) => row.type === "Refund").length,
+    withdrawalCount: rows.filter((row) => row.type === "Withdrawal").length,
   };
 }
 
@@ -97,6 +124,7 @@ export async function listCashLedgerActivity(agencyId, { limit = 100 } = {}) {
     include: {
       client: { select: { fullName: true } },
       case: { select: { caseType: true } },
+      createdBy: { select: { fullName: true } },
     },
     orderBy: { occurredAt: "desc" },
     take: limit,
@@ -116,6 +144,7 @@ export async function listCashLedgerActivity(agencyId, { limit = 100 } = {}) {
       caseType: row.case?.caseType || null,
       reference: row.reference,
       note: row.note,
+      createdByName: row.createdBy?.fullName || null,
     })),
   };
 }
@@ -145,36 +174,76 @@ export async function listQuickBooksSyncFailures(agencyId, { limit = 100 } = {})
 
 export async function getCashReconciliation(agencyId, day) {
   const totals = await cashDayTotals(agencyId, day);
-  const closing = await prisma.cashReconciliation.findUnique({
-    where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
-    include: { closedBy: { select: { id: true, fullName: true } } },
-  });
-  return { day: totals.text, openingBalance: totals.openingBalance, movement: totals.movement, expectedAmount: totals.expectedAmount, receiptCount: totals.receiptCount, refundCount: totals.refundCount, closing };
+  const [closing, withdrawals] = await Promise.all([
+    prisma.cashReconciliation.findUnique({
+      where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
+      include: { closedBy: { select: { id: true, fullName: true } } },
+    }),
+    prisma.cashTransaction.findMany({
+      where: { agencyId, type: "Withdrawal", status: "Posted", occurredAt: { gte: totals.start, lte: totals.end } },
+      include: { createdBy: { select: { id: true, fullName: true } } },
+      orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+    }),
+  ]);
+  return {
+    day: totals.text,
+    openingBalance: totals.openingBalance,
+    movement: totals.movement,
+    expectedAmount: totals.expectedAmount,
+    receiptCount: totals.receiptCount,
+    refundCount: totals.refundCount,
+    withdrawalCount: totals.withdrawalCount,
+    closing,
+    withdrawals: withdrawals.map((row) => ({
+      id: row.id,
+      amount: Math.abs(Number(row.amount)),
+      reference: row.reference,
+      note: row.note,
+      occurredAt: row.occurredAt,
+      createdAt: row.createdAt,
+      createdBy: row.createdBy,
+    })),
+  };
 }
 
 export async function closeCashReconciliation(agencyId, { day, countedAmount, note, actorUserId }) {
-  const totals = await cashDayTotals(agencyId, day);
   const counted = Math.round(Number(countedAmount) * 100) / 100;
   if (!Number.isFinite(counted) || counted < 0 || counted > 10_000_000) throw Object.assign(new Error("Enter the physical cash amount counted."), { statusCode: 400, code: "VALIDATION_ERROR" });
-  const closing = await prisma.cashReconciliation.upsert({
-    where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
-    create: {
-      agencyId, periodStart: totals.start, periodEnd: totals.end,
-      expectedAmount: totals.expectedAmount, countedAmount: counted,
-      varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
-      receiptCount: totals.receiptCount, refundCount: totals.refundCount,
-      note: String(note || "").trim().slice(0, 500) || null,
-      closedById: actorUserId,
-    },
-    update: {
-      periodEnd: totals.end, expectedAmount: totals.expectedAmount,
-      countedAmount: counted, varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
-      receiptCount: totals.receiptCount, refundCount: totals.refundCount,
-      note: String(note || "").trim().slice(0, 500) || null,
-      closedById: actorUserId, closedAt: new Date(), status: "Closed",
-    },
-    include: { closedBy: { select: { id: true, fullName: true } } },
-  });
+  const closingNote = String(note || "").trim().slice(0, 500) || null;
+  let saved;
+  try {
+    saved = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "agencies" WHERE "id" = ${agencyId} FOR UPDATE`;
+      const totals = await cashDayTotals(agencyId, day, tx);
+      await assertCashDateIsOpen(agencyId, totals, tx, { allowLatestClosing: true });
+      const closing = await tx.cashReconciliation.upsert({
+        where: { agencyId_periodStart: { agencyId, periodStart: totals.start } },
+        create: {
+          agencyId, periodStart: totals.start, periodEnd: totals.end,
+          expectedAmount: totals.expectedAmount, countedAmount: counted,
+          varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
+          receiptCount: totals.receiptCount, refundCount: totals.refundCount,
+          note: closingNote,
+          closedById: actorUserId,
+        },
+        update: {
+          periodEnd: totals.end, expectedAmount: totals.expectedAmount,
+          countedAmount: counted, varianceAmount: Math.round((counted - totals.expectedAmount) * 100) / 100,
+          receiptCount: totals.receiptCount, refundCount: totals.refundCount,
+          note: closingNote,
+          closedById: actorUserId, closedAt: new Date(), status: "Closed",
+        },
+        include: { closedBy: { select: { id: true, fullName: true } } },
+      });
+      return { closing, totals };
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error?.code === "P2034") {
+      throw cashError("Cash activity changed while the closing was being saved. Review the current balance and try again.", "CASH_BALANCE_CHANGED", 409);
+    }
+    throw error;
+  }
+  const { closing, totals } = saved;
   await recordActivity({
     agencyId,
     userId: actorUserId,
@@ -183,7 +252,98 @@ export async function closeCashReconciliation(agencyId, { day, countedAmount, no
     entityType: "cashReconciliation",
     entityId: closing.id,
   }).catch(() => {});
-  return { day: totals.text, openingBalance: totals.openingBalance, movement: totals.movement, expectedAmount: totals.expectedAmount, receiptCount: totals.receiptCount, refundCount: totals.refundCount, closing };
+  return getCashReconciliation(agencyId, totals.text);
+}
+
+export async function withdrawCash(agencyId, { day, amount, reference, note, actorUserId, idempotencyKey }) {
+  const numericAmount = Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 10_000_000) {
+    throw cashError("Enter a withdrawal amount between $0.01 and $10,000,000.");
+  }
+  const reason = String(note || "").trim().slice(0, 500);
+  if (!reason) throw cashError("Enter a reason for the cash withdrawal.");
+  const externalReference = String(reference || "").trim().slice(0, 100) || null;
+  const operationKey = String(idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200);
+  if (!operationKey) throw cashError("A valid cash-withdrawal operation key is required.");
+  const requestedDay = cashDayBounds(day);
+
+  let reused = false;
+  let transaction;
+  try {
+    transaction = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "agencies" WHERE "id" = ${agencyId} FOR UPDATE`;
+      const existing = await tx.cashTransaction.findUnique({
+        where: { agencyId_idempotencyKey: { agencyId, idempotencyKey: operationKey } },
+        include: { createdBy: { select: { id: true, fullName: true } } },
+      });
+      if (existing) {
+        const sameRequest = existing.type === "Withdrawal"
+          && Math.abs(Number(existing.amount) + numericAmount) < 0.001
+          && existing.occurredAt.toISOString().slice(0, 10) === requestedDay.text
+          && existing.reference === externalReference
+          && existing.note === reason;
+        if (!sameRequest) throw cashError("This operation key is already in use for a different cash withdrawal.", "IDEMPOTENCY_CONFLICT", 409);
+        reused = true;
+        return existing;
+      }
+
+      const totals = await cashDayTotals(agencyId, requestedDay.text, tx);
+      await assertCashDateIsOpen(agencyId, totals, tx);
+      if (numericAmount > totals.expectedAmount + 0.001) {
+        throw cashError(
+          `Only $${totals.expectedAmount.toFixed(2)} is available in the CaseDesk cash drawer for ${totals.text}.`,
+          "INSUFFICIENT_CASH",
+          409,
+        );
+      }
+      return tx.cashTransaction.create({
+        data: {
+          agencyId,
+          idempotencyKey: operationKey,
+          type: "Withdrawal",
+          amount: -numericAmount,
+          reference: externalReference,
+          occurredAt: new Date(`${totals.text}T12:00:00.000Z`),
+          status: "Posted",
+          note: reason,
+          createdById: actorUserId,
+        },
+        include: { createdBy: { select: { id: true, fullName: true } } },
+      });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error?.code === "P2002") {
+      throw cashError("That withdrawal reference or operation has already been recorded.", "DUPLICATE_CASH_WITHDRAWAL", 409);
+    }
+    if (error?.code === "P2034") {
+      throw cashError("Cash activity changed while the withdrawal was being saved. Review the current balance and try again.", "CASH_BALANCE_CHANGED", 409);
+    }
+    throw error;
+  }
+
+  if (!reused) {
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      action: "cash.withdrawal_posted",
+      details: `Cash withdrawal $${numericAmount.toFixed(2)}${externalReference ? ` · reference ${externalReference}` : ""} · ${reason}`,
+      entityType: "cashTransaction",
+      entityId: transaction.id,
+    }).catch(() => {});
+  }
+  return {
+    ...(await getCashReconciliation(agencyId, day)),
+    withdrawal: {
+      id: transaction.id,
+      amount: Math.abs(Number(transaction.amount)),
+      reference: transaction.reference,
+      note: transaction.note,
+      occurredAt: transaction.occurredAt,
+      createdAt: transaction.createdAt,
+      createdBy: transaction.createdBy,
+    },
+    reused,
+  };
 }
 
 // Surfaces case-invoice refunds still waiting on QuickBooks so an admin can
@@ -504,15 +664,15 @@ async function fetchCashTransactionRows(agencyId, { from, to }) {
     recordId: row.id,
     source: "cash_transaction",
     ledger: "CaseDesk Cash",
-    type: row.type === "Refund" ? "Cash refund" : "Cash receipt",
+    type: row.type === "Withdrawal" ? "Cash withdrawal" : row.type === "Refund" ? "Cash refund" : "Cash receipt",
     description: row.allocations[0]?.invoice?.description || row.note || "Cash transaction",
-    clientName: row.client?.fullName || "Unknown client",
+    clientName: row.client?.fullName || (row.type === "Withdrawal" ? "Cash drawer" : "Unknown client"),
     clientId: row.clientId,
     caseId: row.caseId,
     caseType: row.case?.caseType || null,
-    amount: Math.abs(Number(row.amount)),
+    amount: row.type === "Withdrawal" ? Number(row.amount) : Math.abs(Number(row.amount)),
     balance: 0,
-    status: row.status === "Posted" ? (row.type === "Refund" ? "Refunded" : "Paid") : row.status,
+    status: row.status === "Posted" ? (row.type === "Withdrawal" ? "Withdrawn" : row.type === "Refund" ? "Refunded" : "Paid") : row.status,
     invoiceNumber: row.allocations[0]?.invoice?.invoiceNumber || null,
     qbInvoiceNumber: null,
     qbInvoiceLink: null,
@@ -762,7 +922,9 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
     combined = combined.filter((row) => row.clientName.toLowerCase().includes(needle)
       || (row.invoiceNumber || "").toLowerCase().includes(needle)
       || (row.qbInvoiceNumber || "").toLowerCase().includes(needle)
-      || (row.paymentMethod || "").toLowerCase().includes(needle));
+      || (row.paymentMethod || "").toLowerCase().includes(needle)
+      || (row.paymentReference || "").toLowerCase().includes(needle)
+      || (row.description || "").toLowerCase().includes(needle));
   }
   combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
