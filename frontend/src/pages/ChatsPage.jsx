@@ -1,8 +1,8 @@
-import { Check, ChevronLeft, Loader2, MessagesSquare, Search, SquarePen, Users, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, Loader2, MessagesSquare, Search, SquarePen, Users, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 import {
@@ -65,6 +65,13 @@ function formatThreadTime(value) {
 // group photo (fetched via useThreadAvatarUrls) takes over from the
 // gradient glyph once one has been set.
 function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
+  if (item?.kind === "ai") {
+    return (
+      <span className={`flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-sky-700 text-white ${className}`}>
+        <Bot className="h-4 w-4" />
+      </span>
+    );
+  }
   if (avatarUrl) {
     return (
       <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full ${className}`}>
@@ -91,6 +98,13 @@ function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
 // conversation vs a colleague one — the color alone (avatar gradient)
 // wasn't explicit enough once both kinds sit in the same list.
 function KindBadge({ kind }) {
+  if (kind === "ai") {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700">
+        AI
+      </span>
+    );
+  }
   const isClient = kind === "client";
   return (
     <span
@@ -252,6 +266,7 @@ export default function ChatsPage() {
   const { appUser } = useAuth();
   const myUserId = appUser?.id;
   const reduceMotion = useReducedMotion();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
@@ -281,6 +296,28 @@ export default function ChatsPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [commPermissions, setCommPermissions] = useState({});
   const [groupProfileOpen, setGroupProfileOpen] = useState(false);
+  const [novaMessages, setNovaMessages] = useState([
+    {
+      id: "nova-welcome",
+      direction: "Inbound",
+      bodyText: "I am Nova. Ask me where to find something in CaseDesk.",
+      occurredAt: new Date().toISOString(),
+    },
+  ]);
+
+  const novaItem = useMemo(() => {
+    const latest = novaMessages[novaMessages.length - 1];
+    return {
+      kind: "ai",
+      category: "teams",
+      id: "nova",
+      name: "Nova",
+      isGroup: false,
+      lastMessageAt: latest?.occurredAt || new Date().toISOString(),
+      unreadCount: 0,
+      preview: latest?.bodyText || "CaseDesk AI",
+    };
+  }, [novaMessages]);
 
   useEffect(() => {
     api.get("/communications/providers").then((response) => setCommPermissions(response.data.meta?.permissions || {})).catch(() => {});
@@ -301,6 +338,9 @@ export default function ChatsPage() {
   }, []);
 
   const fetchDetailOnce = useCallback(async (kind, id) => {
+    if (kind === "ai") {
+      return { ...novaItem, messages: [...novaMessages].reverse(), caseId: null };
+    }
     if (kind === "internal") {
       const data = await getInternalChatThread(id);
       return { kind: "internal", id, name: data.name, isGroup: data.isGroup, hasAvatar: data.hasAvatar, participants: data.participants, messages: data.messages, caseId: null };
@@ -318,7 +358,7 @@ export default function ChatsPage() {
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
-  }, []);
+  }, [novaItem, novaMessages]);
 
   const loadDetail = useCallback(async (kind, id, { silent = false } = {}) => {
     if (!id) return;
@@ -370,6 +410,7 @@ export default function ChatsPage() {
 
   const fetchRealtimeConfig = useCallback(() => {
     if (!selectedId) return Promise.resolve({ configured: false });
+    if (selectedKind === "ai") return Promise.resolve({ configured: false });
     if (selectedKind === "internal") return getInternalChatRealtimeConfig(selectedId);
     if (activeDetail?.kind === "client" && activeDetail.id === selectedId && activeDetail.caseId) {
       return api.get(`/communications/realtime/case/${activeDetail.caseId}`).then((response) => response.data.data);
@@ -403,7 +444,7 @@ export default function ChatsPage() {
   }, [selectedKind, selectedId, realtime?.configured, loadDetail, loadLists]);
 
   useEffect(() => {
-    if (!selectedId || document.visibilityState !== "visible") return;
+    if (!selectedId || selectedKind === "ai" || document.visibilityState !== "visible") return;
     const markRead = selectedKind === "internal"
       ? () => markInternalChatThreadRead(selectedId)
       : () => api.post(`/communications/conversations/${selectedId}/read`, { read: true }).catch(() => {});
@@ -422,13 +463,14 @@ export default function ChatsPage() {
   }
 
   const thread = useMemo(() => {
+    if (selectedKind === "ai") return novaMessages;
     if (!activeDetail) return [];
     const messages = [...(activeDetail.messages || [])].reverse();
     if (activeDetail.kind === "internal") {
       return messages.map((message) => ({ ...message, direction: message.senderId === myUserId ? "Outbound" : "Inbound" }));
     }
     return messages; // client messages already carry a real direction field
-  }, [activeDetail, myUserId]);
+  }, [activeDetail, myUserId, selectedKind, novaMessages]);
   const displayMessages = useMemo(() => [...thread, ...pending], [thread, pending]);
 
   // Plays the receive chime for a genuinely new inbound message (not one of
@@ -494,13 +536,13 @@ export default function ChatsPage() {
         preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
       };
     });
-    return [...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
-  }, [internalThreads, clientConversations]);
+    return [novaItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
+  }, [internalThreads, clientConversations, novaItem]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
     return mergedItems.filter((item) => {
-      if (categoryFilter && item.category !== categoryFilter) return false;
+      if (item.kind !== "ai" && categoryFilter && item.category !== categoryFilter) return false;
       if (!query) return true;
       return `${item.name} ${item.preview}`.toLowerCase().includes(query);
     });
@@ -518,14 +560,34 @@ export default function ChatsPage() {
     const clientMessageId = crypto.randomUUID();
     const replyToId = replyTarget?.id || undefined;
     const optimistic = { id: `pending-${clientMessageId}`, clientMessageId, senderId: myUserId, direction: "Outbound", bodyText, occurredAt: new Date().toISOString(), pending: true };
-    setPending((current) => [...current, optimistic]);
+    if (selectedKind === "ai") setNovaMessages((current) => [...current, optimistic]);
+    else setPending((current) => [...current, optimistic]);
     setDraft("");
     setReplyTarget(null);
     setSending(true);
     setError("");
     playSentSound();
     try {
-      if (selectedKind === "internal") {
+      if (selectedKind === "ai") {
+        const history = [...novaMessages, optimistic].map((message) => ({
+          role: message.direction === "Outbound" ? "user" : "assistant",
+          content: message.bodyText,
+        }));
+        const response = await api.post(
+          "/ai/chat",
+          { messages: history, currentPath: location.pathname },
+          { timeout: 60_000 },
+        );
+        setNovaMessages((current) => [
+          ...current.map((item) => (item.id === optimistic.id ? { ...item, pending: false } : item)),
+          {
+            id: `nova-${crypto.randomUUID()}`,
+            direction: "Inbound",
+            bodyText: response.data.message,
+            occurredAt: new Date().toISOString(),
+          },
+        ]);
+      } else if (selectedKind === "internal") {
         await sendInternalChatMessage(selectedId, { bodyText, clientMessageId, replyToId });
       } else {
         await api.post(
@@ -546,9 +608,10 @@ export default function ChatsPage() {
           { timeout: 30_000 },
         );
       }
-      await Promise.all([loadDetail(selectedKind, selectedId, { silent: true }), loadLists({ silent: true })]);
+      if (selectedKind !== "ai") await Promise.all([loadDetail(selectedKind, selectedId, { silent: true }), loadLists({ silent: true })]);
     } catch (reason) {
-      setPending((current) => current.filter((item) => item.id !== optimistic.id));
+      if (selectedKind === "ai") setNovaMessages((current) => current.filter((item) => item.id !== optimistic.id));
+      else setPending((current) => current.filter((item) => item.id !== optimistic.id));
       setDraft(bodyText);
       setReplyTarget(replyTarget);
       setError(internalChatErrorMessage(reason, "Your message could not be sent."));
@@ -698,6 +761,7 @@ export default function ChatsPage() {
   // succeed, without duplicating that policy client-side.
   function canDeleteMessage(message) {
     if (message.pending || message.failed) return false;
+    if (selectedKind === "ai") return false;
     if (selectedKind === "internal") return message.senderId === myUserId;
     return Boolean(commPermissions.canDelete);
   }
@@ -894,7 +958,7 @@ export default function ChatsPage() {
                 mineDirection="Outbound"
                 loading={detailLoading}
                 className="min-h-0 flex-1 px-4 py-5"
-                mineBubbleClassName={activeDetail?.kind === "client" ? "rounded-br-lg bg-[#d9fdd3] text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
+                mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-cyan-500 to-sky-700 text-white" : activeDetail?.kind === "client" ? "rounded-br-lg bg-[#d9fdd3] text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
                 theirBubbleClassName="rounded-bl-lg border border-slate-200 bg-white text-slate-800"
                 attachmentFileUrl={attachmentFileUrl}
                 onAttachmentTap={handleAttachmentTap}
@@ -902,8 +966,8 @@ export default function ChatsPage() {
                 senderLabelFor={activeDetail?.kind === "internal" && activeDetail.isGroup ? (message) => message.sender?.fullName : undefined}
                 mineSenderLabelFor={activeDetail?.kind === "client" ? (message) => message.senderUser?.fullName : undefined}
                 myUserId={myUserId}
-                onReply={startReply}
-                onToggleReaction={toggleReaction}
+                onReply={activeDetail?.kind === "ai" ? undefined : startReply}
+                onToggleReaction={activeDetail?.kind === "ai" ? undefined : toggleReaction}
                 canEditMessage={canEditMessage}
                 canDeleteMessage={canDeleteMessage}
                 editingMessageId={editingMessageId}
@@ -930,10 +994,11 @@ export default function ChatsPage() {
                   value={draft}
                   onChange={setDraft}
                   onSend={send}
-                  onAttach={attachFile}
+                  onAttach={activeDetail?.kind === "ai" ? undefined : attachFile}
+                  allowAttach={activeDetail?.kind !== "ai"}
                   sending={sending}
-                  placeholder="Type a message"
-                  accentClassName={activeDetail?.kind === "client" ? "bg-emerald-600" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
+                  placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : "Type a message"}
+                  accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-cyan-500 to-sky-700" : activeDetail?.kind === "client" ? "bg-emerald-600" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
                   replyTarget={replyTarget}
                   replyTargetLabel={replyTargetLabel}
                   onCancelReply={cancelReply}

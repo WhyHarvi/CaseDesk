@@ -12,6 +12,7 @@ export default function ChatComposer({
   onChange,
   onSend,
   onAttach,
+  allowAttach = true,
   sending,
   disabled,
   disabledReason,
@@ -49,15 +50,17 @@ export default function ChatComposer({
       ) : null}
       <div className="flex items-end gap-2">
         <input ref={fileInputRef} type="file" className="hidden" accept={ATTACH_ACCEPT} onChange={handleFileChange} />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          aria-label="Attach a file"
-          className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:opacity-40"
-        >
-          <Paperclip className="h-4 w-4" />
-        </button>
+        {allowAttach ? (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+            aria-label="Attach a file"
+            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:opacity-40"
+          >
+            <Paperclip className="h-4 w-4" />
+          </button>
+        ) : null}
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
