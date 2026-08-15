@@ -9,6 +9,8 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, formPermissionKeys, getFormPermissions, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
 import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds, notifyUsers } from "../services/notificationService.js";
+import { caseAccessWhere } from "../middleware/authorization.js";
+import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 
 const maxFileSize = 25 * 1024 * 1024;
 const statuses = new Set(["Assigned", "InformationMissing", "ReadyToFill", "InProgress", "ReadyForReview", "ChangesRequested", "Approved", "SignatureRequired", "Signed", "Finalized", "NotRequired"]);
@@ -151,7 +153,7 @@ async function latestOriginalSnapshot(existing) {
 
 async function getCase(req, caseId) {
   const caseItem = await prisma.case.findFirst({
-    where: { id: caseId, agencyId: req.user.agencyId },
+    where: { id: caseId, agencyId: req.user.agencyId, ...caseAccessWhere(req) },
     include: { client: { select: { id: true, dateOfBirth: true } }, assessment: true },
   });
   if (!caseItem) throw createHttpError(404, "Case not found");
@@ -228,7 +230,7 @@ export async function createCustomCaseForm(req, res) {
 async function storeUploadedCaseFormCopy(req, res, { versionSource, allowedCopyTypes, defaultCopyType, activityAction }) {
   await requireFormPermission(req, "canEdit");
   if (!req.file) throw createHttpError(400, "A form file is required");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   const copyType = allowedCopyTypes.has(req.body.copyType) ? req.body.copyType : defaultCopyType;
@@ -257,7 +259,7 @@ export async function saveBrowserCaseFormCopy(req, res) {
 
 export async function importOfficialCaseForm(req, res) {
   await requireFormPermission(req, "canEdit");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   if (existing.source !== "Catalog" || !existing.catalogId) throw createHttpError(409, "Only official catalog forms can be imported");
@@ -294,7 +296,7 @@ export async function importOfficialCaseForm(req, res) {
 }
 
 export async function checkCaseFormVersion(req, res) {
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   if (existing.source !== "Catalog" || !existing.catalogId) throw createHttpError(409, "Only official catalog forms can be checked for updates");
   const entry = getOfficialForm(existing.catalogId);
@@ -364,7 +366,7 @@ export async function monitorAssignedCaseFormRevisions({ agencyId = null, formId
 }
 
 export async function listCaseFormVersions(req, res) {
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   await prisma.$transaction((tx) => ensureExistingVersion(tx, existing, req.user.id));
   const data = await prisma.caseFormVersion.findMany({ where: { caseFormId: existing.id, agencyId: req.user.agencyId }, include: versionInclude, orderBy: { versionNumber: "desc" } });
@@ -372,7 +374,7 @@ export async function listCaseFormVersions(req, res) {
 }
 
 export async function serveCaseFormVersionFile(req, res) {
-  const version = await prisma.caseFormVersion.findFirst({ where: { id: req.params.versionId, caseFormId: req.params.id, agencyId: req.user.agencyId } });
+  const version = await prisma.caseFormVersion.findFirst({ where: caseFormChildAccessWhere(req, { id: req.params.versionId, caseFormId: req.params.id }) });
   if (!version) throw createHttpError(404, "Form version not found");
   const buffer = await downloadStorageFile(DOCUMENT_BUCKET, version.storageKey, { allowMissing: true });
   if (!buffer) throw createHttpError(404, "The stored version file was not found");
@@ -384,8 +386,8 @@ export async function serveCaseFormVersionFile(req, res) {
 export async function restoreCaseFormVersion(req, res) {
   await requireFormPermission(req, "canEdit");
   const [existing, version] = await Promise.all([
-    prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } }),
-    prisma.caseFormVersion.findFirst({ where: { id: req.params.versionId, caseFormId: req.params.id, agencyId: req.user.agencyId } }),
+    prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) }),
+    prisma.caseFormVersion.findFirst({ where: caseFormChildAccessWhere(req, { id: req.params.versionId, caseFormId: req.params.id }) }),
   ]);
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
@@ -402,7 +404,7 @@ export async function restoreCaseFormVersion(req, res) {
 }
 
 export async function serveCaseFormFile(req, res) {
-  const data = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { storageKey: true, originalFilename: true, mimeType: true } });
+  const data = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }), select: { storageKey: true, originalFilename: true, mimeType: true } });
   if (!data?.storageKey) throw createHttpError(404, "No stored file is available for this form");
   const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
   if (!buffer) throw createHttpError(404, "The stored form file was not found");
@@ -412,7 +414,7 @@ export async function serveCaseFormFile(req, res) {
 }
 
 export async function updateCaseForm(req, res) {
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   const status = req.body.status;
@@ -436,7 +438,7 @@ export async function updateCaseForm(req, res) {
 }
 
 export async function listCaseFormReviewComments(req, res) {
-  const form = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { id: true } });
+  const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }), select: { id: true } });
   if (!form) throw createHttpError(404, "Case form not found");
   const data = await prisma.caseFormReviewComment.findMany({ where: { agencyId: req.user.agencyId, caseFormId: form.id }, include: reviewCommentInclude, orderBy: [{ resolvedAt: "asc" }, { createdAt: "desc" }] });
   res.json({ data });
@@ -444,7 +446,7 @@ export async function listCaseFormReviewComments(req, res) {
 
 export async function createCaseFormReviewComment(req, res) {
   await requireFormPermission(req, "canReview");
-  const form = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!form) throw createHttpError(404, "Case form not found");
   const comment = String(req.body.comment || "").trim();
   if (!comment) throw createHttpError(400, "Review comment is required");
@@ -460,7 +462,7 @@ export async function createCaseFormReviewComment(req, res) {
 
 export async function setCaseFormReviewCommentResolution(req, res) {
   await requireFormPermission(req, "canReview");
-  const existing = await prisma.caseFormReviewComment.findFirst({ where: { id: req.params.commentId, caseFormId: req.params.id, agencyId: req.user.agencyId }, include: { caseForm: { select: { clientId: true, caseId: true, title: true } } } });
+  const existing = await prisma.caseFormReviewComment.findFirst({ where: caseFormChildAccessWhere(req, { id: req.params.commentId, caseFormId: req.params.id }), include: { caseForm: { select: { clientId: true, caseId: true, title: true } } } });
   if (!existing) throw createHttpError(404, "Review comment not found");
   const resolved = req.body.resolved !== false;
   const data = await prisma.caseFormReviewComment.update({ where: { id: existing.id }, data: resolved ? { resolvedAt: new Date(), resolvedById: req.user.id } : { resolvedAt: null, resolvedById: null }, include: reviewCommentInclude });
@@ -470,7 +472,7 @@ export async function setCaseFormReviewCommentResolution(req, res) {
 
 export async function deleteCaseFormReviewComment(req, res) {
   await requireFormPermission(req, "canReview");
-  const existing = await prisma.caseFormReviewComment.findFirst({ where: { id: req.params.commentId, caseFormId: req.params.id, agencyId: req.user.agencyId }, include: { caseForm: { select: { clientId: true, caseId: true, title: true } } } });
+  const existing = await prisma.caseFormReviewComment.findFirst({ where: caseFormChildAccessWhere(req, { id: req.params.commentId, caseFormId: req.params.id }), include: { caseForm: { select: { clientId: true, caseId: true, title: true } } } });
   if (!existing) throw createHttpError(404, "Review comment not found");
   await prisma.caseFormReviewComment.delete({ where: { id: existing.id } });
   await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, clientId: existing.caseForm.clientId, caseId: existing.caseForm.caseId, action: "case_form.review_comment_deleted", details: `${existing.caseForm.title}: review comment deleted` });
@@ -479,7 +481,7 @@ export async function deleteCaseFormReviewComment(req, res) {
 
 export async function deleteCaseForm(req, res) {
   await requireFormPermission(req, "canDelete");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, include: { versions: { select: { storageKey: true } } } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }), include: { versions: { select: { storageKey: true } } } });
   if (!existing) throw createHttpError(404, "Case form not found");
   if (existing.lockedAt) throw createHttpError(423, "Unlock the finalized form before deleting it");
   await recordFormAudit({ form: existing, event: "Deleted", details: "Form removed from the case", userId: req.user.id });
@@ -507,7 +509,7 @@ export async function updateUserFormPermissions(req, res) {
 
 export async function finalizeCaseForm(req, res) {
   await requireFormPermission(req, "canFinalize");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   if (!existing.storageKey) throw createHttpError(409, "A stored form copy is required before finalization");
@@ -528,7 +530,7 @@ export async function finalizeCaseForm(req, res) {
 
 export async function unlockCaseForm(req, res) {
   await requireFormPermission(req, "canUnlock");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   if (!existing.lockedAt) throw createHttpError(409, "This form is not locked");
   const signedVersion = await prisma.caseFormVersion.findFirst({ where: { caseFormId: existing.id, copyType: "ClientSigned" }, select: { id: true } });
@@ -539,7 +541,7 @@ export async function unlockCaseForm(req, res) {
 }
 
 export async function listCaseFormAudit(req, res) {
-  const form = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId }, select: { id: true } });
+  const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }), select: { id: true } });
   if (!form) throw createHttpError(404, "Case form not found");
   const data = await prisma.caseFormAuditEvent.findMany({ where: { caseFormId: form.id, agencyId: req.user.agencyId }, include: { user: { select: { id: true, fullName: true } } }, orderBy: { createdAt: "desc" }, take: 200 });
   res.json({ data });
@@ -547,7 +549,7 @@ export async function listCaseFormAudit(req, res) {
 
 export async function recordCaseFormAutofill(req, res) {
   await requireFormPermission(req, "canEdit");
-  const form = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!form) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(form);
   await recordFormAudit({ form, event: "AutofillApplied", details: `${Number(req.body.fieldCount) || 0} fields applied in the browser`, metadata: { fieldCount: Number(req.body.fieldCount) || 0, mappingVersion: String(req.body.mappingVersion || "") || null }, userId: req.user.id });

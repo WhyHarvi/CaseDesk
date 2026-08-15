@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Bot, ChevronLeft, Loader2, Maximize2, MessagesSquare, Search, Users, X } from "lucide-react";
+import { Bot, ChevronLeft, Loader2, Maximize2, MessagesSquare, RotateCcw, Search, Users, X } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { useNotifications } from "../notifications/NotificationProvider";
 import api from "../../services/api";
@@ -24,6 +24,8 @@ import { useCaseRealtimeChat } from "../../hooks/useCaseRealtimeChat";
 import { useChatAttachmentUrls } from "../../hooks/useChatAttachmentUrls";
 import { useThreadAvatarUrls } from "../../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../../utils/chatSounds";
+import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../../hooks/useNovaChat";
+import { NovaAssistantAvatar, NovaMessageContent, NovaSuggestions } from "./NovaChatPresentation";
 
 const RECONCILE_POLL_MS = 45_000;
 const FALLBACK_POLL_MS = 10_000;
@@ -122,14 +124,7 @@ export default function FloatingChatWidget() {
   const [realtime, setRealtime] = useState(null);
   const [lightbox, setLightbox] = useState(null);
   const [incomingPreview, setIncomingPreview] = useState(null);
-  const [novaMessages, setNovaMessages] = useState([
-    {
-      id: "nova-welcome",
-      direction: "Inbound",
-      bodyText: "I am Nova. Ask me where to find something in CaseDesk.",
-      occurredAt: new Date().toISOString(),
-    },
-  ]);
+  const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
   const previewTimerRef = useRef(null);
 
   const novaItem = useMemo(() => {
@@ -395,36 +390,23 @@ export default function FloatingChatWidget() {
 
   async function send() {
     const bodyText = draft.trim();
-    if (!bodyText || !selectedId || sending) return;
+    if (!bodyText || !selectedId || sending || (selectedKind === "ai" && novaSending)) return;
+    if (selectedKind === "ai") {
+      setDraft("");
+      setError("");
+      playSentSound();
+      await sendNovaMessage(bodyText, location.pathname);
+      return;
+    }
     const clientMessageId = crypto.randomUUID();
     const optimistic = { id: `pending-${clientMessageId}`, clientMessageId, senderId: myUserId, direction: "Outbound", bodyText, occurredAt: new Date().toISOString(), pending: true };
-    if (selectedKind === "ai") setNovaMessages((current) => [...current, optimistic]);
-    else setPending((current) => [...current, optimistic]);
+    setPending((current) => [...current, optimistic]);
     setDraft("");
     setSending(true);
     setError("");
     playSentSound();
     try {
-      if (selectedKind === "ai") {
-        const history = [...novaMessages, optimistic].map((message) => ({
-          role: message.direction === "Outbound" ? "user" : "assistant",
-          content: message.bodyText,
-        }));
-        const response = await api.post(
-          "/ai/chat",
-          { messages: history, currentPath: location.pathname },
-          { timeout: 60_000 },
-        );
-        setNovaMessages((current) => [
-          ...current.map((item) => (item.id === optimistic.id ? { ...item, pending: false } : item)),
-          {
-            id: `nova-${crypto.randomUUID()}`,
-            direction: "Inbound",
-            bodyText: response.data.message,
-            occurredAt: new Date().toISOString(),
-          },
-        ]);
-      } else if (selectedKind === "internal") {
+      if (selectedKind === "internal") {
         await sendInternalChatMessage(selectedId, { bodyText, clientMessageId });
       } else {
         await api.post(
@@ -445,15 +427,20 @@ export default function FloatingChatWidget() {
           { timeout: 30_000 },
         );
       }
-      if (selectedKind !== "ai") await Promise.all([loadDetail(selectedKind, selectedId, { silent: true }), loadLists({ silent: true })]);
+      await Promise.all([loadDetail(selectedKind, selectedId, { silent: true }), loadLists({ silent: true })]);
     } catch (reason) {
-      if (selectedKind === "ai") setNovaMessages((current) => current.filter((item) => item.id !== optimistic.id));
-      else setPending((current) => current.filter((item) => item.id !== optimistic.id));
+      setPending((current) => current.filter((item) => item.id !== optimistic.id));
       setDraft(bodyText);
       setError(internalChatErrorMessage(reason, "Your message could not be sent."));
     } finally {
       setSending(false);
     }
+  }
+
+  async function retryNova(message) {
+    if (novaSending) return;
+    playSentSound();
+    await retryNovaMessage(message.id, location.pathname);
   }
 
   async function attachFile(file) {
@@ -548,7 +535,13 @@ export default function FloatingChatWidget() {
 
   function expandToFullPage() {
     setOpen(false);
-    navigate(selectedId ? `/app/chats?thread=${selectedId}&kind=${selectedKind}` : "/app/chats");
+    if (!selectedId) {
+      navigate("/app/chats");
+      return;
+    }
+    const params = new URLSearchParams({ thread: selectedId, kind: selectedKind });
+    if (selectedKind === "ai") params.set("from", location.pathname);
+    navigate(`/app/chats?${params.toString()}`);
   }
 
   if (typeof document === "undefined" || location.pathname === "/app/chats") return null;
@@ -575,7 +568,15 @@ export default function FloatingChatWidget() {
               {view === "thread" && activeDetail ? (
                 <>
                   <QuickAvatar item={activeDetail} avatarUrl={threadAvatarUrl(activeDetail)} />
-                  <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{activeDetail.name}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-950">{activeDetail.name}</p>
+                    {activeDetail.kind === "ai" ? <p className="text-[10px] font-medium text-slate-500">CaseDesk guide</p> : null}
+                  </div>
+                  {activeDetail.kind === "ai" ? (
+                    <button type="button" disabled={novaSending} onClick={resetNovaChat} aria-label="Start a new Nova chat" title="Start a new Nova chat" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-cyan-50 hover:text-cyan-700 disabled:opacity-40">
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <p className="flex-1 text-sm font-semibold text-slate-950">{view === "list" ? "Chats" : "Quick Chat"}</p>
@@ -588,7 +589,7 @@ export default function FloatingChatWidget() {
               </button>
             </header>
 
-            <div className="min-h-0 flex-1">
+            <div className={`min-h-0 flex-1 ${activeDetail?.kind === "ai" ? "bg-gradient-to-b from-cyan-50/70 via-slate-50/40 to-white" : ""}`}>
               {listLoading && !mergedItems.length ? (
                 <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
               ) : !mergedItems.length ? (
@@ -632,13 +633,23 @@ export default function FloatingChatWidget() {
                   mineDirection="Outbound"
                   loading={detailLoading}
                   className="h-full px-3 py-4"
-                  mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-cyan-500 to-sky-700 text-white" : activeDetail?.kind === "client" ? "rounded-br-lg bg-[#d9fdd3] text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
-                  theirBubbleClassName="rounded-bl-lg border border-slate-200 bg-white text-slate-800"
+                  mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "client" ? "rounded-br-lg bg-[#d9fdd3] text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
+                  theirBubbleClassName={activeDetail?.kind === "ai" ? "rounded-bl-lg border border-cyan-100 bg-white/95 text-slate-800 shadow-[0_8px_24px_rgba(8,145,178,0.08)]" : "rounded-bl-lg border border-slate-200 bg-white text-slate-800"}
                   attachmentFileUrl={attachmentFileUrl}
                   onAttachmentTap={handleAttachmentTap}
                   clientLastReadAt={readThreshold}
                   senderLabelFor={activeDetail?.kind === "internal" && activeDetail.isGroup ? (message) => message.sender?.fullName : undefined}
                   mineSenderLabelFor={activeDetail?.kind === "client" ? (message) => message.senderUser?.fullName : undefined}
+                  typing={activeDetail?.kind === "ai" && novaSending}
+                  typingLabel="Nova is checking"
+                  showDeliveryStatus={activeDetail?.kind !== "ai"}
+                  theirAvatar={activeDetail?.kind === "ai" ? <NovaAssistantAvatar compact /> : undefined}
+                  renderMessageBody={activeDetail?.kind === "ai" ? (message, { mine }) => (
+                    mine
+                      ? <p className="whitespace-pre-wrap break-words text-[14px] leading-5">{message.bodyText}</p>
+                      : <NovaMessageContent text={message.bodyText} />
+                  ) : undefined}
+                  onRetryMessage={activeDetail?.kind === "ai" ? retryNova : undefined}
                   emptyState={
                     <>
                       <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm"><MessagesSquare className="h-5 w-5" /></span>
@@ -651,16 +662,18 @@ export default function FloatingChatWidget() {
 
             {view === "thread" && selectedId ? (
               <div className="shrink-0 border-t border-slate-100 bg-white p-2.5">
-                {error ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{error}</p> : null}
+                {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
+                {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaSuggestions onSelect={setDraft} compact /> : null}
                 <ChatComposer
                   value={draft}
                   onChange={setDraft}
                   onSend={send}
                   onAttach={activeDetail?.kind === "ai" ? undefined : attachFile}
                   allowAttach={activeDetail?.kind !== "ai"}
-                  sending={sending}
+                  sending={activeDetail?.kind === "ai" ? novaSending : sending}
                   placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : "Type a message"}
                   accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-cyan-500 to-sky-700" : activeDetail?.kind === "client" ? "bg-emerald-600" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
+                  sendLabel={activeDetail?.kind === "ai" ? "Ask" : undefined}
                 />
               </div>
             ) : null}

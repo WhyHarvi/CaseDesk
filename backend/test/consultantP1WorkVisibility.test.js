@@ -72,6 +72,8 @@ test("dashboard renders API work queues instead of placeholder arrays and inert 
   assert.match(bottomRow, /dashboard\?\.recentActivity/);
   assert.match(stats, /dashboard\.stats\.pendingDocuments/);
   assert.match(stats, /dashboard\.stats\.tasksDueToday/);
+  assert.doesNotMatch(stats, /Case Easy Records Pending|caseEasyImportPending|caseEasyImportNeedsReview/);
+  assert.doesNotMatch(controller, /caseEasyImportPending|caseEasyImportNeedsReview/);
   assert.match(controller, /reportingBounds\(now, timezone\)/);
   assert.match(controller, /AND: \[[\s\S]*caseAccessWhere\(req\)/);
 });

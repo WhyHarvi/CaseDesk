@@ -51,8 +51,8 @@ export async function submitClientRequest({ id, clientId, answers }) {
   });
 }
 
-export async function reviewClientRequest({ id, agencyId, reviewedById }) {
-  const request = await prisma.caseFormClientRequest.findFirst({ where: { id, agencyId } });
+export async function reviewClientRequest({ id, agencyId, caseFormId, reviewedById }) {
+  const request = await prisma.caseFormClientRequest.findFirst({ where: { id, agencyId, caseFormId } });
   if (!request) return null;
   return prisma.caseFormClientRequest.update({ where: { id: request.id }, data: { status: "Reviewed", reviewedAt: new Date(), reviewedById } });
 }

@@ -5,9 +5,10 @@ import { autofillCaseForm, getCaseFormChecklist, setCaseFormFieldValue } from ".
 import { createClientRequest, listClientRequestsForForm, reviewClientRequest } from "../services/caseFormClientRequestService.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
+import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 
 async function loadForm(req) {
-  const form = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!form) throw createHttpError(404, "Case form not found");
   return form;
 }
@@ -146,7 +147,7 @@ export async function postClientRequest(req, res) {
 export async function patchReviewClientRequest(req, res) {
   const form = await loadForm(req);
   await requireFormPermission(req, "canReview");
-  const data = await reviewClientRequest({ id: req.params.requestId, agencyId: req.user.agencyId, reviewedById: req.user.id });
+  const data = await reviewClientRequest({ id: req.params.requestId, agencyId: req.user.agencyId, caseFormId: form.id, reviewedById: req.user.id });
   if (!data) throw createHttpError(404, "Client request not found");
   res.json({ data });
 }

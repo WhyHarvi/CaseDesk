@@ -258,7 +258,8 @@ test("ChatsPage wires real group avatars and opens GroupProfilePanel from the gr
 
   // The header only makes the name/avatar clickable for internal groups —
   // DMs and client conversations render the same avatar+name as plain text.
-  const headerStart = page.indexOf('{activeDetail?.kind === "internal" && activeDetail.isGroup ? (\n                  <button');
+  const headerStart = page.indexOf('activeDetail?.kind === "internal" && activeDetail.isGroup ? (\n                  <button');
+  assert.notEqual(headerStart, -1, "the internal-group header branch must remain present");
   const headerBlock = page.slice(headerStart, page.indexOf("</header>", headerStart));
   assert.match(headerBlock, /onClick={\(\) => setGroupProfileOpen\(true\)}/);
 

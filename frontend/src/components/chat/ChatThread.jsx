@@ -50,6 +50,11 @@ export default function ChatThread({
   onCancelEdit,
   onDeleteMessage,
   savingEdit,
+  typing = false,
+  typingLabel = "Typing",
+  showDeliveryStatus = true,
+  theirAvatar,
+  renderMessageBody,
 }) {
   const scrollRef = useRef(null);
   const stickToBottomRef = useRef(true);
@@ -75,7 +80,7 @@ export default function ChatThread({
     // otherwise loading a page of history cascades a pop-in for every row.
     if (!mountedOnce) setMountedOnce(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length]);
+  }, [messages.length, typing]);
 
   function handleScroll() {
     const node = scrollRef.current;
@@ -138,11 +143,25 @@ export default function ChatThread({
                   onCancelEdit={onCancelEdit}
                   onDeleteMessage={onDeleteMessage}
                   savingEdit={savingEdit}
+                  showDeliveryStatus={showDeliveryStatus}
+                  theirAvatar={theirAvatar}
+                  renderMessageBody={renderMessageBody}
                 />
               );
             })}
           </div>
         ))}
+        {typing ? (
+          <div className="flex items-end gap-2">
+            {theirAvatar || null}
+            <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-cyan-100 bg-white px-4 py-3 text-slate-500 shadow-sm">
+              <span className="flex items-center gap-1" aria-hidden="true">
+                {[0, 1, 2].map((index) => <span key={index} className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-500" style={{ animationDelay: `${index * 120}ms` }} />)}
+              </span>
+              <span className="text-[11px] font-semibold">{typingLabel}</span>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

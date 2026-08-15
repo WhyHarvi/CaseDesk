@@ -7,6 +7,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
 import { stampPdfFormValues, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
+import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 
 const include = { uploadedBy: { select: { id: true, fullName: true } }, lockedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, reviewComments: true } } };
 
@@ -21,7 +22,7 @@ function hashBuffer(buffer) {
 // Application alongside everything else without any special-casing there.
 export async function generateFilledCaseFormPdf(req, res) {
   await requireFormPermission(req, "canEdit");
-  const existing = await prisma.caseForm.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   if (!existing.sourceAgencyFormTemplateId) throw createHttpError(409, "This form isn't linked to a mapped template — nothing to generate from");

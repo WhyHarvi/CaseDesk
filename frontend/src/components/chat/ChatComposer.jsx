@@ -21,6 +21,8 @@ export default function ChatComposer({
   replyTarget,
   replyTargetLabel,
   onCancelReply,
+  sendLabel,
+  sendingLabel = "Thinking",
 }) {
   const fileInputRef = useRef(null);
 
@@ -65,7 +67,7 @@ export default function ChatComposer({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               onSend();
             }
@@ -83,10 +85,11 @@ export default function ChatComposer({
         <button
           type="submit"
           disabled={disabled || sending || !value.trim()}
-          className={`flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full text-white shadow-[0_10px_24px_rgba(37,99,235,0.35)] transition-all duration-200 active:scale-90 disabled:opacity-40 ${accentClassName}`}
+          className={`flex h-[46px] shrink-0 items-center justify-center gap-2 rounded-full text-white shadow-[0_10px_24px_rgba(37,99,235,0.35)] transition-all duration-200 active:scale-90 disabled:opacity-40 ${sendLabel ? "min-w-[104px] px-4" : "w-[46px]"} ${accentClassName}`}
           aria-label="Send message"
         >
           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
+          {sendLabel ? <span className="text-xs font-semibold">{sending ? sendingLabel : sendLabel}</span> : null}
         </button>
       </div>
     </form>

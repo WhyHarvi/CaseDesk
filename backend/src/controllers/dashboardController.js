@@ -290,8 +290,6 @@ export async function getDashboardSummary(req, res) {
     todayTasksByClient,
     documentActionsByClient,
     casesWaitingUpdateByClient,
-    caseEasyImportPendingCount,
-    caseEasyImportNeedsReviewCount,
   ] = await Promise.all([
     prisma.client.count({ where: clientWhere }),
     prisma.client.count({ where: { ...clientWhere, status: "Active" } }),
@@ -486,20 +484,7 @@ export async function getDashboardSummary(req, res) {
       take: 300,
       select: caseSummarySelect,
     }),
-    // Surfaces the Case Easy migration queue on the Dashboard — previously
-    // invisible anywhere outside /app/case-easy-import itself, despite
-    // being the largest body of outstanding work in the system for an
-    // agency mid-migration.
-    prisma.caseEasyImportContact.count({
-      where: { agencyId: req.auth.agencyId, importStatus: { not: "converted" } },
-    }),
-    prisma.caseEasyImportCase.findMany({
-      where: { agencyId: req.auth.agencyId, needsReviewReason: { not: null }, importStatus: { not: "converted" }, linkedContactId: { not: null } },
-      distinct: ["linkedContactId"],
-      select: { linkedContactId: true },
-    }),
   ]);
-  const caseEasyImportReviewCount = caseEasyImportNeedsReviewCount.length;
 
   const leadFollowUpWhere = {
     agencyId: req.auth.agencyId,
@@ -587,8 +572,6 @@ export async function getDashboardSummary(req, res) {
             }
           : {}),
         casesWaitingUpdate: casesWaitingUpdateCount,
-        caseEasyImportPending: caseEasyImportPendingCount,
-        caseEasyImportNeedsReview: caseEasyImportReviewCount,
       },
       casePipeline: casePipelineRaw.map((item) => ({
         stage: item.stage,

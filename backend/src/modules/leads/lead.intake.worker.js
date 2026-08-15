@@ -8,11 +8,65 @@ import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../serv
 import { invalidateDashboardCache } from "../../services/dashboardCache.js";
 import { leadWelcomeEmailEligible, sendLeadWelcomeEmail } from "./lead.welcomeEmail.service.js";
 import { resolveRoutedOwner } from "./lead.routing.service.js";
+import { lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
 
 const POLL_MS = Math.max(Number(process.env.LEAD_INTAKE_POLL_MS) || 2000, 500);
 const BATCH_SIZE = Math.min(Math.max(Number(process.env.LEAD_INTAKE_BATCH_SIZE) || 10, 1), 50);
 let timer = null;
 let running = false;
+const WEBSITE_CORRECTION_WINDOW_MS = 15 * 60_000;
+
+function plainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function identityText(...values) {
+  return values.filter(Boolean).join(" ").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function editDistance(leftValue, rightValue) {
+  const left = String(leftValue || ""), right = String(rightValue || "");
+  const rows = Array.from({ length: left.length + 1 }, (_, index) => {
+    const row = Array(right.length + 1).fill(0);
+    row[0] = index;
+    return row;
+  });
+  for (let column = 0; column <= right.length; column += 1) rows[0][column] = column;
+  for (let row = 1; row <= left.length; row += 1) {
+    for (let column = 1; column <= right.length; column += 1) {
+      const substitution = left[row - 1] === right[column - 1] ? 0 : 1;
+      rows[row][column] = Math.min(
+        rows[row - 1][column] + 1,
+        rows[row][column - 1] + 1,
+        rows[row - 1][column - 1] + substitution,
+      );
+      if (row > 1 && column > 1 && left[row - 1] === right[column - 2] && left[row - 2] === right[column - 1]) {
+        rows[row][column] = Math.min(rows[row][column], rows[row - 2][column - 2] + 1);
+      }
+    }
+  }
+  return rows[left.length][right.length];
+}
+
+function correctedEmail(previousValue, currentValue) {
+  const previous = String(previousValue || "").toLowerCase().split("@");
+  const current = String(currentValue || "").toLowerCase().split("@");
+  if (previous.length !== 2 || current.length !== 2 || previous.join("@") === current.join("@")) return false;
+  const [previousLocal, previousDomain] = previous;
+  const [currentLocal, currentDomain] = current;
+  return (previousLocal === currentLocal && editDistance(previousDomain, currentDomain) <= 2)
+    || (previousDomain === currentDomain && editDistance(previousLocal, currentLocal) <= 1);
+}
+
+export function isLikelyCorrectedWebsiteSubmission(current, previous) {
+  const elapsed = new Date(current?.createdAt).getTime() - new Date(previous?.createdAt).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > WEBSITE_CORRECTION_WINDOW_MS) return false;
+  if (!current?.ip || current.ip !== previous?.ip) return false;
+  const currentName = identityText(current.firstName, current.lastName);
+  const previousName = identityText(previous?.firstName, previous?.lastName);
+  if (!currentName || currentName !== previousName) return false;
+  return correctedEmail(previous?.emailNormalized, current.emailNormalized);
+}
 
 async function refreshBatch(tx, batchId) {
   if (!batchId) return;
@@ -31,19 +85,57 @@ async function findDuplicates(tx, event, normalized) {
   const or = [];
   if (normalized.phoneNormalized) or.push({ phoneNormalized: normalized.phoneNormalized });
   if (normalized.emailNormalized) or.push({ emailNormalized: normalized.emailNormalized });
-  if (!or.length) return [];
   const dismissed = await tx.leadDuplicateCandidate.findMany({
     where: { incomingEventId: event.id, status: "DISMISSED" },
     select: { candidateLeadId: true },
   });
-  const leads = await tx.lead.findMany({ where: { agencyId: event.agencyId, deletedAt: null, OR: or, ...(dismissed.length ? { id: { notIn: dismissed.map((item) => item.candidateLeadId) } } : {}) }, select: { id: true, phoneNormalized: true, emailNormalized: true } });
-  return leads.map((lead) => {
+  const dismissedIds = dismissed.map((item) => item.candidateLeadId);
+  const leads = or.length ? await tx.lead.findMany({ where: { agencyId: event.agencyId, deletedAt: null, OR: or, ...(dismissedIds.length ? { id: { notIn: dismissedIds } } : {}) }, select: { id: true, phoneNormalized: true, emailNormalized: true } }) : [];
+  const candidates = leads.map((lead) => {
     const reasons = [];
     let score = 0;
-    if (lead.phoneNormalized === normalized.phoneNormalized) { reasons.push("Exact phone match"); score = 100; }
+    if (normalized.phoneNormalized && lead.phoneNormalized === normalized.phoneNormalized) { reasons.push("Exact phone match"); score = 100; }
     if (normalized.emailNormalized && lead.emailNormalized === normalized.emailNormalized) { reasons.push("Exact email match"); score = Math.max(score, 90); }
     return { leadId: lead.id, score, reasons };
   });
+
+  const rawPayload = plainObject(event.rawPayload);
+  if (event.sourceConnection?.provider === "WEBSITE" && event.sourceConnectionId && rawPayload.ip && normalized.emailNormalized) {
+    const recentEvents = await tx.leadIncomingEvent.findMany({
+      where: {
+        agencyId: event.agencyId,
+        sourceConnectionId: event.sourceConnectionId,
+        id: { not: event.id },
+        status: "PROCESSED",
+        processedLeadId: { not: null },
+        createdAt: { gte: new Date(event.createdAt.getTime() - WEBSITE_CORRECTION_WINDOW_MS), lte: event.createdAt },
+      },
+      select: {
+        createdAt: true,
+        rawPayload: true,
+        processedLead: { select: { id: true, firstName: true, lastName: true, emailNormalized: true, deletedAt: true, status: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    for (const priorEvent of recentEvents) {
+      const lead = priorEvent.processedLead;
+      if (!lead || lead.deletedAt || ["DUPLICATE", "ARCHIVED"].includes(lead.status) || dismissedIds.includes(lead.id)) continue;
+      if (isLikelyCorrectedWebsiteSubmission(
+        { createdAt: event.createdAt, ip: rawPayload.ip, firstName: normalized.firstName, lastName: normalized.lastName, emailNormalized: normalized.emailNormalized },
+        { createdAt: priorEvent.createdAt, ip: plainObject(priorEvent.rawPayload).ip, firstName: lead.firstName, lastName: lead.lastName, emailNormalized: lead.emailNormalized },
+      )) {
+        candidates.push({ leadId: lead.id, score: 85, reasons: ["Same website visitor and name within 15 minutes", "Possible corrected email address"] });
+      }
+    }
+  }
+
+  return [...candidates.reduce((byLead, candidate) => {
+    const existing = byLead.get(candidate.leadId);
+    if (!existing) byLead.set(candidate.leadId, candidate);
+    else byLead.set(candidate.leadId, { leadId: candidate.leadId, score: Math.max(existing.score, candidate.score), reasons: [...new Set([...existing.reasons, ...candidate.reasons])] });
+    return byLead;
+  }, new Map()).values()];
 }
 
 export async function processClaimed(eventId) {
@@ -66,6 +158,10 @@ export async function processClaimed(eventId) {
     const allowEmailOnly = ["EMAIL", "WEBSITE"].includes(event.sourceConnection?.provider);
     const normalized = normalizeIncomingLead(rawPayload, mapping, { allowEmailOnly });
     if (normalized.errors.length) throw new Error(normalized.errors.join(" "));
+    // Manual intake and every automated intake worker share this lock. It
+    // prevents two simultaneous events with the same contact from both
+    // passing the duplicate scan before either transaction creates a lead.
+    await lockAgencyContactIntake(tx, event.agencyId);
     const duplicates = await findDuplicates(tx, event, normalized.data);
     if (duplicates.length) {
       for (const candidate of duplicates) {

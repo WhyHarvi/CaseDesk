@@ -105,6 +105,7 @@ export async function askCaseDeskAI(messages, context = {}) {
           ...safeMessages,
         ],
         stream: false,
+        think: false,
         options: {
           temperature: 0.2,
         },

@@ -145,6 +145,9 @@ export default function ChatMessageBubble({
   onCancelEdit,
   onDeleteMessage,
   savingEdit = false,
+  showDeliveryStatus = true,
+  theirAvatar,
+  renderMessageBody,
 }) {
   const reduceMotion = useReducedMotion();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -164,12 +167,14 @@ export default function ChatMessageBubble({
       transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.16, 1, 0.3, 1] }}
       className={`group/bubble flex flex-col ${mine ? "items-end" : "items-start"}`}
     >
-      <div className={`relative flex items-center gap-1.5 ${mine ? "flex-row-reverse" : "flex-row"}`}>
-        <Container
-          type={failed ? "button" : undefined}
-          onClick={failed ? () => onRetry?.(message) : undefined}
-          className={`max-w-[80%] space-y-2 rounded-3xl px-4 py-2.5 text-left shadow-sm ${mine ? `rounded-br-lg ${mineBubbleClassName}` : `rounded-bl-lg ${theirBubbleClassName}`} ${message.pending ? "opacity-70" : ""} ${failed ? "cursor-pointer ring-2 ring-rose-300" : ""}`}
-        >
+      <div className={`flex items-end gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
+        {!mine && theirAvatar ? theirAvatar : null}
+        <div className={`relative flex items-center gap-1.5 ${mine ? "flex-row-reverse" : "flex-row"}`}>
+          <Container
+            type={failed ? "button" : undefined}
+            onClick={failed ? () => onRetry?.(message) : undefined}
+            className={`max-w-[80%] space-y-2 rounded-3xl px-4 py-2.5 text-left shadow-sm ${mine ? `rounded-br-lg ${mineBubbleClassName}` : `rounded-bl-lg ${theirBubbleClassName}`} ${message.pending ? "opacity-70" : ""} ${failed ? "cursor-pointer ring-2 ring-rose-300" : ""}`}
+          >
           {mine && mineSenderLabel ? <p className="mb-0.5 text-[10px] font-semibold opacity-70">{mineSenderLabel}</p> : null}
           {!mine && senderLabel ? <p className="text-[11px] font-semibold opacity-70">{senderLabel}</p> : null}
           {replySource ? (
@@ -205,19 +210,21 @@ export default function ChatMessageBubble({
               </div>
             </div>
           ) : (
-            message.bodyText ? <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p> : null
+            message.bodyText
+              ? renderMessageBody?.(message, { mine }) || <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
+              : null
           )}
           <p className={`flex items-center justify-end gap-1 text-[10px] ${mine ? "opacity-70" : "text-slate-400"}`}>
             {message.pending ? "Sending…" : failed ? "Not sent — tap to retry" : timeLabel}
             {message.editedAt ? <span className="italic">Edited</span> : null}
-            {mine && !message.pending && !failed ? (
+            {showDeliveryStatus && mine && !message.pending && !failed ? (
               readState === "read" ? <CheckCheck className="h-3 w-3 text-sky-300" /> : <Check className="h-3 w-3" />
             ) : null}
           </p>
-        </Container>
+          </Container>
 
-        {showActions && (onReply || onToggleReaction || canEdit || canDelete) ? (
-          <div className="relative flex items-center gap-0.5 opacity-0 transition-opacity group-hover/bubble:opacity-100">
+          {showActions && (onReply || onToggleReaction || canEdit || canDelete) ? (
+            <div className="relative flex items-center gap-0.5 opacity-0 transition-opacity group-hover/bubble:opacity-100">
             {onToggleReaction ? (
               <>
                 <button
@@ -262,8 +269,9 @@ export default function ChatMessageBubble({
                 ) : null}
               </>
             ) : null}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {reactionGroups.length ? (

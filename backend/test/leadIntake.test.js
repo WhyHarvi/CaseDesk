@@ -10,6 +10,7 @@ import { enrichProviderPayload } from "../src/modules/leads/lead.provider.enrich
 import { encryptSecret } from "../src/services/secretEncryption.js";
 import { redact } from "../src/services/logger.js";
 import { secureHeaders } from "../src/middleware/productionSecurity.js";
+import { isLikelyCorrectedWebsiteSubmission } from "../src/modules/leads/lead.intake.worker.js";
 
 test("CSV parsing preserves commas, quotes, and row boundaries", () => {
   const result = parseCsv('Full Name,Phone,Notes\r\n"Avery Singh","+1 416 555 0100","Study, then work"\r\n"Sam ""SJ"" Jones",+14165550101,Follow up');
@@ -83,6 +84,32 @@ test("Phase 6 provider adapters normalize Meta, WhatsApp, Google, email, and pho
 test("email intake permits email-only leads while other streams still require phone", () => {
   assert.deepEqual(normalizeIncomingLead({ fullName: "Taylor Kim", email: "taylor@example.ca" }, null, { allowEmailOnly: true }).errors, []);
   assert.match(normalizeIncomingLead({ fullName: "Taylor Kim", email: "taylor@example.ca" }).errors.join(" "), /Phone is required/);
+});
+
+test("a website visitor correcting a small email typo is sent to duplicate review", () => {
+  const previous = {
+    createdAt: "2026-08-14T21:30:47.118Z",
+    ip: "142.186.38.184",
+    firstName: "Sumairdhawan",
+    lastName: null,
+    emailNormalized: "sumairdhawan2467@gamil.com",
+  };
+  const corrected = {
+    ...previous,
+    createdAt: "2026-08-14T21:32:39.004Z",
+    emailNormalized: "sumairdhawan2467@gmail.com",
+  };
+  assert.equal(isLikelyCorrectedWebsiteSubmission(corrected, previous), true);
+  assert.equal(isLikelyCorrectedWebsiteSubmission({ ...corrected, ip: "203.0.113.20" }, previous), false);
+  assert.equal(isLikelyCorrectedWebsiteSubmission({ ...corrected, firstName: "Another person" }, previous), false);
+  assert.equal(isLikelyCorrectedWebsiteSubmission({ ...corrected, createdAt: "2026-08-14T22:30:00.000Z" }, previous), false);
+});
+
+test("the intake worker uses the shared agency contact lock before duplicate detection", async () => {
+  const source = await readFile(new URL("../src/modules/leads/lead.intake.worker.js", import.meta.url), "utf8");
+  const lockAt = source.indexOf("await lockAgencyContactIntake(tx, event.agencyId)");
+  const duplicateAt = source.indexOf("const duplicates = await findDuplicates(tx, event, normalized.data)");
+  assert.ok(lockAt >= 0 && duplicateAt > lockAt);
 });
 
 test("remaining Phase 6 providers are constrained and email-originated leads can begin without phone", async () => {

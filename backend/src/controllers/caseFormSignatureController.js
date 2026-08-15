@@ -4,6 +4,7 @@ import { assertFormUnlocked, requireFormPermission } from "../services/formPermi
 import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { recordFormAudit } from "../utils/formAudit.js";
+import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 
 function isImm5476(form) {
   return String(form?.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
@@ -11,7 +12,7 @@ function isImm5476(form) {
 
 async function loadForm(req) {
   const form = await prisma.caseForm.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: caseFormAccessWhere(req, { id: req.params.id }),
     include: {
       client: { select: { fullName: true, familyName: true, givenNames: true } },
       applicantProfile: { select: { givenNames: true, familyName: true } },
