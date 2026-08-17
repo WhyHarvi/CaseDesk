@@ -51,25 +51,56 @@ export async function traceSignatureImageToStrokes(buffer) {
     return luminance < 165;
   };
 
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isInk(x, y)) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (maxX < minX || maxY < minY) {
+    throw createHttpError(400, "No visible signature was found in that image. Use a clearer photo on a plain white or transparent background.", "INVALID_SIGNATURE");
+  }
+
+  // Place the tightly cropped ink inside the same 3:1 coordinate space as
+  // SignaturePad. This preserves the uploaded image's aspect ratio instead
+  // of stretching every photo to the full PDF signature rectangle.
+  const inkWidth = Math.max(1, maxX - minX + 1);
+  const inkHeight = Math.max(1, maxY - minY + 1);
+  const padding = 0.06;
+  const availableWidth = 1 - padding * 2;
+  const availableHeight = 1 - padding * 2;
+  const normalizedInkAspect = (inkWidth / inkHeight) / 3;
+  const fittedWidth = normalizedInkAspect > availableWidth / availableHeight ? availableWidth : availableHeight * normalizedInkAspect;
+  const fittedHeight = normalizedInkAspect > availableWidth / availableHeight ? availableWidth / normalizedInkAspect : availableHeight;
+  const offsetX = (1 - fittedWidth) / 2;
+  const offsetY = (1 - fittedHeight) / 2;
+  const normalizedPoint = (x, y) => [
+    offsetX + ((x - minX) / inkWidth) * fittedWidth,
+    offsetY + ((y - minY) / inkHeight) * fittedHeight,
+  ];
+
   const targetRows = 300;
   const rowStride = Math.max(1, Math.round(height / targetRows));
   const rawStrokes = [];
-  for (let y = 0; y < height; y += rowStride) {
+  for (let y = minY; y <= maxY; y += rowStride) {
     let runStart = -1;
-    for (let x = 0; x < width; x++) {
+    for (let x = minX; x <= maxX; x++) {
       const ink = isInk(x, y);
       if (ink && runStart === -1) runStart = x;
-      if ((!ink || x === width - 1) && runStart !== -1) {
+      if ((!ink || x === maxX) && runStart !== -1) {
         const runEnd = ink ? x : x - 1;
-        const endX = Math.min(width - 1, Math.max(runEnd, runStart + 1));
-        rawStrokes.push([[runStart / width, y / height], [endX / width, y / height]]);
+        const endX = Math.min(maxX, Math.max(runEnd, runStart + 1));
+        rawStrokes.push([normalizedPoint(runStart, y), normalizedPoint(endX, y)]);
         runStart = -1;
       }
     }
-  }
-
-  if (!rawStrokes.length) {
-    throw createHttpError(400, "No visible signature was found in that image. Use a clearer photo on a plain white or transparent background.", "INVALID_SIGNATURE");
   }
 
   // A wider cap than hand-drawn strokes get (validatedSignatureStrokes caps
@@ -81,4 +112,8 @@ export async function traceSignatureImageToStrokes(buffer) {
   const strokes = [];
   for (let i = 0; i < maxStrokes; i++) strokes.push(rawStrokes[Math.floor(i * step)]);
   return strokes;
+}
+
+export function isTracedImageSignature(strokes) {
+  return Array.isArray(strokes) && strokes.length > 8 && strokes.every((stroke) => Array.isArray(stroke) && stroke.length === 2);
 }

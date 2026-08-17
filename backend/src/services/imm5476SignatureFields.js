@@ -26,9 +26,10 @@ export function signatureAnnotation(strokes, { pageIndex, rect }, user) {
   const [left, bottom, right, top] = rect;
   const paddingX = 8;
   const paddingY = 4;
-  const width = Math.max(1, right - left - paddingX * 2);
   const height = Math.max(1, top - bottom - paddingY * 2);
-  const points = strokes.map((stroke) => stroke.flatMap(([x, y]) => [left + paddingX + x * width, top - paddingY - y * height]));
+  const width = Math.min(Math.max(1, right - left - paddingX * 2), height * 3);
+  const containedLeft = left + (right - left - width) / 2;
+  const points = strokes.map((stroke) => stroke.flatMap(([x, y]) => [containedLeft + x * width, top - paddingY - y * height]));
   const lines = points.map((stroke) => {
     const line = [];
     for (let index = 0; index < stroke.length; index += 2) {

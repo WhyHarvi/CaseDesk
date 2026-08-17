@@ -68,6 +68,20 @@ test("opening IMM 5476 applies the selected representative's saved signature and
   assert.match(renderer, /if \(!alreadySigned\)/);
 });
 
+test("IMM 5476 contains signatures at their natural aspect ratio and retraces legacy uploaded images", async () => {
+  const [fields, tracer, controller] = await Promise.all([
+    source("../src/services/imm5476SignatureFields.js"),
+    source("../src/services/signatureImageTrace.js"),
+    source("../src/controllers/caseFormController.js"),
+  ]);
+  assert.match(fields, /width = Math\.min\([\s\S]*height \* 3\)/);
+  assert.match(fields, /const containedLeft = left \+ \(right - left - width\) \/ 2/);
+  assert.match(tracer, /const normalizedInkAspect = \(inkWidth \/ inkHeight\) \/ 3/);
+  assert.match(tracer, /export function isTracedImageSignature/);
+  assert.match(controller, /isTracedImageSignature\(representative\.formSignatureStrokes\)/);
+  assert.match(controller, /traceSignatureImageToStrokes/);
+});
+
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {
   const [portal, signer, pad] = await Promise.all([
     source("../../frontend/src/pages/client-portal/ClientPortalQuestionnaires.jsx"),

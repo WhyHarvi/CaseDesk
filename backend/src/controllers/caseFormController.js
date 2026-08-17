@@ -12,6 +12,7 @@ import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds,
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 import { stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
+import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
 const statuses = new Set(["Assigned", "InformationMissing", "ReadyToFill", "InProgress", "ReadyForReview", "ChangesRequested", "Approved", "SignatureRequired", "Signed", "Finalized", "NotRequired"]);
@@ -421,8 +422,11 @@ export async function serveCaseFormFile(req, res) {
   const isImm5476 = String(data.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
   const representative = data.representativeUser;
   const hasSavedSignature = representative?.formSignatureImage && Array.isArray(representative.formSignatureStrokes) && representative.formSignatureStrokes.length;
+  const signatureStrokes = hasSavedSignature && isTracedImageSignature(representative.formSignatureStrokes)
+    ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
+    : representative?.formSignatureStrokes;
   const buffer = isImm5476 && hasSavedSignature
-    ? await stampXfaPdfFormValues(storedBuffer, [], { "547R": true }, { strokes: representative.formSignatureStrokes, name: representative.fullName })
+    ? await stampXfaPdfFormValues(storedBuffer, [], { "547R": true }, { strokes: signatureStrokes, name: representative.fullName })
     : storedBuffer;
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");
