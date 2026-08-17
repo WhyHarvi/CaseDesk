@@ -8,6 +8,7 @@ import { logger } from "../services/logger.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { caseAccessWhere, caseLinkedRecordAccessWhere } from "../middleware/authorization.js";
 
 const templateInclude = { createdBy: { select: { id: true, fullName: true } }, updatedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, writtenDocuments: true } } };
 const documentInclude = { correspondenceTemplate: { select: { id: true, title: true, kind: true, category: true, versionNumber: true } }, clientDocument: { select: { id: true, documentName: true, originalFilename: true, storageKey: true, updatedAt: true } }, issuedClientDocument: { select: { id: true, documentName: true, originalFilename: true, storageKey: true, updatedAt: true } }, updatedBy: { select: { id: true, fullName: true } }, issuedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true } } };
@@ -17,7 +18,14 @@ function clean(value, max, fallback = "") { return String(value ?? fallback).tri
 function tags(value) { return [...new Set((Array.isArray(value) ? value : []).map((item) => clean(item, 80).toLowerCase()).filter(Boolean))]; }
 
 async function scopedCase(req, caseId, { writable = false } = {}) {
-  const data = await prisma.case.findFirst({ where: { id: caseId, agencyId: req.user.agencyId }, include: { client: true, assignedUser: true } });
+  const data = await prisma.case.findFirst({
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
+    include: { client: true, assignedUser: true },
+  });
   if (!data) throw createHttpError(404, "Case not found");
   if (writable && (data.archivedAt || data.deletedAt)) throw createHttpError(409, "Restore this case before creating correspondence");
   return data;
@@ -112,10 +120,20 @@ export async function listCaseCorrespondence(req, res) {
 // roles) can call the exact same code instead of a second copy. `options`
 // lets a caller impose an extra restriction the generic Agreements &
 // Letters workspace doesn't need.
-export async function changeCorrespondenceStatus(agencyId, documentId, status, { actorUserId, requireKind } = {}) {
+export async function changeCorrespondenceStatus(
+  agencyId,
+  documentId,
+  status,
+  { actorUserId, requireKind, caseAccessPredicate = {} } = {},
+) {
   if (!correspondenceStatuses.has(status)) throw createHttpError(400, "Invalid correspondence status");
   const existing = await prisma.writtenDocument.findFirst({
-    where: { id: documentId, agencyId, correspondenceKind: { not: null } },
+    where: {
+      id: documentId,
+      agencyId,
+      correspondenceKind: { not: null },
+      case: { agencyId, ...caseAccessPredicate },
+    },
     include: { clientDocument: true, case: { select: { archivedAt: true, deletedAt: true } } },
   });
   if (!existing) throw createHttpError(404, "Agreement or letter not found");
@@ -188,7 +206,10 @@ export async function changeCorrespondenceStatus(agencyId, documentId, status, {
 
 export async function updateCorrespondenceStatus(req, res) {
   const status = clean(req.body.status, 40);
-  const data = await changeCorrespondenceStatus(req.user.agencyId, req.params.id, status, { actorUserId: req.user.id });
+  const data = await changeCorrespondenceStatus(req.user.agencyId, req.params.id, status, {
+    actorUserId: req.user.id,
+    caseAccessPredicate: caseAccessWhere(req),
+  });
   res.json({ data });
 }
 
@@ -198,6 +219,7 @@ export async function deleteCaseCorrespondence(req, res) {
       id: req.params.id,
       agencyId: req.user.agencyId,
       correspondenceKind: { not: null },
+      ...caseLinkedRecordAccessWhere(req),
     },
     include: { clientDocument: true, issuedClientDocument: true, case: { select: { archivedAt: true, deletedAt: true } } },
   });

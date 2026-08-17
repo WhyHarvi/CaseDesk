@@ -311,6 +311,101 @@ export async function ensureRetainerCaseForClient(appointment, { db = prisma, wr
   return { client, caseItem, writtenDocument };
 }
 
+// A minimal, consultant-triggered counterpart to ensureRetainerClientForLead
+// for the gap that function doesn't cover: a retainer signed outside the
+// system entirely — a wet-signed paper copy, or handled through another
+// channel — which updateCommercialStatus (lead.service.js) lets a
+// consultant record by hand via a self-attested "Signed" status, with no
+// appointment and therefore no earlyClientId ever created. Without a
+// client/case, there is nowhere to record the lead's initial payment,
+// which permanently blocks conversion.
+//
+// Deliberately does NOT reuse ensureRetainerClientForLead: that function
+// also renders and emails/texts the client an e-signature link for a
+// retainer they've already signed, and overwrites retainerStatus back to
+// "SENT" — both wrong here. This does only the safe, DB-only part of
+// Phase 1 above: create the Client + Case, re-point the lead's existing
+// appointments/notes/follow-ups onto it, and link
+// earlyClientId/earlyCaseId — leaving retainerStatus untouched and sending
+// nothing. Idempotent the same way: returns null if the lead isn't open or
+// already has a linked client.
+export async function createLeadClientForPayment(leadId, { db = prisma, actorUserId } = {}) {
+  const lead = await db.lead.findUnique({ where: { id: leadId } });
+  if (!lead || lead.status !== "OPEN" || lead.earlyClientId) return null;
+  const agencyId = lead.agencyId;
+  const performedById = actorUserId || lead.ownerUserId;
+
+  const created = await db.$transaction(async (tx) => {
+    const freshLead = await tx.lead.findUnique({ where: { id: lead.id } });
+    if (!freshLead || freshLead.status !== "OPEN" || freshLead.earlyClientId) return null;
+
+    await lockAgencyContactIntake(tx, agencyId);
+    await assertNoContactDuplicate(tx, {
+      agencyId,
+      phoneNormalized: freshLead.phoneNormalized,
+      emailNormalized: freshLead.emailNormalized,
+      excludeLeadId: freshLead.id,
+    });
+
+    const clientNumber = await nextClientNumber(tx, agencyId);
+    const client = await tx.client.create({
+      data: {
+        agencyId, clientNumber, fullName: leadDisplayName(freshLead),
+        givenNames: freshLead.firstName || null,
+        familyName: freshLead.lastName || null,
+        phone: freshLead.phone, phoneNormalized: freshLead.phoneNormalized,
+        email: freshLead.email, emailNormalized: freshLead.emailNormalized,
+        preferredLanguage: freshLead.preferredLanguage, status: "Active",
+        assignedUserId: freshLead.ownerUserId,
+      },
+    });
+    // Stage is "Documents Pending", not "Retainer Pending" like the
+    // automated path uses — the retainer is already signed by the time
+    // this runs, so there's nothing left to send.
+    const caseItem = await tx.case.create({
+      data: {
+        agencyId, clientId: client.id, assignedUserId: freshLead.ownerUserId,
+        caseType: freshLead.immigrationInterest || "Immigration consultation",
+        stage: "Documents Pending", status: "Active",
+        nextAction: "Collect required documents",
+      },
+    });
+
+    const leadAppointments = await tx.appointment.findMany({ where: { agencyId, leadId: freshLead.id }, select: { id: true } });
+    const leadAppointmentIds = leadAppointments.map((item) => item.id);
+    if (leadAppointmentIds.length) {
+      await tx.appointment.updateMany({ where: { id: { in: leadAppointmentIds } }, data: { clientId: client.id } });
+      await tx.note.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
+      await tx.followUp.updateMany({ where: { appointmentId: { in: leadAppointmentIds }, clientId: null }, data: { clientId: client.id } });
+    }
+
+    await tx.lead.update({ where: { id: freshLead.id }, data: { earlyClientId: client.id, earlyCaseId: caseItem.id, version: { increment: 1 } } });
+
+    await tx.leadActivity.create({
+      data: {
+        agencyId, leadId: freshLead.id, activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM",
+        title: "Client and case created to record payment",
+        description: "Created manually so the initial payment could be recorded — the retainer was already marked Signed outside the automated flow.",
+        performedById,
+        metadata: { caseId: caseItem.id, clientId: client.id },
+      },
+    });
+    await tx.activityLog.create({
+      data: {
+        agencyId, userId: performedById, clientId: client.id, caseId: caseItem.id,
+        action: "lead.client_case_created_for_payment",
+        details: `${freshLead.leadNumber}: client and case created manually to record the initial payment`,
+        entityType: "lead", entityId: freshLead.id,
+        metadata: { caseId: caseItem.id, clientId: client.id },
+      },
+    });
+
+    return { client, caseItem };
+  }, retainerTransactionOptions);
+
+  return created;
+}
+
 // Temporary kill switch — flip back to true to resume automatic retainer
 // sending. Paused at the user's request; nothing else about the flow
 // changes underneath this, the trigger just no-ops until it's back on.

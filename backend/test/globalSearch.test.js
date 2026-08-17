@@ -137,3 +137,30 @@ test("lead search surfaces Import Review leads too, clearly labeled and routed t
   assert.match(controller, /const listPath = inReview \? "\/leads\/review" : "\/leads";/);
   assert.match(controller, /url: `\$\{listPath\}\?search=\$\{encodeURIComponent\(lead\.leadNumber\)\}`/);
 });
+
+test("client name search matches regardless of word order, and a converted Case Easy contact links straight to its client profile", async () => {
+  const controller = await source("../src/controllers/globalSearchController.js");
+
+  // A real Case Easy-imported client whose source firstName/lastName
+  // columns were reversed ended up with fullName stored as "Singh
+  // Jashandeep" — a plain, order-sensitive substring match on the whole
+  // query string made that client invisible to search whenever the query
+  // was typed in natural word order. Confirmed live: querying both
+  // "Jashandeep Singh" and "Singh Jashandeep" now finds the client either
+  // way (each word required to appear somewhere in fullName, independent
+  // of order — the same idea caseEasySearchService.js already used for its
+  // own contact search, applied here to every client-name lookup).
+  assert.match(controller, /function fullNameSearchClause\(query, field = "fullName"\)/);
+  assert.match(controller, /if \(terms\.length <= 1\) return \{ \[field\]: \{ contains: query, mode: "insensitive" \} \};/);
+  assert.match(controller, /return \{ AND: terms\.map\(\(term\) => \(\{ \[field\]: \{ contains: term, mode: "insensitive" \} \}\)\) \};/);
+  const fullNameClauseUses = controller.match(/fullNameSearchClause\(query(?:, "fullName")?\)/g) || [];
+  assert.ok(fullNameClauseUses.length >= 6, `expected fullNameSearchClause to replace every client/user fullName filter, found ${fullNameClauseUses.length}`);
+  assert.doesNotMatch(controller, /fullName: \{ contains: query, mode: "insensitive" \}/);
+
+  // A contact already converted to a real client used to always link to
+  // the Case Easy staging page — reaching the client's own profile took a
+  // second click on a "Converted" badge there. Confirmed live: a converted
+  // contact's search result now links directly to /app/clients/:id.
+  assert.match(controller, /convertedClient: \{ select: \{ id: true, clientNumber: true \} \}/);
+  assert.match(controller, /url: contact\.convertedClient\?\.id\s*\n\s*\? `\/app\/clients\/\$\{contact\.convertedClient\.id\}`/);
+});

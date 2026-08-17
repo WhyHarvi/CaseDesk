@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { caseAccessWhere, caseLinkedRecordAccessWhere, relatedRecordAccessWhere } from "../middleware/authorization.js";
 import { removeDocumentFile } from "../services/documentStorage.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
@@ -34,7 +35,11 @@ function contentPayload(body) {
 
 async function findWrittenDocument(req) {
   const data = await prisma.writtenDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...caseLinkedRecordAccessWhere(req),
+    },
     include,
   });
   if (!data) throw createHttpError(404, "Written document not found");
@@ -49,7 +54,11 @@ function requireEditableDocument(document) {
 
 export async function createWrittenDocument(req, res) {
   const caseItem = await prisma.case.findFirst({
-    where: { id: req.body.caseId, agencyId: req.user.agencyId },
+    where: {
+      id: req.body.caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
     select: { id: true, clientId: true },
   });
   if (!caseItem) throw createHttpError(404, "Case not found");
@@ -74,6 +83,7 @@ export async function listWrittenDocuments(req, res) {
   const data = await prisma.writtenDocument.findMany({
     where: {
       agencyId: req.user.agencyId,
+      ...caseLinkedRecordAccessWhere(req),
       ...(req.query.caseId ? { caseId: req.query.caseId } : {}),
     },
     include: {
@@ -95,6 +105,7 @@ export async function deleteWrittenDocument(req, res) {
   const existing = await prisma.writtenDocument.findFirst({
     where: {
       agencyId: req.user.agencyId,
+      ...caseLinkedRecordAccessWhere(req),
       // My Documents can render a saved Writer file from its ClientDocument
       // row, while an unsaved draft comes directly from WrittenDocument.
       // Accept either identifier so both representations delete the same
@@ -126,7 +137,12 @@ export async function deleteWrittenDocument(req, res) {
       where: {
         id: existing.id,
         agencyId: req.user.agencyId,
-        case: { archivedAt: null, deletedAt: null },
+        case: {
+          agencyId: req.user.agencyId,
+          archivedAt: null,
+          deletedAt: null,
+          ...caseAccessWhere(req),
+        },
         OR: [
           { correspondenceStatus: null },
           { correspondenceStatus: { notIn: ["Issued", "Signed", "Finalized"] } },
@@ -177,7 +193,14 @@ export async function saveWrittenDocumentVersion(req, res) {
   const existing = await findWrittenDocument(req);
   requireEditableDocument(existing);
   const clientDocument = await prisma.clientDocument.findFirst({
-    where: { id: req.body.clientDocumentId, agencyId: req.user.agencyId, caseId: existing.caseId, visibility: "Internal", storageKey: { not: null } },
+    where: {
+      id: req.body.clientDocumentId,
+      agencyId: req.user.agencyId,
+      caseId: existing.caseId,
+      visibility: "Internal",
+      storageKey: { not: null },
+      ...relatedRecordAccessWhere(req),
+    },
   });
   if (!clientDocument) throw createHttpError(409, "Save the Word file before creating a document version");
   const payload = contentPayload(req.body);

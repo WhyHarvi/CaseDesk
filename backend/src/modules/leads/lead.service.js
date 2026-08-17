@@ -9,6 +9,7 @@ import { parseBulkReassignment, parseCommercialStatus, parseCreateConsultation, 
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { resolveRoutedOwner } from "./lead.routing.service.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
+import { createLeadClientForPayment } from "./lead.retainer.service.js";
 import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../services/notificationService.js";
 import {
   assertSlotAvailable,
@@ -1289,6 +1290,25 @@ export async function updateCommercialStatus(req, db = prisma) {
     await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.commercial_status_updated", details: `${lead.leadNumber}: ${retainerStatus} / ${initialPaymentStatus}`, entityType: "lead", entityId: lead.id, metadata: { previousRetainerStatus: lead.retainerStatus, retainerStatus, previousInitialPaymentStatus: lead.initialPaymentStatus, initialPaymentStatus } } });
     return updated;
   }, leadTransactionOptions);
+}
+
+// Unblocks the lead conversion checklist for a retainer that was signed
+// outside the automated flow (see updateCommercialStatus's manual "Signed"
+// option) — there's otherwise no client/case to record the initial payment
+// against, and no way forward except marking it Waived even when a real
+// payment was collected. Same admin-or-owning-consultant gate as converting
+// the lead itself: this creates a real Client + Case, same consequential
+// write.
+export async function createClientForPayment(req, db = prisma) {
+  const lead = await requireLead(db, req, req.params.id);
+  if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can do this.", "LEAD_NOT_OPEN");
+  if (lead.earlyClientId) throw createHttpError(409, "This lead already has a linked client.", "LEAD_ALREADY_HAS_CLIENT");
+  const retainerReady = ["SIGNED", "NOT_REQUIRED"].includes(lead.retainerStatus);
+  if (!retainerReady) throw createHttpError(409, "Mark the retainer Signed or Not Required before creating a client to record payment against.", "RETAINER_NOT_READY");
+  assertLeadWorkflowEditable(req, lead);
+  const created = await createLeadClientForPayment(lead.id, { db, actorUserId: req.auth.userId });
+  if (!created) throw createHttpError(409, "This lead already has a linked client, or is no longer open.", "LEAD_ALREADY_HAS_CLIENT");
+  return created;
 }
 
 function qualificationSummary(qualification) {

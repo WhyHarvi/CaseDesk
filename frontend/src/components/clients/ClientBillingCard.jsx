@@ -44,7 +44,7 @@ function Metric({ label, value, tone = "text-slate-950" }) {
   );
 }
 
-export default function ClientBillingCard({ clientId, clientName, onOpenStatement, onEntrySaved, initialEntry = null }) {
+export default function ClientBillingCard({ clientId, clientName, onOpenStatement, onEntrySaved, initialEntry = null, id, highlightClassName = "" }) {
   const { role } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -76,7 +76,7 @@ export default function ClientBillingCard({ clientId, clientName, onOpenStatemen
   const summary = data?.summary || {};
 
   return (
-    <article className="overflow-hidden rounded-[1.9rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+    <article id={id} className={`overflow-hidden rounded-[1.9rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl ${highlightClassName}`}>
       <div className="flex flex-col items-start justify-between gap-4 px-6 pb-5 pt-6 sm:flex-row">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_9px_22px_rgba(15,23,42,0.16)]">

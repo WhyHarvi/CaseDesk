@@ -5,6 +5,7 @@ import { copyStorageFile, DOCUMENT_BUCKET, downloadStorageFile, removeStorageFil
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
+import { caseAccessWhere } from "../middleware/authorization.js";
 
 const include = { uploadedBy: { select: { id: true, fullName: true } }, _count: { select: { clientDocuments: true } } };
 
@@ -69,7 +70,14 @@ export async function addSharedLibraryDocumentToCase(req, res) {
   if (!["MyDocuments", "ClientRequirement"].includes(mode)) throw createHttpError(400, "mode must be MyDocuments or ClientRequirement");
   const [resource, caseItem] = await Promise.all([
     prisma.sharedLibraryDocument.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } }),
-    prisma.case.findFirst({ where: { id: req.body.caseId, agencyId: req.user.agencyId }, select: { id: true, clientId: true } }),
+    prisma.case.findFirst({
+      where: {
+        id: req.body.caseId,
+        agencyId: req.user.agencyId,
+        ...caseAccessWhere(req),
+      },
+      select: { id: true, clientId: true },
+    }),
   ]);
   if (!resource) throw createHttpError(404, "Shared-library document not found");
   if (!caseItem) throw createHttpError(404, "Case not found");

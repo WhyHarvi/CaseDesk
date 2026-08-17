@@ -77,7 +77,47 @@ export function caseAccessWhere(req) {
 export function relatedRecordAccessWhere(req) {
   if (req.auth.role === "admin") return {};
   return {
-    OR: [{ client: clientAccessWhere(req) }, { case: caseAccessWhere(req) }],
+    // A client can have cases assigned to different consultants. Once a
+    // record is attached to a case, client-level access must not be allowed
+    // to bypass that case's assignment boundary. Only genuinely client-level
+    // records (caseId = null) fall back to the client predicate.
+    OR: [
+      {
+        caseId: { not: null },
+        case: {
+          agencyId: req.auth.agencyId,
+          ...caseAccessWhere(req),
+        },
+      },
+      {
+        caseId: null,
+        client: {
+          agencyId: req.auth.agencyId,
+          ...clientAccessWhere(req),
+        },
+      },
+    ],
+  };
+}
+
+// Case-only child records (folders, Writer documents, forms, etc.) use this
+// predicate so an ID-based request cannot stop at agencyId and skip the
+// user's assigned/all/none case scope.
+export function caseLinkedRecordAccessWhere(req) {
+  return {
+    case: {
+      agencyId: req.auth.agencyId,
+      ...caseAccessWhere(req),
+    },
+  };
+}
+
+// A parent relation can use this directly, e.g. an attachment whose
+// `message` must itself satisfy the related-record boundary.
+export function relatedRecordParentAccessWhere(req) {
+  return {
+    agencyId: req.auth.agencyId,
+    ...relatedRecordAccessWhere(req),
   };
 }
 

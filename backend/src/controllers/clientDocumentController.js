@@ -5,7 +5,11 @@ import { removeDocumentFile, requireDocumentFile, writeDocumentFile } from "../s
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import { normalizeDocumentName } from "../utils/documentNames.js";
-import { relatedRecordAccessWhere } from "../middleware/authorization.js";
+import {
+  caseAccessWhere,
+  clientAccessWhere,
+  relatedRecordAccessWhere,
+} from "../middleware/authorization.js";
 
 const include = {
   client: {
@@ -91,8 +95,59 @@ function duplicateDocumentError(error) {
     : error;
 }
 
+async function requireAccessibleDocumentParent(req, { caseId, clientId }) {
+  if (!clientId) throw createHttpError(400, "clientId is required");
+  if (caseId) {
+    const caseItem = await prisma.case.findFirst({
+      where: {
+        id: caseId,
+        clientId,
+        agencyId: req.user.agencyId,
+        ...caseAccessWhere(req),
+      },
+      select: { id: true, clientId: true },
+    });
+    if (!caseItem) throw createHttpError(404, "Case not found");
+    return caseItem;
+  }
+  const client = await prisma.client.findFirst({
+    where: {
+      id: clientId,
+      agencyId: req.user.agencyId,
+      ...clientAccessWhere(req),
+    },
+    select: { id: true },
+  });
+  if (!client) throw createHttpError(404, "Client not found");
+  return null;
+}
+
+async function requireAccessibleFolder(req, folderId, caseId) {
+  if (!folderId) return null;
+  if (!caseId) throw createHttpError(400, "A document folder requires a case", "VALIDATION_ERROR");
+  const folder = await prisma.documentFolder.findFirst({
+    where: {
+      id: folderId,
+      agencyId: req.user.agencyId,
+      caseId,
+      case: { agencyId: req.user.agencyId, ...caseAccessWhere(req) },
+    },
+    select: { id: true },
+  });
+  if (!folder) throw createHttpError(404, "Folder not found");
+  return folder;
+}
+
 export async function createClientDocument(req, res) {
+  const caseId = String(req.body.caseId || "").trim() || null;
+  const clientId = String(req.body.clientId || "").trim();
+  await requireAccessibleDocumentParent(req, { caseId, clientId });
   const visibility = req.body.visibility === "Internal" ? "Internal" : "Client";
+  const folderId = String(req.body.folderId || "").trim() || null;
+  if (folderId && visibility !== "Internal") {
+    throw createHttpError(400, "Only internal working files can be filed into a folder", "VALIDATION_ERROR");
+  }
+  await requireAccessibleFolder(req, folderId, caseId);
   req.body.status = "Requested";
   req.body.normalizedName = visibility === "Client" ? normalizeDocumentName(req.body.documentName) : null;
   try {
@@ -104,22 +159,32 @@ export async function createClientDocument(req, res) {
 
 export async function updateClientDocument(req, res) {
   const existing = await prisma.clientDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
-    select: { documentName: true, visibility: true, caseId: true },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+    },
+    select: { documentName: true, visibility: true, caseId: true, clientId: true, folderId: true },
   });
   if (!existing) throw createHttpError(404, "Client document not found");
+  const nextCaseId = Object.hasOwn(req.body, "caseId")
+    ? String(req.body.caseId || "").trim() || null
+    : existing.caseId;
+  const nextClientId = Object.hasOwn(req.body, "clientId")
+    ? String(req.body.clientId || "").trim()
+    : existing.clientId;
+  await requireAccessibleDocumentParent(req, { caseId: nextCaseId, clientId: nextClientId });
   const visibility = req.body.visibility || existing.visibility;
   const documentName = req.body.documentName ?? existing.documentName;
   req.body.normalizedName = visibility === "Client" ? normalizeDocumentName(documentName) : null;
   // Folders only organize a consultant's own internal working files — a
   // client-requested document stays flat under its checklist item.
-  if (Object.hasOwn(req.body, "folderId") && req.body.folderId) {
+  const nextFolderId = Object.hasOwn(req.body, "folderId")
+    ? String(req.body.folderId || "").trim() || null
+    : existing.folderId;
+  if (nextFolderId) {
     if (visibility !== "Internal") throw createHttpError(400, "Only internal working files can be filed into a folder", "VALIDATION_ERROR");
-    const folder = await prisma.documentFolder.findFirst({
-      where: { id: req.body.folderId, agencyId: req.user.agencyId, caseId: existing.caseId },
-      select: { id: true },
-    });
-    if (!folder) throw createHttpError(404, "Folder not found");
+    await requireAccessibleFolder(req, nextFolderId, nextCaseId);
   }
   try {
     await controller.update(req, res);
@@ -141,13 +206,22 @@ export async function uploadClientDocumentFile(req, res) {
 
   if (documentId) {
     existing = await prisma.clientDocument.findFirst({
-      where: { id: documentId, agencyId: req.user.agencyId },
+      where: {
+        id: documentId,
+        agencyId: req.user.agencyId,
+        ...relatedRecordAccessWhere(req),
+      },
     });
     if (!existing) throw createHttpError(404, "Case document not found");
   } else {
     if (!caseId || !clientId) throw createHttpError(400, "caseId and clientId are required");
     targetCase = await prisma.case.findFirst({
-      where: { id: caseId, clientId, agencyId: req.user.agencyId },
+      where: {
+        id: caseId,
+        clientId,
+        agencyId: req.user.agencyId,
+        ...caseAccessWhere(req),
+      },
       select: { id: true, clientId: true },
     });
     if (!targetCase) throw createHttpError(404, "Case not found");
@@ -157,18 +231,14 @@ export async function uploadClientDocumentFile(req, res) {
   const destinationClientId = existing?.clientId || targetCase?.clientId;
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.user.agencyId, destinationCaseId || `client-${destinationClientId}`, `${randomUUID()}${extension}`);
-  await writeDocumentFile(storageKey, req.file.buffer, req.file.mimetype);
 
   let folderId = String(req.body.folderId || "").trim() || null;
   if (folderId && !existing) {
-    const folder = await prisma.documentFolder.findFirst({
-      where: { id: folderId, agencyId: req.user.agencyId, caseId: destinationCaseId },
-      select: { id: true },
-    });
-    if (!folder) throw createHttpError(404, "Folder not found");
+    await requireAccessibleFolder(req, folderId, destinationCaseId);
   } else if (existing) {
     folderId = null; // re-uploading a file onto an existing document never moves it between folders here
   }
+  await writeDocumentFile(storageKey, req.file.buffer, req.file.mimetype);
 
   let committed = false;
   try {
@@ -234,7 +304,11 @@ export async function uploadClientDocumentFile(req, res) {
 
 export async function serveClientDocumentFile(req, res) {
   const data = await prisma.clientDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+    },
     select: { storageKey: true, originalFilename: true, mimeType: true },
   });
 
@@ -254,7 +328,11 @@ export async function finalizeClientDocument(req, res) {
   }
 
   const existing = await prisma.clientDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+    },
   });
 
   if (!existing) throw createHttpError(404, "Client document not found");
@@ -314,7 +392,11 @@ export async function updateClientDocumentStatus(req, res) {
   if (!["admin", "staff"].includes(req.user.role)) throw createHttpError(403, "You do not have permission to update document status");
 
   const existing = await prisma.clientDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+    },
   });
   if (!existing) throw createHttpError(404, "Client document not found");
   if (fileRequiredStatuses.has(status) && !existing.storageKey) {
@@ -344,7 +426,11 @@ export async function updateClientDocumentStatus(req, res) {
 
 export async function deleteClientDocument(req, res) {
   const existing = await prisma.clientDocument.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+    },
   });
   if (!existing) throw createHttpError(404, "Client document not found");
 

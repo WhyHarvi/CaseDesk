@@ -18,7 +18,11 @@ import {
 } from "../services/communicationSlaService.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { clientAccessWhere } from "../middleware/authorization.js";
+import {
+  caseAccessWhere,
+  clientAccessWhere,
+  relatedRecordAccessWhere,
+} from "../middleware/authorization.js";
 import { resolveNotifications } from "../services/notificationService.js";
 import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
 
@@ -162,9 +166,23 @@ function sendPermission(channel) {
         : "canUseChat";
 }
 
+function conversationOwnershipWhere(req, permissions) {
+  return permissions.canViewAll ? {} : { assignedToId: req.user.id };
+}
+
+function messageOwnershipWhere(req, permissions) {
+  return permissions.canViewAll
+    ? {}
+    : { conversation: { assignedToId: req.user.id } };
+}
+
 async function scopedCase(req, caseId) {
   const data = await prisma.case.findFirst({
-    where: { id: caseId, agencyId: req.user.agencyId },
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
     include: { client: true },
   });
   if (!data) throw createHttpError(404, "Case not found");
@@ -172,8 +190,14 @@ async function scopedCase(req, caseId) {
 }
 
 async function scopedConversation(req, id, include = conversationInclude) {
+  const permissions = await getCommunicationPermissions(req);
   const data = await prisma.communicationConversation.findFirst({
-    where: { id, agencyId: req.user.agencyId },
+    where: {
+      id,
+      agencyId: req.user.agencyId,
+      ...relatedRecordAccessWhere(req),
+      ...conversationOwnershipWhere(req, permissions),
+    },
     include,
   });
   if (!data) throw createHttpError(404, "Conversation not found");
@@ -568,8 +592,10 @@ export async function listCommunicationInbox(req, res) {
       : {}),
     ...(scope === "unassigned" ? { assignedToId: null } : {}),
     ...(scope === "unread" ? { unreadCount: { gt: 0 } } : {}),
-    ...(search
-      ? {
+    AND: [
+      relatedRecordAccessWhere(req),
+      ...(search
+        ? [{
           OR: [
             { subject: { contains: search, mode: "insensitive" } },
             { client: { fullName: { contains: search, mode: "insensitive" } } },
@@ -582,8 +608,9 @@ export async function listCommunicationInbox(req, res) {
               },
             },
           ],
-        }
-      : {}),
+        }]
+        : []),
+    ],
   };
   const [data, total] = await Promise.all([
     prisma.communicationConversation.findMany({
@@ -638,10 +665,17 @@ export async function getCommunicationConversation(req, res) {
 }
 
 export async function createCommunicationMessage(req, res) {
+  const communicationPermissions = await getCommunicationPermissions(req);
   const requestedConversationId = clean(req.body.conversationId, 80);
   const conversationContext = requestedConversationId
     ? await prisma.communicationConversation.findFirst({
-        where: { id: requestedConversationId, agencyId: req.user.agencyId, deletedAt: null },
+        where: {
+          id: requestedConversationId,
+          agencyId: req.user.agencyId,
+          deletedAt: null,
+          ...relatedRecordAccessWhere(req),
+          ...conversationOwnershipWhere(req, communicationPermissions),
+        },
         select: { id: true, clientId: true, caseId: true, assignedToId: true, provider: true },
       })
     : null;
@@ -760,12 +794,12 @@ export async function createCommunicationMessage(req, res) {
     clean(req.header("idempotency-key") || req.body.idempotencyKey, 200) ||
     null;
   if (idempotencyKey) {
-    const duplicate = await prisma.communicationMessage.findUnique({
+    const duplicate = await prisma.communicationMessage.findFirst({
       where: {
-        agencyId_idempotencyKey: {
-          agencyId: req.user.agencyId,
-          idempotencyKey,
-        },
+        agencyId: req.user.agencyId,
+        idempotencyKey,
+        ...relatedRecordAccessWhere(req),
+        ...messageOwnershipWhere(req, communicationPermissions),
       },
       include: messageInclude,
     });
@@ -801,6 +835,8 @@ export async function createCommunicationMessage(req, res) {
         id: req.body.parentMessageId,
         agencyId: req.user.agencyId,
         conversationId: conversationContext?.id || undefined,
+        ...relatedRecordAccessWhere(req),
+        ...messageOwnershipWhere(req, communicationPermissions),
       },
     });
     if (!parent) throw createHttpError(404, "Parent message not found");
@@ -1052,8 +1088,15 @@ export async function createCommunicationMessage(req, res) {
 }
 
 export async function updateCommunicationDraft(req, res) {
+  const communicationPermissions = await getCommunicationPermissions(req);
   const existing = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
+    },
   });
   if (!existing) throw createHttpError(404, "Communication draft not found");
   await requireCommunicationPermission(req, sendPermission(existing.channel));
@@ -1108,8 +1151,15 @@ export async function updateCommunicationDraft(req, res) {
 }
 
 export async function sendCommunicationDraft(req, res) {
+  const communicationPermissions = await getCommunicationPermissions(req);
   const existing = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
+    },
   });
   if (!existing) throw createHttpError(404, "Communication draft not found");
   await requireCommunicationPermission(req, sendPermission(existing.channel));
@@ -1320,6 +1370,7 @@ export async function bulkUpdateCommunicationConversations(req, res) {
     id: { in: ids },
     agencyId: req.user.agencyId,
     deletedAt: null,
+    ...relatedRecordAccessWhere(req),
     ...(!permissions.canViewAll ? { assignedToId: req.user.id } : {}),
   };
   const conversations = await prisma.communicationConversation.findMany({
@@ -1408,8 +1459,15 @@ export async function markCommunicationRead(req, res) {
 }
 
 export async function retryCommunicationDelivery(req, res) {
+  const communicationPermissions = await getCommunicationPermissions(req);
   const existing = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
+    },
   });
   if (!existing) throw createHttpError(404, "Communication not found");
   await requireCommunicationPermission(req, sendPermission(existing.channel));
@@ -1738,7 +1796,7 @@ function csv(value) {
 }
 
 export async function exportCommunication(req, res) {
-  await requireCommunicationPermission(req, "canExport");
+  const communicationPermissions = await requireCommunicationPermission(req, "canExport");
   const caseItem = await scopedCase(req, clean(req.body.caseId, 80));
   const ids = jsonArray(req.body.ids).map(String);
   const data = await prisma.communicationMessage.findMany({
@@ -1746,6 +1804,7 @@ export async function exportCommunication(req, res) {
       agencyId: req.user.agencyId,
       caseId: caseItem.id,
       deletedAt: null,
+      ...messageOwnershipWhere(req, communicationPermissions),
       ...(ids.length ? { id: { in: ids } } : {}),
     },
     include: messageInclude,
@@ -1803,8 +1862,15 @@ export async function exportCommunication(req, res) {
 
 export async function deleteCommunication(req, res) {
   await requireCommunicationDeletePolicy(req);
+  const communicationPermissions = await getCommunicationPermissions(req);
   const existing = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
+    },
     include: { conversation: true },
   });
   if (!existing) throw createHttpError(404, "Communication record not found");
@@ -1841,11 +1907,17 @@ export async function deleteCommunication(req, res) {
 // (already admin-gated and audit-logged) plus reactions, which annotate
 // without rewriting anything.
 export async function toggleCommunicationMessageReaction(req, res) {
-  await requireCommunicationPermission(req, "canUseChat");
+  const communicationPermissions = await requireCommunicationPermission(req, "canUseChat");
   const emoji = clean(req.body.emoji, 8);
   if (!reactionEmoji.has(emoji)) throw createHttpError(400, "Unsupported reaction");
   const message = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
+    },
   });
   if (!message) throw createHttpError(404, "Communication record not found");
   const existing = await prisma.communicationMessageReaction.findUnique({
@@ -1881,6 +1953,7 @@ export async function toggleCommunicationMessageReaction(req, res) {
 
 export async function bulkDeleteCommunication(req, res) {
   await requireCommunicationDeletePolicy(req);
+  const communicationPermissions = await getCommunicationPermissions(req);
   const caseItem = await scopedCase(req, clean(req.body.caseId, 80));
   const ids = jsonArray(req.body.ids).map(String);
   if (!ids.length)
@@ -1891,7 +1964,10 @@ export async function bulkDeleteCommunication(req, res) {
       agencyId: req.user.agencyId,
       caseId: caseItem.id,
       deletedAt: null,
-      conversation: { legalHold: false },
+      conversation: {
+        legalHold: false,
+        ...conversationOwnershipWhere(req, communicationPermissions),
+      },
     },
     select: { id: true, conversationId: true },
   });
@@ -1925,11 +2001,14 @@ export async function bulkDeleteCommunication(req, res) {
 
 export async function restoreCommunication(req, res) {
   await requireCommunicationDeletePolicy(req);
+  const communicationPermissions = await getCommunicationPermissions(req);
   const existing = await prisma.communicationMessage.findFirst({
     where: {
       id: req.params.id,
       agencyId: req.user.agencyId,
       deletedAt: { not: null },
+      ...relatedRecordAccessWhere(req),
+      ...messageOwnershipWhere(req, communicationPermissions),
     },
   });
   if (!existing)

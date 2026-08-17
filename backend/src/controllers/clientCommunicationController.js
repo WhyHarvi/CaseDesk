@@ -15,6 +15,7 @@ import { DOCUMENT_BUCKET, downloadStorageFile } from "../services/supabaseStorag
 import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/communicationAttachmentStorage.js";
 import { getEffectiveClientCommunicationPreference } from "../services/clientCommunicationPolicyService.js";
 import { createHttpError } from "../utils/http.js";
+import { caseAccessWhere } from "../middleware/authorization.js";
 
 const clean = (value, max = 500) =>
   String(value ?? "")
@@ -25,7 +26,11 @@ const hashToken = (token) => createHash("sha256").update(token).digest("hex");
 
 async function scopedCase(req, caseId) {
   const data = await prisma.case.findFirst({
-    where: { id: caseId, agencyId: req.user.agencyId },
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
     include: { client: true },
   });
   if (!data) throw createHttpError(404, "Case not found");

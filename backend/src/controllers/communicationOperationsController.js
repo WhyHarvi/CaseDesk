@@ -9,6 +9,7 @@ import {
   getEffectiveClientCommunicationPreference,
 } from "../services/clientCommunicationPolicyService.js";
 import { createHttpError } from "../utils/http.js";
+import { caseAccessWhere, relatedRecordAccessWhere } from "../middleware/authorization.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const triggers = new Set([
@@ -38,7 +39,11 @@ const pageValues = (query, defaultLimit = 50) => {
 
 async function scopedCase(req, caseId) {
   const data = await prisma.case.findFirst({
-    where: { id: caseId, agencyId: req.user.agencyId },
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
     include: { client: true },
   });
   if (!data) throw createHttpError(404, "Case not found");
@@ -354,7 +359,7 @@ export async function deleteCommunicationAutomation(req, res) {
 }
 
 export async function getCommunicationAnalytics(req, res) {
-  await requireCommunicationPermission(req, "canView");
+  const permissions = await requireCommunicationPermission(req, "canView");
   const now = new Date();
   const to = date(req.query.to, now);
   const from = date(req.query.from, new Date(to.getTime() - 30 * 86_400_000));
@@ -369,6 +374,17 @@ export async function getCommunicationAnalytics(req, res) {
     agencyId: req.user.agencyId,
     occurredAt: { gte: from, lte: to },
     deletedAt: null,
+    ...relatedRecordAccessWhere(req),
+    ...(!permissions.canViewAll
+      ? { conversation: { assignedToId: req.user.id } }
+      : {}),
+    ...(caseId ? { caseId } : {}),
+  };
+  const conversationWhere = {
+    agencyId: req.user.agencyId,
+    deletedAt: null,
+    ...relatedRecordAccessWhere(req),
+    ...(!permissions.canViewAll ? { assignedToId: req.user.id } : {}),
     ...(caseId ? { caseId } : {}),
   };
   const [
@@ -404,46 +420,34 @@ export async function getCommunicationAnalytics(req, res) {
     }),
     prisma.communicationConversation.count({
       where: {
-        agencyId: req.user.agencyId,
+        ...conversationWhere,
         responseDueAt: { lt: now },
         firstRespondedAt: null,
         state: "WaitingOnAgency",
-        deletedAt: null,
-        ...(caseId ? { caseId } : {}),
       },
     }),
     prisma.communicationConversation.count({
       where: {
-        agencyId: req.user.agencyId,
+        ...conversationWhere,
         resolutionDueAt: { lt: now },
         state: { not: "Closed" },
-        deletedAt: null,
-        ...(caseId ? { caseId } : {}),
       },
     }),
     prisma.communicationConversation.count({
       where: {
-        agencyId: req.user.agencyId,
+        ...conversationWhere,
         state: { not: "Closed" },
-        deletedAt: null,
-        ...(caseId ? { caseId } : {}),
       },
     }),
     prisma.communicationConversation.aggregate({
-      where: {
-        agencyId: req.user.agencyId,
-        deletedAt: null,
-        ...(caseId ? { caseId } : {}),
-      },
+      where: conversationWhere,
       _sum: { unreadCount: true },
     }),
     prisma.communicationConversation.findMany({
       where: {
-        agencyId: req.user.agencyId,
+        ...conversationWhere,
         firstInboundAt: { gte: from, lte: to },
         firstRespondedAt: { not: null },
-        deletedAt: null,
-        ...(caseId ? { caseId } : {}),
       },
       select: { firstInboundAt: true, firstRespondedAt: true },
     }),
@@ -503,10 +507,43 @@ export async function getCommunicationAnalytics(req, res) {
 }
 
 export async function listCommunicationAudit(req, res) {
-  await requireCommunicationPermission(req, "canView");
+  const permissions = await requireCommunicationPermission(req, "canView");
   const { page, limit, skip } = pageValues(req.query);
+  const caseId = clean(req.query.caseId, 80) || null;
+  let recordScope = {};
+  if (caseId) {
+    const caseItem = await scopedCase(req, caseId);
+    const conversationWhere = {
+      agencyId: req.user.agencyId,
+      caseId: caseItem.id,
+      ...(!permissions.canViewAll ? { assignedToId: req.user.id } : {}),
+    };
+    const conversations = await prisma.communicationConversation.findMany({
+      where: conversationWhere,
+      select: { id: true },
+    });
+    const conversationIds = conversations.map((item) => item.id);
+    const messages = conversationIds.length
+      ? await prisma.communicationMessage.findMany({
+          where: {
+            agencyId: req.user.agencyId,
+            conversationId: { in: conversationIds },
+          },
+          select: { id: true },
+        })
+      : [];
+    recordScope = {
+      OR: [
+        { conversationId: { in: conversationIds } },
+        { messageId: { in: messages.map((item) => item.id) } },
+      ],
+    };
+  } else if (req.user.role !== "admin") {
+    throw createHttpError(400, "caseId is required to view communication audit history");
+  }
   const where = {
     agencyId: req.user.agencyId,
+    ...recordScope,
     ...(req.query.conversationId
       ? { conversationId: clean(req.query.conversationId, 80) }
       : {}),

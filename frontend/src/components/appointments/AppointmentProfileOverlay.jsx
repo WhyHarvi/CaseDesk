@@ -37,6 +37,7 @@ import {
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
 import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet from "../../modules/leads/components/CompleteConsultationSheet";
+import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -160,8 +161,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   }
 
   async function addNote(event) {
-    event.preventDefault();
-    if (!note.trim()) return;
+    event?.preventDefault();
+    if (saving || !note.trim()) return;
     try {
       setSaving(true);
       const created = await createAppointmentNote(appointment.id, note.trim());
@@ -176,9 +177,9 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   }
 
   async function saveNoteEdit(event) {
-    event.preventDefault();
+    event?.preventDefault();
     const content = editingNoteContent.trim();
-    if (!editingNote || !content) return;
+    if (saving || !editingNote || !content) return;
     try {
       setSaving(true);
       await updateAppointmentNote(editingNote.id, content);
@@ -190,6 +191,19 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setError(requestError.response?.data?.message || "The note could not be updated.");
     } finally { setSaving(false); }
   }
+
+  useDebouncedAutosave({
+    value: note,
+    enabled: showNoteComposer && !saving,
+    onSave: addNote,
+  });
+
+  useDebouncedAutosave({
+    value: editingNoteContent,
+    savedValue: editingNote?.content || "",
+    enabled: Boolean(editingNote) && !saving,
+    onSave: saveNoteEdit,
+  });
 
   async function archiveNote() {
     if (!deleteNoteTarget) return;

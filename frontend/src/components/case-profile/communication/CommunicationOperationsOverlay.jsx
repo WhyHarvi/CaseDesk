@@ -697,7 +697,7 @@ export default function CommunicationOperationsOverlay({
         api.get(`/communications/case/${caseItem.id}/preferences`),
         api.get("/communications/automations"),
         api.get("/communications/sla"),
-        api.get("/communications/audit?limit=50"),
+        api.get(`/communications/audit?limit=50&caseId=${caseItem.id}`),
         api.get("/users?limit=100"),
       ]);
       const preferenceData = preferenceResponse.data.data || {};

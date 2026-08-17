@@ -125,6 +125,10 @@ export async function updateCommercialStatus(req, res) {
   res.json({ data: await service.updateCommercialStatus(req) });
 }
 
+export async function createClientForPayment(req, res) {
+  res.status(201).json({ data: await service.createClientForPayment(req) });
+}
+
 export async function convertLead(req, res) {
   const result = await service.convertLead(req);
   // Fired after the transaction commits — an external QuickBooks call has no

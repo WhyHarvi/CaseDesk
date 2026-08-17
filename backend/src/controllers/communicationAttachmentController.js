@@ -3,7 +3,10 @@ import path from "node:path";
 import prisma from "../services/prisma/client.js";
 import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
-import { requireCommunicationPermission } from "../services/communicationPermissions.js";
+import {
+  getCommunicationPermissions,
+  requireCommunicationPermission,
+} from "../services/communicationPermissions.js";
 import {
   CHAT_ATTACH_GRACE_MS,
   extensionOf,
@@ -12,6 +15,19 @@ import {
   storeCommunicationAttachment,
 } from "../services/communicationAttachmentStorage.js";
 import { createHttpError } from "../utils/http.js";
+import {
+  relatedRecordAccessWhere,
+  relatedRecordParentAccessWhere,
+} from "../middleware/authorization.js";
+
+function messageParentAccessWhere(req, permissions) {
+  return {
+    ...relatedRecordParentAccessWhere(req),
+    ...(!permissions.canViewAll
+      ? { conversation: { assignedToId: req.user.id } }
+      : {}),
+  };
+}
 
 export async function storeInboundCommunicationAttachments({
   agencyId,
@@ -108,8 +124,17 @@ export async function storeInboundCommunicationAttachments({
 
 export async function uploadCommunicationAttachment(req, res) {
   if (!req.file) throw createHttpError(400, "Choose a file to attach");
+  const communicationPermissions = await getCommunicationPermissions(req);
   const message = await prisma.communicationMessage.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId, deletedAt: null },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...(!communicationPermissions.canViewAll
+        ? { conversation: { assignedToId: req.user.id } }
+        : {}),
+    },
   });
   if (!message) throw createHttpError(404, "Communication draft not found");
   await requireCommunicationPermission(
@@ -141,9 +166,13 @@ export async function uploadCommunicationAttachment(req, res) {
 }
 
 export async function serveCommunicationAttachment(req, res) {
-  await requireCommunicationPermission(req, "canView");
+  const communicationPermissions = await requireCommunicationPermission(req, "canView");
   const data = await prisma.communicationAttachment.findFirst({
-    where: { id: req.params.attachmentId, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.attachmentId,
+      agencyId: req.user.agencyId,
+      message: messageParentAccessWhere(req, communicationPermissions),
+    },
     include: { message: { select: { deletedAt: true } } },
   });
   if (!data || data.message.deletedAt)
@@ -164,8 +193,13 @@ export async function serveCommunicationAttachment(req, res) {
 }
 
 export async function deleteCommunicationAttachment(req, res) {
+  const communicationPermissions = await getCommunicationPermissions(req);
   const data = await prisma.communicationAttachment.findFirst({
-    where: { id: req.params.attachmentId, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.attachmentId,
+      agencyId: req.user.agencyId,
+      message: messageParentAccessWhere(req, communicationPermissions),
+    },
     include: { message: true },
   });
   if (!data) throw createHttpError(404, "Communication attachment not found");

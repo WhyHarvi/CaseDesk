@@ -31,6 +31,26 @@ const excerpt = (value, max = 150) => {
 
 const join = (...values) => values.filter(Boolean).join(" · ");
 
+// A single order-sensitive substring match on fullName misses real people —
+// confirmed against a Case Easy-imported client whose fullName landed
+// stored as "Singh Jashandeep" (source data has first/last reversed):
+// searching "Jashandeep Singh" matched nothing. Requiring each word to
+// appear somewhere in the name, independent of order, is the same fix
+// caseEasySearchService.js already applies to its own contact search — this
+// brings the main Client search (and every client-name lookup nested off a
+// case, document, or note) up to the same standard. A single-word query is
+// unaffected (still a plain substring match).
+function fullNameSearchClause(query, field = "fullName") {
+  const terms = String(query || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 8);
+  if (terms.length <= 1) return { [field]: { contains: query, mode: "insensitive" } };
+  return { AND: terms.map((term) => ({ [field]: { contains: term, mode: "insensitive" } })) };
+}
+
 const skippedSearch = () => ({
   items: [],
   attempted: false,
@@ -145,7 +165,7 @@ async function searchCaseEasyContacts(req, query) {
       clientIdentifier: true,
       recordType: true,
       importStatus: true,
-      convertedClient: { select: { clientNumber: true } },
+      convertedClient: { select: { id: true, clientNumber: true } },
       linkedCases: {
         select: { caseNumber: true },
         orderBy: { createdAt: "desc" },
@@ -178,7 +198,13 @@ async function searchCaseEasyContacts(req, query) {
         caseNumbers.join(", "),
         contact.importStatus === "converted" ? "Converted" : "Staged",
       ),
-      url: `/app/case-easy-import?view=contacts&contact=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(query)}`,
+      // A contact already converted to a real client has its own profile —
+      // send the admin straight there instead of the import staging page,
+      // which used to be the link even after conversion (a second click,
+      // to a "Converted" badge, was the only way to actually reach it).
+      url: contact.convertedClient?.id
+        ? `/app/clients/${contact.convertedClient.id}`
+        : `/app/case-easy-import?view=contacts&contact=${encodeURIComponent(contact.id)}&search=${encodeURIComponent(query)}`,
     };
   });
 }
@@ -187,7 +213,7 @@ async function searchInternalRecords(req, query, digits, access) {
   const agencyId = req.auth.agencyId;
   const clientSearch = {
     OR: [
-      { fullName: { contains: query, mode: "insensitive" } },
+      fullNameSearchClause(query),
       { clientNumber: { contains: query, mode: "insensitive" } },
       { email: { contains: query, mode: "insensitive" } },
       { phone: { contains: query, mode: "insensitive" } },
@@ -202,7 +228,7 @@ async function searchInternalRecords(req, query, digits, access) {
       { stage: { contains: query, mode: "insensitive" } },
       { status: { contains: query, mode: "insensitive" } },
       { nextAction: { contains: query, mode: "insensitive" } },
-      { client: { fullName: { contains: query, mode: "insensitive" } } },
+      { client: fullNameSearchClause(query) },
       { client: { clientNumber: { contains: query, mode: "insensitive" } } },
     ],
   };
@@ -211,23 +237,23 @@ async function searchInternalRecords(req, query, digits, access) {
       { documentName: { contains: query, mode: "insensitive" } },
       { originalFilename: { contains: query, mode: "insensitive" } },
       { notes: { contains: query, mode: "insensitive" } },
-      { client: { fullName: { contains: query, mode: "insensitive" } } },
+      { client: fullNameSearchClause(query) },
       { case: { caseType: { contains: query, mode: "insensitive" } } },
     ],
   };
   const writtenDocumentSearch = {
     OR: [
       { title: { contains: query, mode: "insensitive" } },
-      { client: { fullName: { contains: query, mode: "insensitive" } } },
+      { client: fullNameSearchClause(query) },
       { case: { caseType: { contains: query, mode: "insensitive" } } },
     ],
   };
   const noteSearch = {
     OR: [
       { content: { contains: query, mode: "insensitive" } },
-      { client: { fullName: { contains: query, mode: "insensitive" } } },
+      { client: fullNameSearchClause(query) },
       { case: { caseType: { contains: query, mode: "insensitive" } } },
-      { user: { fullName: { contains: query, mode: "insensitive" } } },
+      { user: fullNameSearchClause(query) },
     ],
   };
 

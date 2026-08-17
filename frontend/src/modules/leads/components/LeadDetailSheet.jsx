@@ -18,6 +18,7 @@ import {
   PhoneIncoming,
   UserRound,
   Video,
+  WalletCards,
   X,
   XCircle,
 } from "lucide-react";
@@ -95,6 +96,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [consultationError, setConsultationError] = useState("");
   const [bookingOpen, setBookingOpen] = useState(false);
   const [commercialStatusOpen, setCommercialStatusOpen] = useState(false);
+  const [creatingClientForPayment, setCreatingClientForPayment] = useState(false);
+  const [createClientForPaymentError, setCreateClientForPaymentError] = useState("");
   const [conversionOpen, setConversionOpen] = useState(false);
   const [activeAction, setActiveAction] = useState(null);
   const [closingFollowUp, setClosingFollowUp] = useState(null);
@@ -266,6 +269,26 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     !retainerReady ? "Set the retainer to Signed or Not Required" : null,
     !paymentReady ? "Record the initial payment or mark it Waived" : null,
   ].filter(Boolean);
+
+  // Retainer can be marked Signed by hand (a wet-signed paper copy, or
+  // handled through another channel) with no client/case ever created —
+  // that only happens automatically when a retainer is actually sent
+  // through the booking flow. Without a case there's nowhere to record a
+  // real payment, so this creates one manually.
+  async function createClientForPayment() {
+    if (!window.confirm("Create a client and case for this lead so you can record the initial payment? This can't be undone.")) return;
+    setCreatingClientForPayment(true);
+    setCreateClientForPaymentError("");
+    try {
+      const response = await api.post(`/leads/${lead.id}/create-client-for-payment`);
+      const { client, caseItem } = response.data.data;
+      setLead((current) => ({ ...current, earlyClientId: client.id, earlyCaseId: caseItem.id }));
+    } catch (reason) {
+      setCreateClientForPaymentError(reason.response?.data?.message || "The client and case could not be created.");
+    } finally {
+      setCreatingClientForPayment(false);
+    }
+  }
   // The consultation fee (paid at booking time) is a separate amount from
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
@@ -456,7 +479,24 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       </div>
                     </div>
 
-                    {lead.status === "OPEN" && lead.earlyClientId ? <p className="mt-3 rounded-xl bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. <Link to={`/app/clients/${lead.earlyClientId}`} className="font-semibold underline">View the retainer case →</Link></p> : null}
+                    {lead.status === "OPEN" && retainerReady && !lead.earlyClientId && canConvertLead ? (
+                      <div className="mt-3 rounded-xl bg-amber-50 px-4 py-3">
+                        <p className="text-xs leading-5 text-amber-800">The retainer was marked signed without a client or case being created — that only happens automatically when a retainer is sent through the booking flow. Create one now so you have somewhere to record the initial payment.</p>
+                        <button type="button" disabled={creatingClientForPayment} onClick={createClientForPayment} className="mt-2.5 inline-flex h-8 items-center gap-1.5 rounded-full bg-amber-700 px-3 text-xs font-semibold text-white transition hover:bg-amber-800 disabled:opacity-50">
+                          {creatingClientForPayment ? "Creating…" : "Create client & case"}
+                        </button>
+                        {createClientForPaymentError ? <p className="mt-2 text-xs text-rose-700">{createClientForPaymentError}</p> : null}
+                      </div>
+                    ) : null}
+                    {lead.status === "OPEN" && lead.earlyClientId ? (
+                      <div className="mt-3 rounded-xl bg-sky-50 px-4 py-3">
+                        <p className="text-xs leading-5 text-sky-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. Record the initial payment there to satisfy the requirement below.</p>
+                        <Link to={`/app/clients/${lead.earlyClientId}?focus=billing`} className="mt-2.5 inline-flex h-8 items-center gap-1.5 rounded-full bg-sky-700 px-3 text-xs font-semibold text-white transition hover:bg-sky-800">
+                          <WalletCards className="h-3.5 w-3.5" />
+                          Go to client billing
+                        </Link>
+                      </div>
+                    ) : null}
                     {lead.status === "OPEN" && canConvertLead && !readyToConvert ? (
                       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
                         <p className="text-xs font-semibold text-amber-900">Before this lead can be converted:</p>

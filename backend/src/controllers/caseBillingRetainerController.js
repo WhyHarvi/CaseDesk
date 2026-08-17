@@ -7,6 +7,7 @@ import { createCaseSchedule, getRetainerScheduleMergeContext, previewRetainerSch
 import { changeCorrespondenceStatus } from "./correspondenceController.js";
 import { notifyRetainerIssued } from "../services/agreementNotificationService.js";
 import { removeDocumentFile } from "../services/documentStorage.js";
+import { caseAccessWhere } from "../middleware/authorization.js";
 
 const documentInclude = {
   correspondenceTemplate: { select: { id: true, title: true, kind: true, category: true, versionNumber: true } },
@@ -204,7 +205,14 @@ export function applyScheduleToRetainerHtml(html, scheduleContext) {
 }
 
 async function scopedCase(req, caseId) {
-  const data = await prisma.case.findFirst({ where: { id: caseId, agencyId: req.user.agencyId }, include: { client: true } });
+  const data = await prisma.case.findFirst({
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
+    include: { client: true },
+  });
   if (!data) throw createHttpError(404, "Case not found");
   if (data.archivedAt || data.deletedAt) throw createHttpError(409, "Restore this case before working with its billing retainer");
   return data;
@@ -601,7 +609,11 @@ export async function approveCaseBillingRetainer(req, res) {
     select: { id: true },
   });
   if (!existing) throw createHttpError(404, "This case has no retainer draft yet.", "NOT_FOUND");
-  const data = await changeCorrespondenceStatus(req.user.agencyId, existing.id, "Issued", { actorUserId: req.user.id, requireKind: "Agreement" });
+  const data = await changeCorrespondenceStatus(req.user.agencyId, existing.id, "Issued", {
+    actorUserId: req.user.id,
+    requireKind: "Agreement",
+    caseAccessPredicate: caseAccessWhere(req),
+  });
   await notifyRetainerIssued({ agencyId: req.user.agencyId, caseItem, document: data, actorUserId: req.user.id }).catch(() => {});
   res.json({ data: { source: "existing", document: data, template: null, isGeneralFallback: false } });
 }

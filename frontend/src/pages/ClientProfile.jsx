@@ -38,6 +38,7 @@ import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
 import { canAccessPage, hasCapability } from "../auth/portalAccess";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
+import useDebouncedAutosave from "../hooks/useDebouncedAutosave";
 
 const glass = "rounded-[1.9rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl";
 const spring = { type: "spring", stiffness: 320, damping: 30 };
@@ -421,6 +422,14 @@ export default function ClientProfile() {
     () => new URLSearchParams(location.search).get("note") || "",
     [location.search],
   );
+  // Lets a link from elsewhere (e.g. a lead's "Path to conversion" panel)
+  // jump straight to the Billing card and briefly highlight it, instead of
+  // dropping someone on the client profile and leaving them to scroll and
+  // find it themselves.
+  const focusSection = useMemo(
+    () => new URLSearchParams(location.search).get("focus") || "",
+    [location.search],
+  );
   const openCases = useMemo(
     () =>
       cases.filter(
@@ -488,6 +497,10 @@ export default function ClientProfile() {
     ready: !loading,
     deps: [sortedProfileNotes],
   });
+  const activeFocusSection = useFadingHighlight(focusSection, {
+    domIdPrefix: "client-section-",
+    ready: !loading,
+  });
 
   function resetNoteForm() {
     setNoteFormState(defaultNoteFormState);
@@ -521,7 +534,9 @@ export default function ClientProfile() {
   }
 
   async function handleNoteSubmit(event) {
-    event.preventDefault();
+    event?.preventDefault();
+
+    if (savingNote || !noteFormState.content.trim()) return;
 
     try {
       setSavingNote(true);
@@ -548,6 +563,13 @@ export default function ClientProfile() {
       setSavingNote(false);
     }
   }
+
+  useDebouncedAutosave({
+    value: noteFormState.content,
+    savedValue: editingNote?.content || "",
+    enabled: showNoteForm && !savingNote,
+    onSave: handleNoteSubmit,
+  });
 
   async function handleDeleteNote(note) {
     try {
@@ -857,6 +879,8 @@ export default function ClientProfile() {
 
             {canAccessFinancialData ? (
               <ClientBillingCard
+                id="client-section-billing"
+                highlightClassName={fadingHighlightClass(activeFocusSection === "billing")}
                 clientId={client.id}
                 clientName={client.fullName}
                 initialEntry={initialBillingEntry}

@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { caseAccessWhere, caseLinkedRecordAccessWhere } from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
 
 // Folders only organize a consultant's own internal working files on a case
@@ -6,7 +7,14 @@ import { createHttpError } from "../utils/http.js";
 // Client-requested documents never live in a folder.
 
 async function requireCase(req, caseId) {
-  const targetCase = await prisma.case.findFirst({ where: { id: caseId, agencyId: req.user.agencyId }, select: { id: true } });
+  const targetCase = await prisma.case.findFirst({
+    where: {
+      id: caseId,
+      agencyId: req.user.agencyId,
+      ...caseAccessWhere(req),
+    },
+    select: { id: true },
+  });
   if (!targetCase) throw createHttpError(404, "Case not found");
   return targetCase;
 }
@@ -47,7 +55,13 @@ export async function createDocumentFolder(req, res) {
 export async function renameDocumentFolder(req, res) {
   const name = String(req.body.name || "").trim().slice(0, 120);
   if (!name) throw createHttpError(400, "Folder name is required", "VALIDATION_ERROR");
-  const existing = await prisma.documentFolder.findFirst({ where: { id: req.params.id, agencyId: req.user.agencyId } });
+  const existing = await prisma.documentFolder.findFirst({
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...caseLinkedRecordAccessWhere(req),
+    },
+  });
   if (!existing) throw createHttpError(404, "Folder not found");
   try {
     const folder = await prisma.documentFolder.update({ where: { id: existing.id }, data: { name } });
@@ -59,7 +73,11 @@ export async function renameDocumentFolder(req, res) {
 
 export async function deleteDocumentFolder(req, res) {
   const existing = await prisma.documentFolder.findFirst({
-    where: { id: req.params.id, agencyId: req.user.agencyId },
+    where: {
+      id: req.params.id,
+      agencyId: req.user.agencyId,
+      ...caseLinkedRecordAccessWhere(req),
+    },
     include: { _count: { select: { documents: true } } },
   });
   if (!existing) throw createHttpError(404, "Folder not found");
