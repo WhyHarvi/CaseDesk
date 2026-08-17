@@ -30,15 +30,18 @@ test("support API is staff-only, rate limited, and accepts a bounded screenshot"
   assert.match(upload, /image\/jpeg/);
 });
 
-test("Chats exposes Help and automatic captures stay local until the user submits", async () => {
-  const [chats, panel, capture, api] = await Promise.all([
+test("Chats and its floating widget expose Help while automatic captures stay local until submission", async () => {
+  const [chats, widget, panel, capture, api] = await Promise.all([
     source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
     source("../../frontend/src/components/chat/SupportDeskPanel.jsx"),
     source("../../frontend/src/services/supportCapture.js"),
     source("../../frontend/src/services/api.js"),
   ]);
   assert.match(chats, /name: "Help & Support"/);
   assert.match(chats, /<SupportDeskPanel/);
+  assert.match(widget, /name: "Help & Support"/);
+  assert.match(widget, /<SupportDeskPanel compact \/>/);
   assert.match(capture, /html2canvas\(document\.body/);
   assert.match(capture, /input, textarea, \[data-support-private\], canvas/);
   assert.doesNotMatch(capture, /api\.post|fetch\(/);

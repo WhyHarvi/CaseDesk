@@ -13,7 +13,7 @@ function captureState() {
   };
 }
 
-export default function SupportDeskPanel() {
+export default function SupportDeskPanel({ compact = false }) {
   const [capture, setCapture] = useState(captureState);
   const [description, setDescription] = useState("");
   const [summary, setSummary] = useState("");
@@ -86,12 +86,12 @@ export default function SupportDeskPanel() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+    <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? "px-3 py-4" : "px-4 py-5 sm:px-6"}`}>
       <div className="mx-auto max-w-3xl">
-        <form onSubmit={submit} className="space-y-5">
+        <form onSubmit={submit} className={compact ? "space-y-4" : "space-y-5"}>
           <div>
             <label className="text-sm font-semibold text-slate-800" htmlFor="support-description">What happened?</label>
-            <textarea id="support-description" value={description} onChange={(event) => setDescription(event.target.value)} rows="5" className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Tell us what you were doing, what you expected, and what happened instead." />
+            <textarea id="support-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={compact ? 4 : 5} className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Tell us what you were doing, what you expected, and what happened instead." />
           </div>
 
           <div className="border-y border-slate-200 py-4">
@@ -102,7 +102,7 @@ export default function SupportDeskPanel() {
               </div>
               <button type="button" onClick={recapture} disabled={Boolean(busy)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-50"><Camera className="h-4 w-4" />Capture current page</button>
             </div>
-            {previewUrl ? <img src={previewUrl} alt="Automatic support screenshot preview" className="mt-3 max-h-72 w-full rounded-lg border border-slate-200 object-contain object-top" /> : <div className="mt-3 flex h-28 items-center justify-center gap-2 border border-dashed border-slate-200 text-xs text-slate-400"><ImageOff className="h-4 w-4" />No screenshot available</div>}
+            {previewUrl ? <img src={previewUrl} alt="Automatic support screenshot preview" className={`${compact ? "max-h-44" : "max-h-72"} mt-3 w-full rounded-lg border border-slate-200 object-contain object-top`} /> : <div className="mt-3 flex h-28 items-center justify-center gap-2 border border-dashed border-slate-200 text-xs text-slate-400"><ImageOff className="h-4 w-4" />No screenshot available</div>}
             {previewUrl ? <button type="button" onClick={() => { clearSupportCapture(); setCapture({ ...capture, blob: null }); }} className="mt-2 text-xs font-semibold text-rose-600">Remove screenshot</button> : null}
           </div>
 
@@ -111,7 +111,7 @@ export default function SupportDeskPanel() {
               <label className="text-sm font-semibold text-slate-800" htmlFor="support-summary">Nova summary</label>
               <button type="button" onClick={diagnose} disabled={!description.trim() || Boolean(busy)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-50 px-3 text-xs font-semibold text-brand-700 disabled:opacity-50">{busy === "diagnose" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Summarize with Nova</button>
             </div>
-            <textarea id="support-summary" value={summary} onChange={(event) => setSummary(event.target.value)} rows="5" className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Nova can prepare this, or leave it blank and send your report directly." />
+            <textarea id="support-summary" value={summary} onChange={(event) => setSummary(event.target.value)} rows={compact ? 4 : 5} className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Nova can prepare this, or leave it blank and send your report directly." />
           </div>
 
           {capture.errorCode ? <div className="rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-800"><strong>Detected:</strong> {capture.errorCode}{capture.errorMessage ? ` · ${capture.errorMessage}` : ""}</div> : null}
@@ -124,4 +124,3 @@ export default function SupportDeskPanel() {
     </div>
   );
 }
-

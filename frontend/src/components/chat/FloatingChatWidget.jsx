@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronLeft, Loader2, Maximize2, MessagesSquare, RotateCcw, Search, UserRound, Users, X } from "lucide-react";
+import { ChevronLeft, LifeBuoy, Loader2, Maximize2, MessagesSquare, RotateCcw, Search, UserRound, Users, X } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
 import { useNotifications } from "../notifications/NotificationProvider";
 import api from "../../services/api";
@@ -26,6 +26,7 @@ import { useThreadAvatarUrls } from "../../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../../hooks/useNovaChat";
 import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "./NovaChatPresentation";
+import SupportDeskPanel from "./SupportDeskPanel";
 
 const RECONCILE_POLL_MS = 45_000;
 const FALLBACK_POLL_MS = 10_000;
@@ -43,6 +44,9 @@ const initials = (name) =>
 function QuickAvatar({ item, avatarUrl, className = "h-9 w-9 text-[11px]" }) {
   if (item?.kind === "ai") {
     return <NovaAssistantAvatar className={className} />;
+  }
+  if (item?.kind === "support") {
+    return <span className={`flex shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600 ${className}`}><LifeBuoy className="h-4 w-4" /></span>;
   }
   if (avatarUrl) {
     return (
@@ -135,6 +139,15 @@ export default function FloatingChatWidget() {
       preview: latest?.bodyText || "CaseDesk AI",
     };
   }, [novaMessages]);
+  const supportItem = useMemo(() => ({
+    kind: "support",
+    id: "help",
+    name: "Help & Support",
+    isGroup: false,
+    lastMessageAt: new Date(0).toISOString(),
+    unreadCount: 0,
+    preview: "Report a problem",
+  }), []);
 
   const loadLists = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setListLoading(true);
@@ -187,8 +200,8 @@ export default function FloatingChatWidget() {
         preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
       };
     });
-    return [novaItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, novaItem]);
+    return [novaItem, supportItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
+  }, [internalThreads, clientConversations, novaItem, supportItem]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
@@ -247,6 +260,7 @@ export default function FloatingChatWidget() {
     if (kind === "ai") {
       return { ...novaItem, messages: [...novaMessages].reverse(), caseId: null };
     }
+    if (kind === "support") return { ...supportItem, messages: [], caseId: null };
     if (kind === "internal") {
       const data = await getInternalChatThread(id);
       return { kind: "internal", id, name: data.name, isGroup: data.isGroup, hasAvatar: data.hasAvatar, participants: data.participants, messages: data.messages, caseId: null };
@@ -264,7 +278,7 @@ export default function FloatingChatWidget() {
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
-  }, [novaItem, novaMessages]);
+  }, [novaItem, novaMessages, supportItem]);
 
   const loadDetail = useCallback(async (kind, id, { silent = false } = {}) => {
     if (!id) return;
@@ -296,7 +310,7 @@ export default function FloatingChatWidget() {
 
   const fetchRealtimeConfig = useCallback(() => {
     if (!open || !selectedId) return Promise.resolve({ configured: false });
-    if (selectedKind === "ai") return Promise.resolve({ configured: false });
+    if (["ai", "support"].includes(selectedKind)) return Promise.resolve({ configured: false });
     if (selectedKind === "internal") return getInternalChatRealtimeConfig(selectedId);
     if (activeDetail?.kind === "client" && activeDetail.id === selectedId && activeDetail.caseId) {
       return api.get(`/communications/realtime/case/${activeDetail.caseId}`).then((response) => response.data.data);
@@ -330,7 +344,7 @@ export default function FloatingChatWidget() {
   }, [open, selectedKind, selectedId, realtime?.configured, loadDetail, loadLists]);
 
   useEffect(() => {
-    if (!open || !selectedId || selectedKind === "ai" || document.visibilityState !== "visible") return;
+    if (!open || !selectedId || ["ai", "support"].includes(selectedKind) || document.visibilityState !== "visible") return;
     const markRead = selectedKind === "internal"
       ? () => markInternalChatThreadRead(selectedId)
       : () => api.post(`/communications/conversations/${selectedId}/read`, { read: true }).catch(() => {});
@@ -342,6 +356,7 @@ export default function FloatingChatWidget() {
 
   const thread = useMemo(() => {
     if (selectedKind === "ai") return novaMessages;
+    if (selectedKind === "support") return [];
     if (!activeDetail) return [];
     const messages = [...(activeDetail.messages || [])].reverse();
     if (activeDetail.kind === "internal") {
@@ -578,6 +593,7 @@ export default function FloatingChatWidget() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-slate-950">{activeDetail.name}</p>
                     {activeDetail.kind === "ai" ? <p className="text-[10px] font-medium text-slate-500">CaseDesk guide</p> : null}
+                    {activeDetail.kind === "support" ? <p className="text-[10px] font-medium text-slate-500">Report a problem</p> : null}
                   </div>
                   {activeDetail.kind === "ai" ? (
                     <button type="button" disabled={novaSending} onClick={resetNovaChat} aria-label="Start a new Nova chat" title="Start a new Nova chat" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40">
@@ -639,6 +655,8 @@ export default function FloatingChatWidget() {
                     )}
                   </div>
                 </div>
+              ) : activeDetail?.kind === "support" ? (
+                <SupportDeskPanel compact />
               ) : (
                 <ChatThread
                   messages={displayMessages}
@@ -672,7 +690,7 @@ export default function FloatingChatWidget() {
               )}
             </div>
 
-            {view === "thread" && selectedId ? (
+            {view === "thread" && selectedId && activeDetail?.kind !== "support" ? (
               <div className="shrink-0 border-t border-slate-100 bg-white p-2.5">
                 {(activeDetail?.kind === "ai" ? novaError : error) ? <p className="mb-2 rounded-xl bg-rose-50 px-3 py-1.5 text-[11px] text-rose-700">{activeDetail?.kind === "ai" ? novaError : error}</p> : null}
                 {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaProactiveInsight currentPath={location.pathname} compact /> : null}
