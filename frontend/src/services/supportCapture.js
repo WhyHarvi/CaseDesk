@@ -27,6 +27,7 @@ export async function captureSupportFailure(error = {}) {
       status: Number(error.status) || null,
     },
   };
+  const eventDetail = { automatic: error.code !== "USER_REPORTED" };
   capturePromise = import("html2canvas")
     .then(({ default: html2canvas }) => html2canvas(document.body, {
       backgroundColor: "#f8fafc",
@@ -42,12 +43,12 @@ export async function captureSupportFailure(error = {}) {
     .then((canvas) => new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78)))
     .then((blob) => {
       latestCapture = { ...context, blob: blob || null };
-      window.dispatchEvent(new CustomEvent("casedesk:support-captured"));
+      window.dispatchEvent(new CustomEvent("casedesk:support-captured", { detail: eventDetail }));
       return latestCapture;
     })
     .catch(() => {
       latestCapture = { ...context, blob: null };
-      window.dispatchEvent(new CustomEvent("casedesk:support-captured"));
+      window.dispatchEvent(new CustomEvent("casedesk:support-captured", { detail: eventDetail }));
       return latestCapture;
     });
   return capturePromise;

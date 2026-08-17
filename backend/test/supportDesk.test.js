@@ -44,10 +44,16 @@ test("Chats and its floating widget expose Help while automatic captures stay lo
   assert.match(widget, /<SupportDeskPanel compact \/>/);
   assert.match(capture, /html2canvas\(document\.body/);
   assert.match(capture, /input, textarea, \[data-support-private\], canvas/);
+  assert.match(capture, /automatic: error\.code !== "USER_REPORTED"/);
   assert.doesNotMatch(capture, /api\.post|fetch\(/);
   assert.match(api, /status >= 500/);
   assert.match(panel, /Summarize with Nova/);
   assert.match(panel, /Review the image before sending/);
+});
+
+test("a manual support screenshot does not show the automatic error-capture notice", async () => {
+  const notice = await source("../../frontend/src/components/support/SupportCaptureNotice.jsx");
+  assert.match(notice, /if \(event\.detail\?\.automatic\) setVisible\(true\)/);
 });
 
 test("Nova support diagnosis remains text-only and never receives the screenshot", async () => {
