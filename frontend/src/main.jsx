@@ -27,7 +27,10 @@ function AppShell() {
       { rel: "icon", type: "image/x-icon", href: "/favicon.ico?v=5" },
       { rel: "icon", type: "image/png", href: `${faviconPng}?v=5` },
       { rel: "shortcut icon", href: "/favicon.ico?v=5" },
-      { rel: "apple-touch-icon", href: `${faviconPng}?v=5` },
+      // A proper 180x180 icon, not the 64x64 favicon — iOS renders this
+      // full-size on the home screen once a client adds the portal, and a
+      // small source image just looks blurry scaled up.
+      { rel: "apple-touch-icon", href: "/icons/icon-180.png?v=5" },
     ];
 
     document
@@ -44,6 +47,14 @@ function AppShell() {
       }
       link.href = href;
       document.head.appendChild(link);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Push/install still degrade gracefully without it — nothing in the
+      // rest of the app depends on the service worker being present.
     });
   }, []);
 

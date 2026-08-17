@@ -6,6 +6,7 @@ import {
   resolveNotifications,
 } from "./notificationService.js";
 import { notificationAllowedForMembership } from "./notificationAccessService.js";
+import { sendWebPush } from "./webPushService.js";
 import prisma from "./prisma/client.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_DELIVERY_INTERVAL_MS) || 15_000, 5_000);
@@ -124,6 +125,7 @@ async function deliver(job) {
     });
     return result.id || null;
   }
+  if (job.channel === "push") return sendWebPush(job);
   throw new Error(`Unsupported notification channel: ${job.channel}`);
 }
 

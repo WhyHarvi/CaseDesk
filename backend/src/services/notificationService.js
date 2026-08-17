@@ -4,6 +4,7 @@ import {
   notificationAudienceKey,
   NOTIFICATION_AUDIENCES,
 } from "./notificationAccessService.js";
+import { hasPushSubscription } from "./webPushService.js";
 
 const INTERNAL_CASE_ACTIONS = [
   "case.created",
@@ -378,6 +379,12 @@ export async function notifyUsers({
     notificationAudience: resolvedAudienceKey,
   };
   const preferences = await preferencesFor(agencyId, validIds, category);
+  // Subscribing IS the opt-in — there's no separate "push enabled" toggle
+  // to check the way in_app/email/sms have. A recipient with an active
+  // browser subscription gets push for anything they'd otherwise be
+  // notified about, whether channels was explicitly passed by the caller
+  // or derived from preferences below.
+  const pushSubscribedUserIds = await hasPushSubscription(validIds);
   const created = [];
 
   for (const recipientUserId of validIds) {
@@ -392,6 +399,9 @@ export async function notifyUsers({
       ...(preference?.emailEnabled ? ["email"] : []),
       ...(preference?.smsEnabled ? ["sms"] : []),
     ];
+    if (pushSubscribedUserIds.has(recipientUserId) && !enabledChannels.includes("push")) {
+      enabledChannels = [...enabledChannels, "push"];
+    }
     const occurredAt = new Date();
     const resolvedAttentionLevel =
       attentionLevel === "action_required" || attentionLevel === "update"

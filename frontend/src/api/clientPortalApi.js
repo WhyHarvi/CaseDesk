@@ -145,6 +145,14 @@ export function markPortalChatRead(caseId) {
   return api.post("/portal/messages/read", { caseId }).catch(() => {});
 }
 
+export function subscribeToPortalPush(subscription) {
+  return api.post("/portal/push/subscribe", { subscription }).then((response) => response.data.data);
+}
+
+export function unsubscribeFromPortalPush(endpoint) {
+  return api.post("/portal/push/unsubscribe", { endpoint }).catch(() => {});
+}
+
 export function portalErrorMessage(reason, fallback) {
   return reason?.response?.data?.message || fallback;
 }

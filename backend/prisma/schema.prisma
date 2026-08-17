@@ -693,6 +693,7 @@ model Agency {
   notifications                  Notification[]
   notificationPreferences        NotificationPreference[]
   notificationDeliveries         NotificationDelivery[]
+  pushSubscriptions              PushSubscription[]
   questionnaireAssignments       QuestionnaireAssignment[]
   clientInformationProfiles      ClientInformationProfile[]
   caseInformationProfiles        CaseInformationProfile[]
@@ -1568,6 +1569,7 @@ model User {
   actedNotifications                   Notification[]                  @relation("NotificationActor")
   notificationPreferences              NotificationPreference[]
   notificationDeliveries               NotificationDelivery[]
+  pushSubscriptions                    PushSubscription[]
   schedulingBlocks                     SchedulingBlock[]
   appointmentEvents                    AppointmentEvent[]              @relation("AppointmentEventActor")
   mailboxConnection                    UserMailboxConnection?
@@ -4956,4 +4958,26 @@ model NotificationDelivery {
   @@index([status, availableAt])
   @@index([recipientUserId, createdAt])
   @@map("notification_deliveries")
+}
+
+// One row per browser/device a user has granted push permission on — a
+// client on two phones (or a phone and a laptop) gets two rows, and every
+// active one is sent to for a given notification. endpoint is the Push
+// API's own unique subscription URL, so it doubles as the natural
+// dedupe/upsert key when the same device re-subscribes.
+model PushSubscription {
+  id         String   @id @default(uuid())
+  agencyId   String   @map("agency_id")
+  userId     String   @map("user_id")
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastSeenAt DateTime @default(now()) @updatedAt @map("last_seen_at")
+  agency     Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId, userId])
+  @@map("push_subscriptions")
 }

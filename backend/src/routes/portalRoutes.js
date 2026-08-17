@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createPortalMessage, getPortalRealtimeConfig, markPortalChatRead, portalActions, portalApplications, portalAppointments, portalDocuments, portalMe, portalMessages, portalProfile, servePortalDocument, servePortalMessageAttachment, uploadPortalDocument, uploadPortalMessageAttachment } from "../controllers/portalController.js";
+import { subscribeToPush, unsubscribeFromPush } from "../controllers/pushSubscriptionController.js";
 import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
@@ -7,6 +8,8 @@ import { asyncHandler } from "../utils/http.js";
 const router = Router();
 router.use(requireRole("client"));
 router.get("/me", asyncHandler(portalMe));
+router.post("/push/subscribe", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(subscribeToPush));
+router.post("/push/unsubscribe", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(unsubscribeFromPush));
 router.get("/applications", asyncHandler(portalApplications));
 router.get("/documents", asyncHandler(portalDocuments));
 router.post("/documents/:id/upload", rateLimit({ windowMs: 60_000, max: 10 }), receiveDocumentFile, asyncHandler(uploadPortalDocument));

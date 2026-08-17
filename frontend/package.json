@@ -27,6 +27,7 @@
     "framer-motion": "^12.42.2",
     "gsap": "^3.15.0",
     "heic2any": "^0.0.4",
+    "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.542.0",
     "mammoth": "^1.12.0",

@@ -4,6 +4,7 @@ import { getPortalOverview, portalErrorMessage } from "../../api/clientPortalApi
 import ClientPortalBottomNav from "./ClientPortalBottomNav";
 import ClientPortalSidebar from "./ClientPortalSidebar";
 import { ClientPortalToastProvider } from "./ClientPortalToast";
+import InstallAppPrompt from "./InstallAppPrompt";
 
 const PortalDataContext = createContext(null);
 
@@ -52,6 +53,7 @@ export default function ClientPortalLayout() {
             <ClientPortalSidebar />
 
             <div className="flex min-w-0 flex-1 flex-col">
+              <InstallAppPrompt />
               {isChat ? (
                 <main className="relative mx-auto w-full max-w-[520px] flex-1 lg:mx-0 lg:max-w-none lg:px-10 lg:py-8">
                   <Outlet />

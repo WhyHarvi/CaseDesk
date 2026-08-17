@@ -1,0 +1,14 @@
+{
+  "name": "CaseDesk Client Portal",
+  "short_name": "CaseDesk",
+  "description": "Track your case, upload documents, and message your team.",
+  "start_url": "/client-portal",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#313d54",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
