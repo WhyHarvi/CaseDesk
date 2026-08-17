@@ -143,7 +143,7 @@ test("client conversations link to the scoped client profile from full and float
 
 test("refreshing a Nova deep link keeps it as AI instead of loading an internal thread named nova", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
-  assert.match(page, /\["ai", "client", "internal"\]\.includes\(requestedKind\)/);
+  assert.match(page, /\["ai", "support", "client", "internal"\]\.includes\(requestedKind\)/);
   assert.match(page, /const \[selectedKind, setSelectedKind\] = useState\(initialKind\);/);
   assert.match(page, /useState\(initialKind === "ai" && requestedThreadId \? "nova" : requestedThreadId\)/);
 });

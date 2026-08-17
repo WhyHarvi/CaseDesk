@@ -8,6 +8,7 @@ import {
   shouldCacheGet,
   staleTimeFor,
 } from "./queryClient";
+import { captureSupportFailure } from "./supportCapture";
 
 const transport = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:5001/api",
@@ -20,6 +21,22 @@ transport.interceptors.request.use(async (config) => {
   if (data.session?.access_token) config.headers.Authorization = `Bearer ${data.session.access_token}`;
   return config;
 });
+
+transport.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status;
+    if (!error.config?.url?.startsWith("/support") && (!status || status >= 500)) {
+      void captureSupportFailure({
+        code: error.response?.data?.code || "REQUEST_FAILED",
+        message: error.response?.data?.message || error.message,
+        requestId: error.response?.data?.requestId || error.response?.headers?.["x-request-id"],
+        status,
+      });
+    }
+    return Promise.reject(error);
+  },
+);
 
 async function cachedGet(url, config = {}) {
   if (!shouldCacheGet(url, config)) return transport.get(url, config);

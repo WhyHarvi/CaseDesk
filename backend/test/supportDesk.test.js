@@ -1,0 +1,59 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { supportRecipient } from "../src/services/supportTicketService.js";
+
+const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
+
+test("support reports are durable, tenant scoped, and delivered to the configured developer recipient", async () => {
+  const [migration, service] = await Promise.all([
+    source("../prisma/migrations/20260817223000_add_support_tickets/migration.sql"),
+    source("../src/services/supportTicketService.js"),
+  ]);
+  assert.match(migration, /CREATE TABLE "support_tickets"/);
+  assert.match(migration, /FOREIGN KEY \("agency_id"\) REFERENCES "agencies"/);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+  assert.match(service, /WHERE "agency_id" = \$\{agencyId\} AND "reported_by_id" = \$\{userId\}/);
+  assert.equal(supportRecipient({}), "info.harwinder14@gmail.com");
+  assert.equal(supportRecipient({ CASEDESK_SUPPORT_EMAIL: "developer@example.com" }), "developer@example.com");
+});
+
+test("support API is staff-only, rate limited, and accepts a bounded screenshot", async () => {
+  const [server, routes, upload] = await Promise.all([
+    source("../src/server.js"),
+    source("../src/routes/supportRoutes.js"),
+    source("../src/middleware/supportScreenshotUpload.js"),
+  ]);
+  assert.match(server, /app\.use\("\/api\/support", requireAuth, staffUser, supportRoutes\)/);
+  assert.match(routes, /rateLimit\(\{ windowMs: 60_000, max: 5 \}\)/);
+  assert.match(upload, /fileSize: 2 \* 1024 \* 1024/);
+  assert.match(upload, /image\/jpeg/);
+});
+
+test("Chats exposes Help and automatic captures stay local until the user submits", async () => {
+  const [chats, panel, capture, api] = await Promise.all([
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/SupportDeskPanel.jsx"),
+    source("../../frontend/src/services/supportCapture.js"),
+    source("../../frontend/src/services/api.js"),
+  ]);
+  assert.match(chats, /name: "Help & Support"/);
+  assert.match(chats, /<SupportDeskPanel/);
+  assert.match(capture, /html2canvas\(document\.body/);
+  assert.match(capture, /input, textarea, \[data-support-private\], canvas/);
+  assert.doesNotMatch(capture, /api\.post|fetch\(/);
+  assert.match(api, /status >= 500/);
+  assert.match(panel, /Summarize with Nova/);
+  assert.match(panel, /Review the image before sending/);
+});
+
+test("Nova support diagnosis remains text-only and never receives the screenshot", async () => {
+  const [controller, ollama] = await Promise.all([
+    source("../src/controllers/supportController.js"),
+    source("../src/services/ollama.service.js"),
+  ]);
+  assert.match(controller, /summarizeSupportIssue\(context\)/);
+  assert.doesNotMatch(controller, /req\.file.*summarizeSupportIssue/);
+  assert.match(ollama, /You summarize CaseDesk software bug reports for a developer/);
+  assert.doesNotMatch(ollama.slice(ollama.indexOf("export async function summarizeSupportIssue")), /images:/);
+});

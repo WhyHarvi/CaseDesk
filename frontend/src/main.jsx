@@ -10,18 +10,34 @@ import { NotificationProvider } from "./components/notifications/NotificationPro
 import NotificationPanel from "./components/notifications/NotificationPanel";
 import { queryClient } from "./services/queryClient";
 import RouteRecoveryBoundary from "./components/routing/RouteRecoveryBoundary";
+import { captureSupportFailure } from "./services/supportCapture";
+import SupportCaptureNotice from "./components/support/SupportCaptureNotice";
 
 function RoutedApplication() {
   const location = useLocation();
 
   return (
-    <RouteRecoveryBoundary key={location.pathname} routeKey={location.pathname}>
-      <AppRoutes />
-    </RouteRecoveryBoundary>
+    <>
+      <RouteRecoveryBoundary key={location.pathname} routeKey={location.pathname}>
+        <AppRoutes />
+      </RouteRecoveryBoundary>
+      <SupportCaptureNotice />
+    </>
   );
 }
 
 function AppShell() {
+  useEffect(() => {
+    const onError = (event) => void captureSupportFailure({ code: "PAGE_ERROR", message: event.message || event.error?.message });
+    const onRejection = (event) => void captureSupportFailure({ code: "UNHANDLED_REJECTION", message: event.reason?.message || String(event.reason || "Unexpected application error") });
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
   useEffect(() => {
     const iconLinks = [
       { rel: "icon", type: "image/x-icon", href: "/favicon.ico?v=5" },

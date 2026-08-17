@@ -69,6 +69,7 @@ import {
 import communicationRoutes from "./routes/communicationRoutes.js";
 import communicationWebhookRoutes from "./routes/communicationWebhookRoutes.js";
 import aiRoutes from "./routes/aiRoutes.js";
+import supportRoutes from "./routes/supportRoutes.js";
 import internalChatRoutes from "./routes/internalChatRoutes.js";
 import workloadRoutes from "./modules/workload/workload.routes.js";
 import oomaCallRoutes from "./routes/oomaCallRoutes.js";
@@ -430,6 +431,7 @@ app.use(
   communicationRoutes,
 );
 app.use("/api/ai", requireAuth, staffUser, aiRoutes);
+app.use("/api/support", requireAuth, staffUser, supportRoutes);
 app.use("/api/internal-chat", requireAuth, staffUser, internalChatRoutes);
 app.use("/api/workload", requireAuth, staffUser, workloadRoutes);
 app.use("/api/settings", requireAuth, requireRole("admin"), settingsRoutes);

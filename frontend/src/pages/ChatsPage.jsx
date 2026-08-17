@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, Loader2, MessagesSquare, RotateCcw, Search, SquarePen, UserRound, Users, X } from "lucide-react";
+import { Check, ChevronLeft, LifeBuoy, Loader2, MessagesSquare, RotateCcw, Search, SquarePen, UserRound, Users, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -31,6 +31,7 @@ import { useThreadAvatarUrls } from "../hooks/useThreadAvatarUrls";
 import { playReceivedSound, playSentSound } from "../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../hooks/useNovaChat";
 import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "../components/chat/NovaChatPresentation";
+import SupportDeskPanel from "../components/chat/SupportDeskPanel";
 
 const RECONCILE_POLL_MS = 45_000; // realtime connected — safety net only
 const FALLBACK_POLL_MS = 10_000; // realtime not configured
@@ -67,6 +68,9 @@ function formatThreadTime(value) {
 // group photo (fetched via useThreadAvatarUrls) takes over from the
 // gradient glyph once one has been set.
 function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
+  if (item?.kind === "support") {
+    return <span className={`flex shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600 ${className}`}><LifeBuoy className="h-5 w-5" /></span>;
+  }
   if (item?.kind === "ai") {
     return <NovaAssistantAvatar className={className} />;
   }
@@ -96,6 +100,9 @@ function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
 // conversation vs a colleague one — the color alone (avatar gradient)
 // wasn't explicit enough once both kinds sit in the same list.
 function KindBadge({ kind }) {
+  if (kind === "support") {
+    return <span className="inline-flex shrink-0 items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Help</span>;
+  }
   if (kind === "ai") {
     return (
       <span className="inline-flex shrink-0 items-center rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-700">
@@ -267,7 +274,7 @@ export default function ChatsPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedKind = searchParams.get("kind");
-  const initialKind = ["ai", "client", "internal"].includes(requestedKind) ? requestedKind : "internal";
+  const initialKind = ["ai", "support", "client", "internal"].includes(requestedKind) ? requestedKind : "internal";
   const requestedThreadId = searchParams.get("thread") || "";
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
@@ -313,6 +320,16 @@ export default function ChatsPage() {
       preview: latest?.bodyText || "CaseDesk AI",
     };
   }, [novaMessages]);
+  const supportItem = useMemo(() => ({
+    kind: "support",
+    category: "teams",
+    id: "help",
+    name: "Help & Support",
+    isGroup: false,
+    lastMessageAt: null,
+    unreadCount: 0,
+    preview: "Report a problem to CaseDesk",
+  }), []);
 
   useEffect(() => {
     api.get("/communications/providers").then((response) => setCommPermissions(response.data.meta?.permissions || {})).catch(() => {});
@@ -333,6 +350,7 @@ export default function ChatsPage() {
   }, []);
 
   const fetchDetailOnce = useCallback(async (kind, id) => {
+    if (kind === "support") return { ...supportItem, messages: [], caseId: null };
     if (kind === "ai") {
       return { ...novaItem, messages: [...novaMessages].reverse(), caseId: null };
     }
@@ -353,7 +371,7 @@ export default function ChatsPage() {
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
-  }, [novaItem, novaMessages]);
+  }, [novaItem, novaMessages, supportItem]);
 
   const loadDetail = useCallback(async (kind, id, { silent = false } = {}) => {
     if (!id) return;
@@ -405,7 +423,7 @@ export default function ChatsPage() {
 
   const fetchRealtimeConfig = useCallback(() => {
     if (!selectedId) return Promise.resolve({ configured: false });
-    if (selectedKind === "ai") return Promise.resolve({ configured: false });
+    if (["ai", "support"].includes(selectedKind)) return Promise.resolve({ configured: false });
     if (selectedKind === "internal") return getInternalChatRealtimeConfig(selectedId);
     if (activeDetail?.kind === "client" && activeDetail.id === selectedId && activeDetail.caseId) {
       return api.get(`/communications/realtime/case/${activeDetail.caseId}`).then((response) => response.data.data);
@@ -439,7 +457,7 @@ export default function ChatsPage() {
   }, [selectedKind, selectedId, realtime?.configured, loadDetail, loadLists]);
 
   useEffect(() => {
-    if (!selectedId || selectedKind === "ai" || document.visibilityState !== "visible") return;
+    if (!selectedId || ["ai", "support"].includes(selectedKind) || document.visibilityState !== "visible") return;
     const markRead = selectedKind === "internal"
       ? () => markInternalChatThreadRead(selectedId)
       : () => api.post(`/communications/conversations/${selectedId}/read`, { read: true }).catch(() => {});
@@ -531,13 +549,13 @@ export default function ChatsPage() {
         preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
       };
     });
-    return [novaItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, novaItem]);
+    return [novaItem, supportItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
+  }, [internalThreads, clientConversations, novaItem, supportItem]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
     return mergedItems.filter((item) => {
-      if (item.kind !== "ai" && categoryFilter && item.category !== categoryFilter) return false;
+      if (!["ai", "support"].includes(item.kind) && categoryFilter && item.category !== categoryFilter) return false;
       if (!query) return true;
       return `${item.name} ${item.preview}`.toLowerCase().includes(query);
     });
@@ -966,7 +984,11 @@ export default function ChatsPage() {
                 )}
               </header>
 
-              <ChatThread
+              {activeDetail?.kind === "support" ? (
+                <SupportDeskPanel />
+              ) : (
+                <>
+                  <ChatThread
                 messages={displayMessages}
                 mineDirection="Outbound"
                 loading={detailLoading}
@@ -1030,6 +1052,8 @@ export default function ChatsPage() {
                   onCancelReply={cancelReply}
                 />
               </div>
+                </>
+              )}
             </>
           )}
         </section>
