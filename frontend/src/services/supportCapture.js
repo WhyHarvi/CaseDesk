@@ -27,7 +27,10 @@ export async function captureSupportFailure(error = {}) {
       status: Number(error.status) || null,
     },
   };
-  const eventDetail = { automatic: error.code !== "USER_REPORTED" };
+  const eventDetail = {
+    automatic: error.code !== "USER_REPORTED",
+    notify: error.notify !== false,
+  };
   capturePromise = import("html2canvas")
     .then(({ default: html2canvas }) => html2canvas(document.body, {
       backgroundColor: "#f8fafc",

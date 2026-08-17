@@ -32,6 +32,7 @@ transport.interceptors.response.use(
         message: error.response?.data?.message || error.message,
         requestId: error.response?.data?.requestId || error.response?.headers?.["x-request-id"],
         status,
+        notify: false,
       });
     }
     return Promise.reject(error);

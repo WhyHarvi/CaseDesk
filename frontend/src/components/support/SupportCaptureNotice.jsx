@@ -9,7 +9,7 @@ export default function SupportCaptureNotice() {
 
   useEffect(() => {
     const show = (event) => {
-      if (event.detail?.automatic) setVisible(true);
+      if (event.detail?.automatic && event.detail?.notify) setVisible(true);
     };
     window.addEventListener("casedesk:support-captured", show);
     return () => window.removeEventListener("casedesk:support-captured", show);
