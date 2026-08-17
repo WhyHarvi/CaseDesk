@@ -11,7 +11,7 @@ import { recordFormAudit } from "../utils/formAudit.js";
 import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds, notifyUsers } from "../services/notificationService.js";
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
-import { stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
+import { imm5476RepresentativeSignatureName, rebuildImm5476FromOriginal, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
 import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
@@ -413,6 +413,7 @@ export async function serveCaseFormFile(req, res) {
       originalFilename: true,
       mimeType: true,
       formNumber: true,
+      id: true,
       representativeUser: { select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
@@ -425,9 +426,26 @@ export async function serveCaseFormFile(req, res) {
   const signatureStrokes = hasSavedSignature && isTracedImageSignature(representative.formSignatureStrokes)
     ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
     : representative?.formSignatureStrokes;
+  let preparedBuffer = storedBuffer;
+  if (isImm5476) {
+    const embeddedSigner = await imm5476RepresentativeSignatureName(storedBuffer);
+    const selectedSigner = hasSavedSignature ? representative.fullName.trim() : null;
+    if (embeddedSigner && embeddedSigner.localeCompare(selectedSigner || "", undefined, { sensitivity: "base" }) !== 0) {
+      const originalVersion = await prisma.caseFormVersion.findFirst({
+        where: { caseFormId: data.id, agencyId: req.user.agencyId, copyType: "Original" },
+        select: { storageKey: true },
+        orderBy: { versionNumber: "asc" },
+      });
+      const originalBuffer = originalVersion?.storageKey
+        ? await downloadStorageFile(DOCUMENT_BUCKET, originalVersion.storageKey, { allowMissing: true })
+        : null;
+      if (!originalBuffer) throw createHttpError(409, "The original IMM 5476 is unavailable, so the previous representative signature could not be cleared. Import the official form again.");
+      preparedBuffer = await rebuildImm5476FromOriginal(storedBuffer, originalBuffer);
+    }
+  }
   const buffer = isImm5476 && hasSavedSignature
-    ? await stampXfaPdfFormValues(storedBuffer, [], { "547R": true }, { strokes: signatureStrokes, name: representative.fullName })
-    : storedBuffer;
+    ? await stampXfaPdfFormValues(preparedBuffer, [], { "547R": true }, { strokes: signatureStrokes, name: representative.fullName })
+    : preparedBuffer;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");

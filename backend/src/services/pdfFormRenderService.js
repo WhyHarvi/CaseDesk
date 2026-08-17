@@ -92,3 +92,40 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
     await task.destroy().catch(() => {});
   }
 }
+
+export async function imm5476RepresentativeSignatureName(sourceBuffer) {
+  const task = pdfjs.getDocument({ data: new Uint8Array(sourceBuffer), enableXfa: true });
+  try {
+    const document = await task.promise;
+    const page = await document.getPage(REPRESENTATIVE_SIGNATURE.pageIndex + 1);
+    const annotations = await page.getAnnotations({ intent: "display" });
+    const [left, bottom, right, top] = REPRESENTATIVE_SIGNATURE.rect;
+    const signature = annotations.find((annotation) => {
+      if (String(annotation?.subtype || "").toLowerCase() !== "ink" || !Array.isArray(annotation.rect)) return false;
+      const [annotationLeft, annotationBottom, annotationRight, annotationTop] = annotation.rect;
+      return annotationLeft < right && annotationRight > left && annotationBottom < top && annotationTop > bottom;
+    });
+    return String(signature?.titleObj?.str || signature?.title || "").trim() || null;
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+}
+
+export async function rebuildImm5476FromOriginal(sourceBuffer, originalBuffer) {
+  const [sourceTask, originalTask] = [sourceBuffer, originalBuffer].map((buffer) => pdfjs.getDocument({ data: new Uint8Array(buffer), enableXfa: true }));
+  try {
+    const [sourceDocument, originalDocument] = await Promise.all([sourceTask.promise, originalTask.promise]);
+    const fields = await sourceDocument.getFieldObjects();
+    for (const entries of Object.values(fields || {})) {
+      for (const field of entries) {
+        if (!field?.id || field.id === REPRESENTATIVE_SIGNATURE.dateFieldId) continue;
+        const value = field.value;
+        if (value === null || value === undefined || value === "") continue;
+        originalDocument.annotationStorage.setValue(field.id, { value });
+      }
+    }
+    return Buffer.from(await originalDocument.saveDocument());
+  } finally {
+    await Promise.all([sourceTask.destroy().catch(() => {}), originalTask.destroy().catch(() => {})]);
+  }
+}

@@ -62,7 +62,7 @@ test("opening IMM 5476 applies the selected representative's saved signature and
     source("../src/services/pdfFormRenderService.js"),
   ]);
   assert.match(controller, /representativeUser: \{ select: \{ fullName: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
-  assert.match(controller, /stampXfaPdfFormValues\(storedBuffer, \[\], \{ "547R": true \}/);
+  assert.match(controller, /stampXfaPdfFormValues\(preparedBuffer, \[\], \{ "547R": true \}/);
   assert.match(renderer, /const alreadySigned = annotations\.some/);
   assert.match(renderer, /if \(!existingDate\) document\.annotationStorage\.setValue/);
   assert.match(renderer, /if \(!alreadySigned\)/);
@@ -93,6 +93,18 @@ test("representative setup opens the newly updated IMM 5476 without a stale cach
   assert.match(overlay, /onOpenForm\(currentItem\)/);
   assert.match(workspace, /const imm5476 = returned\.find\(isImm5476Form\)/);
   assert.match(workspace, /onOpenForm=\{openFormFromSetup\}/);
+});
+
+test("changing representatives removes a prior representative's embedded signature and date", async () => {
+  const [controller, renderer] = await Promise.all([
+    source("../src/controllers/caseFormController.js"),
+    source("../src/services/pdfFormRenderService.js"),
+  ]);
+  assert.match(controller, /const embeddedSigner = await imm5476RepresentativeSignatureName\(storedBuffer\)/);
+  assert.match(controller, /copyType: "Original"/);
+  assert.match(controller, /rebuildImm5476FromOriginal\(storedBuffer, originalBuffer\)/);
+  assert.match(renderer, /field\.id === REPRESENTATIVE_SIGNATURE\.dateFieldId/);
+  assert.match(renderer, /originalDocument\.annotationStorage\.setValue\(field\.id, \{ value \}\)/);
 });
 
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {
