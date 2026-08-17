@@ -20,7 +20,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
@@ -157,13 +156,6 @@ function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false })
   );
 }
 
-// A centered modal, not an inline page block — "Add note" can be clicked
-// from the page header or from the Notes card further down, and the old
-// inline-block version always rendered in one fixed spot near the top of
-// the page regardless of which button opened it or how far the page was
-// scrolled, so it could pop open off-screen. Matches NoteDeleteOverlay's
-// portal/backdrop/motion pattern (the other note-related modal already on
-// this page) rather than inventing a second modal idiom.
 function NoteForm({
   formState,
   onChange,
@@ -173,23 +165,19 @@ function NoteForm({
   formError,
   isEditing,
 }) {
-  return createPortal(
-    <div className="fixed inset-0 z-[740] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="client-note-title">
-      <button type="button" className="absolute inset-0" onClick={() => !saving && onCancel()} aria-label="Close" />
-      <motion.section
-        initial={{ opacity: 0, scale: 0.96, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="relative w-full max-w-lg overflow-hidden rounded-[2rem] border border-white/80 bg-white p-6 shadow-[0_30px_100px_rgba(15,23,42,0.28)]"
-      >
+  return (
+    <motion.section
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      className="mt-4 overflow-hidden border-y border-violet-100 bg-violet-50/45 py-4"
+      aria-labelledby="client-note-title"
+    >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-500">Profile note</p>
-            <h2 id="client-note-title" className="mt-0.5 text-xl font-semibold tracking-tight text-slate-950">
+            <h2 id="client-note-title" className="mt-0.5 text-base font-semibold text-slate-950">
               {isEditing ? "Edit note" : "Add note"}
             </h2>
-            <p className="mt-1.5 text-sm leading-5 text-slate-500">
-              Keep profile-level notes here. Case notes stay inside each case.
-            </p>
           </div>
           <button
             type="button"
@@ -202,7 +190,7 @@ function NoteForm({
           </button>
         </div>
 
-        <form className="mt-5 space-y-4" onSubmit={onSubmit}>
+        <form className="mt-4 space-y-3" onSubmit={onSubmit}>
           <label className="block">
             <span className="mb-2 block text-sm font-semibold text-slate-700">
               Note
@@ -211,7 +199,7 @@ function NoteForm({
               autoFocus
               required
               name="content"
-              rows="5"
+              rows="4"
               value={formState.content}
               onChange={onChange}
               className="w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-brand-400 focus:bg-white focus:ring-4 focus:ring-brand-100"
@@ -244,9 +232,7 @@ function NoteForm({
             </button>
           </div>
         </form>
-      </motion.section>
-    </div>,
-    document.body,
+    </motion.section>
   );
 }
 
@@ -722,18 +708,6 @@ export default function ClientProfile() {
           onClose={() => { if (!deletingNoteId) { setDeleteNoteTarget(null); setNoteFormError(""); } }}
           onConfirm={() => handleDeleteNote(deleteNoteTarget)}
         />
-        {showNoteForm ? (
-          <NoteForm
-            formState={noteFormState}
-            onChange={handleNoteChange}
-            onSubmit={handleNoteSubmit}
-            onCancel={resetNoteForm}
-            saving={savingNote}
-            formError={noteFormError}
-            isEditing={isEditingNote}
-          />
-        ) : null}
-
         {error ? (
           <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {error}
@@ -934,6 +908,18 @@ export default function ClientProfile() {
                     Add
                   </button>
                 </div>
+
+                {showNoteForm ? (
+                  <NoteForm
+                    formState={noteFormState}
+                    onChange={handleNoteChange}
+                    onSubmit={handleNoteSubmit}
+                    onCancel={resetNoteForm}
+                    saving={savingNote}
+                    formError={noteFormError}
+                    isEditing={isEditingNote}
+                  />
+                ) : null}
 
                 <div className="mt-4 space-y-3">
                   {sortedProfileNotes.length ? (
