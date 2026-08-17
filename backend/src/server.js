@@ -8,6 +8,7 @@ import caseRoutes from "./routes/caseRoutes.js";
 import clientDocumentRoutes from "./routes/clientDocumentRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import developerRoutes from "./routes/developerRoutes.js";
 import globalSearchRoutes from "./routes/globalSearchRoutes.js";
 import paymentsOverviewRoutes from "./routes/paymentsOverviewRoutes.js";
 import documentTemplateRoutes from "./routes/documentTemplateRoutes.js";
@@ -201,6 +202,7 @@ app.get("/api/health", async (req, res, next) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/developer", requireAuth, requireRole("developer"), developerRoutes);
 app.use("/api/account", requireAuth, accountSettingsRoutes);
 app.use("/api/onboarding", onboardingRoutes);
 app.use("/api/communications/webhooks", communicationWebhookRoutes);

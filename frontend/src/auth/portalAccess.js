@@ -114,6 +114,7 @@ export const hasCapability = (role, permissions, capability) =>
   getPortalAccess(role, permissions).capabilities[capability] === true;
 
 export function homePathForAccess(role, permissions = {}) {
+  if (role === "developer") return "/developer";
   if (role === "client") return "/client-portal";
   const access = getPortalAccess(role, permissions);
   const paths = [

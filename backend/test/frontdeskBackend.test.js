@@ -50,7 +50,7 @@ test("front desk role reaches only areas explicitly enabled by portal access", a
     source("../src/server.js"),
   ]);
   assert.match(schema, /enum UserRole \{[\s\S]*frontdesk/);
-  assert.match(auth, /\["admin", "consultant", "frontdesk", "client"\]/);
+  assert.match(auth, /\["developer", "admin", "consultant", "frontdesk", "client"\]/);
   assert.match(
     server,
     /const staffUser = requireRole\("admin", "consultant", "frontdesk"\)/,

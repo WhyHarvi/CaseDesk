@@ -70,6 +70,14 @@ export function AdminRoute({ children }) {
   return children;
 }
 
+export function DeveloperRoute({ children }) {
+  const { loading, isAuthenticated, role } = useAuth();
+  if (loading) return <AuthLoading />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (role !== "developer") return <Navigate to={homePathForRole(role)} replace />;
+  return children;
+}
+
 export function PortalAccessRoute({ page, children }) {
   const { loading, accessReady, isAuthenticated, role, appUser, membership } = useAuth();
   const location = useLocation();

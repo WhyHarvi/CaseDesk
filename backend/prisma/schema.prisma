@@ -19,6 +19,7 @@ model ApiRateLimitBucket {
 }
 
 enum UserRole {
+  developer
   admin
   consultant
   frontdesk

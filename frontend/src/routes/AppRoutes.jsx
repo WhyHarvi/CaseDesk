@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import {
   AdminRoute,
+  DeveloperRoute,
   HomeRedirect,
   InternalRoute,
   PortalAccessRoute,
@@ -41,6 +42,7 @@ const Dashboard = lazyWithRetry(
   () => import("../pages/Dashboard"),
   "dashboard",
 );
+const DeveloperDashboard = lazyWithRetry(() => import("../pages/DeveloperDashboard"), "developer-dashboard");
 const Documents = lazyWithRetry(
   () => import("../pages/Documents"),
   "documents",
@@ -216,6 +218,7 @@ export default function AppRoutes() {
       />
       <Route path="/auth/reset-password" element={<ResetPassword />} />
       <Route path="/change-password" element={<ChangePassword />} />
+      <Route path="/developer" element={<DeveloperRoute><Deferred><DeveloperDashboard /></Deferred></DeveloperRoute>} />
       <Route
         path="/legal/privacy"
         element={
