@@ -8,6 +8,11 @@ import {
 } from "../../frontend/src/services/authLinkSession.js";
 import { normalizeSupabaseAuthCallback } from "../../frontend/src/services/supabase.js";
 import { accountAccessEmailContent } from "../src/services/accountAccessMailService.js";
+import {
+  DEFAULT_PUBLIC_APP_URL,
+  normalizeAuthActionLink,
+  publicAppUrl,
+} from "../src/utils/publicAppUrl.js";
 
 function browserLocation(suffix) {
   const url = new URL(suffix, "https://app.example.com");
@@ -21,6 +26,31 @@ function browserHistory() {
     replaceState(_state, _title, value) { this.replacement = value; },
   };
 }
+
+test("production onboarding links never use a localhost application origin", () => {
+  assert.equal(
+    publicAppUrl({ NODE_ENV: "production", PUBLIC_APP_URL: "http://localhost:5173" }),
+    DEFAULT_PUBLIC_APP_URL,
+  );
+  assert.equal(
+    publicAppUrl({ NODE_ENV: "production", FRONTEND_URL: "http://127.0.0.1:5173" }),
+    DEFAULT_PUBLIC_APP_URL,
+  );
+  assert.equal(
+    publicAppUrl({ NODE_ENV: "production", PUBLIC_APP_URL: "https://workspace.example.com/app/" }),
+    "https://workspace.example.com",
+  );
+});
+
+test("Supabase onboarding action links are forced back to the canonical application route", () => {
+  const normalized = normalizeAuthActionLink(
+    "https://auth.example.com/auth/v1/verify?token=secret&type=invite&redirect_to=http%3A%2F%2Flocalhost%3A5173",
+    "https://casedesk.chkimmigration.ca/auth/accept-invite",
+  );
+  const parsed = new URL(normalized);
+  assert.equal(parsed.searchParams.get("token"), "secret");
+  assert.equal(parsed.searchParams.get("redirect_to"), "https://casedesk.chkimmigration.ca/auth/accept-invite");
+});
 
 test("recovery links parse Supabase errors into a useful expired-link message", () => {
   const parameters = readLinkParameters(browserLocation("/auth/reset-password#error=access_denied&error_code=otp_expired"));

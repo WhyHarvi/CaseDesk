@@ -1,4 +1,5 @@
 import { createHttpError } from "../utils/http.js";
+import { normalizeAuthActionLink } from "../utils/publicAppUrl.js";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const SUPPORTED_USER_TOKEN_ALGORITHMS = Object.freeze([
@@ -197,7 +198,10 @@ export async function generateAuthLink({ type, email, fullName, redirectTo }) {
     },
   );
   return {
-    actionLink: payload.properties?.action_link || payload.action_link,
+    actionLink: normalizeAuthActionLink(
+      payload.properties?.action_link || payload.action_link,
+      redirectTo,
+    ),
     user: payload.user || payload,
   };
 }
