@@ -533,7 +533,20 @@ export default function ClientProfile() {
     }));
   }
 
-  async function handleNoteSubmit(event) {
+  function updateSavedNote(savedNote) {
+    setProfile((current) => {
+      const currentNotes = current?.notes || [];
+      const exists = currentNotes.some((note) => note.id === savedNote.id);
+      return {
+        ...current,
+        notes: exists
+          ? currentNotes.map((note) => note.id === savedNote.id ? savedNote : note)
+          : [savedNote, ...currentNotes],
+      };
+    });
+  }
+
+  async function handleNoteSubmit(event, { keepOpen = false } = {}) {
     event?.preventDefault();
 
     if (savingNote || !noteFormState.content.trim()) return;
@@ -547,14 +560,17 @@ export default function ClientProfile() {
         content: noteFormState.content.trim(),
       };
 
-      if (isEditingNote) {
-        await api.patch(`/notes/${editingNote.id}`, payload);
-      } else {
-        await api.post("/notes", payload);
-      }
+      const response = isEditingNote
+        ? await api.patch(`/notes/${editingNote.id}`, payload)
+        : await api.post("/notes", payload);
+      const savedNote = response.data.data;
+      updateSavedNote(savedNote);
 
-      await loadClient();
-      resetNoteForm();
+      if (keepOpen) {
+        setEditingNote(savedNote);
+      } else {
+        resetNoteForm();
+      }
     } catch (requestError) {
       setNoteFormError(
         requestError.response?.data?.message || "Unable to save note.",
@@ -568,14 +584,17 @@ export default function ClientProfile() {
     value: noteFormState.content,
     savedValue: editingNote?.content || "",
     enabled: showNoteForm && !savingNote,
-    onSave: handleNoteSubmit,
+    onSave: () => handleNoteSubmit(null, { keepOpen: true }),
   });
 
   async function handleDeleteNote(note) {
     try {
       setDeletingNoteId(note.id);
       await api.delete(`/notes/${note.id}`);
-      await loadClient();
+      setProfile((current) => ({
+        ...current,
+        notes: (current?.notes || []).filter((item) => item.id !== note.id),
+      }));
       setDeleteNoteTarget(null);
 
       if (editingNote?.id === note.id) {
