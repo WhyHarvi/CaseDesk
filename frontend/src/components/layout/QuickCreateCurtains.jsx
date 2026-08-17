@@ -32,6 +32,8 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   const [users, setUsers] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
   const [contactMatches, setContactMatches] = useState([]);
+  const [caseEasyMatches, setCaseEasyMatches] = useState([]);
+  const [importingCaseEasyId, setImportingCaseEasyId] = useState("");
   const [checkingContact, setCheckingContact] = useState(false);
 
   useEffect(() => {
@@ -76,6 +78,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     const validPhone = phone.replace(/\D/g, "").length >= 7;
     if (!validEmail && !validPhone) {
       setContactMatches([]);
+      setCaseEasyMatches([]);
       setCheckingContact(false);
       return undefined;
     }
@@ -83,8 +86,12 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     setCheckingContact(true);
     const timer = window.setTimeout(() => {
       api.get("/clients/contact-matches", { params: { ...(validEmail ? { email } : {}), ...(validPhone ? { phone } : {}) } })
-        .then((response) => { if (active) setContactMatches(response.data.data || []); })
-        .catch(() => { if (active) setContactMatches([]); })
+        .then((response) => {
+          if (!active) return;
+          setContactMatches(response.data.data?.clients || []);
+          setCaseEasyMatches(response.data.data?.caseEasyContacts || []);
+        })
+        .catch(() => { if (active) { setContactMatches([]); setCaseEasyMatches([]); } })
         .finally(() => { if (active) setCheckingContact(false); });
     }, 350);
     return () => { active = false; window.clearTimeout(timer); };
@@ -93,6 +100,24 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   function close() {
     setClosing(true);
     window.setTimeout(onClose, 260);
+  }
+
+  async function importCaseEasyContact(contact, book) {
+    setImportingCaseEasyId(contact.id);
+    setFormError("");
+    try {
+      const { data } = await api.post("/case-easy-import/contacts/bulk-convert", { contactIds: [contact.id] });
+      const result = data?.data?.results?.[0];
+      if (result?.status !== "converted" || !result.clientId) {
+        throw new Error(result?.message || "This contact could not be imported.");
+      }
+      onClose();
+      navigate(book ? `/app/calendar?bookForClient=${encodeURIComponent(result.clientId)}` : `/app/clients/${result.clientId}`);
+    } catch (error) {
+      setFormError(error.response?.data?.message || error.message || "This contact could not be imported.");
+    } finally {
+      setImportingCaseEasyId("");
+    }
   }
 
   function handleClientChange(event) {
@@ -161,7 +186,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   }
 
   if (kind === "client") {
-    return <ClientDrawer formState={clientForm} onChange={handleClientChange} onSubmit={submitClient} onCancel={close} saving={saving} formError={formError} users={users} isEditing={false} closing={closing} showFrontDeskActions={role === "frontdesk"} frontDeskIntake={{ action: "client-only", bookAppointmentAfterPayment: true }} onFrontDeskIntakeChange={() => {}} canRecordProfessionalFee={false} nameNeedsReview={false} contactMatches={contactMatches} checkingContact={checkingContact} onOpenExistingClient={(client) => { onClose(); navigate(`/app/clients/${client.id}`); }} onBookExistingClient={(client) => { onClose(); navigate(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`); }} dobError={dobError} onDobBlur={() => setDobError(dateOfBirthError(clientForm.dateOfBirth))} />;
+    return <ClientDrawer formState={clientForm} onChange={handleClientChange} onSubmit={submitClient} onCancel={close} saving={saving} formError={formError} users={users} isEditing={false} closing={closing} showFrontDeskActions={role === "frontdesk"} frontDeskIntake={{ action: "client-only", bookAppointmentAfterPayment: true }} onFrontDeskIntakeChange={() => {}} canRecordProfessionalFee={false} nameNeedsReview={false} contactMatches={contactMatches} caseEasyMatches={caseEasyMatches} checkingContact={checkingContact} onOpenExistingClient={(client) => { onClose(); navigate(`/app/clients/${client.id}`); }} onBookExistingClient={(client) => { onClose(); navigate(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`); }} onImportCaseEasyContact={importCaseEasyContact} importingCaseEasyId={importingCaseEasyId} dobError={dobError} onDobBlur={() => setDobError(dateOfBirthError(clientForm.dateOfBirth))} />;
   }
 
   if (kind === "case") {

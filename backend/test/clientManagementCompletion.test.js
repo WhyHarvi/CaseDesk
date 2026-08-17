@@ -41,6 +41,43 @@ test("client management stores searchable identity fields and archives without d
   assert.match(profile, /Identification/);
 });
 
+test("the duplicate-client check also searches unconverted Case Easy import data, with an import action right from the Add Client form", async () => {
+  const [controller, routes, clientsPage, curtains] = await Promise.all([
+    source("../src/controllers/clientController.js"),
+    source("../src/routes/clientRoutes.js"),
+    source("../../frontend/src/pages/Clients.jsx"),
+    source("../../frontend/src/components/layout/QuickCreateCurtains.jsx"),
+  ]);
+
+  // Real gap, confirmed against live agency data: of 3,793+ imported Case
+  // Easy contacts, only a couple had ever been converted to real Client
+  // rows — so someone already sitting in that staged data sailed straight
+  // through this duplicate check, because it only ever looked at the
+  // Client table. Live-verified end to end: a matching contact now shows
+  // up under caseEasyContacts, and importing it (reusing the same
+  // bulk-convert endpoint the Case Easy Import page itself uses) produces
+  // a real Client row.
+  assert.match(controller, /async function findCaseEasyContactMatches\(req, email, phoneDigits\)/);
+  assert.match(controller, /if \(!hasPortalPageAccess\(req, "caseEasyImport"\)\) return \[\];/);
+  assert.match(controller, /importStatus: \{ not: "converted" \}/);
+  assert.match(controller, /data: \{ clients: \[\], caseEasyContacts: \[\] \}/);
+  assert.match(controller, /caseEasyContacts,\s*\n\s*\},\s*\n\s*\}\);/);
+
+  assert.match(clientsPage, /Found in imported Case Easy data/);
+  assert.match(clientsPage, /Not yet a CaseDesk client\. Import their record instead of starting from scratch\./);
+  assert.match(clientsPage, /onImportCaseEasyContact\(contact, false\)/);
+  assert.match(clientsPage, /onImportCaseEasyContact\(contact, true\)/);
+  assert.match(clientsPage, /"\/case-easy-import\/contacts\/bulk-convert", \{ contactIds: \[contact\.id\] \}/);
+  assert.match(clientsPage, /response\.data\.data\?\.clients \|\| \[\]/);
+  assert.match(clientsPage, /response\.data\.data\?\.caseEasyContacts \|\| \[\]/);
+
+  // The same Add Client form is reused (not reimplemented) by the header's
+  // quick-create curtain, so the fix needed wiring in both places.
+  assert.match(curtains, /caseEasyMatches=\{caseEasyMatches\}/);
+  assert.match(curtains, /onImportCaseEasyContact=\{importCaseEasyContact\}/);
+  assert.match(curtains, /"\/case-easy-import\/contacts\/bulk-convert", \{ contactIds: \[contact\.id\] \}/);
+});
+
 test("clients converted from a Case Easy import are labeled everywhere a client is shown", async () => {
   const [controller, badge, clientsPage, profile] = await Promise.all([
     source("../src/controllers/clientController.js"),

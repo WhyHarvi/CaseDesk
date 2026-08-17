@@ -263,9 +263,12 @@ export function ClientDrawer({
   canRecordProfessionalFee,
   nameNeedsReview,
   contactMatches,
+  caseEasyMatches = [],
   checkingContact,
   onOpenExistingClient,
   onBookExistingClient,
+  onImportCaseEasyContact,
+  importingCaseEasyId = "",
   dobError,
   onDobBlur,
 }) {
@@ -395,32 +398,58 @@ export function ClientDrawer({
                 </label>
 
                 {!isEditing && (checkingContact || contactMatches.length) ? (
-                  <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50/90 p-4" role="status" aria-live="polite">
+                  <div className="md:col-span-2 rounded-2xl border border-sky-200 bg-sky-50 p-4" role="status" aria-live="polite">
                     {checkingContact ? (
-                      <p className="flex items-center gap-2 text-xs font-semibold text-amber-800"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking for an existing client…</p>
+                      <p className="flex items-center gap-2 text-xs font-semibold text-sky-800"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking for an existing client…</p>
                     ) : (
                       <>
-                        <p className="text-sm font-semibold text-amber-950">This person is already in CaseDesk</p>
-                        <p className="mt-1 text-xs leading-5 text-amber-800">Use the existing profile instead of creating a duplicate.</p>
+                        <p className="text-sm font-semibold text-sky-900">This person is already in CaseDesk</p>
+                        <p className="mt-1 text-xs leading-5 text-sky-700">Use the existing profile instead of creating a duplicate.</p>
                         <div className="mt-3 space-y-2">
                           {contactMatches.map((client) => (
-                            <div key={client.id} className="rounded-xl border border-amber-200/80 bg-white p-3 shadow-sm">
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-slate-900">{client.fullName}</p>
-                                  <p className="mt-0.5 truncate text-[11px] text-slate-500">{[client.clientNumber, client.email, client.phone].filter(Boolean).join(" · ")}</p>
-                                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Matched {client.matchedBy.join(" and ")}{client.archivedAt ? " · Archived profile" : ""}</p>
-                                </div>
-                                <div className="flex shrink-0 flex-wrap gap-2">
-                                  <button type="button" onClick={() => onOpenExistingClient(client)} className="h-8 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50">Go to profile</button>
-                                  {client.canBookAppointment ? <button type="button" onClick={() => onBookExistingClient(client)} className="h-8 rounded-full bg-slate-950 px-3 text-[11px] font-semibold text-white transition hover:bg-slate-800">Book appointment</button> : null}
-                                </div>
+                            <div key={client.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-2.5 shadow-sm">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900">{client.fullName}</p>
+                                <p className="mt-0.5 truncate text-[11px] text-slate-500">{[client.clientNumber, client.email, client.phone].filter(Boolean).join(" · ")}</p>
+                                <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-sky-600">Matched {client.matchedBy.join(" and ")}{client.archivedAt ? " · Archived profile" : ""}</p>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button type="button" onClick={() => onOpenExistingClient(client)} className="h-9 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">Go to profile</button>
+                                {client.canBookAppointment ? <button type="button" onClick={() => onBookExistingClient(client)} className="h-9 rounded-full bg-slate-950 px-3.5 text-xs font-semibold text-white transition hover:bg-slate-800">Book appointment</button> : null}
                               </div>
                             </div>
                           ))}
                         </div>
                       </>
                     )}
+                  </div>
+                ) : null}
+
+                {!isEditing && !checkingContact && caseEasyMatches.length ? (
+                  <div className="md:col-span-2 rounded-2xl border border-violet-200 bg-violet-50 p-4" role="status" aria-live="polite">
+                    <p className="text-sm font-semibold text-violet-900">Found in imported Case Easy data</p>
+                    <p className="mt-1 text-xs leading-5 text-violet-700">Not yet a CaseDesk client. Import their record instead of starting from scratch.</p>
+                    <div className="mt-3 space-y-2">
+                      {caseEasyMatches.map((contact) => (
+                        <div key={contact.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-2.5 shadow-sm">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-slate-900">{contact.fullName}</p>
+                            <p className="mt-0.5 truncate text-[11px] text-slate-500">{[contact.clientIdentifier, contact.email, contact.phone].filter(Boolean).join(" · ")}</p>
+                            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-violet-600">Case Easy{contact.recordType ? ` · ${contact.recordType}` : ""}</p>
+                          </div>
+                          <div className="flex shrink-0 gap-2">
+                            <button type="button" disabled={importingCaseEasyId === contact.id} onClick={() => onImportCaseEasyContact(contact, false)} className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50">
+                              {importingCaseEasyId === contact.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                              Import
+                            </button>
+                            <button type="button" disabled={importingCaseEasyId === contact.id} onClick={() => onImportCaseEasyContact(contact, true)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-950 px-3.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+                              {importingCaseEasyId === contact.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                              Import &amp; book
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 
@@ -850,6 +879,8 @@ export default function Clients() {
   const [formError, setFormError] = useState("");
   const [dobError, setDobError] = useState("");
   const [contactMatches, setContactMatches] = useState([]);
+  const [caseEasyMatches, setCaseEasyMatches] = useState([]);
+  const [importingCaseEasyId, setImportingCaseEasyId] = useState("");
   const [checkingContact, setCheckingContact] = useState(false);
   const [saving, setSaving] = useState(false);
   const [assigningClientIds, setAssigningClientIds] = useState([]);
@@ -909,6 +940,7 @@ export default function Clients() {
   useEffect(() => {
     if (!showForm || isEditing) {
       setContactMatches([]);
+      setCaseEasyMatches([]);
       setCheckingContact(false);
       return undefined;
     }
@@ -918,12 +950,14 @@ export default function Clients() {
     const validPhone = phone.replace(/\D/g, "").length >= 7;
     if (!validEmail && !validPhone) {
       setContactMatches([]);
+      setCaseEasyMatches([]);
       setCheckingContact(false);
       return undefined;
     }
 
     let active = true;
     setContactMatches([]);
+    setCaseEasyMatches([]);
     setCheckingContact(true);
     const timer = window.setTimeout(() => {
       api.get("/clients/contact-matches", {
@@ -932,8 +966,12 @@ export default function Clients() {
           ...(validPhone ? { phone } : {}),
         },
       })
-        .then((response) => { if (active) setContactMatches(response.data.data || []); })
-        .catch(() => { if (active) setContactMatches([]); })
+        .then((response) => {
+          if (!active) return;
+          setContactMatches(response.data.data?.clients || []);
+          setCaseEasyMatches(response.data.data?.caseEasyContacts || []);
+        })
+        .catch(() => { if (active) { setContactMatches([]); setCaseEasyMatches([]); } })
         .finally(() => { if (active) setCheckingContact(false); });
     }, 350);
     return () => { active = false; window.clearTimeout(timer); };
@@ -1115,7 +1153,29 @@ export default function Clients() {
     setShowForm(false);
     setEditingClient(null);
     setContactMatches([]);
+    setCaseEasyMatches([]);
     navigate(path);
+  }
+
+  // Reuses the same bulk-convert endpoint the Case Easy Import page itself
+  // uses for a batch of contacts, just with a single id — it already
+  // creates the Client (and any of its not-yet-converted linked cases)
+  // with sensible defaults, no separate conversion logic needed here.
+  async function importCaseEasyContact(contact, book) {
+    setImportingCaseEasyId(contact.id);
+    setFormError("");
+    try {
+      const { data } = await api.post("/case-easy-import/contacts/bulk-convert", { contactIds: [contact.id] });
+      const result = data?.data?.results?.[0];
+      if (result?.status !== "converted" || !result.clientId) {
+        throw new Error(result?.message || "This contact could not be imported.");
+      }
+      leaveClientIntake(book ? `/app/calendar?bookForClient=${encodeURIComponent(result.clientId)}` : `/app/clients/${result.clientId}`);
+    } catch (requestError) {
+      setFormError(requestError.response?.data?.message || requestError.message || "This contact could not be imported.");
+    } finally {
+      setImportingCaseEasyId("");
+    }
   }
 
   function handleInputChange(event) {
@@ -1740,9 +1800,12 @@ export default function Clients() {
           canRecordProfessionalFee={canRecordProfessionalFee}
           nameNeedsReview={Boolean(isEditing && clientNameParts(editingClient).needsReview)}
           contactMatches={contactMatches}
+          caseEasyMatches={caseEasyMatches}
           checkingContact={checkingContact}
           onOpenExistingClient={(client) => leaveClientIntake(`/app/clients/${client.id}`)}
           onBookExistingClient={(client) => leaveClientIntake(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`)}
+          onImportCaseEasyContact={importCaseEasyContact}
+          importingCaseEasyId={importingCaseEasyId}
           dobError={dobError}
           onDobBlur={() => setDobError(dateOfBirthError(formState.dateOfBirth))}
         />

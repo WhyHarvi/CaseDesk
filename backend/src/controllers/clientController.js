@@ -21,6 +21,7 @@ import { syncClientToQuickBooks } from "../services/clientQuickBooksSyncService.
 import { TERMINAL_CASE_STATUSES } from "./caseController.js";
 import {
   hasPortalCapability,
+  hasPortalPageAccess,
   portalDataScope,
 } from "../services/portalAccessService.js";
 import {
@@ -712,45 +713,92 @@ export async function listClients(req, res) {
   res.json({ data: enriched, meta: { page, limit, total } });
 }
 
+// Case Easy import data was never checked here — of this agency's 3,793+
+// imported contacts, only a couple have actually been converted into real
+// Client records, so a person could already be sitting in that staged data
+// and still sail through this duplicate check with nothing found, because
+// it only ever looked at the Client table. No normalized phone/email column
+// exists on the import table (unlike Client), so phone matching is a
+// contains() on the digit-only last 7 digits — the same approximation
+// caseEasySearchService.js already uses for this same data, confirmed
+// against real records to be digit-contiguous in the vast majority of
+// cases. Scoped to hasPortalPageAccess("caseEasyImport") since the
+// import/book actions this powers require that same access anyway.
+async function findCaseEasyContactMatches(req, email, phoneDigits) {
+  if (!hasPortalPageAccess(req, "caseEasyImport")) return [];
+  const conditions = [
+    ...(email ? [{ email: { equals: email, mode: "insensitive" } }] : []),
+    ...(phoneDigits.length >= 7 ? [{ phone: { contains: phoneDigits.slice(-7) } }] : []),
+  ];
+  if (!conditions.length) return [];
+
+  const contacts = await prisma.caseEasyImportContact.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      importStatus: { not: "converted" },
+      OR: conditions,
+    },
+    select: { id: true, firstName: true, lastName: true, email: true, phone: true, clientIdentifier: true, recordType: true },
+    orderBy: { updatedAt: "desc" },
+    take: 5,
+  });
+  return contacts.map((contact) => ({
+    id: contact.id,
+    fullName: [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.clientIdentifier || "Imported contact",
+    email: contact.email,
+    phone: contact.phone,
+    clientIdentifier: contact.clientIdentifier,
+    recordType: contact.recordType,
+  }));
+}
+
 export async function findClientContactMatches(req, res) {
+  const rawEmail = String(req.query.email || "").slice(0, 320).trim().toLowerCase();
+  const rawPhone = String(req.query.phone || "").slice(0, 40);
   const { phoneNormalized, emailNormalized } = normalizeContactMatchInput({
-    phone: String(req.query.phone || "").slice(0, 40),
-    email: String(req.query.email || "").slice(0, 320),
+    phone: rawPhone,
+    email: rawEmail,
   });
   const contact = [
     ...(phoneNormalized ? [{ phoneNormalized }] : []),
     ...(emailNormalized ? [{ emailNormalized }] : []),
   ];
-  if (!contact.length) return res.json({ data: [] });
+  if (!contact.length) return res.json({ data: { clients: [], caseEasyContacts: [] } });
 
-  const clients = await prisma.client.findMany({
-    where: {
-      agencyId: req.auth.agencyId,
-      AND: [clientAccessWhere(req), { OR: contact }],
-    },
-    select: {
-      id: true,
-      clientNumber: true,
-      fullName: true,
-      email: true,
-      emailNormalized: true,
-      phone: true,
-      phoneNormalized: true,
-      status: true,
-      archivedAt: true,
-    },
-    orderBy: { updatedAt: "desc" },
-    take: 5,
-  });
+  const [clients, caseEasyContacts] = await Promise.all([
+    prisma.client.findMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        AND: [clientAccessWhere(req), { OR: contact }],
+      },
+      select: {
+        id: true,
+        clientNumber: true,
+        fullName: true,
+        email: true,
+        emailNormalized: true,
+        phone: true,
+        phoneNormalized: true,
+        status: true,
+        archivedAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+    }),
+    findCaseEasyContactMatches(req, rawEmail, rawPhone.replace(/\D/g, "")),
+  ]);
   res.json({
-    data: clients.map((client) => ({
-      ...client,
-      matchedBy: [
-        client.emailNormalized === emailNormalized ? "email" : null,
-        client.phoneNormalized === phoneNormalized ? "phone" : null,
-      ].filter(Boolean),
-      canBookAppointment: !client.archivedAt,
-    })),
+    data: {
+      clients: clients.map((client) => ({
+        ...client,
+        matchedBy: [
+          client.emailNormalized === emailNormalized ? "email" : null,
+          client.phoneNormalized === phoneNormalized ? "phone" : null,
+        ].filter(Boolean),
+        canBookAppointment: !client.archivedAt,
+      })),
+      caseEasyContacts,
+    },
   });
 }
 
