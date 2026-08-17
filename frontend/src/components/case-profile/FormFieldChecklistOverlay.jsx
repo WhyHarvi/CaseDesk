@@ -428,7 +428,19 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
 
         {isImm5476 && checklist?.available === false ? (
           <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4">
-            <button type="button" onClick={onClose} className="rounded-full bg-slate-950 px-5 py-2.5 text-xs font-semibold text-white">Done</button>
+            <button type="button" onClick={onClose} className="rounded-full border border-slate-200 bg-white px-5 py-2.5 text-xs font-semibold text-slate-700">Done</button>
+            {!signatureOpen ? (
+              <button
+                type="button"
+                onClick={() => setSignatureOpen(true)}
+                disabled={representativeSaving || !checklist?.representativeUserId || !currentItem?.storageKey || currentItem?.currentCopyType === "Original"}
+                title={currentItem?.currentCopyType === "Original" ? "Open and save a filled copy before requesting the client's signature" : "Send a secure signature request to the client portal"}
+                className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-5 py-2.5 text-xs font-semibold text-violet-700 disabled:opacity-40"
+              >
+                <UserRoundCheck className="h-3.5 w-3.5" />
+                Request client signature
+              </button>
+            ) : null}
             {onOpenForm ? (
               <button
                 type="button"

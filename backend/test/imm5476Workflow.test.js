@@ -30,6 +30,8 @@ test("IMM 5476 setup does not present an empty checklist or disabled generic act
   assert.match(overlay, /will be applied automatically when you open IMM 5476/);
   assert.match(overlay, /isImm5476 && checklist\?\.available === false/);
   assert.match(overlay, />Done<\/button>/);
+  assert.match(overlay, /Request client signature/);
+  assert.match(overlay, /currentItem\?\.currentCopyType === "Original"/);
 });
 
 test("IMM 5476 representatives come from licensed profiles and never fall back to the case assignee", async () => {
