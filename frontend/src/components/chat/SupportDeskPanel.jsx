@@ -1,5 +1,5 @@
 import { Camera, CheckCircle2, ImageOff, Loader2, Send, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "../../services/api";
 import { captureCurrentPageForSupport, clearSupportCapture, latestSupportCapture } from "../../services/supportCapture";
 
@@ -14,6 +14,7 @@ function captureState() {
 }
 
 export default function SupportDeskPanel({ compact = false }) {
+  const descriptionRef = useRef(null);
   const [capture, setCapture] = useState(captureState);
   const [description, setDescription] = useState("");
   const [summary, setSummary] = useState("");
@@ -38,7 +39,11 @@ export default function SupportDeskPanel({ compact = false }) {
   }
 
   async function diagnose() {
-    if (!description.trim()) return;
+    if (!description.trim()) {
+      setNotice("Describe what happened first. Nova summarizes your written report and does not inspect the screenshot.");
+      descriptionRef.current?.focus();
+      return;
+    }
     setBusy("diagnose");
     setNotice("");
     try {
@@ -91,7 +96,7 @@ export default function SupportDeskPanel({ compact = false }) {
         <form onSubmit={submit} className={compact ? "space-y-4" : "space-y-5"}>
           <div>
             <label className="text-sm font-semibold text-slate-800" htmlFor="support-description">What happened?</label>
-            <textarea id="support-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={compact ? 4 : 5} className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Tell us what you were doing, what you expected, and what happened instead." />
+            <textarea ref={descriptionRef} id="support-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={compact ? 4 : 5} className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Tell us what you were doing, what you expected, and what happened instead." />
           </div>
 
           <div className="border-y border-slate-200 py-4">
@@ -109,7 +114,7 @@ export default function SupportDeskPanel({ compact = false }) {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="text-sm font-semibold text-slate-800" htmlFor="support-summary">Nova summary</label>
-              <button type="button" onClick={diagnose} disabled={!description.trim() || Boolean(busy)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-50 px-3 text-xs font-semibold text-brand-700 disabled:opacity-50">{busy === "diagnose" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Summarize with Nova</button>
+              <button type="button" onClick={diagnose} disabled={Boolean(busy)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-50 px-3 text-xs font-semibold text-brand-700 disabled:opacity-50">{busy === "diagnose" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Summarize with Nova</button>
             </div>
             <textarea id="support-summary" value={summary} onChange={(event) => setSummary(event.target.value)} rows={compact ? 4 : 5} className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Nova can prepare this, or leave it blank and send your report directly." />
           </div>

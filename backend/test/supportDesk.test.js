@@ -48,6 +48,8 @@ test("Chats and its floating widget expose Help while automatic captures stay lo
   assert.doesNotMatch(capture, /api\.post|fetch\(/);
   assert.match(api, /status >= 500/);
   assert.match(panel, /Summarize with Nova/);
+  assert.match(panel, /Nova summarizes your written report and does not inspect the screenshot/);
+  assert.match(panel, /disabled=\{Boolean\(busy\)\}/);
   assert.match(panel, /Review the image before sending/);
 });
 
