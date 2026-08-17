@@ -7,6 +7,19 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { clientRecipientIds, notifyUsers } from "../services/notificationService.js";
 import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 
+const representativeUserSelect = {
+  id: true,
+  fullName: true,
+  email: true,
+  phone: true,
+  licenseNumber: true,
+  representativeType: true,
+  membershipBody: true,
+  membershipProvince: true,
+  formOfficePhone: true,
+  formOfficeEmail: true,
+};
+
 async function loadForm(req) {
   const form = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
   if (!form) throw createHttpError(404, "Case form not found");
@@ -60,7 +73,11 @@ export async function setRepresentative(req, res) {
     });
     if (!user?.licenseNumber?.trim()) throw createHttpError(400, "Choose an active licensed representative from this agency");
   }
-  const data = await prisma.caseForm.update({ where: { id: form.id }, data: { representativeUserId } });
+  const data = await prisma.caseForm.update({
+    where: { id: form.id },
+    data: { representativeUserId },
+    include: { representativeUser: { select: representativeUserSelect } },
+  });
   res.json({ data });
 }
 

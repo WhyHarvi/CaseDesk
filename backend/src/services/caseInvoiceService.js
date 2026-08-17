@@ -570,6 +570,53 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   return updated;
 }
 
+export async function voidUnpaidCaseInvoice(agencyId, { caseId, invoiceId, reason, actorUserId }) {
+  const voidReason = String(reason || "").trim().slice(0, 500);
+  if (!voidReason) throw createHttpError(400, "Enter why this invoice is being voided.", "VALIDATION_ERROR");
+
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: invoiceId, agencyId, caseId },
+    include: {
+      installments: { select: { id: true } },
+      paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true } },
+    },
+  });
+  if (!invoice) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  if (["Void", "Voided"].includes(invoice.status)) return invoice;
+  if (invoice.installments.length) {
+    throw createHttpError(409, "Void this invoice from its payment-schedule installment.", "SCHEDULE_INVOICE_REQUIRED");
+  }
+  const localCashPaid = invoice.paymentApprovals.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance)) + localCashPaid;
+  if (collected > 0.01) {
+    throw createHttpError(409, "This invoice already has a payment. Refund or reverse the payment before voiding it.", "INVOICE_HAS_PAYMENT");
+  }
+
+  if (invoice.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS) {
+    if (!invoice.qbInvoiceId || !invoice.qbSyncToken) {
+      throw createHttpError(409, "This QuickBooks invoice must be synchronized before it can be voided.", "QBO_INVOICE_NOT_SYNCED");
+    }
+    await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
+  }
+
+  const updated = await prisma.caseInvoice.update({
+    where: { id: invoice.id },
+    data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
+  });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: invoice.clientId,
+    caseId,
+    action: "invoice.voided",
+    details: `${invoice.invoiceNumber} (${invoice.description}) voided: ${voidReason}`,
+    entityType: "caseInvoice",
+    entityId: invoice.id,
+    metadata: { reason: voidReason, priorBalance: Number(invoice.balance) },
+  });
+  return updated;
+}
+
 function normalizeCasePaymentDate(value) {
   if (!value) return null;
   const text = String(value).trim();

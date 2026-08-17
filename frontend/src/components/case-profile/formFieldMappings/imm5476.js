@@ -136,13 +136,24 @@ function splitStreetAddress(raw) {
   return { streetNo: "", streetName: trimmed };
 }
 
-// "+1 (416) 555-0199" -> { countryCode: "1", number: "(416) 555-0199" }.
-// Only splits a leading "+<digits>"; a plain local number is assumed to
-// already be in the default country (Canada/US share "1").
+// IMM 5476's telephone widgets are numeric. Put the country calling code in
+// the first box and the complete national number in the next box, without
+// punctuation that XFA may truncate or reject.
 function splitPhone(raw, defaultCountryCode) {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return { countryCode: "", number: "" };
-  const match = trimmed.match(/^\+(\d{1,3})[\s.-]*(.*)$/);
-  if (match) return { countryCode: match[1], number: match[2].trim() };
-  return { countryCode: defaultCountryCode, number: trimmed };
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return { countryCode: "", number: "" };
+
+  const explicitCallingCode = trimmed.match(/^\+(\d{1,3})(?:[\s.-]+|\()(.+)$/);
+  if (explicitCallingCode) {
+    return { countryCode: explicitCallingCode[1], number: explicitCallingCode[2].replace(/\D/g, "") };
+  }
+  if (trimmed.startsWith("+") && defaultCountryCode && digits.startsWith(defaultCountryCode)) {
+    return { countryCode: defaultCountryCode, number: digits.slice(defaultCountryCode.length) };
+  }
+  if (defaultCountryCode === "1" && digits.length === 11 && digits.startsWith("1")) {
+    return { countryCode: "1", number: digits.slice(1) };
+  }
+  return { countryCode: defaultCountryCode, number: digits };
 }

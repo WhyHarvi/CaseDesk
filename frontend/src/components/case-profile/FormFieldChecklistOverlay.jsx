@@ -173,9 +173,9 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
   async function changeRepresentative(representativeUserId) {
     try {
       setError("");
-      await api.patch(`/case-forms/${item.id}/representative`, { representativeUserId: representativeUserId || null });
+      const response = await api.patch(`/case-forms/${item.id}/representative`, { representativeUserId: representativeUserId || null });
+      await onFormChanged?.(response.data.data);
       await load();
-      await onFormChanged?.();
       setNotice(representativeUserId ? "Representative selected. Close this panel and open the form to apply their information." : "Representative removed from this form.");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Unable to set the representative.");
@@ -267,7 +267,7 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
               {item.formNumber ? `${item.formNumber} · ` : ""}
               {item.title}
             </h3>
-            {progress ? (
+            {progress && !isImm5476 ? (
               <p className="mt-1 text-sm text-slate-500">
                 {progress.complete} of {progress.total} required fields complete
                 {progress.totalAll > progress.total ? ` · ${progress.filledOfAll} of ${progress.totalAll} fields total` : ""}
@@ -307,8 +307,12 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
           ) : checklist?.available === false ? (
             <div className="px-6 py-14 text-center">
               {isImm5476 ? <CheckCircle2 className="mx-auto h-7 w-7 text-violet-500" /> : <AlertCircle className="mx-auto h-7 w-7 text-slate-300" />}
-              <p className="mt-3 text-sm font-semibold text-slate-700">{isImm5476 ? "Representative selection ready" : "Checklist not available"}</p>
-              <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-slate-500">{isImm5476 ? "Choose the licensed representative above. Then close this panel and open IMM 5476 to apply the selected representative's profile information." : checklist.reason}</p>
+              <p className="mt-3 text-sm font-semibold text-slate-700">{isImm5476 ? (checklist.representativeUserId ? "Representative selected" : "Choose a representative") : "Checklist not available"}</p>
+              <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-slate-500">{isImm5476
+                ? checklist.representativeUserId
+                  ? `${representatives.find((user) => user.id === checklist.representativeUserId)?.fullName || "The selected representative"} will be applied automatically when you open IMM 5476.`
+                  : "Select an active licensed representative above. Their saved profile information will be applied when you open IMM 5476."
+                : checklist.reason}</p>
             </div>
           ) : (
             <>
@@ -414,7 +418,11 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
           ) : null}
         </main>
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-5 py-4">
+        {isImm5476 && checklist?.available === false ? (
+          <footer className="flex justify-end border-t border-slate-100 px-5 py-4">
+            <button type="button" onClick={onClose} className="rounded-full bg-slate-950 px-5 py-2.5 text-xs font-semibold text-white">Done</button>
+          </footer>
+        ) : <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-5 py-4">
           <button
             type="button"
             onClick={runAutofill}
@@ -450,7 +458,7 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
               {generating ? "Generating…" : "Generate filled PDF"}
             </button>
           </div>
-        </footer>
+        </footer>}
       </motion.section>
     </div>,
     document.body,

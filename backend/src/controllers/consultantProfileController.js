@@ -120,6 +120,9 @@ export async function getMyProfile(req, res) {
 
 export async function updateMyProfile(req, res) {
   const existing = await currentUser(req);
+  const fullName = String(req.body.fullName || "").trim().replace(/\s+/g, " ");
+  if (!fullName) throw createHttpError(400, "Full name is required.", "VALIDATION_ERROR");
+  if (fullName.length > 200) throw createHttpError(400, "Full name must be 200 characters or fewer.", "VALIDATION_ERROR");
   const phone = optionalText(req.body.phone, "Phone", 40);
   const jobTitle = optionalText(req.body.jobTitle, "Job title", 100);
   const specializations = parseSpecializations(req.body.specializations ?? []);
@@ -141,6 +144,7 @@ export async function updateMyProfile(req, res) {
       return tx.user.update({
         where: { id: req.auth.userId },
         data: {
+          fullName,
           phone,
           jobTitle,
           ...(nextAvatar ? { avatarStorageKey: nextAvatar.storageKey, avatarMimeType: nextAvatar.mimeType } : {}),
@@ -155,7 +159,9 @@ export async function updateMyProfile(req, res) {
       agencyId: req.auth.agencyId,
       userId: req.auth.userId,
       action: "CONSULTANT_PROFILE_UPDATED",
-      details: "Consultant updated their personal profile",
+      details: existing.fullName === fullName ? "Consultant updated their personal profile" : `Consultant changed their name from ${existing.fullName} to ${fullName}`,
+      entityType: "user",
+      entityId: req.auth.userId,
     });
     res.json({ success: true, data: publicProfile(user, await profileStats(req)), message: "Profile updated." });
   } catch (error) {

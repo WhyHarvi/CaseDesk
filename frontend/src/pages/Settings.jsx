@@ -273,6 +273,7 @@ function PersonalProfilePanel({ user, agency }) {
     stats: { clients: 0, activeCases: 0, openFollowUps: 0 },
   });
   const [form, setForm] = useState({
+    fullName: user?.fullName || "",
     phone: user?.phone || "",
     jobTitle: user?.jobTitle || "",
     specializations: "",
@@ -296,6 +297,7 @@ function PersonalProfilePanel({ user, agency }) {
         const data = response.data.data;
         setProfile(data);
         setForm({
+          fullName: data.fullName || "",
           phone: data.phone || "",
           jobTitle: data.jobTitle || "",
           specializations: data.specializations.join(", "),
@@ -342,6 +344,7 @@ function PersonalProfilePanel({ user, agency }) {
   function closeEditor() {
     if (saving) return;
     setForm({
+      fullName: profile.fullName || "",
       phone: profile.phone || "",
       jobTitle: profile.jobTitle || "",
       specializations: (profile.specializations || []).join(", "),
@@ -372,7 +375,12 @@ function PersonalProfilePanel({ user, agency }) {
     setError("");
     setNotice("");
     try {
+      if (!form.fullName.trim()) {
+        setError("Full name is required.");
+        return;
+      }
       const data = new FormData();
+      data.append("fullName", form.fullName.trim());
       data.append("phone", form.phone);
       data.append("jobTitle", form.jobTitle);
       data.append(
@@ -661,6 +669,17 @@ function PersonalProfilePanel({ user, agency }) {
 
                   <div className="space-y-5 p-6">
                     <label className="block text-sm font-semibold text-slate-800">
+                      Full name
+                      <input
+                        required
+                        value={form.fullName}
+                        maxLength={200}
+                        onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))}
+                        placeholder="Your full name"
+                        className="mt-2 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm font-normal outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm font-semibold text-slate-800">
                       Phone
                       <input
                         value={form.phone}
@@ -709,9 +728,8 @@ function PersonalProfilePanel({ user, agency }) {
                       </span>
                     </label>
                     <div className="rounded-lg border border-slate-200 px-4 py-3 text-xs leading-5 text-slate-500">
-                      Your name and sign-in email are managed by an
-                      administrator. Profile images can be JPG, PNG, or WebP up
-                      to 5 MB.
+                      Your sign-in email is managed by an administrator. Profile
+                      images can be JPG, PNG, or WebP up to 5 MB.
                     </div>
                     {error ? (
                       <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">

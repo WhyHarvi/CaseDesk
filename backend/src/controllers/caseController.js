@@ -6,7 +6,7 @@ import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import { clientRecipientIds, notifyUsers, resolveNotifications } from "../services/notificationService.js";
-import { evaluateStageTriggers } from "../services/paymentScheduleService.js";
+import { evaluateStageTriggers, getCasePaymentSummary } from "../services/paymentScheduleService.js";
 import { logger } from "../services/logger.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "../services/bookingNotificationService.js";
 import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
@@ -977,6 +977,11 @@ export async function closeCase(req, res) {
   });
   if (!existing) throw createHttpError(404, "Case not found.", "NOT_FOUND");
   if (TERMINAL_CASE_STATUSES.has(existing.status)) throw createHttpError(409, "Case is already closed or inactive.", "CASE_ALREADY_CLOSED");
+  const billingSummary = await getCasePaymentSummary(req.auth.agencyId, existing.id);
+  const outstandingBalance = Number(billingSummary.balance || 0);
+  if (outstandingBalance > 0.01 && req.body?.billingDisposition !== "keep_outstanding") {
+    throw createHttpError(409, `Review the $${outstandingBalance.toFixed(2)} outstanding balance before closing this case.`, "OUTSTANDING_BILLING_REVIEW_REQUIRED");
+  }
   const now = new Date();
   const [scheduledAppointments, openFollowUps] = await Promise.all([prisma.appointment.findMany({
     where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Scheduled" },
@@ -1047,7 +1052,8 @@ export async function closeCase(req, res) {
     clientId: existing.clientId,
     caseId: existing.id,
     action: "case.closed",
-    details: `${existing.caseType} closed; ${result.tasks} tasks, ${result.followUps} follow-ups, and ${result.cancelledAppointments.length} appointments cancelled`,
+    details: `${existing.caseType} closed; ${result.tasks} tasks, ${result.followUps} follow-ups, and ${result.cancelledAppointments.length} appointments cancelled${outstandingBalance > 0.01 ? `; $${outstandingBalance.toFixed(2)} retained for collection` : ""}`,
+    metadata: { outstandingBalance, billingDisposition: outstandingBalance > 0.01 ? "keep_outstanding" : "none" },
   });
   invalidateDashboardCache(req.auth.agencyId);
   res.json({ data: result.data });

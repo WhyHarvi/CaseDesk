@@ -52,14 +52,17 @@ export default function CaseActionDialog({
   successTitle,
   successMessage,
   blocked = null,
+  acknowledgement = null,
 }) {
   const [phase, setPhase] = useState("confirm");
   const [error, setError] = useState("");
+  const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
     if (open) {
       setPhase("confirm");
       setError("");
+      setAcknowledged(false);
     }
   }, [open]);
 
@@ -142,11 +145,17 @@ export default function CaseActionDialog({
                 </div>
                 <h3 className="mt-4 text-lg font-semibold text-slate-950">{title}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500">{message}</p>
+                {acknowledgement ? (
+                  <label className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left text-sm leading-5 text-amber-900">
+                    <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600" />
+                    <span>{acknowledgement}</span>
+                  </label>
+                ) : null}
                 {error ? <p className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
                 <div className="mt-6 space-y-2">
                   <button
                     type="button"
-                    disabled={phase === "working"}
+                    disabled={phase === "working" || Boolean(acknowledgement && !acknowledged)}
                     onClick={confirm}
                     className={`flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-70 ${confirmClassName}`}
                   >

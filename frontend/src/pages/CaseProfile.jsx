@@ -1905,7 +1905,12 @@ export default function CaseProfile() {
           icon={FolderCheck}
           iconWrapClassName="bg-amber-50 text-amber-600"
           title="Close this case?"
-          message="Pending tasks, follow-ups, and appointments will be cancelled. Documents, payments, and history stay on record."
+          message={Number(paymentSummary.balance) > 0
+            ? `This case has ${Number(paymentSummary.balance).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} outstanding. Closing the case will keep that amount collectible and cancel pending tasks, follow-ups, and appointments.`
+            : "Pending tasks, follow-ups, and appointments will be cancelled. Documents, payments, and history stay on record."}
+          acknowledgement={Number(paymentSummary.balance) > 0
+            ? "I reviewed the outstanding invoices and confirm this balance must remain collectible after closure."
+            : null}
           confirmLabel="Close case"
           workingLabel="Closing…"
           successTitle="Case closed"
@@ -1918,7 +1923,7 @@ export default function CaseProfile() {
                 }
               : null
           }
-          action={async () => (await api.patch(`/cases/${caseItem.id}/close`)).data.data}
+          action={async () => (await api.patch(`/cases/${caseItem.id}/close`, Number(paymentSummary.balance) > 0 ? { billingDisposition: "keep_outstanding" } : {})).data.data}
           onSuccess={(closedCase) => {
             setCaseItem((current) => ({ ...current, ...closedCase }));
             setFollowUps((current) =>

@@ -1712,7 +1712,9 @@ export default function Cases() {
         }
 
         setToast({ type: "success", message: "Case created successfully" });
-        closeDrawers();
+        setShowForm(false);
+        resetFormState();
+        navigate(`/app/cases/${encodeURIComponent(savedCase.id)}`);
       } catch (requestError) {
         setCases((current) =>
           rollbackOptimisticCase(current, optimisticCase.id),

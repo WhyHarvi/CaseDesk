@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ACCOUNTING_PROVIDERS, createCaseInvoice, describeInvoiceRefundRequest, getCaseInvoicePdf, listCaseInvoices, recordCashPayment, recordManualPayment, requestCaseInvoiceRefund } from "../services/caseInvoiceService.js";
+import { ACCOUNTING_PROVIDERS, createCaseInvoice, describeInvoiceRefundRequest, getCaseInvoicePdf, listCaseInvoices, recordCashPayment, recordManualPayment, requestCaseInvoiceRefund, voidUnpaidCaseInvoice } from "../services/caseInvoiceService.js";
 import { approvePaymentApproval, submitPaymentApproval } from "../services/paymentApprovalService.js";
 
 export async function listInvoices(req, res) {
@@ -51,6 +51,16 @@ export async function createManualPayment(req, res) {
     idempotencyKey: req.body?.idempotencyKey,
     actorUserId: req.auth.userId,
     actorRole: req.auth.role,
+  });
+  res.json({ data });
+}
+
+export async function voidInvoice(req, res) {
+  const data = await voidUnpaidCaseInvoice(req.auth.agencyId, {
+    caseId: req.params.id,
+    invoiceId: req.params.invoiceId,
+    reason: req.body?.reason,
+    actorUserId: req.auth.userId,
   });
   res.json({ data });
 }

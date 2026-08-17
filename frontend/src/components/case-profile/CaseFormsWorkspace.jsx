@@ -1665,6 +1665,14 @@ export default function CaseFormsWorkspace({
     return item?.representativeUser || caseItem?.assignedUser || null;
   }
 
+  async function refreshChangedForm(updatedForm) {
+    if (updatedForm?.id) {
+      setForms((current) => current.map((entry) => (entry.id === updatedForm.id ? { ...entry, ...updatedForm } : entry)));
+      setChecklistTarget((current) => current?.id === updatedForm.id ? { ...current, ...updatedForm } : current);
+    }
+    await load();
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -2718,7 +2726,7 @@ export default function CaseFormsWorkspace({
           item={checklistTarget}
           caseId={caseId}
           onClose={() => setChecklistTarget(null)}
-          onFormChanged={load}
+          onFormChanged={refreshChangedForm}
         />
       ) : null}
       {mappingTarget ? (

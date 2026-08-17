@@ -797,12 +797,24 @@ export function clientPayload(body, existing = null) {
   const status = body.status ?? existing?.status ?? "Lead";
   if (!CLIENT_STATUSES.includes(status))
     throw createHttpError(400, "Client status is invalid.", "VALIDATION_ERROR");
-  const rawDate = Object.hasOwn(body, "dateOfBirth")
-    ? body.dateOfBirth
-    : existing?.dateOfBirth;
-  const dateOfBirth = rawDate ? new Date(rawDate) : null;
-  if (dateOfBirth && Number.isNaN(dateOfBirth.getTime()))
-    throw createHttpError(400, "Date of birth is invalid.", "VALIDATION_ERROR");
+  const hasDateOfBirth = Object.hasOwn(body, "dateOfBirth");
+  const rawDate = hasDateOfBirth ? String(body.dateOfBirth || "").trim() : null;
+  let dateOfBirth = hasDateOfBirth ? null : existing?.dateOfBirth || null;
+  if (rawDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      throw createHttpError(400, "Date of birth must use YYYY-MM-DD format.", "VALIDATION_ERROR");
+    }
+    const [year, month, day] = rawDate.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      throw createHttpError(400, "Date of birth must be a real calendar date.", "VALIDATION_ERROR");
+    }
+    const now = new Date();
+    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    if (parsed.getTime() > today) throw createHttpError(400, "Date of birth cannot be in the future.", "VALIDATION_ERROR");
+    if (year < 1900) throw createHttpError(400, "Date of birth must be from 1900 onward.", "VALIDATION_ERROR");
+    dateOfBirth = parsed;
+  }
   const address = Object.hasOwn(body, "address")
     ? String(body.address || "").trim() || null
     : existing?.address || null;

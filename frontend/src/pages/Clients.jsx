@@ -56,6 +56,19 @@ const pillClassName = "inline-flex items-center rounded-full px-3.5 py-1.5 text-
 // from a previous work session never resurfaces in a new tab days later.
 const CLIENT_DRAFT_STORAGE_KEY = "casedesk:client-drawer-draft";
 
+function dateOfBirthError(value) {
+  const input = String(value || "").trim();
+  if (!input) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return "Use YYYY-MM-DD, for example 1990-05-23.";
+  const [year, month, day] = input.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return "Enter a real calendar date.";
+  const today = new Date();
+  if (parsed.getTime() > Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())) return "Date of birth cannot be in the future.";
+  if (year < 1900) return "Enter a date of birth from 1900 onward.";
+  return "";
+}
+
 function readClientDraft() {
   try {
     const raw = window.sessionStorage.getItem(CLIENT_DRAFT_STORAGE_KEY);
@@ -253,6 +266,8 @@ function ClientDrawer({
   checkingContact,
   onOpenExistingClient,
   onBookExistingClient,
+  dobError,
+  onDobBlur,
 }) {
   return (
     <div
@@ -414,12 +429,20 @@ function ClientDrawer({
                     Date of birth
                   </span>
                   <input
-                    type="date"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="bday"
                     name="dateOfBirth"
                     value={formState.dateOfBirth}
                     onChange={onChange}
-                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
+                    onBlur={onDobBlur}
+                    maxLength={10}
+                    placeholder="YYYY-MM-DD"
+                    aria-invalid={Boolean(dobError)}
+                    aria-describedby={dobError ? "client-dob-error" : undefined}
+                    className={`h-12 w-full rounded-2xl border bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 ${dobError ? "border-rose-400 ring-4 ring-rose-100 focus:border-rose-500" : "border-slate-200/90 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"}`}
                   />
+                  {dobError ? <span id="client-dob-error" className="mt-1.5 block text-xs font-medium text-rose-600">{dobError}</span> : null}
                 </label>
 
                 <label className="block">
@@ -825,6 +848,7 @@ export default function Clients() {
   const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
   const [clientCreateIdempotencyKey, setClientCreateIdempotencyKey] = useState(() => readClientDraft()?.clientCreateIdempotencyKey || newClientOperationKey());
   const [formError, setFormError] = useState("");
+  const [dobError, setDobError] = useState("");
   const [contactMatches, setContactMatches] = useState([]);
   const [checkingContact, setCheckingContact] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1044,6 +1068,7 @@ export default function Clients() {
       setFrontDeskIntake(defaultFrontDeskIntakeState);
       setEditingClient(null);
       setFormError("");
+      setDobError("");
       setShowForm(false);
       setDrawerClosing(false);
     }, 260);
@@ -1056,6 +1081,7 @@ export default function Clients() {
     setClientCreateIdempotencyKey(newClientOperationKey());
     setFrontDeskIntake(defaultFrontDeskIntakeState);
     setFormError("");
+    setDobError("");
     setShowForm(true);
   }
 
@@ -1080,6 +1106,7 @@ export default function Clients() {
       assignedUserId: client.assignedUser?.id || "",
     });
     setFormError("");
+    setDobError("");
     setShowForm(true);
   }
 
@@ -1093,6 +1120,7 @@ export default function Clients() {
 
   function handleInputChange(event) {
     const { name, value } = event.target;
+    if (name === "dateOfBirth" && dobError) setDobError(dateOfBirthError(value));
     setFormState((current) => ({
       ...current,
       [name]: value,
@@ -1108,6 +1136,13 @@ export default function Clients() {
 
       if (!formState.givenNames.trim() && !formState.familyName.trim()) {
         setFormError("Enter at least a given name or family name.");
+        return;
+      }
+
+      const nextDobError = dateOfBirthError(formState.dateOfBirth);
+      if (nextDobError) {
+        setDobError(nextDobError);
+        setFormError("Correct the highlighted date of birth before saving.");
         return;
       }
 
@@ -1708,6 +1743,8 @@ export default function Clients() {
           checkingContact={checkingContact}
           onOpenExistingClient={(client) => leaveClientIntake(`/app/clients/${client.id}`)}
           onBookExistingClient={(client) => leaveClientIntake(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`)}
+          dobError={dobError}
+          onDobBlur={() => setDobError(dateOfBirthError(formState.dateOfBirth))}
         />
       ) : null}
     </section>
