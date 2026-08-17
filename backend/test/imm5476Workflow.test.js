@@ -10,6 +10,7 @@ test("IMM 5476 appointment mapping forces the A/B/E purpose and respects the IRC
   assert.match(mapping, /"547R": true/);
   assert.match(mapping, /if \(explicitGiven\) return \{ familyName: explicitGiven, givenNames: "", singleName: true \}/);
   assert.match(mapping, /representative\.licenseNumber/);
+  assert.match(mapping, /"102R": false, "101R": false, "100R": false, "97R": true, "96R": false, "95R": false/);
 });
 
 test("IMM 5476 fills a separate country code and punctuation-free full telephone number", async () => {
@@ -124,6 +125,7 @@ test("opening a form reloads the authoritative representative and overwrites sta
   assert.match(controller, /"561R": representativeFamilyName/);
   assert.match(controller, /"562R": representativeGivenNames/);
   assert.match(controller, /"94R": representative\?\.licenseNumber\?\.trim\(\) \|\| ""/);
+  assert.match(controller, /"102R": false,[\s\S]*"101R": false,[\s\S]*"100R": false,[\s\S]*"97R": true,[\s\S]*"96R": false,[\s\S]*"95R": false/);
   assert.match(controller, /hasSavedSignature \? \{ strokes: signatureStrokes, name: representative\.fullName \} : null/);
 });
 

@@ -76,7 +76,7 @@ export default {
       // RCICs use the first paid option; the remaining regulator variants
       // remain profile-driven rather than guessed.
       ...(String(representative.representativeType || "").toLowerCase() === "paid" && /CICC|Immigration Consultants/i.test(representative.membershipBody || "")
-        ? { "97R": true, "94R": representative.licenseNumber || "" }
+        ? { "102R": false, "101R": false, "100R": false, "97R": true, "96R": false, "95R": false, "94R": representative.licenseNumber || "" }
         : {}),
 
       // Section B, question 7 — representative's firm/mailing address & contact
