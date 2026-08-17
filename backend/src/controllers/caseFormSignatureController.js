@@ -14,8 +14,8 @@ async function loadForm(req) {
   const form = await prisma.caseForm.findFirst({
     where: caseFormAccessWhere(req, { id: req.params.id }),
     include: {
-      client: { select: { fullName: true, familyName: true, givenNames: true } },
-      applicantProfile: { select: { givenNames: true, familyName: true } },
+      client: { select: { fullName: true, familyName: true, givenNames: true, dateOfBirth: true } },
+      applicantProfile: { select: { givenNames: true, familyName: true, dateOfBirth: true } },
       representativeUser: { select: { id: true, fullName: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formSignatureImage: true, formSignatureStrokes: true } },
       fieldValues: { select: { fieldKey: true, value: true } },
     },
@@ -25,8 +25,25 @@ async function loadForm(req) {
 }
 
 function applicantName(form) {
-  if (form.applicantProfile) return `${form.applicantProfile.givenNames || ""} ${form.applicantProfile.familyName || ""}`.trim();
-  return form.client.fullName || `${form.client.givenNames || ""} ${form.client.familyName || ""}`.trim();
+  const profileName = form.applicantProfile
+    ? `${form.applicantProfile.givenNames || ""} ${form.applicantProfile.familyName || ""}`.trim()
+    : form.client.fullName || `${form.client.givenNames || ""} ${form.client.familyName || ""}`.trim();
+  if (profileName) return profileName;
+
+  const valuesByKey = new Map(form.fieldValues.map((field) => [field.fieldKey, field.value]));
+  return `${valuesByKey.get("554R") || ""} ${valuesByKey.get("553R") || ""}`.trim();
+}
+
+function hasApplicantIdentity(form) {
+  const valuesByKey = new Map(form.fieldValues.map((field) => [field.fieldKey, field.value]));
+  const savedPdfName = `${valuesByKey.get("554R") || ""} ${valuesByKey.get("553R") || ""}`.trim();
+  const savedPdfDob = String(valuesByKey.get("555R") || "").trim();
+  const profileDob = form.applicantProfile?.dateOfBirth || form.client.dateOfBirth;
+
+  // A browser-saved XFA copy may contain these values without creating
+  // checklist rows. The selected applicant/client record is therefore a
+  // valid identity source as well as the mapped PDF fields.
+  return Boolean((applicantName(form) || savedPdfName) && (profileDob || savedPdfDob));
 }
 
 export async function listFormSignatureRequests(req, res) {
@@ -53,9 +70,7 @@ export async function sendFormSignatureRequest(req, res) {
   if (!form.representativeUser.formSignatureImage || !Array.isArray(form.representativeUser.formSignatureStrokes)) {
     throw createHttpError(409, `${form.representativeUser.fullName} must save their government-form signature in Settings before this form can be sent`);
   }
-  const valuesByKey = new Map(form.fieldValues.map((field) => [field.fieldKey, field.value]));
-  const requiredApplicantValues = ["553R", "555R"];
-  if (requiredApplicantValues.some((fieldKey) => !String(valuesByKey.get(fieldKey) || "").trim())) {
+  if (!hasApplicantIdentity(form)) {
     throw createHttpError(409, "Complete and save the applicant name and date of birth before requesting signatures");
   }
   if (req.body?.submissionChannel === "OutsidePortal") {
