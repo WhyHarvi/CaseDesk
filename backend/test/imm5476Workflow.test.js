@@ -61,7 +61,7 @@ test("opening IMM 5476 applies the selected representative's saved signature and
     source("../src/controllers/caseFormController.js"),
     source("../src/services/pdfFormRenderService.js"),
   ]);
-  assert.match(controller, /representativeUser: \{ select: \{ fullName: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
+  assert.match(controller, /representativeUser: \{ select: \{ fullName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
   assert.match(controller, /stampXfaPdfFormValues\([\s\S]*preparedBuffer,[\s\S]*"547R": true/);
   assert.match(renderer, /const alreadySigned = annotations\.some/);
   assert.match(renderer, /const signedDate = existingDate \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/);
@@ -121,7 +121,9 @@ test("opening a form reloads the authoritative representative and overwrites sta
   ]);
   assert.match(workspace, /const formsResponse = await api\.get\(`\/case-forms\?caseId=\$\{caseId\}`\)/);
   assert.match(workspace, /representative: representativeFor\(currentItem\)/);
-  assert.match(controller, /"561R": representativeFamilyName, "562R": representativeGivenNames/);
+  assert.match(controller, /"561R": representativeFamilyName/);
+  assert.match(controller, /"562R": representativeGivenNames/);
+  assert.match(controller, /"94R": representative\?\.licenseNumber\?\.trim\(\) \|\| ""/);
   assert.match(controller, /hasSavedSignature \? \{ strokes: signatureStrokes, name: representative\.fullName \} : null/);
 });
 

@@ -414,7 +414,7 @@ export async function serveCaseFormFile(req, res) {
       mimeType: true,
       formNumber: true,
       id: true,
-      representativeUser: { select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } },
+      representativeUser: { select: { fullName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
   if (!data?.storageKey) throw createHttpError(404, "No stored file is available for this form");
@@ -450,7 +450,12 @@ export async function serveCaseFormFile(req, res) {
     ? await stampXfaPdfFormValues(
         preparedBuffer,
         [],
-        { "547R": true, "561R": representativeFamilyName, "562R": representativeGivenNames },
+        {
+          "547R": true,
+          "561R": representativeFamilyName,
+          "562R": representativeGivenNames,
+          "94R": representative?.licenseNumber?.trim() || "",
+        },
         hasSavedSignature ? { strokes: signatureStrokes, name: representative.fullName } : null,
       )
     : preparedBuffer;
