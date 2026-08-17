@@ -5,6 +5,7 @@ import { formatPortalDate } from "./ClientStatusCard";
 const ACTION_META = {
   document: { icon: FileUp, label: "Upload now" },
   agreement: { icon: PenLine, label: "Review & sign" },
+  form_signature: { icon: PenLine, label: "Review & sign" },
   questionnaire: { icon: ClipboardList, label: "Start now" },
   payment: { icon: CreditCard, label: "View payments" },
   waiting: { icon: Clock4, label: null },

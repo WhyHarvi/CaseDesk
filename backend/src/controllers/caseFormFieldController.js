@@ -149,6 +149,8 @@ export async function postClientRequest(req, res) {
       category: "documents",
       title: `Please complete ${form.title}`,
       body: message || "A few details are needed to finish this form.",
+      severity: "warning",
+      attentionLevel: "action_required",
       actionUrl: "/client-portal",
       entityType: "case_form",
       entityId: form.id,

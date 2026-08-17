@@ -114,6 +114,8 @@ export async function sendFormSignatureRequest(req, res) {
       category: "documents",
       title: "Please sign IMM 5476",
       body: message || "Review the declaration and draw your signature securely in CaseDesk.",
+      severity: "warning",
+      attentionLevel: "action_required",
       actionUrl: "/client-portal/questionnaires",
       entityType: "case_form_signature_request",
       entityId: data.id,

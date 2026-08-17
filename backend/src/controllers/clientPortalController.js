@@ -298,11 +298,12 @@ function paymentSummaryFromLedger(ledger) {
   };
 }
 
-function nextActionFor({ caseItem, documents, payment, assessment, agreements }) {
+export function nextActionFor({ caseItem, documents, payment, assessment, agreements, formSignatureRequests }) {
   const missing = documents.filter((item) => item.status === "Requested");
   const changesRequested = documents.filter((item) => item.status === "ChangesRequested");
   const underReview = documents.filter((item) => ["Uploaded", "UnderReview"].includes(item.status));
   const awaitingSignature = (agreements || []).filter((item) => item.correspondenceStatus === "Issued");
+  const awaitingFormSignature = formSignatureRequests || [];
   const pendingQuestionnaires = sharedAssignments(assessment?.formData || {}).filter((item) => !item.locked && item.status !== "Submitted");
 
   if (!caseItem) {
@@ -314,6 +315,10 @@ function nextActionFor({ caseItem, documents, payment, assessment, agreements })
   if (awaitingSignature.length) {
     const agreement = awaitingSignature[0];
     return { type: "agreement", title: `Review and sign: ${agreement.title}`, reason: "We need your signature before work on your file can continue.", dueDate: null, documentId: null, actionUrl: "/client-portal/documents" };
+  }
+  if (awaitingFormSignature.length) {
+    const request = awaitingFormSignature[0];
+    return { type: "form_signature", title: `Sign ${request.caseForm.title}`, reason: request.message || "Review the declaration and draw your signature securely in CaseDesk.", dueDate: null, documentId: null, actionUrl: "/client-portal/questionnaires" };
   }
   if (caseItem.stage === "Retainer Pending") {
     return { type: "agreement", title: "Review and sign your service agreement", reason: "We need your signed agreement before work on your file can continue.", dueDate: null, documentId: null, actionUrl: "/client-portal/help" };
@@ -377,7 +382,7 @@ function buildTimeline({ caseItem, documents, invoices, assessment, agreements }
 
 async function portalData(req) {
   const link = await linkedClient(req);
-  const [agency, bookingSettings, caseItem, documents, agreements] = await Promise.all([
+  const [agency, bookingSettings, caseItem, documents, agreements, formSignatureRequests] = await Promise.all([
     prisma.agency.findUnique({
       where: { id: req.auth.agencyId },
       select: { name: true, email: true, phone: true, address: true, city: true, province: true, country: true, postalCode: true, logoUrl: true, paymentInstructions: true, defaultCurrency: true },
@@ -401,6 +406,11 @@ async function portalData(req) {
       select: agreementSelect,
       orderBy: { updatedAt: "desc" },
     }),
+    prisma.caseFormSignatureRequest.findMany({
+      where: { agencyId: req.auth.agencyId, clientId: link.clientId, status: { in: ["Sent", "Signing"] } },
+      select: { id: true, message: true, createdAt: true, caseForm: { select: { title: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
   ]);
   const [assessment, billingLedger, invoices] = await Promise.all([
     caseItem ? caseAssessmentFor(req, caseItem.id) : null,
@@ -421,7 +431,7 @@ async function portalData(req) {
       : Promise.resolve([]),
   ]);
   const paymentSummary = paymentSummaryFromLedger(billingLedger);
-  return { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment };
+  return { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment, formSignatureRequests };
 }
 
 function agencyAddress(agency) {
@@ -429,7 +439,7 @@ function agencyAddress(agency) {
 }
 
 export async function getPortalOverview(req, res) {
-  const { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment } = await portalData(req);
+  const { link, agency, bookingSettings, caseItem, documents, paymentSummary, invoices, agreements, assessment, formSignatureRequests } = await portalData(req);
   const payment = withPaymentDisplay(paymentSummary, agency);
   const nameParts = String(link.client.fullName || "").trim().split(/\s+/);
   const shared = sharedAssignments(assessment?.formData || {});
@@ -490,7 +500,7 @@ export async function getPortalOverview(req, res) {
             lastUpdatedAt: caseItem.updatedAt,
           }
         : null,
-      nextAction: nextActionFor({ caseItem, documents, payment, assessment, agreements }),
+      nextAction: nextActionFor({ caseItem, documents, payment, assessment, agreements, formSignatureRequests }),
       documents: documents.map(publicDocument),
       payment,
       questionnaires: {
