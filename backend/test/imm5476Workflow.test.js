@@ -56,6 +56,18 @@ test("selecting an IMM 5476 representative immediately refreshes their saved for
   assert.match(workspace, /setChecklistTarget\(\(current\) => current\?\.id === updatedForm\.id/);
 });
 
+test("opening IMM 5476 applies the selected representative's saved signature and date without stacking duplicates", async () => {
+  const [controller, renderer] = await Promise.all([
+    source("../src/controllers/caseFormController.js"),
+    source("../src/services/pdfFormRenderService.js"),
+  ]);
+  assert.match(controller, /representativeUser: \{ select: \{ fullName: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
+  assert.match(controller, /stampXfaPdfFormValues\(storedBuffer, \[\], \{ "547R": true \}/);
+  assert.match(renderer, /const alreadySigned = annotations\.some/);
+  assert.match(renderer, /if \(!existingDate\) document\.annotationStorage\.setValue/);
+  assert.match(renderer, /if \(!alreadySigned\)/);
+});
+
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {
   const [portal, signer, pad] = await Promise.all([
     source("../../frontend/src/pages/client-portal/ClientPortalQuestionnaires.jsx"),

@@ -11,6 +11,7 @@ import { recordFormAudit } from "../utils/formAudit.js";
 import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds, notifyUsers } from "../services/notificationService.js";
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
+import { stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
 
 const maxFileSize = 25 * 1024 * 1024;
 const statuses = new Set(["Assigned", "InformationMissing", "ReadyToFill", "InProgress", "ReadyForReview", "ChangesRequested", "Approved", "SignatureRequired", "Signed", "Finalized", "NotRequired"]);
@@ -404,10 +405,25 @@ export async function restoreCaseFormVersion(req, res) {
 }
 
 export async function serveCaseFormFile(req, res) {
-  const data = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }), select: { storageKey: true, originalFilename: true, mimeType: true } });
+  const data = await prisma.caseForm.findFirst({
+    where: caseFormAccessWhere(req, { id: req.params.id }),
+    select: {
+      storageKey: true,
+      originalFilename: true,
+      mimeType: true,
+      formNumber: true,
+      representativeUser: { select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } },
+    },
+  });
   if (!data?.storageKey) throw createHttpError(404, "No stored file is available for this form");
-  const buffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
-  if (!buffer) throw createHttpError(404, "The stored form file was not found");
+  const storedBuffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
+  if (!storedBuffer) throw createHttpError(404, "The stored form file was not found");
+  const isImm5476 = String(data.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
+  const representative = data.representativeUser;
+  const hasSavedSignature = representative?.formSignatureImage && Array.isArray(representative.formSignatureStrokes) && representative.formSignatureStrokes.length;
+  const buffer = isImm5476 && hasSavedSignature
+    ? await stampXfaPdfFormValues(storedBuffer, [], { "547R": true }, { strokes: representative.formSignatureStrokes, name: representative.fullName })
+    : storedBuffer;
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");
   res.send(buffer);
