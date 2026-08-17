@@ -1,5 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import { randomUUID } from "node:crypto";
+import { REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
 
 const TRUE_VALUES = new Set(["true", "1", "yes", "on", "checked", "x"]);
 
@@ -47,7 +49,17 @@ export async function stampPdfFormValues(sourceBuffer, fields) {
 // references that pdf-lib cannot safely parse. PDF.js is already CaseDesk's
 // browser renderer for this form and can persist the XFA widget values
 // without flattening or rebuilding the official document.
-export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues = {}) {
+//
+// representativeSignature (optional): { strokes, name }. When the form's
+// representative has a saved government-form signature, the checklist
+// "Generate filled PDF" step stamps it (and today's date) into Section B's
+// declaration block right away — the representative signs by preparing and
+// sending the form, they don't need to wait for the applicant's own
+// signature in Section E. This uses the exact same ink-annotation shape as
+// the client-portal secure-signing flow (imm5476SignatureService.js), so a
+// form generated here and later completed there doesn't end up with two
+// different-looking marks.
+export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues = {}, representativeSignature = null) {
   const task = pdfjs.getDocument({ data: new Uint8Array(sourceBuffer), enableXfa: true });
   try {
     const document = await task.promise;
@@ -57,6 +69,14 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
       document.annotationStorage.setValue(fieldKey, { value: isBooleanField ? TRUE_VALUES.has(String(value).toLowerCase()) : String(value) });
     }
     for (const [fieldKey, value] of Object.entries(forcedValues)) document.annotationStorage.setValue(fieldKey, { value });
+    if (representativeSignature?.strokes?.length) {
+      const signedDate = new Date().toISOString().slice(0, 10);
+      document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
+      document.annotationStorage.setValue(
+        `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
+        signatureAnnotation(representativeSignature.strokes, REPRESENTATIVE_SIGNATURE, representativeSignature.name),
+      );
+    }
     return Buffer.from(await document.saveDocument());
   } finally {
     await task.destroy().catch(() => {});

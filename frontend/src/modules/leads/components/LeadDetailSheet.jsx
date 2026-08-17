@@ -260,6 +260,12 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const retainerReady = RETAINER_READY_VALUES.includes(lead.retainerStatus);
   const paymentReady = PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus);
   const readyToConvert = stageReady && retainerReady && paymentReady;
+  const canConvertLead = role === "admin" || (role === "consultant" && ownsLead);
+  const conversionBlockers = [
+    !stageReady ? `Move the lead from ${humanize(lead.stage)} to Ready to Convert` : null,
+    !retainerReady ? "Set the retainer to Signed or Not Required" : null,
+    !paymentReady ? "Record the initial payment or mark it Waived" : null,
+  ].filter(Boolean);
   // The consultation fee (paid at booking time) is a separate amount from
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
@@ -450,9 +456,27 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       </div>
                     </div>
 
-                    {lead.status === "OPEN" && stageReady && !readyToConvert ? <p className="mt-3 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Stage reached Ready to Convert, but retainer and/or payment still need confirming before this lead can convert.</p> : null}
                     {lead.status === "OPEN" && lead.earlyClientId ? <p className="mt-3 rounded-xl bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. <Link to={`/app/clients/${lead.earlyClientId}`} className="font-semibold underline">View the retainer case →</Link></p> : null}
-                    {lead.status === "OPEN" && readyToConvert ? <button type="button" onClick={() => setConversionOpen(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-700"><CheckCircle2 className="h-4 w-4" />Convert to client</button> : null}
+                    {lead.status === "OPEN" && canConvertLead && !readyToConvert ? (
+                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                        <p className="text-xs font-semibold text-amber-900">Before this lead can be converted:</p>
+                        <ul className="mt-2 space-y-1 text-xs leading-5 text-amber-800">
+                          {conversionBlockers.map((blocker) => <li key={blocker} className="flex gap-2"><span aria-hidden="true">•</span><span>{blocker}</span></li>)}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {lead.status === "OPEN" && canConvertLead ? (
+                      <button
+                        type="button"
+                        disabled={!readyToConvert}
+                        onClick={() => setConversionOpen(true)}
+                        className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        {readyToConvert ? "Convert to client" : `Convert to client · ${conversionBlockers.length} ${conversionBlockers.length === 1 ? "requirement" : "requirements"} remaining`}
+                      </button>
+                    ) : null}
+                    {lead.status === "OPEN" && !canConvertLead ? <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Only an administrator or this lead's assigned consultant can convert it to a client.</p> : null}
                     {lead.status === "CONVERTED" && lead.convertedClientId ? <Link to={`/app/clients/${lead.convertedClientId}`} className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-xl bg-emerald-50 text-sm font-semibold text-emerald-700 hover:bg-emerald-100">Open linked client</Link> : null}
                   </section> : null}
 

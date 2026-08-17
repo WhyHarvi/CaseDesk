@@ -857,6 +857,34 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
   return hold;
 }
 
+// A real incident: the same $100 e-transfer for one appointment got
+// submitted three times, because each entry point (the Calendar inline
+// form, the booking-creation flow, the client account-statement billing
+// sheet) only knew about its own local state, not whether another
+// submission was already sitting in the approval queue. Every path that can
+// start a consultation payment calls this first, so a second submission for
+// the same appointment is blocked with a clear reason no matter which
+// screen it comes from.
+export async function assertNoLivePaymentApproval(agencyId, appointmentId) {
+  if (!appointmentId) return;
+  const liveApproval = await prisma.paymentApproval.findFirst({
+    where: {
+      agencyId,
+      appointmentId,
+      entryType: { in: ["appointment_payment", "appointment_payment_details"] },
+      status: { in: ["Pending", "Processing"] },
+    },
+    select: { id: true },
+  });
+  if (liveApproval) {
+    throw createHttpError(
+      409,
+      "A payment for this appointment has already been submitted and is awaiting review. Check Payments before submitting it again.",
+      "PAYMENT_ALREADY_SUBMITTED",
+    );
+  }
+}
+
 // Staff collected payment outside QuickBooks' hosted checkout. The money
 // still belongs in the same accounting trail as card
 // payments, so this creates/reuses the consultation invoice and applies a
@@ -899,6 +927,10 @@ export async function recordWalkInManualPayment(agencyId, {
   let existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
   if (existingHold?.status === "Paid") throw createHttpError(409, "This consultation is already marked as paid.", "ALREADY_PAID");
   if (existingHold?.status === "Refunded") throw createHttpError(409, "This consultation was already refunded. Create a new consultation charge instead of replacing its audit history.", "ALREADY_REFUNDED");
+  if (existingHold?.status === "RecordingPayment") {
+    throw createHttpError(409, "A payment is already being recorded for this appointment. Wait a moment and refresh before trying again.", "PAYMENT_IN_PROGRESS");
+  }
+  await assertNoLivePaymentApproval(agencyId, appointmentId);
   if (existingHold?.status === "AwaitingPayment" && existingHold.qbInvoiceId) {
     await reconcilePaymentHold(agencyId, existingHold.id).catch(() => null);
     existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });

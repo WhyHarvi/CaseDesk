@@ -395,6 +395,33 @@ function mapQuickBooksInvoice(invoice) {
   };
 }
 
+// Once a QuickBooks company has real sales-tax tracking turned on (its own
+// TaxAgency/TaxCode/TaxRate records exist), QBO rejects any invoice line
+// with no TaxCodeRef at all — "Make sure all your transactions have a
+// GST/HST rate before you save" — even when the item and customer are both
+// already marked non-taxable. Omitting the tax code isn't the same as
+// declaring "no tax applies"; QBO needs that stated explicitly. This
+// resolves the company's own built-in non-taxable code by name so every
+// non-taxable line still carries one. A company with sales tax tracking
+// never turned on at all (no TaxCode rows exist) has nothing to resolve —
+// that's the original no-tax-setup case, left to omit TaxCodeRef exactly
+// as before.
+const NON_TAXABLE_TAX_CODE_NAMES = ["Out of Scope", "Zero-rated", "Exempt"];
+
+export async function resolveNonTaxableTaxCodeId(agencyId) {
+  const payload = await qboRequest(agencyId, {
+    path: "/query",
+    query: "SELECT Id, Name FROM TaxCode WHERE Active = true MAXRESULTS 1000",
+  });
+  const codes = payload.QueryResponse?.TaxCode || [];
+  if (!codes.length) return null;
+  for (const name of NON_TAXABLE_TAX_CODE_NAMES) {
+    const match = codes.find((code) => String(code.Name || "").toLowerCase() === name.toLowerCase());
+    if (match) return match.Id;
+  }
+  return null;
+}
+
 export async function createQuickBooksInvoice(agencyId, {
   customerId,
   itemId,
@@ -411,6 +438,8 @@ export async function createQuickBooksInvoice(agencyId, {
   const invoiceLines = Array.isArray(lines) && lines.length
     ? lines
     : [{ itemId, description, amount, taxable: false }];
+  const needsNonTaxableCode = invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
+  const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",
@@ -424,6 +453,7 @@ export async function createQuickBooksInvoice(agencyId, {
       AllowOnlineACHPayment: true,
       Line: invoiceLines.map((line) => {
         const lineAmount = Number(line.amount);
+        const taxCodeId = line.taxable && taxableTaxCodeId ? taxableTaxCodeId : nonTaxableCodeId;
         return {
           Amount: lineAmount,
           DetailType: "SalesItemLineDetail",
@@ -432,7 +462,7 @@ export async function createQuickBooksInvoice(agencyId, {
             ItemRef: { value: line.itemId },
             Qty: Number(line.quantity || 1),
             UnitPrice: Number(line.unitAmount ?? lineAmount),
-            ...(line.taxable && taxableTaxCodeId ? { TaxCodeRef: { value: taxableTaxCodeId } } : {}),
+            ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
           },
         };
       }),

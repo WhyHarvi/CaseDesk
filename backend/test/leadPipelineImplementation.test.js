@@ -156,9 +156,10 @@ test("sensitive commercial states require evidence and converted leads reject in
   );
 });
 
-test("the lead UI exposes completion, duplicate resolution, and real availability instead of dead ends", async () => {
-  const [routes, completeSheet, bookingSheet, duplicateSheet] = await Promise.all([
+test("the lead UI exposes completion, conversion blockers, duplicate resolution, and real availability instead of dead ends", async () => {
+  const [routes, detailSheet, completeSheet, bookingSheet, duplicateSheet] = await Promise.all([
     source("../src/modules/leads/lead.routes.js"),
+    source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
     source("../../frontend/src/modules/leads/components/CompleteConsultationSheet.jsx"),
     source("../../frontend/src/modules/leads/components/BookConsultationSheet.jsx"),
     source("../../frontend/src/modules/leads/components/DuplicateReviewSheet.jsx"),
@@ -170,4 +171,7 @@ test("the lead UI exposes completion, duplicate resolution, and real availabilit
   assert.match(bookingSheet, /!form\.startAt \|\| !form\.endAt/);
   assert.match(duplicateSheet, /Link to this lead/);
   assert.match(duplicateSheet, /Create as a new lead anyway/);
+  assert.match(detailSheet, /Before this lead can be converted:/);
+  assert.match(detailSheet, /Convert to client.*requirements.*remaining/);
+  assert.match(detailSheet, /disabled=\{!readyToConvert\}/);
 });

@@ -3,7 +3,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { notifyUsers, resolveNotifications } from "./notificationService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
-import { recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "./bookingPaymentHoldService.js";
+import { assertNoLivePaymentApproval, recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "./bookingPaymentHoldService.js";
 import { ACCOUNTING_PROVIDERS, completeCashInvoiceRefund, createCaseInvoice, recordManualPayment } from "./caseInvoiceService.js";
 import {
   normalizePaymentApprovalKey,
@@ -33,6 +33,12 @@ async function targetContext(agencyId, values) {
     });
     if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
     if (values.clientId && appointment.clientId && appointment.clientId !== values.clientId) throw createHttpError(404, "Appointment not found for this client.", "NOT_FOUND");
+    // A fresh payment submission (not an edit to an already-paid record's
+    // details, which callers pass as "appointment_payment_details") must
+    // not stack on top of one already awaiting review.
+    if (values.entryType === "appointment_payment") {
+      await assertNoLivePaymentApproval(agencyId, appointment.id);
+    }
     const settings = appointment.paymentHold ? null : await prisma.bookingSettings.findUnique({ where: { agencyId }, select: { consultFeeAmount: true } });
     return {
       clientId: values.clientId || appointment.clientId,

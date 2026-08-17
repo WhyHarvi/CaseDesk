@@ -978,7 +978,7 @@ export async function createBookingAppointment(req, res) {
       if (manualPaymentHold) {
         // A transport retry after the original request succeeded must return
         // the paid appointment, not attempt to charge it a second time.
-      } else if (req.auth.role === "frontdesk") {
+      } else if (req.auth.role === "frontdesk" && paymentMethod === "Cash") {
         manualPaymentApproval = await submitPaymentApproval(req.auth.agencyId, {
           entryType: "appointment_payment",
           appointmentId: data.id,
@@ -1191,7 +1191,7 @@ export async function recordWalkInManualPayment(req, res) {
   const method = String(req.body?.method || "");
   const transactionReference = String(req.body?.transactionReference || "").trim().slice(0, 100) || null;
   const note = String(req.body?.note || "").trim().slice(0, 500) || null;
-  if (req.auth.role === "frontdesk") {
+  if (req.auth.role === "frontdesk" && method === "Cash") {
     const approval = await submitPaymentApproval(req.auth.agencyId, {
       entryType: "appointment_payment",
       appointmentId: req.params.id,
@@ -1239,7 +1239,7 @@ export async function recordWalkInManualPayment(req, res) {
 }
 
 export async function updatePaidAppointmentPaymentDetails(req, res) {
-  if (req.auth.role === "frontdesk") {
+  if (req.auth.role === "frontdesk" && req.body?.method === "Cash") {
     const approval = await submitPaymentApproval(req.auth.agencyId, {
       entryType: "appointment_payment_details",
       appointmentId: req.params.id,

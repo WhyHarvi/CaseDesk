@@ -1312,6 +1312,12 @@ export async function convertLead(req, db = prisma) {
     const lead = await requireLead(tx, req, req.params.id);
     if (lead.status === "CONVERTED" || lead.convertedClientId) throw createHttpError(409, "This lead has already been converted.", "LEAD_ALREADY_CONVERTED");
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can be converted.", "LEAD_NOT_OPEN");
+    // Converting creates both a client and a case assigned to this lead's
+    // owner. Keep that consequential write limited to the administrator or
+    // the consultant who actually owns the lead, even when a consultant has
+    // workspace-wide Lead visibility or can see the lead through an assigned
+    // follow-up.
+    assertLeadWorkflowEditable(req, lead);
     const retainerReady = ["SIGNED", "NOT_REQUIRED"].includes(lead.retainerStatus);
     const paymentReady = ["PAID", "WAIVED"].includes(lead.initialPaymentStatus);
     if (lead.stage !== "READY_TO_CONVERT" || !retainerReady || !paymentReady) {

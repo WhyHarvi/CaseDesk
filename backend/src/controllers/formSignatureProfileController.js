@@ -3,6 +3,7 @@ import { drawnSignatureImage } from "./clientPortalController.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { validatedSignatureStrokes } from "../utils/signatureStrokes.js";
+import { traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 async function representativeUser(req) {
   const user = await prisma.user.findFirst({
@@ -92,7 +93,15 @@ export async function updateMyFormSignature(req, res) {
   const existing = await representativeUser(req);
   if (!existing.licenseNumber?.trim()) throw createHttpError(409, "Save your licence number before saving a government-form signature", "REPRESENTATIVE_LICENCE_REQUIRED");
   const signatureImage = drawnSignatureImage(req.body?.signatureImage);
-  const signatureStrokes = validatedSignatureStrokes(req.body?.signatureStrokes);
+  // "upload" = a photo/scan of a real signature. It has no pointer-drag
+  // strokes to validate, so the strokes actually used to stamp government
+  // forms (imm5476SignatureFields.js's ink annotation) are traced from the
+  // image itself instead — same downstream PDF pipeline either way, just a
+  // different source for the stroke data.
+  const isUpload = req.body?.signatureSource === "upload";
+  const signatureStrokes = isUpload
+    ? await traceSignatureImageToStrokes(Buffer.from(signatureImage.split(",")[1], "base64"))
+    : validatedSignatureStrokes(req.body?.signatureStrokes);
   const user = await prisma.user.update({
     where: { id: existing.id },
     data: { formSignatureImage: signatureImage, formSignatureStrokes: signatureStrokes, formSignatureUpdatedAt: new Date() },
@@ -102,7 +111,7 @@ export async function updateMyFormSignature(req, res) {
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
     action: "government_form.signature_updated",
-    details: "Representative updated their personal government-form signature",
+    details: isUpload ? "Representative uploaded their personal government-form signature" : "Representative updated their personal government-form signature",
     entityType: "user",
     entityId: req.auth.userId,
   });

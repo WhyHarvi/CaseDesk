@@ -1,12 +1,18 @@
-import { CheckCircle2, FileSignature, Loader2, Trash2 } from "lucide-react";
+import { CheckCircle2, FileSignature, ImageUp, Loader2, PenLine, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import SignaturePad from "../client-portal/SignaturePad";
+import SignatureImageUpload from "./SignatureImageUpload";
 import api from "../../services/api";
 
 export default function GovernmentFormSignaturePanel() {
   const [data, setData] = useState(null);
   const [signatureImage, setSignatureImage] = useState("");
   const [signatureStrokes, setSignatureStrokes] = useState([]);
+  // "draw" uses the pointer strokes recorded by SignaturePad directly.
+  // "upload" has no pointer strokes — the backend traces them from the
+  // uploaded picture instead (see signatureImageTrace.js), so the exact
+  // same PDF-stamping pipeline applies either way.
+  const [signatureSource, setSignatureSource] = useState("draw");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   // `loadError` is page-level (nothing rendered yet to act on, so it belongs
@@ -75,7 +81,7 @@ export default function GovernmentFormSignaturePanel() {
     const includesSignature = Boolean(signatureImage);
     if (includesSignature) {
       try {
-        const signatureResponse = await api.put("/account/form-signature", { signatureImage, signatureStrokes });
+        const signatureResponse = await api.put("/account/form-signature", { signatureImage, signatureStrokes, signatureSource });
         setData(signatureResponse.data.data);
         setSignatureImage("");
         setSignatureStrokes([]);
@@ -87,6 +93,13 @@ export default function GovernmentFormSignaturePanel() {
     }
     setActionNotice(includesSignature ? "Your credentials and signature are ready for government forms." : "Your representative credentials are ready for government forms.");
     setSaving(false);
+  }
+
+  function switchSource(next) {
+    if (next === signatureSource) return;
+    setSignatureSource(next);
+    setSignatureImage("");
+    setSignatureStrokes([]);
   }
 
   async function remove() {
@@ -165,12 +178,22 @@ export default function GovernmentFormSignaturePanel() {
 
       {data ? (
         <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">2</span>
-            <p className="text-sm font-semibold text-slate-900">{data.hasSignature ? "Replace signature" : "Draw signature"}</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">2</span>
+              <p className="text-sm font-semibold text-slate-900">{data.hasSignature ? "Replace signature" : "Add your signature"}</p>
+            </div>
+            <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
+              <button type="button" disabled={saving} onClick={() => switchSource("draw")} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition ${signatureSource === "draw" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}><PenLine className="h-3.5 w-3.5" />Draw</button>
+              <button type="button" disabled={saving} onClick={() => switchSource("upload")} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition ${signatureSource === "upload" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}><ImageUp className="h-3.5 w-3.5" />Upload a photo</button>
+            </div>
           </div>
-          <div className="pl-[34px]">
-            <SignaturePad key={`${data.updatedAt || "new"}-${data.hasSignature}`} disabled={saving} onChange={setSignatureImage} onStrokesChange={setSignatureStrokes} />
+          <div className="mt-4 pl-[34px]">
+            {signatureSource === "upload" ? (
+              <SignatureImageUpload disabled={saving} onChange={setSignatureImage} />
+            ) : (
+              <SignaturePad key={`${data.updatedAt || "new"}-${data.hasSignature}`} disabled={saving} onChange={setSignatureImage} onStrokesChange={setSignatureStrokes} />
+            )}
             <p className="mt-4 text-xs leading-5 text-slate-500">By saving this signature, you confirm it is yours and may be applied only when you are explicitly selected as the representative on a government form. The completed form still requires review before submission.</p>
           </div>
 

@@ -4,37 +4,7 @@ import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import prisma from "./prisma/client.js";
 import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "./supabaseStorage.js";
 import { createHttpError } from "../utils/http.js";
-
-const REPRESENTATIVE_SIGNATURE = { pageIndex: 2, rect: [25.2, 671.199, 397.199, 699.84], dateFieldId: "113R" };
-const APPLICANT_SIGNATURE = { pageIndex: 3, rect: [25.2, 655.199, 397.199, 685.44], dateFieldId: "121R" };
-
-function signatureAnnotation(strokes, { pageIndex, rect }, user) {
-  const [left, bottom, right, top] = rect;
-  const paddingX = 8;
-  const paddingY = 4;
-  const width = Math.max(1, right - left - paddingX * 2);
-  const height = Math.max(1, top - bottom - paddingY * 2);
-  const points = strokes.map((stroke) => stroke.flatMap(([x, y]) => [left + paddingX + x * width, top - paddingY - y * height]));
-  const lines = points.map((stroke) => {
-    const line = [];
-    for (let index = 0; index < stroke.length; index += 2) {
-      line.push(Number.NaN, Number.NaN, Number.NaN, Number.NaN, stroke[index], stroke[index + 1]);
-    }
-    return line;
-  });
-  return {
-    annotationType: pdfjs.AnnotationEditorType.INK,
-    pageIndex,
-    rect,
-    rotation: 0,
-    color: [15, 23, 42],
-    thickness: 1.2,
-    opacity: 1,
-    paths: { lines, points },
-    date: new Date().toISOString(),
-    user,
-  };
-}
+import { APPLICANT_SIGNATURE, readFieldValue, REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
 
 function hashBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
@@ -55,7 +25,12 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
   let signedBuffer;
   try {
     const document = await task.promise;
-    const signedDate = new Date().toISOString().slice(0, 10);
+    // The applicant signs whatever date the representative's signature
+    // already carries (stamped when the filled PDF was generated/sent), not
+    // whatever day the applicant happens to get around to signing — the two
+    // signature dates on a IMM 5476 should read the same day.
+    const representativeSignedDate = String((await readFieldValue(document, REPRESENTATIVE_SIGNATURE.dateFieldId)) || "").trim();
+    const signedDate = representativeSignedDate || new Date().toISOString().slice(0, 10);
     document.annotationStorage.setValue("547R", { value: true });
     document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
     document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });

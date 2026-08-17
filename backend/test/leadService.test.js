@@ -625,8 +625,27 @@ test("conversion reuses an already-created retainer client/case instead of creat
 });
 
 test("conversion rejects leads that have not completed commercial requirements", async () => {
-  const tx = { lead: { findFirst: async () => ({ id: "lead-1", status: "OPEN", stage: "PAYMENT_PENDING", retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED" }) } };
+  const tx = { lead: { findFirst: async () => ({ id: "lead-1", ownerUserId: "user-1", status: "OPEN", stage: "PAYMENT_PENDING", retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED" }) } };
   const db = { $transaction: async (operation) => operation(tx) };
   const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents" } };
   await assert.rejects(() => convertLead(req, db), (error) => error.code === "LEAD_NOT_READY_TO_CONVERT");
+});
+
+test("conversion rejects a consultant who can see but does not own the lead", async () => {
+  const tx = {
+    lead: {
+      findFirst: async () => ({ id: "lead-1", ownerUserId: "other-consultant", status: "OPEN", stage: "READY_TO_CONVERT", retainerStatus: "SIGNED", initialPaymentStatus: "PAID" }),
+    },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+  const req = {
+    auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" },
+    params: { id: "lead-1" },
+    body: { fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents" },
+  };
+
+  await assert.rejects(
+    () => convertLead(req, db),
+    /Only an admin or this lead's assigned consultant/,
+  );
 });

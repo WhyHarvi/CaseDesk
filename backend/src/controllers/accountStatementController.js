@@ -181,9 +181,17 @@ export async function createClientManualBillingEntry(req, res) {
     actorUserId: req.auth.userId,
   };
 
-  // Frontdesk records what was received, but an administrator owns the
-  // accounting decision. Nothing is marked paid or sent to QuickBooks here.
-  if (req.auth.role === "frontdesk" || req.body?.method === "Cash") {
+  // Cash is the one method CaseDesk can't independently verify against a
+  // bank reference, so it always goes through administrator review — for
+  // every entry type, any role — before anything is marked paid or sent to
+  // QuickBooks. For a consultation payment specifically (already tied to a
+  // fixed, pre-agreed fee, unlike a new case charge frontdesk could type in
+  // any amount for) any other method has a checkable reference and posts
+  // immediately even for frontdesk. Case billing (a new charge, or payment
+  // against an existing invoice) is untouched: frontdesk still needs
+  // administrator review there regardless of method.
+  const isAppointmentPayment = ["appointment_payment", "appointment_payment_details"].includes(entryType);
+  if (req.body?.method === "Cash" || (req.auth.role === "frontdesk" && !isAppointmentPayment)) {
     const approval = await submitPaymentApproval(req.auth.agencyId, {
       entryType,
       clientId: client.id,

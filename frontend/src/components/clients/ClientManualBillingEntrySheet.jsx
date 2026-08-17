@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Banknote, CalendarDays, Check, FilePlus2, Loader2, ReceiptText, WalletCards, X } from "lucide-react";
+import { Banknote, CalendarDays, Check, ClipboardCheck, FilePlus2, Loader2, ReceiptText, WalletCards, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { createClientManualBillingEntry, getClientManualBillingOptions } from "../../api/clientBillingApi";
@@ -22,6 +22,13 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
   const [warning, setWarning] = useState("");
   const [confirmPaidOverride, setConfirmPaidOverride] = useState(false);
   const [submittedApproval, setSubmittedApproval] = useState(null);
+  // A direct (no-approval-needed) success used to just silently close the
+  // sheet — no confirmation at all that the payment actually went through.
+  // That ambiguity is exactly how the same $100 e-transfer for one
+  // appointment ended up recorded three times: nothing on screen ever told
+  // frontdesk it had already worked. This mirrors submittedApproval's own
+  // "Done" confirmation screen for the direct-success case instead.
+  const [recordedConfirmation, setRecordedConfirmation] = useState(null);
   const [mode, setMode] = useState("existing");
   const [targetKind, setTargetKind] = useState("invoice");
   const [form, setForm] = useState({ invoiceId: "", appointmentId: "", caseId: "", paymentType: "", description: "", chargeAmount: "", amount: "", method: "ETransfer", transactionReference: "", paymentDate: today(), note: "", idempotencyKey: newKey() });
@@ -35,6 +42,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
     setWarning("");
     setConfirmPaidOverride(false);
     setSubmittedApproval(null);
+    setRecordedConfirmation(null);
     getClientManualBillingOptions(clientId)
       .then((result) => {
         if (!active) return;
@@ -82,6 +90,13 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
   const selectedInvoice = options?.invoices?.find((item) => item.id === form.invoiceId);
   const selectedAppointment = availableAppointments.find((item) => item.id === form.appointmentId);
   const repairingAppointment = selectedAppointment?.paymentHold?.status === "Paid";
+  // Mirrors createClientManualBillingEntry's own gating: Cash always needs
+  // review; a frontdesk-submitted consultation payment (a fixed, pre-agreed
+  // fee) no longer does — only case billing (a new charge, or a payment
+  // against an existing invoice, where frontdesk could type in any amount)
+  // still requires it for every method.
+  const isAppointmentPaymentEntry = mode !== "new" && targetKind === "appointment";
+  const requiresApproval = form.method === "Cash" || Boolean(options?.approvalRequiredForEntries && !isAppointmentPaymentEntry);
 
   function update(key, value) { setForm((current) => ({ ...current, [key]: value })); }
 
@@ -138,6 +153,10 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
       if (result.approvalRequired) {
         setSubmittedApproval(result.approval);
         setWarning(result.message || "Payment submitted for administrator approval. It has not been marked paid yet.");
+      } else if (result.paymentRecorded && !repairingAppointment) {
+        const methodLabel = form.method === "ETransfer" ? "e-transfer" : form.method.toLowerCase();
+        setRecordedConfirmation({ amount: money(Number(form.amount) || 0), method: methodLabel });
+        setWarning(`${money(Number(form.amount) || 0)} ${methodLabel} payment recorded and applied in QuickBooks.`);
       } else if (result.paymentWarning) {
         const createdInvoice = result.invoice;
         setOptions((current) => current ? {
@@ -207,16 +226,16 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
                     <div className="flex items-center gap-2"><Banknote className="h-4 w-4 text-emerald-600" /><p className="text-xs font-semibold text-slate-800">Payment details</p></div>
                     {!repairingAppointment ? <label className="block text-xs font-medium text-slate-600">Amount received<input required type="number" min="0.01" step="0.01" max={selectedInvoice ? Number(selectedInvoice.balance) : mode === "new" ? form.chargeAmount || undefined : undefined} value={form.amount} onChange={(event) => update("amount", event.target.value)} className={fieldClass} /></label> : null}
                     {fixedMethod ? <div className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-violet-50 text-xs font-semibold text-violet-700"><Banknote className="h-4 w-4" />Cash · CaseDesk only</div> : <div className="grid grid-cols-2 gap-1 rounded-2xl bg-slate-100 p-1">{PAYMENT_METHODS.map(([value, label]) => <button key={value} type="button" onClick={() => { update("method", value); setError(""); }} className={`h-10 rounded-xl px-1 text-[11px] font-semibold transition ${form.method === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{label}</button>)}</div>}
-                    <p className={`rounded-2xl px-3.5 py-3 text-xs leading-5 ${form.method === "Cash" ? "bg-violet-50 text-violet-700" : options?.approvalRequiredForEntries ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700"}`}>{form.method === "Cash" ? "Cash is recorded in the CaseDesk Cash ledger and never sent to QuickBooks." : options?.approvalRequiredForEntries ? "Frontdesk entries are submitted to an administrator. QuickBooks is updated only after approval." : "This non-cash payment is applied to the linked QuickBooks invoice when you save."}</p>
+                    <p className={`rounded-2xl px-3.5 py-3 text-xs leading-5 ${form.method === "Cash" ? "bg-violet-50 text-violet-700" : requiresApproval ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700"}`}>{form.method === "Cash" ? "Cash is recorded in the CaseDesk Cash ledger and never sent to QuickBooks." : requiresApproval ? "Frontdesk entries are submitted to an administrator. QuickBooks is updated only after approval." : "This payment is applied and recorded in QuickBooks immediately when you save."}</p>
                     <label className="block text-xs font-medium text-slate-600">{form.method === "Cash" ? "Receipt / reference (optional)" : "E-transfer transaction number *"}<input required={form.method !== "Cash"} maxLength={100} value={form.transactionReference} onChange={(event) => update("transactionReference", event.target.value)} className={fieldClass} placeholder={form.method === "Cash" ? "Receipt or internal reference" : "Enter the e-transfer transaction number"} /></label>
                     <label className="block text-xs font-medium text-slate-600">Payment date<input required type="date" max={options?.today || today()} value={form.paymentDate} onChange={(event) => update("paymentDate", event.target.value)} className={fieldClass} /></label>
                     <label className="block text-xs font-medium text-slate-600">Internal note (optional)<textarea rows="3" maxLength={500} value={form.note} onChange={(event) => update("note", event.target.value)} className="mt-1.5 w-full resize-none rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Deposit details or context for staff" /></label>
                   </section>
 
-                  {warning ? <div className={`rounded-2xl border p-4 text-xs leading-5 ${submittedApproval ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{submittedApproval ? <strong className="mb-1 block text-sm">Sent for approval</strong> : null}{warning}{submittedApproval ? <span className="mt-1 block">The administrator will review it in Payments → Payment approvals.</span> : null}</div> : null}
+                  {warning ? <div className={`rounded-2xl border p-4 text-xs leading-5 ${submittedApproval || recordedConfirmation ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>{submittedApproval ? <strong className="mb-1 flex items-center gap-1.5 text-sm"><ClipboardCheck className="h-4 w-4" /> Sent for approval</strong> : recordedConfirmation ? <strong className="mb-1 flex items-center gap-1.5 text-sm"><Check className="h-4 w-4" /> Payment sent</strong> : null}{warning}{submittedApproval ? <span className="mt-1 block">The administrator will review it in Payments → Payment approvals.</span> : null}</div> : null}
                   {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs leading-5 text-rose-700">{error}{!options && !loading ? <button type="button" onClick={() => setLoadAttempt((value) => value + 1)} className="mt-3 flex h-9 items-center justify-center rounded-full border border-rose-200 bg-white px-4 font-semibold text-rose-700">Try again</button> : null}</div> : null}
                 </div>
-                <footer className="border-t border-white bg-white/85 p-4">{submittedApproval ? <button type="button" onClick={onClose} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white"><Check className="h-4 w-4" />Done</button> : <button type="submit" disabled={saving || loading || (mode === "existing" && targetKind === "invoice" && !form.invoiceId) || (mode === "existing" && targetKind === "appointment" && (!form.appointmentId || (selectedAppointment?.isFreeConsultation && !confirmPaidOverride)))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-45">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{saving ? "Saving payment…" : options?.approvalRequiredForEntries ? "Submit for approval" : repairingAppointment ? "Save missing payment details" : selectedAppointment?.isFreeConsultation ? "Convert and record payment" : "Record payment"}</button>}</footer>
+                <footer className="border-t border-white bg-white/85 p-4">{submittedApproval || recordedConfirmation ? <button type="button" onClick={onClose} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white"><Check className="h-4 w-4" />Done</button> : <button type="submit" disabled={saving || loading || (mode === "existing" && targetKind === "invoice" && !form.invoiceId) || (mode === "existing" && targetKind === "appointment" && (!form.appointmentId || (selectedAppointment?.isFreeConsultation && !confirmPaidOverride)))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-45">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{saving ? "Saving payment…" : requiresApproval ? "Submit for approval" : repairingAppointment ? "Save missing payment details" : selectedAppointment?.isFreeConsultation ? "Convert and record payment" : "Record payment"}</button>}</footer>
               </form>
             )}
           </motion.aside>
