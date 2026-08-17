@@ -12,6 +12,15 @@ const AFFIRMATIVE = /^\s*(yes|yeah|yep|sure|please|ok(?:ay)?|show me|go ahead)\b
 const PERSONAL_SCOPE = /\b(my|mine|for me|assigned to me|do i|i have)\b/i;
 const UPCOMING_APPOINTMENT_LIMIT = 50;
 const NUMBER_QUESTION = /\b(how many|how much|count|number of|total|active|open|pending|overdue|converted|lost|nurture|collected|outstanding|refunded|transactions?|cash on hand)\b/i;
+// "What does the overdue count mean?" asks for an explanation, not a live
+// number — but it still contains "overdue" and "count", the exact words
+// NUMBER_QUESTION looks for. Without this check it either gets swallowed
+// by a domain match that has nothing to do with the actual question (e.g.
+// "leads" for "what does a nurture lead mean?"), or falls through to the
+// "I can't verify that live number yet" refusal — a real, reported
+// exchange: a plain definitional question got refused instead of answered.
+const DEFINITIONAL_QUESTION = /\bwhat\s+(?:does|do|is|are)\b[\s\S]*\bmean(?:s)?\b/i;
+const OVERDUE_COUNT_DEFINITION = /\b(?:what\s+(?:does|is)|define|explain)\b[\s\S]*\boverdue(?:\s+(?:task|tasks))?\s+count\b[\s\S]*\b(?:mean|means)?\b/i;
 const PERFORMANCE_WORDS = /\b(incentives?|commissions?|bonuses?|performance(?:\s+summary)?)\b/i;
 const APPOINTMENT_CONFIGURATION = /\b(hours?|minutes?|notice|duration|buffer|slots?|working hours?|schedule hours?)\b/i;
 const DOMAIN_PATTERNS = Object.freeze([
@@ -92,6 +101,7 @@ export function appointmentInsightIntent(messages, role) {
 export function crmMetricIntent(messages) {
   const message = latestUserMessage(messages);
   const question = messageText(message);
+  if (DEFINITIONAL_QUESTION.test(question)) return null;
   const namedLeadCount = /\bleads?\b/i.test(question) && NAMED_LEAD_ASSIGNEE.test(question);
   if (!NUMBER_QUESTION.test(question) && !namedLeadCount && !PERFORMANCE_WORDS.test(question)) return null;
   const match = DOMAIN_PATTERNS.find(([, pattern]) => pattern.test(question));
@@ -919,6 +929,13 @@ export async function resolveCaseDeskAIInsight(req, messages, {
   paymentSummary = getPaymentsSummary,
   structuredIntent = null,
 } = {}) {
+  const question = messageText(latestUserMessage(messages));
+  if (OVERDUE_COUNT_DEFINITION.test(question)) {
+    return {
+      answer: "The **Overdue Tasks** count is the number of active workflow tasks that are still marked **Pending** and were due before today. It uses your agency’s timezone and only includes records within your permitted scope.\n\nIt does not include overdue follow-ups, unpaid balances, or pending documents; those are tracked separately. Select the Overdue Tasks card to see the tasks included in the count.\n\n[Open Dashboard](/app/dashboard)",
+    };
+  }
+
   const appointmentIntent = appointmentInsightIntent(messages, req.auth?.role);
   if (appointmentIntent) {
     return resolveAppointmentMetric(req, appointmentIntent, db, now);
@@ -926,8 +943,7 @@ export async function resolveCaseDeskAIInsight(req, messages, {
 
   const metricIntent = structuredMetricIntent(messages, structuredIntent) || crmMetricIntent(messages);
   if (!metricIntent) {
-    const question = messageText(latestUserMessage(messages));
-    if (NUMBER_QUESTION.test(question)) {
+    if (NUMBER_QUESTION.test(question) && !DEFINITIONAL_QUESTION.test(question)) {
       return {
         answer: "I can’t verify that live number yet, so I won’t guess. I can currently verify appointments, leads, clients, cases, documents, follow-ups, and payment totals that your permissions allow.",
       };

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  caseDeskIntentPrompt,
   normalizeCaseDeskIntent,
   parseCaseDeskIntentContent,
   shouldExtractCaseDeskIntent,
@@ -49,4 +50,14 @@ test("intent extraction activates for analytical and contextual follow-ups but s
   ]), true);
   assert.equal(shouldExtractCaseDeskIntent([{ role: "user", content: "Compare Manpreet's workload with last month" }]), true);
   assert.equal(shouldExtractCaseDeskIntent([{ role: "user", content: "Where do I edit a lead?" }]), false);
+});
+
+// Defense in depth alongside aiInsightService.js's own regex guard: even
+// if a definitional question ("what does the overdue count mean?") slips
+// past the analytical-signal check and reaches the LLM classifier, the
+// classifier itself is told explicitly not to call that kind=metric.
+test("the intent classifier prompt explicitly rules out definitional questions from kind=metric", () => {
+  const prompt = caseDeskIntentPrompt({ currentPath: "/app/dashboard", role: "admin" });
+  assert.match(prompt, /never kind=metric, even if it names a real domain/);
+  assert.match(prompt, /Use kind=unknown for it\./);
 });

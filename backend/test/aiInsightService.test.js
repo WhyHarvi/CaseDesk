@@ -626,6 +626,25 @@ test("a documents question mentioning cases in passing still resolves as the doc
   assert.equal(crmMetricIntent([{ role: "user", content: "How many documents are outstanding on my cases?" }])?.domain, "documents");
 });
 
+// A real reported exchange: "What does the overdue count mean?" contains
+// "overdue" and "count" — the exact words the number-question detector
+// looks for — so it got refused with "I can't verify that live number yet."
+test("a definitional question is never treated as a live-number request, even when it names a real domain", async () => {
+  const definitional = await resolveCaseDeskAIInsight(request(), [{ role: "user", content: "What does the overdue count mean?" }], { db: {} });
+  assert.match(definitional.answer, /active workflow tasks/);
+  assert.match(definitional.answer, /still marked \*\*Pending\*\*/);
+  assert.match(definitional.answer, /due before today/);
+  assert.match(definitional.answer, /agency’s timezone/);
+  assert.match(definitional.answer, /does not include overdue follow-ups, unpaid balances, or pending documents/);
+  assert.match(definitional.answer, /\[Open Dashboard\]\(\/app\/dashboard\)/);
+
+  assert.equal(crmMetricIntent([{ role: "user", content: "What does a nurture lead mean?" }]), null);
+  assert.equal(crmMetricIntent([{ role: "user", content: "What do overdue leads mean?" }]), null);
+
+  // A genuine number question with the same keywords still works normally.
+  assert.equal(crmMetricIntent([{ role: "user", content: "How many leads are overdue?" }])?.domain, "leads");
+});
+
 test("document metrics use the same access-scoped filter as related-record permissions, break down by status, and never leave an uploaded-but-unreviewed document uncounted", async () => {
   const seenWhere = [];
   const db = {
