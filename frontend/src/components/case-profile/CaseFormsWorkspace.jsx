@@ -2272,25 +2272,29 @@ export default function CaseFormsWorkspace({
     try {
       setBusyId(item.id);
       setError("");
+      const formsResponse = await api.get(`/case-forms?caseId=${caseId}`);
+      const latestForms = formsResponse.data.data || [];
+      const currentItem = latestForms.find((entry) => entry.id === item.id) || item;
+      setForms(latestForms);
       const response = await api.get(
-        `/case-forms/${item.id}/file${download ? "?download=1" : ""}`,
+        `/case-forms/${currentItem.id}/file${download ? "?download=1" : ""}`,
         { responseType: "blob", timeout: 60000 },
       );
       const isPdf = response.data.type === "application/pdf" || likelyPdf;
       if (!download && isPdf) {
         previewWindow?.close();
-        const autofill = buildCaseFormAutofill(item, caseItem, assessment, {
-          representative: representativeFor(item),
+        const autofill = buildCaseFormAutofill(currentItem, caseItem, assessment, {
+          representative: representativeFor(currentItem),
           agency: agencyProfile,
         });
-        setPdfPreview({ item, blob: response.data, autofill });
+        setPdfPreview({ item: currentItem, blob: response.data, autofill });
         if (
-          !item.lockedAt &&
+          !currentItem.lockedAt &&
           permissions.canEdit &&
           Object.keys(autofill.values || {}).length
         )
           api
-            .post(`/case-forms/${item.id}/audit/autofill`, {
+            .post(`/case-forms/${currentItem.id}/audit/autofill`, {
               fieldCount: Object.keys(autofill.values).length,
               mappingVersion: autofill.mappingVersion,
             })
@@ -2300,14 +2304,14 @@ export default function CaseFormsWorkspace({
         if (download) {
           const anchor = document.createElement("a");
           anchor.href = url;
-          anchor.download = item.originalFilename || item.title;
+          anchor.download = currentItem.originalFilename || currentItem.title;
           anchor.click();
         } else if (previewWindow) {
           previewWindow.location.replace(url);
         } else {
           const anchor = document.createElement("a");
           anchor.href = url;
-          anchor.download = item.originalFilename || item.title;
+          anchor.download = currentItem.originalFilename || currentItem.title;
           anchor.click();
           setError(
             "Your browser prevented a preview tab, so the form was downloaded instead.",

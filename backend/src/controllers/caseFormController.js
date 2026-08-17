@@ -443,8 +443,16 @@ export async function serveCaseFormFile(req, res) {
       preparedBuffer = await rebuildImm5476FromOriginal(storedBuffer, originalBuffer);
     }
   }
-  const buffer = isImm5476 && hasSavedSignature
-    ? await stampXfaPdfFormValues(preparedBuffer, [], { "547R": true }, { strokes: signatureStrokes, name: representative.fullName })
+  const representativeName = String(representative?.fullName || "").trim().split(/\s+/).filter(Boolean);
+  const representativeFamilyName = representativeName.length > 1 ? representativeName.at(-1) : representativeName[0] || "";
+  const representativeGivenNames = representativeName.length > 1 ? representativeName.slice(0, -1).join(" ") : "";
+  const buffer = isImm5476
+    ? await stampXfaPdfFormValues(
+        preparedBuffer,
+        [],
+        { "547R": true, "561R": representativeFamilyName, "562R": representativeGivenNames },
+        hasSavedSignature ? { strokes: signatureStrokes, name: representative.fullName } : null,
+      )
     : preparedBuffer;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
