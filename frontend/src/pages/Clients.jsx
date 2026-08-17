@@ -24,9 +24,9 @@ import api from "../services/api";
 import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
 import { clientNameParts, composePersonFullName } from "../utils/personName";
 
-const newClientOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+export const newClientOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
-const defaultFormState = {
+export const defaultClientFormState = {
   givenNames: "",
   familyName: "",
   email: "",
@@ -56,7 +56,7 @@ const pillClassName = "inline-flex items-center rounded-full px-3.5 py-1.5 text-
 // from a previous work session never resurfaces in a new tab days later.
 const CLIENT_DRAFT_STORAGE_KEY = "casedesk:client-drawer-draft";
 
-function dateOfBirthError(value) {
+export function dateOfBirthError(value) {
   const input = String(value || "").trim();
   if (!input) return "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return "Use YYYY-MM-DD, for example 1990-05-23.";
@@ -247,7 +247,7 @@ function buildClientViewModel(client) {
   };
 }
 
-function ClientDrawer({
+export function ClientDrawer({
   formState,
   onChange,
   onSubmit,
@@ -844,7 +844,7 @@ export default function Clients() {
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(() => Boolean(readClientDraft()));
   const [editingClient, setEditingClient] = useState(() => readClientDraft()?.editingClient || null);
-  const [formState, setFormState] = useState(() => ({ ...defaultFormState, ...(readClientDraft()?.formState || {}) }));
+  const [formState, setFormState] = useState(() => ({ ...defaultClientFormState, ...(readClientDraft()?.formState || {}) }));
   const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
   const [clientCreateIdempotencyKey, setClientCreateIdempotencyKey] = useState(() => readClientDraft()?.clientCreateIdempotencyKey || newClientOperationKey());
   const [formError, setFormError] = useState("");
@@ -1064,7 +1064,7 @@ export default function Clients() {
     setDrawerClosing(true);
 
     window.setTimeout(() => {
-      setFormState(defaultFormState);
+      setFormState(defaultClientFormState);
       setFrontDeskIntake(defaultFrontDeskIntakeState);
       setEditingClient(null);
       setFormError("");
@@ -1077,7 +1077,7 @@ export default function Clients() {
   function openCreateForm() {
     setActiveActionMenuId(null);
     setEditingClient(null);
-    setFormState(defaultFormState);
+    setFormState(defaultClientFormState);
     setClientCreateIdempotencyKey(newClientOperationKey());
     setFrontDeskIntake(defaultFrontDeskIntakeState);
     setFormError("");

@@ -1,7 +1,11 @@
 import { Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import DashboardTopBar from "../dashboard/DashboardTopBar";
+import { lazy, Suspense, useState } from "react";
+
+const QuickCreateCurtains = lazy(() => import("./QuickCreateCurtains"));
 
 export default function Header({ sidebarCollapsed, onToggleSidebar, onOpenMobileSidebar }) {
+  const [createCurtain, setCreateCurtain] = useState(null);
   const sidebarControls = (
     <>
       <button
@@ -24,8 +28,19 @@ export default function Header({ sidebarCollapsed, onToggleSidebar, onOpenMobile
   );
 
   return (
-    <header className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/85 px-6 py-4 backdrop-blur">
-      <DashboardTopBar leading={sidebarControls} />
-    </header>
+    <>
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/85 px-6 py-4 backdrop-blur">
+        <DashboardTopBar
+          leading={sidebarControls}
+          onAddClient={() => setCreateCurtain("client")}
+          onAddCase={() => setCreateCurtain("case")}
+        />
+      </header>
+      {createCurtain ? (
+        <Suspense fallback={null}>
+          <QuickCreateCurtains kind={createCurtain} onClose={() => setCreateCurtain(null)} />
+        </Suspense>
+      ) : null}
+    </>
   );
 }

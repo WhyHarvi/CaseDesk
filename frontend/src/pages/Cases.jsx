@@ -28,7 +28,7 @@ import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
 import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 import { CASE_STAGES, caseStagesForType } from "../constants/caseStages";
 
-const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+export const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
 const STATUS_OPTIONS = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 const PRIORITY_OPTIONS = ["Low", "Normal", "High", "Urgent"];
@@ -39,7 +39,7 @@ const REGISTER_VIEWS = [
   { id: "trash", label: "Trash", icon: Trash2 },
 ];
 
-const defaultFormState = {
+export const defaultCaseFormState = {
   clientId: "",
   assignedUserId: "",
   caseType: "",
@@ -103,7 +103,7 @@ function getInitials(name) {
     .join("");
 }
 
-function getDefaultNextAction(stage) {
+export function getDefaultNextAction(stage) {
   const defaults = {
     Lead: "Call client",
     Consultation: "Prepare application",
@@ -855,7 +855,7 @@ function DrawerShell({
   );
 }
 
-function CaseFormDrawer({
+export function CaseFormDrawer({
   formState,
   onChange,
   onSubmit,
@@ -1227,7 +1227,7 @@ export default function Cases() {
   const [drawerClosing, setDrawerClosing] = useState(false);
   const [editingCase, setEditingCase] = useState(null);
   const [viewingCase, setViewingCase] = useState(null);
-  const [formState, setFormState] = useState(defaultFormState);
+  const [formState, setFormState] = useState(defaultCaseFormState);
   const [caseCreateIdempotencyKey, setCaseCreateIdempotencyKey] = useState(newCaseOperationKey);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1518,7 +1518,7 @@ export default function Cases() {
   }, [enrichedCases]);
 
   function resetFormState() {
-    setFormState(defaultFormState);
+    setFormState(defaultCaseFormState);
     setFormError("");
     setEditingCase(null);
   }
@@ -1529,7 +1529,7 @@ export default function Cases() {
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(null);
-    setFormState(defaultFormState);
+    setFormState(defaultCaseFormState);
     setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
@@ -1540,7 +1540,7 @@ export default function Cases() {
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(null);
-    setFormState({ ...defaultFormState, clientId });
+    setFormState({ ...defaultCaseFormState, clientId });
     setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
