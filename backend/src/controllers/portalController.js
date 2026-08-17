@@ -3,12 +3,14 @@ import path from "node:path";
 import prisma from "../services/prisma/client.js";
 import { hasPortalCapability } from "../services/portalAccessService.js";
 import {
+  createAuthUser,
   deleteAuthUser,
   findAuthUserByEmail,
   generateAuthLink,
   updateAuthUser,
 } from "../services/supabaseAuth.js";
 import { sendAccountAccessEmail } from "../services/accountAccessMailService.js";
+import { generateTemporaryPassword } from "../utils/temporaryPassword.js";
 import { publicAppUrl } from "../utils/publicAppUrl.js";
 import {
   removeDocumentFile,
@@ -298,6 +300,103 @@ export async function sendPortalAccessLink(req, res) {
     details: `${isOnboarding ? "Onboarding" : "Password reset"} link emailed to ${client.fullName}`,
   });
   res.json({ success: true, message: isOnboarding ? "Onboarding link emailed." : "Reset link emailed." });
+}
+
+// A deliberate second option next to sendPortalAccessLink's secure
+// self-service link — some clients need direct access right away instead
+// of navigating an email link/accept-invite flow. Generates a real
+// temporary password server-side via Supabase's admin API (createAuthUser
+// for a brand-new account, updateAuthUser to reset one that already
+// exists) rather than a one-time link, and emails it in plain text — a
+// materially weaker posture than the link flow, so this stays a distinct,
+// explicitly-chosen action rather than the default.
+export async function sendPortalTemporaryPassword(req, res) {
+  if (req.auth.role !== "admin" && !hasPortalCapability(req, "manageClientPortal")) {
+    throw createHttpError(403, "You do not have permission to manage portal access.", "FORBIDDEN");
+  }
+  const client = await prisma.client.findFirst({
+    where: { id: req.params.clientId, agencyId: req.auth.agencyId },
+    select: { id: true, fullName: true, email: true },
+  });
+  if (!client) throw createHttpError(404, "Client not found.", "NOT_FOUND");
+
+  const existingLink = await prisma.clientUser.findFirst({
+    where: { agencyId: req.auth.agencyId, clientId: client.id },
+    select: { user: { select: { id: true, email: true, fullName: true, authUserId: true } } },
+    orderBy: { isPrimary: "desc" },
+  });
+
+  const email = String(existingLink?.user?.email || client.email || "").trim().toLowerCase();
+  const fullName = existingLink?.user?.fullName || client.fullName;
+  if (!email || !email.includes("@")) throw createHttpError(400, "This client has no email on file.", "VALIDATION_ERROR");
+
+  if (!existingLink && await prisma.user.findUnique({ where: { email }, select: { id: true } })) {
+    throw createHttpError(409, "An account with this email already exists.", "ACCOUNT_EXISTS");
+  }
+
+  const password = generateTemporaryPassword();
+  const existingAuthUserId = existingLink?.user?.authUserId || (await findAuthUserByEmail(email).catch(() => null))?.id || null;
+  let authUserId = existingAuthUserId;
+  let authUserCreated = false;
+  if (existingAuthUserId) {
+    await updateAuthUser(existingAuthUserId, { password }).catch(() => {
+      throw createHttpError(502, "The temporary password could not be set.", "AUTH_UPDATE_FAILED");
+    });
+  } else {
+    const created = await createAuthUser({ email, password, fullName, mustChangePassword: false }).catch(() => null);
+    if (!created?.id) throw createHttpError(502, "The temporary password could not be set.", "AUTH_UPDATE_FAILED");
+    authUserId = created.id;
+    authUserCreated = true;
+  }
+
+  try {
+    if (!existingLink) {
+      await prisma.user.create({
+        data: {
+          agencyId: req.auth.agencyId,
+          authUserId,
+          email,
+          fullName,
+          role: "client",
+          status: "active",
+          mustChangePassword: false,
+          memberships: { create: { agencyId: req.auth.agencyId, role: "client", isActive: true, mustChangePassword: false } },
+          clientUsers: { create: { agencyId: req.auth.agencyId, clientId: client.id, relationship: "self", isPrimary: true } },
+        },
+      });
+    } else if (existingLink.user.id) {
+      // A portal account already existed (invited but never completed, or
+      // previously issued a temporary password) — direct access should work
+      // right away rather than leaving them stuck on "complete your setup."
+      await prisma.user.update({ where: { id: existingLink.user.id }, data: { status: "active" } });
+    }
+  } catch (error) {
+    if (authUserCreated) await deleteAuthUser(authUserId).catch(() => {});
+    throw error;
+  }
+
+  const loginUrl = `${publicAppUrl()}/login`;
+  let manualPassword = null;
+  try {
+    await sendAccountAccessEmail({ agencyId: req.auth.agencyId, email, fullName, password, loginUrl, kind: "temporaryPassword", audience: "client" });
+  } catch {
+    manualPassword = password;
+  }
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: client.id,
+    action: "CLIENT_PORTAL_TEMPORARY_PASSWORD_SENT",
+    details: `Temporary portal password issued to ${client.fullName}`,
+  });
+  res.json({
+    success: true,
+    message: manualPassword ? "Password set. The email could not be sent — share it directly." : "Temporary password emailed.",
+    // Always returned (not just on email failure) so staff can read it out
+    // or relay it another way without having to open the client's inbox.
+    password,
+    loginUrl,
+  });
 }
 
 export async function getPortalAccountStatus(req, res) {

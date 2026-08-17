@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, Copy, Loader2, Mail, ShieldCheck, ShieldOff, Smartphone, X } from "lucide-react";
+import { ArrowUpRight, Check, Copy, KeyRound, Loader2, Mail, ShieldCheck, ShieldOff, Smartphone, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
@@ -96,6 +96,79 @@ function InviteDialog({ clientId, clientEmail, clientName, onClose, onInvited, r
   );
 }
 
+// A deliberate second option next to the secure invite/reset link: direct
+// access via a real, working password instead of a self-service setup
+// link. Sends immediately with no email-entry step (matching how "Send
+// reset link" already works off whatever email is on file) — the result
+// screen is what matters here, since staff need to actually see and relay
+// the password, unlike the link flow where the email itself carries
+// everything.
+function TemporaryPasswordDialog({ clientId, clientName, onClose, onIssued, reload }) {
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  async function send() {
+    setSending(true);
+    setError("");
+    try {
+      const { data } = await api.post(`/clients/${clientId}/portal-account/temporary-password`);
+      setResult(data);
+      reload();
+    } catch (reason) {
+      setError(reason.response?.data?.message || "The temporary password could not be issued.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function copyPassword() {
+    await navigator.clipboard.writeText(result.password);
+    setCopied(true);
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/25 px-5 py-10 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) onClose(); }}>
+      {result ? (
+        <section role="dialog" aria-modal="true" aria-labelledby="temp-password-result-title" className="w-full max-w-md rounded-[1.8rem] border border-white bg-white p-6 shadow-2xl sm:p-7">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white"><KeyRound className="h-5 w-5" /></div>
+              <h2 id="temp-password-result-title" className="text-xl font-semibold tracking-tight text-slate-950">Temporary password issued</h2>
+              <p className="mt-1.5 text-sm leading-6 text-slate-500">{result.message}</p>
+            </div>
+            <button type="button" onClick={() => { onIssued(result.message); onClose(); }} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="mt-5 rounded-2xl bg-slate-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Password</p>
+            <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-slate-950">{result.password}</p>
+          </div>
+          <button type="button" onClick={copyPassword} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-800">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? "Copied" : "Copy password"}</button>
+          <p className="mt-4 text-center text-xs leading-5 text-slate-400">Treat this like a real password. Share it only with {clientName || "the client"}, over a trusted channel.</p>
+        </section>
+      ) : (
+        <section role="dialog" aria-modal="true" aria-labelledby="temp-password-title" className="w-full max-w-md rounded-[1.8rem] border border-white bg-white p-6 shadow-2xl sm:p-7">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-50 text-amber-600"><KeyRound className="h-5 w-5" /></div>
+              <h2 id="temp-password-title" className="text-xl font-semibold tracking-tight text-slate-950">Send a temporary password?</h2>
+              <p className="mt-1.5 text-sm leading-6 text-slate-500">{clientName || "This client"} will be emailed a working password and can sign in right away — no setup link to click. This is less secure than the usual invite link: the password sits in their inbox until they change it, instead of a link that only works once.</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
+          </div>
+          {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">{error}</p> : null}
+          <div className="mt-6 flex justify-end gap-2">
+            <button type="button" disabled={sending} onClick={onClose} className="h-10 rounded-full px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
+            <button type="button" disabled={sending} onClick={send} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{sending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{sending ? "Sending…" : "Send temporary password"}</button>
+          </div>
+        </section>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
 function ManageAccessDialog({ clientId, account, clientName, onClose, onChanged }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -156,6 +229,7 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
   const { account, loading, error, reload } = usePortalAccess(clientId);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [tempPasswordOpen, setTempPasswordOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
   const [sendingLink, setSendingLink] = useState(false);
@@ -253,6 +327,12 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
             {sendingLink ? "Sending…" : linkLabel}
           </button>
         ) : null}
+        {!loading && account?.status !== "disabled" ? (
+          <button type="button" onClick={() => { setNotice(""); setTempPasswordOpen(true); }} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+            <KeyRound className="h-4 w-4" />
+            Send temporary password
+          </button>
+        ) : null}
       </div>
 
       {inviteOpen ? (
@@ -272,6 +352,15 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
           clientName={clientName}
           onClose={() => setManageOpen(false)}
           onChanged={(message) => { setManageOpen(false); setNotice(message); reload(); }}
+        />
+      ) : null}
+      {tempPasswordOpen ? (
+        <TemporaryPasswordDialog
+          clientId={clientId}
+          clientName={clientName}
+          onClose={() => setTempPasswordOpen(false)}
+          onIssued={(message) => setNotice(message)}
+          reload={reload}
         />
       ) : null}
     </article>

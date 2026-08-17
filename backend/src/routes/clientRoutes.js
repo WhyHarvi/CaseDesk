@@ -16,6 +16,7 @@ import {
   createPortalAccount,
   getPortalAccountStatus,
   sendPortalAccessLink,
+  sendPortalTemporaryPassword,
   setPortalAccountAccess,
 } from "../controllers/portalController.js";
 import {
@@ -63,6 +64,12 @@ router.post(
   requirePortalCapability("manageClientPortal"),
   rateLimit({ windowMs: 15 * 60_000, max: 20 }),
   asyncHandler(sendPortalAccessLink),
+);
+router.post(
+  "/:clientId/portal-account/temporary-password",
+  requirePortalCapability("manageClientPortal"),
+  rateLimit({ windowMs: 15 * 60_000, max: 20 }),
+  asyncHandler(sendPortalTemporaryPassword),
 );
 router.use("/:id", requireClientAccess());
 router.get(

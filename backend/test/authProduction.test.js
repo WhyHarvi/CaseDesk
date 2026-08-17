@@ -87,11 +87,32 @@ test("internal Prisma errors never expose query details to the UI", () => {
 
 test("client portal members use the same secure invitation activation", async () => {
   const controller = await source("../src/controllers/portalController.js");
-  const createSection = controller.slice(controller.indexOf("export async function createPortalAccount"), controller.indexOf("export async function portalMe"));
+  const createSection = controller.slice(controller.indexOf("export async function createPortalAccount"), controller.indexOf("export async function sendPortalAccessLink"));
   assert.match(createSection, /generateAuthLink/);
   assert.match(createSection, /sendAccountAccessEmail/);
   assert.match(createSection, /status: "invited"/);
   assert.doesNotMatch(createSection, /temporaryPassword|createAuthUser/);
+});
+
+// A deliberate, explicitly-chosen second option — not a regression of the
+// guard above. Direct access matters for clients who won't complete an
+// email-link accept-invite flow; the trade-off (a real password sitting in
+// an inbox, versus a single-use link) is accepted knowingly here, scoped to
+// its own function, gated the same way as every other portal-access action.
+test("issuing a temporary portal password is a distinct, explicitly-gated action, not the default onboarding path", async () => {
+  const [controller, routes] = await Promise.all([
+    source("../src/controllers/portalController.js"),
+    source("../src/routes/clientRoutes.js"),
+  ]);
+  const section = controller.slice(controller.indexOf("export async function sendPortalTemporaryPassword"), controller.indexOf("export async function getPortalAccountStatus"));
+  assert.match(section, /requirePortalCapability|hasPortalCapability\(req, "manageClientPortal"\)/);
+  assert.match(section, /generateTemporaryPassword\(\)/);
+  assert.match(section, /createAuthUser\(\{ email, password, fullName, mustChangePassword: false \}\)/);
+  assert.match(section, /updateAuthUser\(existingAuthUserId, \{ password \}\)/);
+  assert.match(section, /status: "active"/);
+  assert.match(section, /kind: "temporaryPassword"/);
+  assert.match(routes, /"\/:clientId\/portal-account\/temporary-password"/);
+  assert.match(routes, /requirePortalCapability\("manageClientPortal"\)/);
 });
 
 test("onboarding PII is protected from direct Supabase access", async () => {

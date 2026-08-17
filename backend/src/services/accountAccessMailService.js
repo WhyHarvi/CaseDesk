@@ -26,6 +26,10 @@ const COPY = {
       subject: (agencyName) => `Sign your retainer agreement — ${agencyName}`,
       intro: "Your consultation is booked. Please review and sign your retainer agreement to secure your appointment.",
     },
+    temporaryPassword: {
+      subject: (agencyName) => `Your ${agencyName} client portal access`,
+      intro: "A staff member set up direct access to your client portal. Sign in with the temporary password below, then change it anytime from your account.",
+    },
   },
   staff: {
     onboarding: {
@@ -68,6 +72,8 @@ export function accountAccessEmailContent({
   agency,
   fullName,
   actionLink,
+  password,
+  loginUrl,
   kind,
   audience = "client",
   supportEmail,
@@ -77,7 +83,8 @@ export function accountAccessEmailContent({
   const contactName = fullName || "there";
   const copy = COPY[audience]?.[kind] || COPY.client[kind];
   const subject = copy.subject(agencyName);
-  const buttonLabel = kind === "onboarding" ? "Set up my account" : kind === "retainer" ? "Review and sign" : "Reset my password";
+  const isTemporaryPassword = kind === "temporaryPassword";
+  const buttonLabel = kind === "onboarding" ? "Set up my account" : kind === "retainer" ? "Review and sign" : isTemporaryPassword ? "Sign in" : "Reset my password";
   const phone = String(agency?.phone || "").trim();
   const email = String(supportEmail || agency?.email || "").trim();
   const phoneHref = phone.replace(/[^\d+]/g, "");
@@ -91,6 +98,17 @@ export function accountAccessEmailContent({
   const helpHtml = helpItems.length
     ? `<p style="margin:8px 0 0;color:#64748b;font-size:12px;line-height:1.6">Need help? ${helpItems.join(" &nbsp;·&nbsp; ")}</p>`
     : "";
+  // A temporary password isn't a one-time link — it's a credential that sits
+  // in this inbox until the client signs in and changes it. Shown as a
+  // monospace block instead of the usual click-through button, with a
+  // matching disclaimer (no "use this link only once" line, since there is
+  // no link).
+  const bodyHtml = isTemporaryPassword
+    ? `<tr><td style="padding:18px 34px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px"><tr><td style="padding:16px 20px"><p style="margin:0 0 6px;color:#64748b;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Temporary password</p><p style="margin:0;color:#0f172a;font-size:20px;font-weight:750;letter-spacing:.04em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">${escapeHtml(password)}</p></td></tr></table></td></tr>
+      <tr><td style="padding:18px 34px 0"><a href="${escapeHtml(loginUrl)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(buttonLabel)} &nbsp;→</a></td></tr>
+      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">You can change this password anytime once you're signed in. If you did not request this message, contact your case team.</p></td></tr>`
+    : `<tr><td style="padding:18px 34px 0"><a href="${escapeHtml(actionLink)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(buttonLabel)} &nbsp;→</a></td></tr>
+      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">For your security, use this link only once. If you did not request this message, you can safely ignore it.</p></td></tr>`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(subject)}</title></head>
@@ -102,8 +120,7 @@ export function accountAccessEmailContent({
         <h1 style="margin:0;color:#0f172a;font-size:24px;line-height:1.3;letter-spacing:-.03em;font-weight:750">${escapeHtml(subject)}</h1>
         <p style="margin:14px 0 0;color:#475569;font-size:16px;line-height:1.65">Hi ${escapeHtml(contactName)},<br>${escapeHtml(copy.intro)}</p>
       </td></tr>
-      <tr><td style="padding:18px 34px 0"><a href="${escapeHtml(actionLink)}" style="display:inline-block;border-radius:999px;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 22px;font-size:14px;font-weight:750">${escapeHtml(buttonLabel)} &nbsp;→</a></td></tr>
-      <tr><td style="padding:28px 34px 34px"><p style="margin:0;color:#64748b;font-size:13px;line-height:1.6">For your security, use this link only once. If you did not request this message, you can safely ignore it.</p></td></tr>
+      ${bodyHtml}
       <tr><td style="padding:23px 34px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;color:#334155;font-size:13px;font-weight:700">${escapeHtml(agencyName)}</p>${helpHtml}</td></tr>
     </table>
     <p style="margin:18px 0 0;color:#94a3b8;font-size:11px">Sent securely by CaseDesk</p>
@@ -111,19 +128,34 @@ export function accountAccessEmailContent({
 </body></html>`;
 
   const agencyContact = [phone, email].filter(Boolean).join(" · ");
-  const text = [
-    subject,
-    "",
-    `Hi ${contactName},`,
-    copy.intro,
-    "",
-    actionLink,
-    "",
-    "For your security, use this link only once. If you did not request this message, you can safely ignore it.",
-    "",
-    agencyName,
-    agencyContact || null,
-  ].filter((line) => line !== null).join("\n");
+  const text = isTemporaryPassword
+    ? [
+        subject,
+        "",
+        `Hi ${contactName},`,
+        copy.intro,
+        "",
+        `Temporary password: ${password}`,
+        loginUrl,
+        "",
+        "You can change this password anytime once you're signed in. If you did not request this message, contact your case team.",
+        "",
+        agencyName,
+        agencyContact || null,
+      ].filter((line) => line !== null).join("\n")
+    : [
+        subject,
+        "",
+        `Hi ${contactName},`,
+        copy.intro,
+        "",
+        actionLink,
+        "",
+        "For your security, use this link only once. If you did not request this message, you can safely ignore it.",
+        "",
+        agencyName,
+        agencyContact || null,
+      ].filter((line) => line !== null).join("\n");
 
   return { subject, html, text };
 }
@@ -134,7 +166,7 @@ export function accountAccessEmailContent({
 // connected mailbox and can silently fail). generateAuthLink() only ever
 // returns a link; nothing is emailed unless this function does it, via the
 // agency's own mail config.
-export async function sendAccountAccessEmail({ agencyId, email, fullName, actionLink, kind, audience = "client" }) {
+export async function sendAccountAccessEmail({ agencyId, email, fullName, actionLink, password, loginUrl, kind, audience = "client" }) {
   const [agency, config] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, phone: true, email: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true } }),
     resolveAgencyMailConfig(agencyId),
@@ -155,6 +187,8 @@ export async function sendAccountAccessEmail({ agencyId, email, fullName, action
     agency,
     fullName,
     actionLink,
+    password,
+    loginUrl,
     kind,
     audience,
     supportEmail: senderAddress(config.from) || agency?.email,
