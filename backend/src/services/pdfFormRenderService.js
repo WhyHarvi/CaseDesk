@@ -1,7 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { randomUUID } from "node:crypto";
-import { readFieldValue, REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
+import { APPLICANT_SIGNATURE, readFieldValue, REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
 
 const TRUE_VALUES = new Set(["true", "1", "yes", "on", "checked", "x"]);
 
@@ -79,7 +79,9 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
         return annotationLeft < right && annotationRight > left && annotationBottom < top && annotationTop > bottom;
       });
       const existingDate = String((await readFieldValue(document, REPRESENTATIVE_SIGNATURE.dateFieldId)) || "").trim();
-      if (!existingDate) document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: new Date().toISOString().slice(0, 10) });
+      const signedDate = existingDate || new Date().toISOString().slice(0, 10);
+      document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
+      document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });
       if (!alreadySigned) {
         document.annotationStorage.setValue(
           `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
@@ -118,7 +120,7 @@ export async function rebuildImm5476FromOriginal(sourceBuffer, originalBuffer) {
     const fields = await sourceDocument.getFieldObjects();
     for (const entries of Object.values(fields || {})) {
       for (const field of entries) {
-        if (!field?.id || field.id === REPRESENTATIVE_SIGNATURE.dateFieldId) continue;
+        if (!field?.id || field.id === REPRESENTATIVE_SIGNATURE.dateFieldId || field.id === APPLICANT_SIGNATURE.dateFieldId) continue;
         const value = field.value;
         if (value === null || value === undefined || value === "") continue;
         originalDocument.annotationStorage.setValue(field.id, { value });

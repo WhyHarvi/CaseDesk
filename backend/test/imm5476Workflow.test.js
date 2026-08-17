@@ -64,7 +64,7 @@ test("opening IMM 5476 applies the selected representative's saved signature and
   assert.match(controller, /representativeUser: \{ select: \{ fullName: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
   assert.match(controller, /stampXfaPdfFormValues\([\s\S]*preparedBuffer,[\s\S]*"547R": true/);
   assert.match(renderer, /const alreadySigned = annotations\.some/);
-  assert.match(renderer, /if \(!existingDate\) document\.annotationStorage\.setValue/);
+  assert.match(renderer, /const signedDate = existingDate \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/);
   assert.match(renderer, /if \(!alreadySigned\)/);
 });
 
@@ -103,8 +103,15 @@ test("changing representatives removes a prior representative's embedded signatu
   assert.match(controller, /const embeddedSigner = await imm5476RepresentativeSignatureName\(storedBuffer\)/);
   assert.match(controller, /copyType: "Original"/);
   assert.match(controller, /rebuildImm5476FromOriginal\(storedBuffer, originalBuffer\)/);
-  assert.match(renderer, /field\.id === REPRESENTATIVE_SIGNATURE\.dateFieldId/);
+  assert.match(renderer, /field\.id === REPRESENTATIVE_SIGNATURE\.dateFieldId \|\| field\.id === APPLICANT_SIGNATURE\.dateFieldId/);
   assert.match(renderer, /originalDocument\.annotationStorage\.setValue\(field\.id, \{ value \}\)/);
+});
+
+test("preparing IMM 5476 fills the date beside both representative and client signatures", async () => {
+  const renderer = await source("../src/services/pdfFormRenderService.js");
+  assert.match(renderer, /const signedDate = existingDate \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/);
+  assert.match(renderer, /setValue\(REPRESENTATIVE_SIGNATURE\.dateFieldId, \{ value: signedDate \}\)/);
+  assert.match(renderer, /setValue\(APPLICANT_SIGNATURE\.dateFieldId, \{ value: signedDate \}\)/);
 });
 
 test("opening a form reloads the authoritative representative and overwrites stale embedded representative names", async () => {
