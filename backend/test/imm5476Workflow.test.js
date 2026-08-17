@@ -82,6 +82,19 @@ test("IMM 5476 contains signatures at their natural aspect ratio and retraces le
   assert.match(controller, /traceSignatureImageToStrokes/);
 });
 
+test("representative setup opens the newly updated IMM 5476 without a stale cached form", async () => {
+  const [controller, overlay, workspace] = await Promise.all([
+    source("../src/controllers/caseFormController.js"),
+    source("../../frontend/src/components/case-profile/FormFieldChecklistOverlay.jsx"),
+    source("../../frontend/src/components/case-profile/CaseFormsWorkspace.jsx"),
+  ]);
+  assert.match(controller, /Cache-Control", "private, no-store"/);
+  assert.match(overlay, /setCurrentItem\(\(current\) => \(\{ \.\.\.current, \.\.\.response\.data\.data \}\)\)/);
+  assert.match(overlay, /onOpenForm\(currentItem\)/);
+  assert.match(workspace, /const imm5476 = returned\.find\(isImm5476Form\)/);
+  assert.match(workspace, /onOpenForm=\{openFormFromSetup\}/);
+});
+
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {
   const [portal, signer, pad] = await Promise.all([
     source("../../frontend/src/pages/client-portal/ClientPortalQuestionnaires.jsx"),

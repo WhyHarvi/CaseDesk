@@ -81,7 +81,7 @@ function FieldRow({ field, onSave, saving }) {
   );
 }
 
-export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFormChanged }) {
+export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFormChanged, onOpenForm }) {
   const [checklist, setChecklist] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -99,6 +99,8 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [signatureMessage, setSignatureMessage] = useState("");
   const [signatureSending, setSignatureSending] = useState(false);
+  const [representativeSaving, setRepresentativeSaving] = useState(false);
+  const [currentItem, setCurrentItem] = useState(item);
 
   const isImm5476 = String(item.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
 
@@ -122,6 +124,7 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
   }
 
   useEffect(() => {
+    setCurrentItem(item);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
@@ -172,13 +175,17 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
 
   async function changeRepresentative(representativeUserId) {
     try {
+      setRepresentativeSaving(true);
       setError("");
       const response = await api.patch(`/case-forms/${item.id}/representative`, { representativeUserId: representativeUserId || null });
+      setCurrentItem((current) => ({ ...current, ...response.data.data }));
       await onFormChanged?.(response.data.data);
       await load();
-      setNotice(representativeUserId ? "Representative selected. Close this panel and open the form to apply their information." : "Representative removed from this form.");
+      setNotice(representativeUserId ? "Representative selected. Open the form to apply their latest saved information." : "Representative removed from this form.");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Unable to set the representative.");
+    } finally {
+      setRepresentativeSaving(false);
     }
   }
 
@@ -287,6 +294,7 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
                 <UserRoundCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <select
                   value={checklist.representativeUserId || ""}
+                  disabled={representativeSaving}
                   onChange={(event) => changeRepresentative(event.target.value)}
                   className="h-10 w-full appearance-none rounded-xl border border-slate-200 bg-white py-0 pl-9 pr-9 text-sm font-medium text-slate-700 outline-none transition hover:border-slate-300 focus:border-violet-300 focus:ring-4 focus:ring-violet-100"
                 >
@@ -419,8 +427,19 @@ export default function FormFieldChecklistOverlay({ item, caseId, onClose, onFor
         </main>
 
         {isImm5476 && checklist?.available === false ? (
-          <footer className="flex justify-end border-t border-slate-100 px-5 py-4">
+          <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4">
             <button type="button" onClick={onClose} className="rounded-full bg-slate-950 px-5 py-2.5 text-xs font-semibold text-white">Done</button>
+            {onOpenForm ? (
+              <button
+                type="button"
+                onClick={() => onOpenForm(currentItem)}
+                disabled={representativeSaving || !checklist?.representativeUserId || !currentItem?.storageKey}
+                className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                Open form
+              </button>
+            ) : null}
           </footer>
         ) : <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-5 py-4">
           <button

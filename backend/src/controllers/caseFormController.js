@@ -428,6 +428,7 @@ export async function serveCaseFormFile(req, res) {
   const buffer = isImm5476 && hasSavedSignature
     ? await stampXfaPdfFormValues(storedBuffer, [], { "547R": true }, { strokes: signatureStrokes, name: representative.fullName })
     : storedBuffer;
+  res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");
   res.send(buffer);

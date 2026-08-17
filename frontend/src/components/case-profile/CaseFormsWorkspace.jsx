@@ -1673,6 +1673,11 @@ export default function CaseFormsWorkspace({
     await load();
   }
 
+  async function openFormFromSetup(updatedForm) {
+    setChecklistTarget(null);
+    await openStored(updatedForm);
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -1761,6 +1766,8 @@ export default function CaseFormsWorkspace({
         ),
       ]);
       setAddOpen(false);
+      const imm5476 = returned.find(isImm5476Form);
+      if (imm5476) setChecklistTarget(imm5476);
     } catch (requestError) {
       setError(
         requestError.response?.data?.message || "Unable to assign forms.",
@@ -2727,6 +2734,7 @@ export default function CaseFormsWorkspace({
           caseId={caseId}
           onClose={() => setChecklistTarget(null)}
           onFormChanged={refreshChangedForm}
+          onOpenForm={openFormFromSetup}
         />
       ) : null}
       {mappingTarget ? (
