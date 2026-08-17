@@ -5,9 +5,15 @@ import { getLeadDashboard } from "../src/modules/leads/lead.dashboard.service.js
 
 test("lead reporting uses the agency-local day and Monday week boundary", () => {
   const bounds = reportingBounds(new Date("2026-07-14T15:00:00Z"), "America/Toronto");
+  assert.equal(bounds.previousDayStart.toISOString(), "2026-07-13T04:00:00.000Z");
   assert.equal(bounds.todayStart.toISOString(), "2026-07-14T04:00:00.000Z");
   assert.equal(bounds.tomorrowStart.toISOString(), "2026-07-15T04:00:00.000Z");
+  assert.equal(bounds.previousWeekStart.toISOString(), "2026-07-06T04:00:00.000Z");
   assert.equal(bounds.weekStart.toISOString(), "2026-07-13T04:00:00.000Z");
+  assert.equal(bounds.twoMonthsAgoStart.toISOString(), "2026-05-01T04:00:00.000Z");
+  assert.equal(bounds.previousMonthStart.toISOString(), "2026-06-01T04:00:00.000Z");
+  assert.equal(bounds.monthStart.toISOString(), "2026-07-01T04:00:00.000Z");
+  assert.equal(bounds.nextMonthStart.toISOString(), "2026-08-01T04:00:00.000Z");
 });
 
 test("overall conversion rate is stable and safe for an empty funnel", () => {

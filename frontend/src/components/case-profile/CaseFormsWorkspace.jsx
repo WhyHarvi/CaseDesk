@@ -1674,7 +1674,12 @@ export default function CaseFormsWorkspace({
           api.get(`/case-forms?caseId=${caseId}`),
           api.get(`/case-forms/catalog?caseId=${caseId}`),
           api.get("/form-templates?limit=100"),
-          api.get("/settings/agency-profile").catch(() => null),
+          // Not /settings/agency-profile — that endpoint is admin-only, and
+          // any consultant can be picked as a form's representative. Using
+          // the admin-gated one meant a consultant representative's forms
+          // silently got a blank office address/phone while an admin
+          // representative's forms were fine.
+          api.get("/account/agency-office-contact").catch(() => null),
         ]);
       setForms(formsResponse.data.data || []);
       setPermissions(formsResponse.data.meta?.permissions || {});

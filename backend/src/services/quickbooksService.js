@@ -517,6 +517,12 @@ export async function listQuickBooksTaxCodes(agencyId) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export async function getQuickBooksSalesTaxStatus(agencyId) {
+  const payload = await qboRequest(agencyId, { path: "/preferences" });
+  const usingSalesTax = payload.Preferences?.TaxPrefs?.UsingSalesTax;
+  return { usingSalesTax: typeof usingSalesTax === "boolean" ? usingSalesTax : null };
+}
+
 // Batched refresh for the invoices already known to CaseDesk — one round
 // trip regardless of how many invoices a case has accumulated. Note:
 // InvoiceLink is not a queryable column in QBO's SQL-like Query API (only

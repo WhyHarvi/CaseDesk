@@ -52,6 +52,7 @@ export default function ChatThread({
   savingEdit,
   typing = false,
   typingLabel = "Typing",
+  renderTyping,
   showDeliveryStatus = true,
   theirAvatar,
   renderMessageBody,
@@ -152,15 +153,17 @@ export default function ChatThread({
           </div>
         ))}
         {typing ? (
-          <div className="flex items-end gap-2">
-            {theirAvatar || null}
-            <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-cyan-100 bg-white px-4 py-3 text-slate-500 shadow-sm">
-              <span className="flex items-center gap-1" aria-hidden="true">
-                {[0, 1, 2].map((index) => <span key={index} className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-500" style={{ animationDelay: `${index * 120}ms` }} />)}
-              </span>
-              <span className="text-[11px] font-semibold">{typingLabel}</span>
+          renderTyping ? renderTyping() : (
+            <div className="flex items-end gap-2">
+              {theirAvatar || null}
+              <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-slate-200 bg-white px-4 py-3 text-slate-500 shadow-sm">
+                <span className="flex items-center gap-1" aria-hidden="true">
+                  {[0, 1, 2].map((index) => <span key={index} className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" style={{ animationDelay: `${index * 120}ms` }} />)}
+                </span>
+                <span className="text-[11px] font-semibold">{typingLabel}</span>
+              </div>
             </div>
-          </div>
+          )
         ) : null}
       </div>
     </div>

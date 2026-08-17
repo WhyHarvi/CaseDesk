@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { caseRegisterWhere } from "../src/controllers/caseController.js";
-import { assertNoContactDuplicate, normalizeContact } from "../src/services/contactDuplicateService.js";
+import { assertNoContactDuplicate, normalizeContact, normalizeContactMatchInput } from "../src/services/contactDuplicateService.js";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
@@ -12,6 +12,17 @@ test("client contact normalization detects equivalent phone and email formats", 
   assert.equal(first.phoneNormalized, "+14165550100");
   assert.equal(first.phoneNormalized, second.phoneNormalized);
   assert.equal(first.emailNormalized, second.emailNormalized);
+});
+
+test("live client-match normalization ignores incomplete contact input", () => {
+  assert.deepEqual(normalizeContactMatchInput({ phone: "416", email: "person@" }), {
+    phoneNormalized: null,
+    emailNormalized: null,
+  });
+  assert.deepEqual(normalizeContactMatchInput({ phone: "(416) 555-0100", email: " PERSON@EXAMPLE.CA " }), {
+    phoneNormalized: "+14165550100",
+    emailNormalized: "person@example.ca",
+  });
 });
 
 test("duplicate checks cover both existing clients and active leads", async () => {

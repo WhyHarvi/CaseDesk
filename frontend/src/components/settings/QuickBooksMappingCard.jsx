@@ -319,8 +319,9 @@ function ItemPicker({ slotKey, mapping, items, accounts, onSaved }) {
   );
 }
 
-function TaxCodePicker({ mapping, taxCodes, onSaved }) {
+function TaxCodePicker({ mapping, taxCodes, usingSalesTax, onSaved, onTaxCodesReloaded }) {
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
 
   async function choose(event) {
@@ -337,6 +338,18 @@ function TaxCodePicker({ mapping, taxCodes, onSaved }) {
     }
   }
 
+  async function checkAgain() {
+    setChecking(true);
+    setError("");
+    try {
+      onTaxCodesReloaded(await getQuickBooksTaxCodes());
+    } catch (reason) {
+      setError(reason.response?.data?.message || "QuickBooks sales-tax settings could not be checked.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
   return (
     <div className="flex items-start gap-3">
       <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
@@ -345,15 +358,27 @@ function TaxCodePicker({ mapping, taxCodes, onSaved }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-semibold text-slate-900">Sales tax</p>
-            <p className="text-xs text-slate-500">Choose the QuickBooks HST/GST code used for taxable professional and consultation fees.</p>
+            <p className="text-sm font-semibold text-slate-900">QuickBooks tax code</p>
+            <p className="text-xs text-slate-500">Maps taxable case invoices to the HST/GST code already configured in QuickBooks.</p>
           </div>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : null}
+          {saving || checking ? <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> : null}
         </div>
-        <Select value={mapping.taxableTaxCodeId || ""} onChange={choose} disabled={saving} className="mt-2.5 w-full" ariaLabel="QuickBooks sales-tax code">
-          <option value="">Choose a QuickBooks sales-tax code…</option>
+        <Select value={mapping.taxableTaxCodeId || ""} onChange={choose} disabled={saving || checking || !taxCodes.length} className="mt-2.5 w-full" ariaLabel="QuickBooks sales-tax code">
+          <option value="">{taxCodes.length ? "Choose a QuickBooks sales-tax code…" : "No QuickBooks sales-tax codes available"}</option>
           {taxCodes.map((taxCode) => <option key={taxCode.id} value={taxCode.id}>{taxCode.name}</option>)}
         </Select>
+        {!taxCodes.length ? (
+          <div className="mt-2.5 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-xs text-amber-900" role="status">
+            <p className="font-semibold">{usingSalesTax === false ? "Sales tax is turned off in the connected QuickBooks company." : "QuickBooks returned no selectable sales-tax codes."}</p>
+            <p className="mt-1 leading-5">In QuickBooks, open <span className="font-semibold">All apps → Sales Tax → Overview</span> and complete the Ontario sales-tax setup. Then return here and check again.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={checkAgain} disabled={checking} className="inline-flex h-8 items-center gap-1.5 rounded-full bg-amber-900 px-3 text-[11px] font-semibold text-white transition hover:bg-amber-800 disabled:opacity-60">
+                {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}{checking ? "Checking…" : "Check again"}
+              </button>
+              <a href="https://quickbooks.intuit.com/learn-support/en-ca/help-article/sales-taxes/set-use-sales-tax-quickbooks-online/L4Lx8eL7V_CA_en_CA" target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-amber-800 underline decoration-amber-400 underline-offset-2">QuickBooks setup guide</a>
+            </div>
+          </div>
+        ) : null}
         {error ? <p className="mt-1.5 text-xs text-rose-600">{error}</p> : null}
       </div>
     </div>
@@ -552,17 +577,19 @@ export default function QuickBooksMappingCard() {
   const [items, setItems] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [taxCodes, setTaxCodes] = useState(null);
+  const [usingSalesTax, setUsingSalesTax] = useState(null);
   const [mapping, setMapping] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
     Promise.all([getQuickBooksItems(), getQuickBooksAccounts(), getQuickBooksTaxCodes(), getQuickBooksMapping()])
-      .then(([itemRows, accountRows, taxCodeRows, mappingRow]) => {
+      .then(([itemRows, accountRows, taxCodeResult, mappingRow]) => {
         if (!active) return;
         setItems(itemRows);
         setAccounts(accountRows);
-        setTaxCodes(taxCodeRows);
+        setTaxCodes(taxCodeResult.taxCodes);
+        setUsingSalesTax(taxCodeResult.usingSalesTax);
         setMapping(mappingRow);
       })
       .catch((reason) => active && setError(reason.response?.data?.message || "QuickBooks items could not be loaded."))
@@ -596,7 +623,13 @@ export default function QuickBooksMappingCard() {
           <ItemPicker slotKey="fee" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="disbursement" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <ItemPicker slotKey="consult" mapping={mapping} items={items} accounts={accounts} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
-          <TaxCodePicker mapping={mapping} taxCodes={taxCodes} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
+          <TaxCodePicker
+            mapping={mapping}
+            taxCodes={taxCodes}
+            usingSalesTax={usingSalesTax}
+            onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))}
+            onTaxCodesReloaded={(result) => { setTaxCodes(result.taxCodes); setUsingSalesTax(result.usingSalesTax); }}
+          />
           <RefundFeeRateField mapping={mapping} onSaved={(patch) => setMapping((m) => ({ ...m, ...patch }))} />
           <AdditionalFeeCategories items={items} />
         </div>

@@ -174,7 +174,7 @@ export function leadSearchWhere(search) {
 }
 
 export async function listLeads(req) {
-  const { page, limit, search, status, stage, segment, sourceId, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
+  const { page, limit, search, status, stage, segment, sourceId, ownerUserId, includeConverted, sortBy, sortDirection, month, createdToday, uncontacted, convertedThisWeek, lostThisWeek } = parseLeadListQuery(req.query);
 
   // Only computed when a date-scoped dashboard flag is present — same
   // bounds getLeadDashboard() uses, so a stat card's count and this list
@@ -197,9 +197,10 @@ export async function listLeads(req) {
     // pipeline, not literally every record — a converted lead is done and
     // shouldn't keep cluttering the default list. Still fully visible by
     // explicitly filtering to Converted.
-    ...(status ? { status } : { status: { not: "CONVERTED" } }),
+    ...(status ? { status } : includeConverted ? {} : { status: { not: "CONVERTED" } }),
     ...(stage ? { stage } : {}),
     ...(sourceId ? { originalSourceId: sourceId } : {}),
+    ...(ownerUserId ? { ownerUserId } : {}),
     ...(month ? { inquiryDate: { gte: new Date(Date.UTC(month.year, month.month - 1, 1)), lt: new Date(Date.UTC(month.month === 12 ? month.year + 1 : month.year, month.month === 12 ? 0 : month.month, 1)) } } : {}),
     ...(createdToday ? { createdAt: { gte: bounds.todayStart, lt: bounds.tomorrowStart } } : {}),
     ...(uncontacted ? { firstContactAt: null } : {}),

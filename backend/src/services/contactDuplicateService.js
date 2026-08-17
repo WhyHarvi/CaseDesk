@@ -12,6 +12,23 @@ export function normalizeContact({ phone, email }) {
   };
 }
 
+// Intake forms call this while a person is still typing. A complete valid
+// contact value is normalized exactly like createClient; incomplete values
+// are ignored instead of turning ordinary keystrokes into validation errors.
+export function normalizeContactMatchInput({ phone, email }) {
+  let phoneNormalized = null;
+  let emailNormalized = null;
+  if (String(phone || "").trim()) {
+    try { phoneNormalized = normalizeContact({ phone }).phoneNormalized; }
+    catch { phoneNormalized = null; }
+  }
+  if (String(email || "").trim()) {
+    try { emailNormalized = normalizeContact({ email }).emailNormalized; }
+    catch { emailNormalized = null; }
+  }
+  return { phoneNormalized, emailNormalized };
+}
+
 function contactWhere(phoneNormalized, emailNormalized) {
   const OR = [
     ...(phoneNormalized ? [{ phoneNormalized }] : []),

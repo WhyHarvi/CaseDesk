@@ -6,6 +6,7 @@ import {
   buildOAuthState,
   createQuickBooksItem,
   exchangeAuthorizationCode,
+  getQuickBooksSalesTaxStatus,
   listQuickBooksAccounts,
   listQuickBooksItems,
   listQuickBooksTaxCodes,
@@ -85,8 +86,13 @@ export async function getQuickBooksAccounts(req, res) {
 }
 
 export async function getQuickBooksTaxCodes(req, res) {
-  const taxCodes = await listQuickBooksTaxCodes(req.auth.agencyId);
-  res.json({ data: taxCodes });
+  const [taxCodes, taxStatus] = await Promise.all([
+    listQuickBooksTaxCodes(req.auth.agencyId),
+    getQuickBooksSalesTaxStatus(req.auth.agencyId).catch(() => ({ usingSalesTax: null })),
+  ]);
+  // Keep `data` as the existing array so older clients remain compatible;
+  // the status is additive metadata used to explain an empty dropdown.
+  res.json({ data: taxCodes, meta: taxStatus });
 }
 
 export async function createQuickBooksMappingItem(req, res) {

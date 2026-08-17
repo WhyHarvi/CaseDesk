@@ -762,8 +762,8 @@ test("free follow-up consultations require a prior settled booking and a 15-minu
   assert.match(portalController, /durationMinutes: 15/);
   assert.doesNotMatch(portalOffer, /getPublicBookingInfo/);
   assert.match(portalOffer, /booking\.freeFollowUpOffer/);
-  assert.match(calendar, /no prior paid consultation on file/);
-  assert.match(calendar, /only with a 15-minute appointment type/);
+  assert.match(calendar, /Eligible for a free 15-minute follow-up/);
+  assert.match(calendar, /choose a 15-minute appointment type to apply it/);
 });
 
 test("staff can't pick a free-named session type for a contact who hasn't earned it yet", async () => {
@@ -783,12 +783,12 @@ test("staff can't pick a free-named session type for a contact who hasn't earned
   assert.match(calendar, /if \(current && isFreeNamedType\(current\) && !contactVerifiedFreeEligible\) \{/);
   assert.match(calendar, /setForm\(\(c\) => \(\{ \.\.\.c, sessionTypeId: "" \}\)\);/);
 
-  // The "not eligible" banners are now impossible to miss and say plainly
-  // that the fee still applies, instead of a neutral note easy to skim
-  // past next to a "Skip" button.
-  assert.match(calendar, /bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle/);
-  assert.match(calendar, /Not eligible for a free follow-up — this contact has no prior paid consultation on file/);
-  assert.match(calendar, /Free follow-up limit reached .* — the .*consultation fee applies/);
+  // Eligibility remains enforced by the locked session type, while the form
+  // only calls attention to the positive, actionable state.
+  assert.match(calendar, /freeEligibility\?\.enabled && freeEligibility\.contactEligible/);
+  assert.match(calendar, /border-emerald-200 bg-emerald-50/);
+  assert.doesNotMatch(calendar, /Not eligible for a free follow-up/);
+  assert.doesNotMatch(calendar, /Free follow-up limit reached/);
 });
 
 test("the public widget hides the free 15-minute follow-up from visitors who haven't verified through the portal", async () => {

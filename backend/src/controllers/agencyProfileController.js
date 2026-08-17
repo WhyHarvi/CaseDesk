@@ -123,6 +123,34 @@ function publicAgency(agency, stats = undefined) {
   };
 }
 
+const officeContactSelect = {
+  name: true,
+  address: true,
+  addressUnit: true,
+  city: true,
+  province: true,
+  country: true,
+  postalCode: true,
+  phone: true,
+  email: true,
+  faxNumber: true,
+};
+
+// Unlike getAgencyProfile (admin-only — business/tax numbers, owner contact
+// details), this returns only the office-contact fields that are printed on
+// government forms like IMM 5476. Any authenticated staff member can be
+// picked as a form's representative, not just admins, so this has to be
+// reachable by consultants too — mounted under /api/account (requireAuth
+// only) rather than /api/settings (requireRole("admin")). Without this, a
+// consultant representative's forms would show a blank office address/phone
+// while an admin representative's forms showed it correctly, purely because
+// of the admin-gated endpoint the case-forms workspace used to call.
+export async function getAgencyOfficeContact(req, res) {
+  const agency = await prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: officeContactSelect });
+  if (!agency) throw createHttpError(404, "Agency not found.", "NOT_FOUND");
+  res.json({ data: agency });
+}
+
 export async function getAgencyProfile(req, res) {
   const [agency, stats] = await Promise.all([
     prisma.agency.findUnique({ where: { id: req.auth.agencyId }, select: agencySelect }),

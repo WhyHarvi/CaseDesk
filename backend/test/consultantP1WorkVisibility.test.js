@@ -135,7 +135,7 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   // Admins get the new team activity report; the personal per-consultant
   // view (out of scope for this redesign) is unchanged.
   assert.match(page, /isAdmin \? `\/workload\/team\?period=\$\{period\}` : "\/consultants\/me\/workload"/);
-  assert.match(page, /title=\{isAdmin \? "Team Workload" : "My Workload"\}/);
+  assert.match(page, />\{isAdmin \? "Team Workload" : "My Workload"\}<\/h1>/);
   assert.match(page, /Unassigned work needs an owner/);
   assert.match(rosterTable, /Your team/);
   assert.match(page, /Open Leads/);

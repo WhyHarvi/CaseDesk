@@ -19,6 +19,8 @@ async function representativeUser(req) {
       representativeType: true,
       membershipBody: true,
       membershipProvince: true,
+      formOfficePhone: true,
+      formOfficeEmail: true,
       formSignatureImage: true,
       formSignatureStrokes: true,
       formSignatureUpdatedAt: true,
@@ -35,6 +37,8 @@ function publicSignature(user) {
     representativeType: user.representativeType || "Paid",
     membershipBody: user.membershipBody || "College of Immigration and Citizenship Consultants (CICC)",
     membershipProvince: user.membershipProvince || "",
+    formOfficePhone: user.formOfficePhone || "",
+    formOfficeEmail: user.formOfficeEmail || "",
     hasSignature: Boolean(user.formSignatureImage && user.formSignatureStrokes),
     signatureImage: user.formSignatureImage || null,
     updatedAt: user.formSignatureUpdatedAt || null,
@@ -47,6 +51,15 @@ export async function getMyFormSignature(req, res) {
 
 function clean(value, max) {
   return String(value || "").trim().slice(0, max) || null;
+}
+
+function cleanEmail(value, field) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw createHttpError(400, `Enter a valid ${field}, or leave it blank to use the agency's office email.`, "VALIDATION_ERROR");
+  }
+  return normalized;
 }
 
 export async function updateMyRepresentativeProfile(req, res) {
@@ -62,8 +75,14 @@ export async function updateMyRepresentativeProfile(req, res) {
       representativeType,
       membershipBody: clean(req.body?.membershipBody, 160),
       membershipProvince: clean(req.body?.membershipProvince, 80),
+      // Explicit per-representative override for the government-form office
+      // phone/email. Left blank, the form falls back to the agency's shared
+      // office phone/email so every representative shows the same contact
+      // by default — see imm5476.js.
+      formOfficePhone: clean(req.body?.formOfficePhone, 40),
+      formOfficeEmail: cleanEmail(req.body?.formOfficeEmail, "office email"),
     },
-    select: { fullName: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
+    select: { fullName: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
   });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "government_form.representative_profile_updated", details: "Representative credentials updated", entityType: "user", entityId: req.auth.userId });
   res.json({ data: publicSignature(user) });

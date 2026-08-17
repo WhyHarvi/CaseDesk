@@ -122,7 +122,9 @@ export function parseUpdateLeadDetails(body = {}) {
 export function parseLeadListQuery(query = {}) {
   const page = Math.max(Number(query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
-  const status = query.status ? enumValue(query.status, "status", LEAD_STATUSES) : null;
+  const requestedStatus = String(query.status || "").trim().toUpperCase();
+  const includeConverted = requestedStatus === "ALL";
+  const status = requestedStatus && !includeConverted ? enumValue(requestedStatus, "status", LEAD_STATUSES) : null;
   const stage = query.stage ? enumValue(query.stage, "stage", LEAD_STAGES) : null;
   const segment = enumValue(query.segment, "segment", ["STANDARD", "IMPORT_REVIEW"], "STANDARD");
   const sortBy = ["createdAt", "updatedAt", "nextActionAt", "leadNumber", "inquiryDate"].includes(query.sortBy) ? query.sortBy : "createdAt";
@@ -139,8 +141,10 @@ export function parseLeadListQuery(query = {}) {
     sortBy,
     sortDirection,
     month,
+    includeConverted,
     search: text(query.search, "search", { max: 200 }) || "",
     sourceId: text(query.sourceId, "sourceId", { max: 100 }),
+    ownerUserId: text(query.ownerUserId, "ownerUserId", { max: 100 }),
     // Dashboard drill-down flags — match reportingBounds()'s day/week windows
     // exactly so a stat card's count and its linked list always agree.
     createdToday: query.createdToday === "true",

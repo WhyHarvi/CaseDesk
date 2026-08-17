@@ -13,6 +13,7 @@ import {
   assertNoContactDuplicate,
   lockAgencyContactIntake,
   normalizeContact,
+  normalizeContactMatchInput,
 } from "../services/contactDuplicateService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { notifyUsers } from "../services/notificationService.js";
@@ -709,6 +710,48 @@ export async function listClients(req, res) {
     };
   });
   res.json({ data: enriched, meta: { page, limit, total } });
+}
+
+export async function findClientContactMatches(req, res) {
+  const { phoneNormalized, emailNormalized } = normalizeContactMatchInput({
+    phone: String(req.query.phone || "").slice(0, 40),
+    email: String(req.query.email || "").slice(0, 320),
+  });
+  const contact = [
+    ...(phoneNormalized ? [{ phoneNormalized }] : []),
+    ...(emailNormalized ? [{ emailNormalized }] : []),
+  ];
+  if (!contact.length) return res.json({ data: [] });
+
+  const clients = await prisma.client.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      AND: [clientAccessWhere(req), { OR: contact }],
+    },
+    select: {
+      id: true,
+      clientNumber: true,
+      fullName: true,
+      email: true,
+      emailNormalized: true,
+      phone: true,
+      phoneNormalized: true,
+      status: true,
+      archivedAt: true,
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 5,
+  });
+  res.json({
+    data: clients.map((client) => ({
+      ...client,
+      matchedBy: [
+        client.emailNormalized === emailNormalized ? "email" : null,
+        client.phoneNormalized === phoneNormalized ? "phone" : null,
+      ].filter(Boolean),
+      canBookAppointment: !client.archivedAt,
+    })),
+  });
 }
 
 export function clientPayload(body, existing = null) {

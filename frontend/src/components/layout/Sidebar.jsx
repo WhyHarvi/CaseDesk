@@ -128,6 +128,7 @@ const adminNavigation = [
     icon: Gauge,
     description: "Capacity and assignments",
     disabled: false,
+    badgeKey: "workload",
   },
   {
     label: "Payments",
@@ -200,6 +201,7 @@ const memberNavigation = [
     to: "/app/workload",
     icon: Gauge,
     accessKey: "workload",
+    badgeKey: "workload",
   },
   {
     label: "Payments",

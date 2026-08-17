@@ -163,7 +163,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   }, []);
 
   const pageCount = Math.max(Math.ceil(meta.total / meta.limit), 1);
-  const hasFilters = ["search", "status", "stage", "sourceId", "month"].some((key) => params.get(key));
+  const hasFilters = ["search", "status", "stage", "sourceId", "ownerUserId", "month"].some((key) => params.get(key));
   const range = useMemo(() => meta.total ? `${(meta.page - 1) * meta.limit + 1}–${Math.min(meta.page * meta.limit, meta.total)} of ${meta.total}` : "0 leads", [meta]);
 
   // Last 18 months plus the current one — comfortably covers both imported
@@ -287,9 +287,10 @@ export default function LeadsPage({ segment = "STANDARD" }) {
             </form>
             <div className="flex shrink-0 flex-wrap items-center gap-2 lg:flex-nowrap">
               <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-slate-400"><SlidersHorizontal className="h-3.5 w-3.5" />Filters</span>
-              <LeadFilterMenu label="Status" value={params.get("status") || ""} options={LEAD_STATUSES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(status) => updateParams({ status })} icon={CircleDot} allLabel="All except converted" />
+              <LeadFilterMenu label="Status" value={params.get("status") || ""} options={[{ value: "ALL", label: "All including converted" }, ...LEAD_STATUSES.map((item) => ({ value: item, label: humanize(item) }))]} onChange={(status) => updateParams({ status })} icon={CircleDot} allLabel="All except converted" />
               <LeadFilterMenu label="Stage" value={params.get("stage") || ""} options={LEAD_STAGES.map((item) => ({ value: item, label: humanize(item) }))} onChange={(stage) => updateParams({ stage })} icon={Layers3} allLabel="All stages" />
               <LeadFilterMenu label="Source" value={params.get("sourceId") || ""} options={sources.map((source) => ({ value: source.id, label: source.name }))} onChange={(sourceId) => updateParams({ sourceId })} icon={Megaphone} allLabel="All sources" />
+              <LeadFilterMenu label="Assignee" value={params.get("ownerUserId") || ""} options={staff.map((person) => ({ value: person.id, label: person.fullName }))} onChange={(ownerUserId) => updateParams({ ownerUserId })} icon={UserRoundSearch} allLabel="Any assignee" />
               <LeadFilterMenu label="Month" value={params.get("month") || ""} options={monthOptions} onChange={(month) => updateParams({ month })} icon={CalendarRange} allLabel="All time" />
               <LeadFilterMenu label="Sort" value={`${params.get("sortBy") || "createdAt"}:${params.get("sortDirection") || "desc"}`} options={[{ value: "createdAt:desc", label: "Newest first" }, { value: "createdAt:asc", label: "Oldest first" }, { value: "nextActionAt:asc", label: "Next action" }, { value: "leadNumber:asc", label: "Lead number" }, { value: "inquiryDate:desc", label: "Month wise (newest)" }, { value: "inquiryDate:asc", label: "Month wise (oldest)" }]} onChange={(value) => { const [sortBy, sortDirection] = value.split(":"); updateParams({ sortBy, sortDirection }); }} icon={ArrowDownUp} allLabel="Newest first" />
               {hasFilters ? <button type="button" onClick={clearFilters} className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"><FilterX className="h-3.5 w-3.5" />Reset</button> : null}

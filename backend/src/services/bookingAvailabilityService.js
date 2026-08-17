@@ -65,6 +65,47 @@ export function localDateKey(date, timezone) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
+function dateKeyDayNumber(dateKey) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  return Date.UTC(year, month - 1, day) / 86_400_000;
+}
+
+function addDateKeyDays(dateKey, amount) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + amount));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function localTimeParts(date, timezone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
+  return { minutes: value("hour") * 60 + value("minute") };
+}
+
+export function parseSchedulingBlockDateTime(value, timezone) {
+  const text = String(value || "").trim();
+  const localMatch = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d(?:\.\d{1,3})?)?$/.exec(text);
+  if (localMatch) {
+    return localDateTimeToUtc(localMatch[1], Number(localMatch[2]) * 60 + Number(localMatch[3]), timezone);
+  }
+  return new Date(text);
+}
+
+export function schedulingBlockRecurrenceEnd(dateKey, timezone) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ""))) return new Date(Number.NaN);
+  return localDateTimeToUtc(addDateKeyDays(String(dateKey), 1), 0, timezone);
+}
+
+export function schedulingBlockRecurrenceDays(startsAt, recurrenceUntilKey, timezone) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(recurrenceUntilKey || ""))) return Number.NaN;
+  return dateKeyDayNumber(String(recurrenceUntilKey)) - dateKeyDayNumber(localDateKey(startsAt, timezone));
+}
+
 export function validateAvailabilityRange(fromKey, toKey, maximumDays = 62) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) {
     throw createHttpError(400, "Availability dates must use YYYY-MM-DD.", "VALIDATION_ERROR");
@@ -98,21 +139,35 @@ export function mergeStaffAvailability(assignedToIds, staffSlots) {
   return [...combined.values()].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
-function expandedSchedulingBlocks(blocks, rangeStart, rangeEnd) {
+export function expandedSchedulingBlocks(blocks, rangeStart, rangeEnd, timezoneForBlock = "America/Toronto") {
   const expanded = [];
   for (const block of blocks) {
-    const duration = new Date(block.endsAt).getTime() - new Date(block.startsAt).getTime();
-    const step = block.recurrence === "DAILY" ? 86_400_000 : block.recurrence === "WEEKLY" ? 7 * 86_400_000 : null;
-    if (!step) {
+    const blockStart = new Date(block.startsAt);
+    const blockEnd = new Date(block.endsAt);
+    const stepDays = block.recurrence === "DAILY" ? 1 : block.recurrence === "WEEKLY" ? 7 : null;
+    if (!stepDays) {
       if (new Date(block.startsAt) < rangeEnd && new Date(block.endsAt) > rangeStart) expanded.push({ ...block, assignedToId: block.userId });
       continue;
     }
-    const limit = block.recurrenceUntil ? Math.min(new Date(block.recurrenceUntil).getTime(), rangeEnd.getTime()) : rangeEnd.getTime();
-    let start = new Date(block.startsAt).getTime();
-    if (start + duration <= rangeStart.getTime()) start += Math.max(0, Math.floor((rangeStart.getTime() - start - duration) / step)) * step;
-    for (; start < limit; start += step) {
-      const end = start + duration;
-      if (end > rangeStart.getTime()) expanded.push({ userId: block.userId, assignedToId: block.userId, startsAt: new Date(start), endsAt: new Date(end) });
+    const timezone = typeof timezoneForBlock === "function" ? timezoneForBlock(block) : timezoneForBlock;
+    const anchorDateKey = localDateKey(blockStart, timezone);
+    const endDateKey = localDateKey(blockEnd, timezone);
+    const startMinutes = localTimeParts(blockStart, timezone).minutes;
+    const endMinutes = localTimeParts(blockEnd, timezone).minutes;
+    const endDayOffset = Math.max(0, dateKeyDayNumber(endDateKey) - dateKeyDayNumber(anchorDateKey));
+    const rangeStartKey = localDateKey(rangeStart, timezone);
+    const daysFromAnchor = dateKeyDayNumber(rangeStartKey) - dateKeyDayNumber(anchorDateKey);
+    let occurrenceIndex = Math.max(0, Math.floor(daysFromAnchor / stepDays) - 1);
+    const finalOccurrenceIndex = occurrenceIndex + 370;
+    const recurrenceLimit = block.recurrenceUntil ? new Date(block.recurrenceUntil).getTime() : rangeEnd.getTime();
+    for (; occurrenceIndex <= finalOccurrenceIndex; occurrenceIndex += 1) {
+      const occurrenceDateKey = addDateKeyDays(anchorDateKey, occurrenceIndex * stepDays);
+      const start = localDateTimeToUtc(occurrenceDateKey, startMinutes, timezone);
+      if (start.getTime() >= recurrenceLimit || start >= rangeEnd) break;
+      const end = localDateTimeToUtc(addDateKeyDays(occurrenceDateKey, endDayOffset), endMinutes, timezone);
+      if (end > rangeStart) {
+        expanded.push({ userId: block.userId, assignedToId: block.userId, startsAt: start, endsAt: end });
+      }
     }
   }
   return expanded;
@@ -271,17 +326,27 @@ export async function availabilityForRange({ agencyId, assignedToId, assignedToI
     },
     select: { assignedToId: true, startsAt: true, endsAt: true, meetingMode: true },
   }) : []]);
+  const preferenceByStaff = new Map(preferences.map((item) => [item.userId, item]));
   // BookingSlotHold has no meetingMode column of its own — it comes from
   // the waitlist entry it's offering. Flattened here so every busy entry
   // exposes the same shape regardless of source.
   const flattenedHolds = activeHolds.map((hold) => ({ ...hold, meetingMode: hold.waitlistEntry?.meetingMode || null }));
-  const busy = [...busyAppointments, ...flattenedHolds, ...activePaymentHolds, ...expandedSchedulingBlocks(rawBlocks, rangeStart, rangeEnd)];
+  const busy = [
+    ...busyAppointments,
+    ...flattenedHolds,
+    ...activePaymentHolds,
+    ...expandedSchedulingBlocks(
+      rawBlocks,
+      rangeStart,
+      rangeEnd,
+      (block) => preferenceByStaff.get(block.userId)?.timezone || timezone,
+    ),
+  ];
   // Every appointment format consumes the same consultant capacity. Entries
   // with no meeting mode (such as scheduling blocks) also block every format.
   const relevantBusy = meetingMode
     ? busy.filter((item) => !item.meetingMode || meetingModesInSameCapacityGroup(meetingMode).includes(item.meetingMode))
     : busy;
-  const preferenceByStaff = new Map(preferences.map((item) => [item.userId, item]));
   const staffLimits = new Map(preferences.map((item) => [item.userId, item.maxDailyAppointments]));
 
   const days = {};
@@ -351,15 +416,29 @@ export async function assertSlotAvailable(tx, { agencyId, assignedToId, startsAt
     if (paymentHold) return paymentHold;
   }
   if (!tx.schedulingBlock) return null;
-  const blockRows = await tx.schedulingBlock.findMany({
-    where: {
-      agencyId,
-      userId: assignedToId,
-      startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) },
-      OR: [{ recurrence: null }, { recurrenceUntil: null }, { recurrenceUntil: { gt: new Date(new Date(startsAt).getTime() - buffer) } }],
-    },
-    select: { id: true, userId: true, startsAt: true, endsAt: true, recurrence: true, recurrenceUntil: true },
-  });
-  const expanded = expandedSchedulingBlocks(blockRows, new Date(new Date(startsAt).getTime() - buffer), new Date(new Date(endsAt).getTime() + buffer));
+  const [blockRows, settings, preference] = await Promise.all([
+    tx.schedulingBlock.findMany({
+      where: {
+        agencyId,
+        userId: assignedToId,
+        startsAt: { lt: new Date(new Date(endsAt).getTime() + buffer) },
+        OR: [{ recurrence: null }, { recurrenceUntil: null }, { recurrenceUntil: { gt: new Date(new Date(startsAt).getTime() - buffer) } }],
+      },
+      select: { id: true, userId: true, startsAt: true, endsAt: true, recurrence: true, recurrenceUntil: true },
+    }),
+    tx.bookingSettings?.findUnique
+      ? tx.bookingSettings.findUnique({ where: { agencyId }, select: { timezone: true } })
+      : Promise.resolve(null),
+    tx.schedulingStaffPreference?.findUnique
+      ? tx.schedulingStaffPreference.findUnique({ where: { userId: assignedToId }, select: { timezone: true } })
+      : Promise.resolve(null),
+  ]);
+  const blockTimezone = preference?.timezone || settings?.timezone || "America/Toronto";
+  const expanded = expandedSchedulingBlocks(
+    blockRows,
+    new Date(new Date(startsAt).getTime() - buffer),
+    new Date(new Date(endsAt).getTime() + buffer),
+    blockTimezone,
+  );
   return expanded.find((block) => overlaps(new Date(startsAt).getTime(), new Date(endsAt).getTime(), new Date(block.startsAt).getTime() - buffer, new Date(block.endsAt).getTime() + buffer)) || null;
 }

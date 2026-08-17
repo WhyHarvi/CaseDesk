@@ -100,6 +100,7 @@ export const SIDEBAR_DESTINATIONS = new Set([
   "payments",
   "caseEasyImport",
   "settings",
+  "workload",
   "portalHome",
   "portalDocuments",
   "portalForms",
@@ -144,6 +145,7 @@ export function destinationFromNotification({ destinationKey, actionUrl, categor
     ["/app/payments", "payments"],
     ["/app/case-easy-import", "caseEasyImport"],
     ["/app/settings", "settings"],
+    ["/app/workload", "workload"],
     ["/client-portal", "portalHome"],
   ];
   const route = routes.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));

@@ -125,6 +125,81 @@ test("the floating quick-chat widget is mounted globally, opens to the recent-co
   assert.match(widget, /const unreadTotal = sidebarCounts\?\.chats\?\.total \|\| 0;/);
 });
 
+test("client conversations link to the scoped client profile from full and floating chat", async () => {
+  const [page, widget, controller] = await Promise.all([
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+    source("../src/controllers/communicationController.js"),
+  ]);
+  assert.match(controller, /client: \{ select: \{ id: true, fullName: true, email: true, phone: true \} \}/);
+  assert.match(page, /activeDetail\?\.kind === "client" && activeDetail\.clientId/);
+  assert.match(page, /to=\{`\/app\/clients\/\$\{encodeURIComponent\(activeDetail\.clientId\)\}`\}/);
+  assert.match(page, /title="Open client profile"/);
+  assert.match(widget, /function openClientProfile\(\)/);
+  assert.match(widget, /activeDetail\?\.kind !== "client" \|\| !activeDetail\.clientId/);
+  assert.match(widget, /navigate\(`\/app\/clients\/\$\{encodeURIComponent\(clientId\)\}`\)/);
+  assert.match(widget, /aria-label="Open client profile"/);
+});
+
+test("refreshing a Nova deep link keeps it as AI instead of loading an internal thread named nova", async () => {
+  const page = await source("../../frontend/src/pages/ChatsPage.jsx");
+  assert.match(page, /\["ai", "client", "internal"\]\.includes\(requestedKind\)/);
+  assert.match(page, /const \[selectedKind, setSelectedKind\] = useState\(initialKind\);/);
+  assert.match(page, /useState\(initialKind === "ai" && requestedThreadId \? "nova" : requestedThreadId\)/);
+});
+
+test("Nova uses one custom CaseDesk-blue product logo across full and floating chat", async () => {
+  const [presentation, page, widget] = await Promise.all([
+    source("../../frontend/src/components/chat/NovaChatPresentation.jsx"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+  ]);
+  assert.match(presentation, /viewBox="0 0 64 64"/);
+  assert.match(presentation, /<ellipse cx="32" cy="32" rx="25" ry="10"/);
+  assert.match(presentation, /M32 8L36\.8 27\.2L32 32L27\.2 27\.2L32 8Z/);
+  assert.match(presentation, /abstract product logo—no face, mascot, or letter monogram/);
+  assert.match(page, /return <NovaAssistantAvatar className=\{className\} \/>;/);
+  assert.match(widget, /return <NovaAssistantAvatar className=\{className\} \/>;/);
+  assert.doesNotMatch(page, /NovaMark/);
+  assert.doesNotMatch(widget, /NovaMark/);
+});
+
+test("Nova's suggestion chips are dynamic per page, not one fixed template", async () => {
+  const [presentation, page, widget] = await Promise.all([
+    source("../../frontend/src/components/chat/NovaChatPresentation.jsx"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+  ]);
+  assert.match(presentation, /export function novaSuggestionsForPath\(path\)/);
+  // A handful of the route-specific entries — enough to prove this is a real
+  // per-page lookup, not a single list dressed up as one.
+  assert.match(presentation, /\/\^\\\/leads\\\/review\/\.test\(path\)/);
+  assert.match(presentation, /\/\^\\\/app\\\/clients\\\/\[\^\/\]\+\/\.test\(path\)/);
+  assert.match(presentation, /\/\^\\\/app\\\/calendar\/\.test\(path\)/);
+  assert.match(presentation, /DEFAULT_SUGGESTIONS/);
+  assert.doesNotMatch(presentation, /export const NOVA_SUGGESTIONS/);
+  assert.match(presentation, /function NovaSuggestions\(\{ onSelect, currentPath, compact = false \}\)/);
+  assert.match(presentation, /const suggestions = novaSuggestionsForPath\(currentPath\)/);
+  assert.match(page, /<NovaSuggestions onSelect=\{setDraft\} currentPath=\{novaContextPath\} \/>/);
+  assert.match(widget, /<NovaSuggestions onSelect=\{setDraft\} currentPath=\{location\.pathname\} compact \/>/);
+});
+
+test("Nova renders labeled and bare CaseDesk routes as clickable internal links", async () => {
+  const presentation = await source("../../frontend/src/components/chat/NovaChatPresentation.jsx");
+  assert.match(presentation, /const markdownLink = token\.match/);
+  assert.match(presentation, /to=\{markdownLink\[2\]\}/);
+  assert.match(presentation, /\|leads\(\?:\\\/\|\$\)/);
+  assert.match(presentation, /\|calls\(\?:\\\/\|\$\)/);
+});
+
+test("short chat messages stay on one line until the shared bubble width cap", async () => {
+  const bubble = await source("../../frontend/src/components/chat/ChatMessageBubble.jsx");
+  assert.match(bubble, /flex w-full items-end gap-2/);
+  assert.match(bubble, /max-w-\[min\(80%,32rem\)\]/);
+  assert.match(bubble, /className=\{`w-fit max-w-full space-y-2/);
+  assert.doesNotMatch(bubble, /w-fit max-w-\[80%\]/);
+});
+
 test("the quick-chat list has a search box that filters the merged conversation list", async () => {
   const widget = await source("../../frontend/src/components/chat/FloatingChatWidget.jsx");
   assert.match(widget, /const \[listSearch, setListSearch\] = useState\(""\);/);

@@ -21,6 +21,9 @@ test("client management stores searchable identity fields and archives without d
   assert.match(schema, /creationIdempotencyKey\s+String\?/);
   assert.match(migration, /CREATE UNIQUE INDEX "clients_agency_id_client_number_key"/);
   assert.match(controller, /assertNoContactDuplicate/);
+  assert.match(controller, /findClientContactMatches/);
+  assert.match(controller, /AND: \[clientAccessWhere\(req\), \{ OR: contact \}\]/);
+  assert.match(routes, /"\/contact-matches"/);
   assert.match(controller, /agencyId_creationIdempotencyKey/);
   assert.match(controller, /archivedAt: new Date\(\), status: "Inactive"/);
   assert.doesNotMatch(routes, /router\.delete/);
@@ -30,6 +33,10 @@ test("client management stores searchable identity fields and archives without d
   assert.match(page, /new Date\(right\.createdAt \|\| 0\)/);
   assert.match(page, /Recently added/);
   assert.match(page, /clientCreateIdempotencyKey/);
+  assert.match(page, /This person is already in CaseDesk/);
+  assert.match(page, /Go to profile/);
+  assert.match(page, /Book appointment/);
+  assert.match(page, /\/clients\/contact-matches/);
   assert.match(profile, /Preferred language/);
   assert.match(profile, /Identification/);
 });

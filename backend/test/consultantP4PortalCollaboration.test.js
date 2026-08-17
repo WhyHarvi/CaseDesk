@@ -243,7 +243,7 @@ test("client E-Sign requires a touch-drawn signature rendered into the signed ag
   assert.match(portalController, /signatureMethod \}/);
 });
 
-test("case Manage Permissions controls owner and collaborator access without stranding active work", async () => {
+test("case Collaboration controls owner and collaborator access without stranding active work", async () => {
   const [controller, routes, toolbar, profile, overlay] = await Promise.all([
     source("../src/controllers/caseController.js"),
     source("../src/routes/caseRoutes.js"),
@@ -257,7 +257,7 @@ test("case Manage Permissions controls owner and collaborator access without str
   assert.match(controller, /assignmentType: "supporting"/);
   assert.match(controller, /Reassign.*active work item/);
   assert.match(controller, /case\.permissions_updated/);
-  assert.match(toolbar, /item === "Manage Permissions"/);
+  assert.match(toolbar, /label="Collaboration" onClick=\{onOpenPermissions\}/);
   assert.match(toolbar, /canManagePermissions/);
   assert.match(profile, /CasePermissionsOverlay/);
   assert.match(overlay, /Primary case owner/);

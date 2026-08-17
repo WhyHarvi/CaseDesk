@@ -18,6 +18,9 @@ import {
   getOrCreateBookingSettings,
   localDateKey,
   localDateTimeToUtc,
+  parseSchedulingBlockDateTime,
+  schedulingBlockRecurrenceDays,
+  schedulingBlockRecurrenceEnd,
 } from "../services/bookingAvailabilityService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
@@ -1846,30 +1849,57 @@ export async function listSchedulingBlocks(req, res) {
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from || to.getTime() - from.getTime() > 366 * 86_400_000) {
     throw createHttpError(400, "Choose a valid block range up to one year.", "VALIDATION_ERROR");
   }
-  const data = await prisma.schedulingBlock.findMany({
-    where: {
-      agencyId: req.auth.agencyId,
-      ...(req.auth.role === "consultant" ? { userId: req.auth.userId } : req.query.userId ? { userId: String(req.query.userId) } : {}),
-      startsAt: { lt: to },
-      OR: [{ endsAt: { gt: from } }, { recurrence: { in: ["DAILY", "WEEKLY"] }, recurrenceUntil: { gte: from } }],
-    },
-    include: { user: { select: { id: true, fullName: true } } },
-    orderBy: { startsAt: "asc" },
+  const [data, settings] = await Promise.all([
+    prisma.schedulingBlock.findMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        ...(req.auth.role === "consultant" ? { userId: req.auth.userId } : req.query.userId ? { userId: String(req.query.userId) } : {}),
+        startsAt: { lt: to },
+        OR: [{ endsAt: { gt: from } }, { recurrence: { in: ["DAILY", "WEEKLY"] }, recurrenceUntil: { gte: from } }],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            schedulingPreference: { select: { timezone: true } },
+          },
+        },
+      },
+      orderBy: { startsAt: "asc" },
+    }),
+    prisma.bookingSettings.findUnique({ where: { agencyId: req.auth.agencyId }, select: { timezone: true } }),
+  ]);
+  const agencyTimezone = settings?.timezone || "America/Toronto";
+  res.json({
+    data: data.map(({ user, ...block }) => ({
+      ...block,
+      timezone: user?.schedulingPreference?.timezone || agencyTimezone,
+      user: user ? { id: user.id, fullName: user.fullName } : null,
+    })),
   });
-  res.json({ data });
 }
 
 export async function createSchedulingBlock(req, res) {
-  const startsAt = new Date(String(req.body?.startsAt || ""));
-  const endsAt = new Date(String(req.body?.endsAt || ""));
   const recurrence = String(req.body?.recurrence || "NONE");
-  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) throw createHttpError(400, "Choose a valid start and end.", "VALIDATION_ERROR");
   if (!["NONE", "DAILY", "WEEKLY"].includes(recurrence)) throw createHttpError(400, "Choose a valid recurrence.", "VALIDATION_ERROR");
-  let userId = req.auth.role === "consultant" ? req.auth.userId : String(req.body?.userId || req.auth.userId);
-  const user = await prisma.user.findFirst({ where: { id: userId, agencyId: req.auth.agencyId, status: "active" }, select: { id: true } });
+  const userId = req.auth.role === "consultant" ? req.auth.userId : String(req.body?.userId || req.auth.userId);
+  const [user, settings] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: userId, agencyId: req.auth.agencyId, status: "active" },
+      select: { id: true, schedulingPreference: { select: { timezone: true } } },
+    }),
+    prisma.bookingSettings.findUnique({ where: { agencyId: req.auth.agencyId }, select: { timezone: true } }),
+  ]);
   if (!user) throw createHttpError(400, "Team member not found.", "VALIDATION_ERROR");
-  const recurrenceUntil = recurrence === "NONE" ? null : new Date(String(req.body?.recurrenceUntil || ""));
-  if (recurrence !== "NONE" && (Number.isNaN(recurrenceUntil.getTime()) || recurrenceUntil < startsAt || recurrenceUntil.getTime() - startsAt.getTime() > 366 * 86_400_000)) {
+  const timezone = user.schedulingPreference?.timezone || settings?.timezone || "America/Toronto";
+  const startsAt = parseSchedulingBlockDateTime(req.body?.startsAt, timezone);
+  const endsAt = parseSchedulingBlockDateTime(req.body?.endsAt, timezone);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) throw createHttpError(400, "Choose a valid start and end.", "VALIDATION_ERROR");
+  const recurrenceUntilKey = String(req.body?.recurrenceUntil || "");
+  const recurrenceUntil = recurrence === "NONE" ? null : schedulingBlockRecurrenceEnd(recurrenceUntilKey, timezone);
+  const recurrenceDays = recurrence === "NONE" ? 0 : schedulingBlockRecurrenceDays(startsAt, recurrenceUntilKey, timezone);
+  if (recurrence !== "NONE" && (Number.isNaN(recurrenceUntil.getTime()) || !Number.isInteger(recurrenceDays) || recurrenceDays < 0 || recurrenceDays > 366)) {
     throw createHttpError(400, "Recurring blocks need an end date within one year.", "VALIDATION_ERROR");
   }
   const data = await prisma.schedulingBlock.create({ data: {
@@ -1881,7 +1911,7 @@ export async function createSchedulingBlock(req, res) {
     recurrence,
     recurrenceUntil,
   }, include: { user: { select: { id: true, fullName: true } } } });
-  res.status(201).json({ data });
+  res.status(201).json({ data: { ...data, timezone } });
 }
 
 export async function deleteSchedulingBlock(req, res) {

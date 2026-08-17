@@ -227,6 +227,14 @@ test("sidebar notification destinations follow the page that can resolve the upd
   assert.equal(destinationFromNotification({ actionUrl: "/client-portal/payments", category: "payments", type: "invoice.created" }), "portalPayments");
 });
 
+// Regression: workload.zero_activity notifications (actionUrl /app/workload,
+// category "team") matched none of the known routes or categories and fell
+// through to the generic "cases" default, wrongly inflating the Cases
+// sidebar badge with notifications that have nothing to do with casework.
+test("workload notifications route to their own sidebar destination, not Cases", () => {
+  assert.equal(destinationFromNotification({ actionUrl: "/app/workload", category: "team", type: "workload.zero_activity" }), "workload");
+});
+
 test("financial exception notifications deep-link to the exact review surface", () => {
   assert.equal(
     focusedNotificationActionUrl({

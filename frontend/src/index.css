@@ -254,6 +254,16 @@ input {
   to { transform: rotate(360deg); }
 }
 
+/* ---------- Nova (AI assistant) thinking indicator ---------- */
+@keyframes nova-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 4px 16px rgba(73, 104, 149, 0.45); }
+  50% { transform: scale(1.08); box-shadow: 0 6px 22px rgba(73, 104, 149, 0.65); }
+}
+
+@keyframes nova-shimmer {
+  to { background-position: -200% center; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

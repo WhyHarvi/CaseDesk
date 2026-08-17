@@ -42,7 +42,15 @@ export default {
     const agency = ctx.agency || {};
     const street = splitStreetAddress(agency.address);
     const defaultCountryCode = !agency.country || /canada|united states/i.test(agency.country) ? "1" : "";
-    const phone = splitPhone(representative.phone || agency.phone, defaultCountryCode);
+    // Section B is the FIRM's contact info, not the individual's personal
+    // account details — representative.phone/email are the account's
+    // general-purpose login/notification contact and can legitimately
+    // differ between two representatives at the same firm even though the
+    // office itself is identical. formOfficePhone/formOfficeEmail are an
+    // explicit, representative-managed override for this specific form
+    // (set in their Government-form signature settings); left blank, every
+    // representative falls back to the same shared agency office contact.
+    const phone = splitPhone(representative.formOfficePhone || agency.phone, defaultCountryCode);
     const fax = splitPhone(agency.faxNumber, defaultCountryCode);
 
     return {
@@ -84,7 +92,7 @@ export default {
       "79R": phone.number,
       "78R": fax.countryCode,
       "77R": fax.number,
-      "76R": representative.email || agency.email || "",
+      "76R": representative.formOfficeEmail || agency.email || "",
     };
   },
   getWarnings(ctx) {

@@ -249,6 +249,10 @@ function ClientDrawer({
   onFrontDeskIntakeChange,
   canRecordProfessionalFee,
   nameNeedsReview,
+  contactMatches,
+  checkingContact,
+  onOpenExistingClient,
+  onBookExistingClient,
 }) {
   return (
     <div
@@ -374,6 +378,36 @@ function ClientDrawer({
                     placeholder="+1 416 555 0100"
                   />
                 </label>
+
+                {!isEditing && (checkingContact || contactMatches.length) ? (
+                  <div className="md:col-span-2 rounded-2xl border border-amber-200 bg-amber-50/90 p-4" role="status" aria-live="polite">
+                    {checkingContact ? (
+                      <p className="flex items-center gap-2 text-xs font-semibold text-amber-800"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking for an existing client…</p>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-amber-950">This person is already in CaseDesk</p>
+                        <p className="mt-1 text-xs leading-5 text-amber-800">Use the existing profile instead of creating a duplicate.</p>
+                        <div className="mt-3 space-y-2">
+                          {contactMatches.map((client) => (
+                            <div key={client.id} className="rounded-xl border border-amber-200/80 bg-white p-3 shadow-sm">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-900">{client.fullName}</p>
+                                  <p className="mt-0.5 truncate text-[11px] text-slate-500">{[client.clientNumber, client.email, client.phone].filter(Boolean).join(" · ")}</p>
+                                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Matched {client.matchedBy.join(" and ")}{client.archivedAt ? " · Archived profile" : ""}</p>
+                                </div>
+                                <div className="flex shrink-0 flex-wrap gap-2">
+                                  <button type="button" onClick={() => onOpenExistingClient(client)} className="h-8 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50">Go to profile</button>
+                                  {client.canBookAppointment ? <button type="button" onClick={() => onBookExistingClient(client)} className="h-8 rounded-full bg-slate-950 px-3 text-[11px] font-semibold text-white transition hover:bg-slate-800">Book appointment</button> : null}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : null}
 
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">
@@ -549,7 +583,7 @@ function ClientDrawer({
 
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || (!isEditing && (checkingContact || contactMatches.length > 0))}
                 className="inline-flex h-11 items-center justify-center rounded-2xl bg-slate-950 px-6 text-sm font-semibold text-white shadow-[0_18px_42px_rgba(15,23,42,0.24)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
               >
                 {saving
@@ -791,6 +825,8 @@ export default function Clients() {
   const [frontDeskIntake, setFrontDeskIntake] = useState(() => readClientDraft()?.frontDeskIntake || defaultFrontDeskIntakeState);
   const [clientCreateIdempotencyKey, setClientCreateIdempotencyKey] = useState(() => readClientDraft()?.clientCreateIdempotencyKey || newClientOperationKey());
   const [formError, setFormError] = useState("");
+  const [contactMatches, setContactMatches] = useState([]);
+  const [checkingContact, setCheckingContact] = useState(false);
   const [saving, setSaving] = useState(false);
   const [assigningClientIds, setAssigningClientIds] = useState([]);
   const [deletingId, setDeletingId] = useState("");
@@ -845,6 +881,39 @@ export default function Clients() {
     }
     writeClientDraft({ editingClient, formState, frontDeskIntake, clientCreateIdempotencyKey });
   }, [showForm, editingClient, formState, frontDeskIntake, clientCreateIdempotencyKey]);
+
+  useEffect(() => {
+    if (!showForm || isEditing) {
+      setContactMatches([]);
+      setCheckingContact(false);
+      return undefined;
+    }
+    const email = formState.email.trim();
+    const phone = formState.phone.trim();
+    const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    const validPhone = phone.replace(/\D/g, "").length >= 7;
+    if (!validEmail && !validPhone) {
+      setContactMatches([]);
+      setCheckingContact(false);
+      return undefined;
+    }
+
+    let active = true;
+    setContactMatches([]);
+    setCheckingContact(true);
+    const timer = window.setTimeout(() => {
+      api.get("/clients/contact-matches", {
+        params: {
+          ...(validEmail ? { email } : {}),
+          ...(validPhone ? { phone } : {}),
+        },
+      })
+        .then((response) => { if (active) setContactMatches(response.data.data || []); })
+        .catch(() => { if (active) setContactMatches([]); })
+        .finally(() => { if (active) setCheckingContact(false); });
+    }, 350);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [formState.email, formState.phone, isEditing, showForm]);
 
   useEffect(() => {
     function updateLayoutMode() {
@@ -1012,6 +1081,14 @@ export default function Clients() {
     });
     setFormError("");
     setShowForm(true);
+  }
+
+  function leaveClientIntake(path) {
+    clearClientDraft();
+    setShowForm(false);
+    setEditingClient(null);
+    setContactMatches([]);
+    navigate(path);
   }
 
   function handleInputChange(event) {
@@ -1627,6 +1704,10 @@ export default function Clients() {
           onFrontDeskIntakeChange={(patch) => setFrontDeskIntake((current) => ({ ...current, ...patch }))}
           canRecordProfessionalFee={canRecordProfessionalFee}
           nameNeedsReview={Boolean(isEditing && clientNameParts(editingClient).needsReview)}
+          contactMatches={contactMatches}
+          checkingContact={checkingContact}
+          onOpenExistingClient={(client) => leaveClientIntake(`/app/clients/${client.id}`)}
+          onBookExistingClient={(client) => leaveClientIntake(`/app/calendar?bookForClient=${encodeURIComponent(client.id)}`)}
         />
       ) : null}
     </section>

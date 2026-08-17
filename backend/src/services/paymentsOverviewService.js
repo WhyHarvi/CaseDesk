@@ -1030,10 +1030,12 @@ function summarizeMonthWindow(all, bounds) {
   };
 }
 
-export async function getPaymentsSummary(agencyId, { month } = {}) {
-  await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
-    logger.warn("payments_summary.refund_reconcile_failed", { agencyId, reason: error.message });
-  });
+export async function getPaymentsSummary(agencyId, { month, reconcile = true } = {}) {
+  if (reconcile) {
+    await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
+      logger.warn("payments_summary.refund_reconcile_failed", { agencyId, reason: error.message });
+    });
+  }
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);

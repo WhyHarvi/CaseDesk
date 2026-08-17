@@ -19,7 +19,7 @@ const uploadCopyTypes = new Set(["Working", "Filled", "ClientSigned"]);
 const browserCopyTypes = new Set(["Working", "Filled"]);
 const allowedOfficialHosts = new Set(["canada.ca", "www.canada.ca", "ircc.canada.ca", "www.ircc.canada.ca"]);
 
-const representativeUserSelect = { id: true, fullName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true };
+const representativeUserSelect = { id: true, fullName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true };
 const include = {
   uploadedBy: { select: { id: true, fullName: true } },
   lockedBy: { select: { id: true, fullName: true } },

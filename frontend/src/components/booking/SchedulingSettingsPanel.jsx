@@ -1,6 +1,7 @@
-import { CalendarClock, Check, Copy, Eye, Link2, Loader2, MapPin, Phone, Plus, Send, Trash2, Video, X } from "lucide-react";
+import { CalendarClock, Check, Clock, Copy, Eye, Globe, Link2, ListChecks, Loader2, MapPin, Phone, Plus, Send, SlidersHorizontal, Trash2, Video, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { motion } from "framer-motion";
 import {
   createSessionType,
   createSchedulingBlock,
@@ -40,8 +41,75 @@ const REMINDER_OPTIONS = [
   { label: "48 hours before", value: 2880 },
 ];
 
-const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
+const TABS = [
+  { id: "availability", label: "Availability", icon: Clock },
+  { id: "session-types", label: "Session types", icon: ListChecks },
+  { id: "locations", label: "Locations & meeting options", icon: MapPin },
+  { id: "rules", label: "Booking rules", icon: SlidersHorizontal },
+  { id: "public", label: "Public page & messaging", icon: Globe },
+];
+
+const card = "rounded-2xl border border-slate-200 bg-white p-5 sm:p-6";
 const inputClass = "rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400";
+
+function formatBlockDate(value, timezone, options) {
+  return new Intl.DateTimeFormat("en-CA", { ...options, timeZone: timezone || "America/Toronto" }).format(new Date(value));
+}
+
+function formatTime12(value) {
+  const [hours, minutes] = String(value || "00:00").split(":").map(Number);
+  const period = hours >= 12 ? "PM" : "AM";
+  const hour12 = ((hours + 11) % 12) + 1;
+  return `${hour12}:${String(minutes || 0).padStart(2, "0")} ${period}`;
+}
+
+// Turns a day-by-day hours array into one readable line ("Mon–Fri 9:00 AM–5:00
+// PM, Sat 10:00 AM–2:00 PM") by grouping consecutive days that share the same
+// open/closed state and times — used so an override editor can say what it
+// inherits instead of repeating the full day grid just to be read.
+function summarizeWeeklyHours(rows) {
+  const segments = [];
+  let current = null;
+  for (const row of rows) {
+    const key = row.enabled ? `${row.start}-${row.end}` : "closed";
+    if (current && current.key === key) {
+      current.days.push(row.day);
+    } else {
+      current = { key, days: [row.day], enabled: row.enabled, start: row.start, end: row.end };
+      segments.push(current);
+    }
+  }
+  const openSegments = segments.filter((segment) => segment.enabled);
+  if (!openSegments.length) return "Closed every day";
+  return openSegments
+    .map((segment) => {
+      const labels = segment.days.map((day) => DAY_LABELS[day].slice(0, 3));
+      const dayLabel = labels.length > 2 ? `${labels[0]}–${labels[labels.length - 1]}` : labels.join(", ");
+      return `${dayLabel} ${formatTime12(segment.start)}–${formatTime12(segment.end)}`;
+    })
+    .join(", ");
+}
+
+// A visible two-option switch (rather than one button whose label doubles as
+// a state description) so it's unambiguous what will happen on click and
+// which of the two modes is active right now.
+function SegmentedToggle({ options, value, onChange, label }) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex shrink-0 rounded-full bg-slate-100 p-0.5 text-[11px] font-semibold">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          aria-pressed={value === option.value}
+          className={`rounded-full px-3 py-1.5 transition-colors ${value === option.value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Toggle({ checked, onChange, label }) {
   return (
@@ -60,18 +128,64 @@ function Toggle({ checked, onChange, label }) {
 
 function SchedulingHeader() {
   return (
-    <header className="flex items-start gap-3 pb-1">
-      <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 ring-1 ring-sky-100">
+    <header className="flex items-start gap-3">
+      <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
         <CalendarClock className="h-5 w-5" />
       </div>
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">Appointments</p>
-        <h1 className="mt-1 text-[28px] font-semibold leading-8 tracking-[-0.03em] text-slate-950">Scheduling</h1>
-        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-slate-500">
-          Manage your team’s availability, appointment types, booking rules, locations, and client communications.
+      <div className="min-w-0">
+        <h1 className="text-[26px] font-semibold leading-8 tracking-[-0.03em] text-slate-950">Scheduling</h1>
+        <p className="mt-1 max-w-xl text-sm leading-6 text-slate-500">
+          Availability, session types, locations, booking rules, and what clients see when they book.
         </p>
       </div>
     </header>
+  );
+}
+
+function TabNav({ tabs, active, onChange }) {
+  return (
+    <div className="sticky top-0 z-10 flex gap-1.5 overflow-x-auto border-b border-slate-200 bg-white/90 py-2 backdrop-blur-xl">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const isActive = tab.id === active;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onChange(tab.id)}
+            aria-current={isActive ? "true" : undefined}
+            className={`relative flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3.5 py-2 text-[13px] font-medium transition-colors ${
+              isActive ? "text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            }`}
+          >
+            {isActive ? (
+              <motion.span
+                layoutId="scheduling-tab-pill"
+                className="absolute inset-0 rounded-full bg-slate-950"
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              />
+            ) : null}
+            <Icon className="relative h-[15px] w-[15px]" />
+            <span className="relative">{tab.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SectionHeader({ title, description, action, badge }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[15px] font-semibold text-slate-900">{title}</h3>
+          {badge ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{badge}</span> : null}
+        </div>
+        {description ? <p className="mt-1 max-w-xl text-[13px] leading-5 text-slate-500">{description}</p> : null}
+      </div>
+      {action || null}
+    </div>
   );
 }
 
@@ -131,7 +245,32 @@ function PersonalHoursEditor({ member, preference, workspaceHours, onSave }) {
     setSaving(false);
   }
 
-  return <div className="mt-3 border-t border-slate-200/70 pt-3"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-700">Personal weekly hours</p><p className="text-[11px] text-slate-400">Override workspace hours for this consultant.</p></div><button type="button" onClick={() => { if (custom) saveHours(null); else { setHours(workspaceHours); saveHours(workspaceHours); } }} className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${custom ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-600"}`}>{custom ? "Custom hours" : "Use workspace hours"}</button></div>{custom ? <><div className="mt-3 space-y-2">{rows.map((rule) => <div key={rule.day} className="flex flex-wrap items-center gap-2"><Toggle checked={rule.enabled} onChange={(enabled) => patchDay(rule.day, { enabled })} label={`${member.fullName} ${DAY_LABELS[rule.day]} availability`} /><span className="w-20 text-xs font-medium text-slate-600">{DAY_LABELS[rule.day].slice(0, 3)}</span>{rule.enabled ? <><input type="time" value={rule.start} onChange={(event) => patchDay(rule.day, { start: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /><span className="text-[11px] text-slate-400">to</span><input type="time" value={rule.end} onChange={(event) => patchDay(rule.day, { end: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /></> : <span className="text-xs text-slate-400">Unavailable</span>}</div>)}</div><button type="button" disabled={saving} onClick={() => saveHours(rows)} className="mt-3 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save personal hours"}</button></> : null}</div>;
+  return (
+    <div className="mt-3 border-t border-slate-200/70 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-slate-700">Hours for {member.fullName.split(" ")[0]}</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
+            {custom ? "Custom hours, set below — different from the workspace." : `Follows the workspace Weekly hours: ${summarizeWeeklyHours(workspaceHours)}.`}
+          </p>
+        </div>
+        <SegmentedToggle
+          label={`${member.fullName} hours source`}
+          options={[{ label: "Workspace hours", value: "workspace" }, { label: "Custom", value: "custom" }]}
+          value={custom ? "custom" : "workspace"}
+          onChange={(next) => { if (next === "custom") { setHours(workspaceHours); saveHours(workspaceHours); } else { saveHours(null); } }}
+        />
+      </div>
+      {custom ? (
+        <>
+          <div className="mt-3 space-y-2 rounded-xl bg-slate-50/70 p-3">
+            {rows.map((rule) => <div key={rule.day} className="flex flex-wrap items-center gap-2"><Toggle checked={rule.enabled} onChange={(enabled) => patchDay(rule.day, { enabled })} label={`${member.fullName} ${DAY_LABELS[rule.day]} availability`} /><span className="w-20 text-xs font-medium text-slate-600">{DAY_LABELS[rule.day].slice(0, 3)}</span>{rule.enabled ? <><input type="time" value={rule.start} onChange={(event) => patchDay(rule.day, { start: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /><span className="text-[11px] text-slate-400">to</span><input type="time" value={rule.end} onChange={(event) => patchDay(rule.day, { end: event.target.value })} className={`${inputClass} !px-2 !py-1.5`} /></> : <span className="text-xs text-slate-400">Unavailable</span>}</div>)}
+          </div>
+          <button type="button" disabled={saving} onClick={() => saveHours(rows)} className="mt-3 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving…" : "Save personal hours"}</button>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 function LocationHoursEditor({ location, workspaceHours, onChange }) {
@@ -145,21 +284,22 @@ function LocationHoursEditor({ location, workspaceHours, onChange }) {
 
   return (
     <div className="mt-3 border-t border-slate-100 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold text-slate-700">Office hours</p>
-          <p className="text-[11px] text-slate-400">Override the workspace default for this location.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-slate-700">Hours for this office</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
+            {custom ? "Custom hours, set below — different from the workspace." : `Follows the workspace Weekly hours: ${summarizeWeeklyHours(workspaceHours)}.`}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => onChange(custom ? { ...location, useCustomHours: false } : { ...location, useCustomHours: true, workingHours: Array.isArray(location.workingHours) && location.workingHours.length ? location.workingHours : workspaceHours })}
-          className={`rounded-full px-3 py-1.5 text-[11px] font-semibold ${custom ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-600"}`}
-        >
-          {custom ? "Custom hours" : "Use workspace hours"}
-        </button>
+        <SegmentedToggle
+          label={`${location.name} hours source`}
+          options={[{ label: "Workspace hours", value: "workspace" }, { label: "Custom", value: "custom" }]}
+          value={custom ? "custom" : "workspace"}
+          onChange={(next) => onChange(next === "custom" ? { ...location, useCustomHours: true, workingHours: Array.isArray(location.workingHours) && location.workingHours.length ? location.workingHours : workspaceHours } : { ...location, useCustomHours: false })}
+        />
       </div>
       {custom ? (
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 space-y-2 rounded-xl bg-slate-50/70 p-3">
           {rows.map((rule) => (
             <div key={rule.day} className="flex flex-wrap items-center gap-2">
               <Toggle checked={rule.enabled} onChange={(enabled) => patchDay(rule.day, { enabled })} label={`${location.name} ${DAY_LABELS[rule.day]} availability`} />
@@ -180,6 +320,7 @@ function LocationHoursEditor({ location, workspaceHours, onChange }) {
 }
 
 export default function SchedulingSettingsPanel() {
+  const [activeTab, setActiveTab] = useState("availability");
   const [settings, setSettings] = useState(null);
   const [sessionTypes, setSessionTypes] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -294,6 +435,11 @@ export default function SchedulingSettingsPanel() {
     const map = new Map((settings?.workingHours || []).map((rule) => [Number(rule.day), rule]));
     return DAY_ORDER.map((day) => map.get(day) || { day, enabled: false, start: "09:00", end: "17:00" });
   }, [settings]);
+
+  const selectedBlockTimezone = useMemo(() => {
+    const member = staff.find((item) => item.id === newBlock.userId);
+    return member?.schedulingPreference?.timezone || settings?.timezone || "America/Toronto";
+  }, [newBlock.userId, settings?.timezone, staff]);
 
   function setHours(day, patch) {
     setSettings((current) => ({
@@ -512,7 +658,6 @@ export default function SchedulingSettingsPanel() {
     }
   }
 
-
   if (loading) {
     return <div className="space-y-5"><SchedulingHeader /><div className={`${card} flex items-center gap-2 text-sm text-slate-500`}><Loader2 className="h-4 w-4 animate-spin" /> Loading scheduling settings…</div></div>;
   }
@@ -542,444 +687,466 @@ export default function SchedulingSettingsPanel() {
         </div>
       ) : null}
 
-      <section className={card}>
-        <h3 className="text-sm font-semibold text-slate-900">Weekly hours</h3>
-        <p className="mt-0.5 text-xs text-slate-500">When appointments can be booked. Times are in {settings.timezone}.</p>
-        <div className="mt-4 space-y-2">
-          {hoursByDay.map((rule) => (
-            <div key={rule.day} className="flex flex-wrap items-center gap-3">
-              <Toggle checked={rule.enabled} onChange={(value) => setHours(rule.day, { enabled: value })} label={`${DAY_LABELS[rule.day]} open`} />
-              <span className="w-24 text-sm font-medium text-slate-700">{DAY_LABELS[rule.day]}</span>
-              {rule.enabled ? (
-                <span className="flex items-center gap-2">
-                  <input type="time" value={rule.start} onChange={(event) => setHours(rule.day, { start: event.target.value })} className={inputClass} />
-                  <span className="text-xs text-slate-400">to</span>
-                  <input type="time" value={rule.end} onChange={(event) => setHours(rule.day, { end: event.target.value })} className={inputClass} />
-                </span>
-              ) : (
-                <span className="text-sm text-slate-400">Closed</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
+      <TabNav tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
-      <section className={card}>
-        <h3 className="text-sm font-semibold text-slate-900">Scheduling team</h3>
-        <p className="mt-0.5 text-xs text-slate-500">Consultants participate by default. Administrators choose whether their calendar joins the assignment pool.</p>
-        <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-          Capacity is shared across every appointment format. Each available consultant contributes one seat at a time, so an in-person, phone, Jitsi, or Zoom booking at that time consumes the same seat.
-          <span className="mt-1 block font-semibold">Current public capacity: {publicSchedulingStaff.length} simultaneous appointment{publicSchedulingStaff.length === 1 ? "" : "s"}{zoomStatus?.connected ? ` · Zoom capacity: ${publicZoomCapacity}` : ""}.</span>
-          {publicSchedulingStaff.length < 2 ? <span className="mt-1 block">For two seats at the same time, <a href="/app/settings?section=users-roles" className="font-semibold underline underline-offset-2">add another consultant</a>, then enable Accepts and Public here.</span> : null}
-        </p>
-        <div className="mt-3 divide-y divide-slate-100">
-          {staff.map((member) => {
-            const preference = member.schedulingPreference || { acceptsAppointments: member.role === "consultant", publicBookable: member.role === "consultant", maxDailyAppointments: null };
-            return (
-              <div key={member.id} className="flex flex-wrap items-center gap-3 py-3">
-                <div className="min-w-[150px] flex-1">
-                  <p className="text-sm font-medium text-slate-800">{member.fullName}</p>
-                  <p className="text-xs capitalize text-slate-400">{member.role}{member.role === "admin" && preference.acceptsAppointments ? " · Participating" : ""}</p>
-                </div>
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.acceptsAppointments} onChange={(value) => changeStaff(member, { acceptsAppointments: value, publicBookable: value ? preference.publicBookable : false })} label={`${member.fullName} accepts appointments`} /> Accepts</label>
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.publicBookable} onChange={(value) => changeStaff(member, { publicBookable: value, acceptsAppointments: value ? true : preference.acceptsAppointments })} label={`${member.fullName} public bookable`} /> Public</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={preference.maxDailyAppointments ?? ""}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setStaff((items) => items.map((item) => item.id === member.id
-                      ? { ...item, schedulingPreference: { ...preference, maxDailyAppointments: value } }
-                      : item));
-                  }}
-                  onBlur={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })}
-                  placeholder="Daily max"
-                  className={`${inputClass} w-24`}
-                />
-                <details className="w-full rounded-xl bg-slate-50 px-3 py-2">
-                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">Personal availability overrides</summary>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                    <label className="text-[11px] font-medium text-slate-500">Timezone<input value={preference.timezone || ""} onBlur={(event) => changeStaff(member, { timezone: event.target.value || null })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, timezone: event.target.value } } : item))} placeholder={settings.timezone} className={`${inputClass} mt-1 w-full`} /></label>
-                    <label className="text-[11px] font-medium text-slate-500">Personal buffer<input type="number" min="0" max="240" value={preference.bufferMinutes ?? ""} onBlur={(event) => changeStaff(member, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, bufferMinutes: event.target.value } } : item))} placeholder={`${settings.bufferMinutes} min (workspace)`} className={`${inputClass} mt-1 w-full`} /></label>
-                    <label className="text-[11px] font-medium text-slate-500">Days off (YYYY-MM-DD)<input defaultValue={(preference.daysOff || []).join(", ")} onBlur={(event) => changeStaff(member, { daysOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="2026-08-01, 2026-08-02" className={`${inputClass} mt-1 w-full`} /></label>
-                  </div>
-                  <PersonalHoursEditor member={member} preference={preference} workspaceHours={hoursByDay} onSave={changeStaff} />
-                </details>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className={card}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><Video className="h-4 w-4" /></span>
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900">Zoom organization</h3>
-              <p className="mt-0.5 text-xs leading-5 text-slate-500">Connect one consultancy Zoom account, then map each CaseDesk consultant to a distinct Zoom host.</p>
-            </div>
-          </div>
-          {zoomStatus?.connected ? (
-            <button type="button" disabled={zoomBusy} onClick={removeZoomAccount} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Disconnect</button>
-          ) : (
-            <button type="button" disabled={zoomBusy || zoomStatus?.configured === false} onClick={connectZoomAccount} className="inline-flex items-center gap-1.5 rounded-full bg-[#2D8CFF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#237ee8] disabled:opacity-50">{zoomBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} Connect Zoom</button>
-          )}
-        </div>
-        {zoomStatus?.configured === false ? <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">The server needs ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and a valid MAIL_SETTINGS_ENCRYPTION_KEY before an administrator can connect Zoom.</p> : null}
-        {zoomStatus?.lastError ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{zoomStatus.lastError}</p> : null}
-        {zoomStatus?.connected ? (
+      <div className="space-y-5 pb-8">
+        {activeTab === "availability" ? (
           <>
-            <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 px-3.5 py-3 text-xs text-emerald-800">
-              <p className="font-semibold">Connected{zoomStatus.connectedUserEmail ? ` as ${zoomStatus.connectedUserEmail}` : ""}</p>
-              <p className="mt-1 leading-5">CaseDesk creates one private meeting per appointment, keeps the join link synchronized on reschedule, and deletes the Zoom meeting on cancellation. Clients do not need a Zoom account.</p>
-            </div>
-            <div className="mt-4 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consultant host mapping</p>
-              {staff.map((member) => (
-                <label key={member.id} className="grid items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2.5 sm:grid-cols-[1fr_1.3fr]">
-                  <span><span className="block text-sm font-medium text-slate-800">{member.fullName}</span><span className="block text-[11px] text-slate-400">{member.email}</span></span>
-                  <Select value={zoomMappingDraft[member.id] || ""} onChange={(event) => setZoomMappingDraft((current) => ({ ...current, [member.id]: event.target.value }))}>
-                    <option value="">Not available for Zoom</option>
-                    {(zoomStatus.hosts || []).map((host) => {
-                      const selectedByAnother = Object.entries(zoomMappingDraft).some(([userId, zoomUserId]) => userId !== member.id && zoomUserId === host.id);
-                      return <option key={host.id} value={host.id} disabled={selectedByAnother}>{host.name || host.email} · {host.email} · {host.licenseType || "Unknown license"}</option>;
-                    })}
-                  </Select>
-                </label>
-              ))}
-              {!(zoomStatus.hosts || []).length ? <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">No active Zoom users were returned. Add users in Zoom or reconnect an account that can read organization users.</p> : null}
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="text-[11px] leading-5 text-slate-400">For two simultaneous Zoom appointments, map two different Zoom users. A free Basic host is suitable for a 30-minute one-to-one consultation.</p>
-              <button type="button" disabled={zoomBusy} onClick={saveZoomHosts} className="shrink-0 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{zoomBusy ? "Saving…" : "Save hosts"}</button>
-            </div>
+            <section className={card}>
+              <SectionHeader title="Weekly hours" description={`When appointments can be booked by default, in ${settings.timezone}. Individual consultants and office locations can override this — that's a separate, optional setting on their own tab.`} />
+              <div className="mt-4 space-y-2">
+                {hoursByDay.map((rule) => (
+                  <div key={rule.day} className="flex flex-wrap items-center gap-3">
+                    <Toggle checked={rule.enabled} onChange={(value) => setHours(rule.day, { enabled: value })} label={`${DAY_LABELS[rule.day]} open`} />
+                    <span className="w-24 text-sm font-medium text-slate-700">{DAY_LABELS[rule.day]}</span>
+                    {rule.enabled ? (
+                      <span className="flex items-center gap-2">
+                        <input type="time" value={rule.start} onChange={(event) => setHours(rule.day, { start: event.target.value })} className={inputClass} />
+                        <span className="text-xs text-slate-400">to</span>
+                        <input type="time" value={rule.end} onChange={(event) => setHours(rule.day, { end: event.target.value })} className={inputClass} />
+                      </span>
+                    ) : (
+                      <span className="text-sm text-slate-400">Closed</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className={card}>
+              <SectionHeader
+                title="Scheduling team"
+                description="Consultants participate by default. Administrators choose whether their calendar joins the assignment pool."
+              />
+              <p className="mt-3 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                Capacity is shared across every appointment format. Each available consultant contributes one seat at a time, so an in-person, phone, Jitsi, or Zoom booking at that time consumes the same seat.
+                <span className="mt-1 block font-semibold">Current public capacity: {publicSchedulingStaff.length} simultaneous appointment{publicSchedulingStaff.length === 1 ? "" : "s"}{zoomStatus?.connected ? ` · Zoom capacity: ${publicZoomCapacity}` : ""}.</span>
+                {publicSchedulingStaff.length < 2 ? <span className="mt-1 block">For two seats at the same time, <a href="/app/settings?section=users-roles" className="font-semibold underline underline-offset-2">add another consultant</a>, then enable Accepts and Public here.</span> : null}
+              </p>
+              <div className="mt-3 divide-y divide-slate-100">
+                {staff.map((member) => {
+                  const preference = member.schedulingPreference || { acceptsAppointments: member.role === "consultant", publicBookable: member.role === "consultant", maxDailyAppointments: null };
+                  return (
+                    <div key={member.id} className="flex flex-wrap items-center gap-3 py-3">
+                      <div className="min-w-[150px] flex-1">
+                        <p className="text-sm font-medium text-slate-800">{member.fullName}</p>
+                        <p className="text-xs capitalize text-slate-400">{member.role}{member.role === "admin" && preference.acceptsAppointments ? " · Participating" : ""}</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.acceptsAppointments} onChange={(value) => changeStaff(member, { acceptsAppointments: value, publicBookable: value ? preference.publicBookable : false })} label={`${member.fullName} accepts appointments`} /> Accepts</label>
+                      <label className="flex items-center gap-2 text-xs font-medium text-slate-600"><Toggle checked={preference.publicBookable} onChange={(value) => changeStaff(member, { publicBookable: value, acceptsAppointments: value ? true : preference.acceptsAppointments })} label={`${member.fullName} public bookable`} /> Public</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={preference.maxDailyAppointments ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setStaff((items) => items.map((item) => item.id === member.id
+                            ? { ...item, schedulingPreference: { ...preference, maxDailyAppointments: value } }
+                            : item));
+                        }}
+                        onBlur={(event) => changeStaff(member, { maxDailyAppointments: event.target.value ? Number(event.target.value) : null })}
+                        placeholder="Daily max"
+                        className={`${inputClass} w-24`}
+                      />
+                      <details className="w-full rounded-xl bg-slate-50 px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-600">Personal availability overrides</summary>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                          <label className="text-[11px] font-medium text-slate-500">Timezone<input value={preference.timezone || ""} onBlur={(event) => changeStaff(member, { timezone: event.target.value || null })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, timezone: event.target.value } } : item))} placeholder={settings.timezone} className={`${inputClass} mt-1 w-full`} /></label>
+                          <label className="text-[11px] font-medium text-slate-500">Personal buffer<input type="number" min="0" max="240" value={preference.bufferMinutes ?? ""} onBlur={(event) => changeStaff(member, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} onChange={(event) => setStaff((items) => items.map((item) => item.id === member.id ? { ...item, schedulingPreference: { ...preference, bufferMinutes: event.target.value } } : item))} placeholder={`${settings.bufferMinutes} min (workspace)`} className={`${inputClass} mt-1 w-full`} /></label>
+                          <label className="text-[11px] font-medium text-slate-500">Days off (YYYY-MM-DD)<input defaultValue={(preference.daysOff || []).join(", ")} onBlur={(event) => changeStaff(member, { daysOff: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} placeholder="2026-08-01, 2026-08-02" className={`${inputClass} mt-1 w-full`} /></label>
+                        </div>
+                        <PersonalHoursEditor member={member} preference={preference} workspaceHours={hoursByDay} onSave={changeStaff} />
+                      </details>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className={card}>
+              <SectionHeader title="Availability blocks" description="Block meetings, lunch, leave, or recurring unavailable time. These periods are removed from public and internal slots." />
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <Select value={newBlock.userId} onChange={(event) => setNewBlock((current) => ({ ...current, userId: event.target.value }))}><option value="">Choose team member</option>{staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</Select>
+                <input value={newBlock.title} onChange={(event) => setNewBlock((current) => ({ ...current, title: event.target.value }))} placeholder="Unavailable" className={inputClass} />
+                <Select value={newBlock.recurrence} onChange={(event) => setNewBlock((current) => ({ ...current, recurrence: event.target.value }))}><option value="NONE">Does not repeat</option><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option></Select>
+                <label className="text-[11px] font-medium text-slate-500">Starts<input type="datetime-local" value={newBlock.startsAt} onChange={(event) => setNewBlock((current) => ({ ...current, startsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
+                <label className="text-[11px] font-medium text-slate-500">Ends<input type="datetime-local" value={newBlock.endsAt} onChange={(event) => setNewBlock((current) => ({ ...current, endsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
+                {newBlock.recurrence !== "NONE" ? <label className="text-[11px] font-medium text-slate-500">Repeat until<input type="date" value={newBlock.recurrenceUntil} onChange={(event) => setNewBlock((current) => ({ ...current, recurrenceUntil: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label> : <div />}
+              </div>
+              <p className="mt-2 text-[11px] text-slate-400">Times use {selectedBlockTimezone}. The same local time is preserved across daylight saving changes.</p>
+              <button type="button" disabled={!newBlock.userId || !newBlock.startsAt || !newBlock.endsAt || (newBlock.recurrence !== "NONE" && !newBlock.recurrenceUntil)} onClick={addBlock} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add block</button>
+              {blocks.length ? <div className="mt-4 divide-y divide-slate-100 rounded-2xl border border-slate-100 px-3">{blocks.map((block) => <div key={block.id} className="flex items-center justify-between gap-3 py-2.5"><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800">{block.title} · {block.user?.fullName}</p><p className="truncate text-[11px] text-slate-400">{formatBlockDate(block.startsAt, block.timezone || settings?.timezone, { dateStyle: "medium", timeStyle: "short" })} → {formatBlockDate(block.endsAt, block.timezone || settings?.timezone, { timeStyle: "short" })}{block.recurrence && block.recurrence !== "NONE" ? ` · ${block.recurrence.toLowerCase()}` : ""}</p></div><button type="button" onClick={() => removeBlock(block.id)} aria-label={`Remove ${block.title}`} className="rounded-full p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div> : null}
+            </section>
+
+            <section className={card}>
+              <SectionHeader title="Days off" description="Holidays and closures — no bookings on these dates." />
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {(settings.daysOff || []).map((day) => (
+                  <span key={day} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                    {day}
+                    <button type="button" aria-label={`Remove ${day}`} onClick={() => setSettings((current) => ({ ...current, daysOff: current.daysOff.filter((item) => item !== day) }))} className="text-slate-400 hover:text-rose-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+                <span className="flex items-center gap-2">
+                  <input type="date" value={newDayOff} onChange={(event) => setNewDayOff(event.target.value)} className={inputClass} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newDayOff) return;
+                      setSettings((current) => ({ ...current, daysOff: [...new Set([...(current.daysOff || []), newDayOff])].sort() }));
+                      setNewDayOff("");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add
+                  </button>
+                </span>
+              </div>
+            </section>
           </>
         ) : null}
-      </section>
 
-      <section className={card}>
-        <div className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-violet-600" /><h3 className="text-sm font-semibold text-slate-900">Availability blocks</h3></div>
-        <p className="mt-0.5 text-xs text-slate-500">Block meetings, lunch, leave, or recurring unavailable time. These periods are removed from public and internal slots.</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <Select value={newBlock.userId} onChange={(event) => setNewBlock((current) => ({ ...current, userId: event.target.value }))}><option value="">Choose team member</option>{staff.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</Select>
-          <input value={newBlock.title} onChange={(event) => setNewBlock((current) => ({ ...current, title: event.target.value }))} placeholder="Unavailable" className={inputClass} />
-          <Select value={newBlock.recurrence} onChange={(event) => setNewBlock((current) => ({ ...current, recurrence: event.target.value }))}><option value="NONE">Does not repeat</option><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option></Select>
-          <label className="text-[11px] font-medium text-slate-500">Starts<input type="datetime-local" value={newBlock.startsAt} onChange={(event) => setNewBlock((current) => ({ ...current, startsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
-          <label className="text-[11px] font-medium text-slate-500">Ends<input type="datetime-local" value={newBlock.endsAt} onChange={(event) => setNewBlock((current) => ({ ...current, endsAt: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label>
-          {newBlock.recurrence !== "NONE" ? <label className="text-[11px] font-medium text-slate-500">Repeat until<input type="date" value={newBlock.recurrenceUntil} onChange={(event) => setNewBlock((current) => ({ ...current, recurrenceUntil: event.target.value }))} className={`${inputClass} mt-1 w-full`} /></label> : <div />}
-        </div>
-        <button type="button" disabled={!newBlock.userId || !newBlock.startsAt || !newBlock.endsAt || (newBlock.recurrence !== "NONE" && !newBlock.recurrenceUntil)} onClick={addBlock} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add block</button>
-        {blocks.length ? <div className="mt-4 divide-y divide-slate-100 rounded-2xl border border-slate-100 px-3">{blocks.map((block) => <div key={block.id} className="flex items-center justify-between gap-3 py-2.5"><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800">{block.title} · {block.user?.fullName}</p><p className="truncate text-[11px] text-slate-400">{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(block.startsAt))} → {new Intl.DateTimeFormat("en-CA", { timeStyle: "short" }).format(new Date(block.endsAt))}{block.recurrence && block.recurrence !== "NONE" ? ` · ${block.recurrence.toLowerCase()}` : ""}</p></div><button type="button" onClick={() => removeBlock(block.id)} aria-label={`Remove ${block.title}`} className="rounded-full p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></div>)}</div> : null}
-      </section>
-
-      <section className={card}>
-        <h3 className="text-sm font-semibold text-slate-900">Days off</h3>
-        <p className="mt-0.5 text-xs text-slate-500">Holidays and closures — no bookings on these dates.</p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {(settings.daysOff || []).map((day) => (
-            <span key={day} className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700">
-              {day}
-              <button type="button" aria-label={`Remove ${day}`} onClick={() => setSettings((current) => ({ ...current, daysOff: current.daysOff.filter((item) => item !== day) }))} className="text-slate-400 hover:text-rose-600">
-                <X className="h-3.5 w-3.5" />
+        {activeTab === "session-types" ? (
+          <section className={card}>
+            <SectionHeader title="Session types" description="What people book — each with its own length, formats, and eligible team." />
+            <div className="mt-3 divide-y divide-slate-100">
+              {sessionTypes.map((type) => (
+                <div key={type.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className={`truncate text-sm font-medium ${type.isActive ? "text-slate-800" : "text-slate-400 line-through"}`}>{type.name}</p>
+                    <p className="text-xs text-slate-400">{type.durationMinutes} minutes</p>
+                    <div className="mt-1.5 flex gap-1.5">
+                      {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Jitsi"], ["Zoom", "Zoom"]].map(([mode, label]) => <button key={mode} type="button" onClick={() => toggleTypeMode(type, mode)} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${(type.allowedMeetingModes || ["InPerson", "Online"]).includes(mode) ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-400"}`}>{label}</button>)}
+                    </div>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Eligible team · {type.eligibleStaff?.length ? type.eligibleStaff.length : "all"}</summary>
+                      <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
+                        <button type="button" onClick={() => setTypeStaff(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.eligibleStaff?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All participating</button>
+                        {staff.map((member) => <button key={member.id} type="button" onClick={() => setTypeStaff(type, member.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.eligibleStaff || []).some((item) => item.userId === member.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{member.fullName}</button>)}
+                      </div>
+                    </details>
+                    {(settings.locations || []).length ? <details className="mt-1.5">
+                      <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Locations · {type.allowedLocationIds?.length ? type.allowedLocationIds.length : "all"}</summary>
+                      <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
+                        <button type="button" onClick={() => setTypeLocation(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.allowedLocationIds?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All offices</button>
+                        {settings.locations.map((location) => <button key={location.id} type="button" onClick={() => setTypeLocation(type, location.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.allowedLocationIds || []).includes(location.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{location.name}</button>)}
+                      </div>
+                    </details> : null}
+                    <details className="mt-1.5">
+                      <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Preparation & timing</summary>
+                      <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Session buffer<input type="number" min="0" max="240" defaultValue={type.bufferMinutes ?? ""} onBlur={(event) => changeType(type, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} placeholder="Use workspace buffer" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Checklist (one per line)<textarea defaultValue={(type.preparationChecklist || []).join("\n")} onBlur={(event) => changeType(type, { preparationChecklist: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Preparation instructions<textarea defaultValue={type.preparationInstructions || ""} onBlur={(event) => changeType(type, { preparationInstructions: event.target.value })} rows="2" placeholder="Documents to bring, arrival guidance…" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                        <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Parking / arrival notes<textarea defaultValue={type.parkingInstructions || ""} onBlur={(event) => changeType(type, { parkingInstructions: event.target.value })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
+                      </div>
+                    </details>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Toggle checked={type.isActive} onChange={() => toggleType(type)} label={`${type.name} active`} />
+                    <button type="button" aria-label={`Delete ${type.name}`} onClick={() => removeType(type)} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!sessionTypes.length ? <p className="py-3 text-sm text-slate-400">No session types yet — add your first below.</p> : null}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input value={newType.name} onChange={(event) => setNewType((c) => ({ ...c, name: event.target.value }))} placeholder="Session name" className={`${inputClass} flex-1 min-w-[180px]`} />
+              <Select value={newType.durationMinutes} onChange={(event) => setNewType((c) => ({ ...c, durationMinutes: Number(event.target.value) }))}>
+                {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
+              </Select>
+              <button type="button" disabled={addingType || !newType.name.trim()} onClick={addSessionType} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                {addingType ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
               </button>
-            </span>
-          ))}
-          <span className="flex items-center gap-2">
-            <input type="date" value={newDayOff} onChange={(event) => setNewDayOff(event.target.value)} className={inputClass} />
-            <button
-              type="button"
-              onClick={() => {
-                if (!newDayOff) return;
-                setSettings((current) => ({ ...current, daysOff: [...new Set([...(current.daysOff || []), newDayOff])].sort() }));
-                setNewDayOff("");
-              }}
-              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add
-            </button>
-          </span>
-        </div>
-      </section>
-
-      <section className={card}>
-        <h3 className="text-sm font-semibold text-slate-900">Booking rules</h3>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <label className="block text-xs font-medium text-slate-600">Buffer between appointments
-            <Select value={settings.bufferMinutes} onChange={(event) => setSettings((c) => ({ ...c, bufferMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
-              {BUFFER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes ? `${minutes} minutes` : "No buffer"}</option>)}
-            </Select>
-          </label>
-          <label className="block text-xs font-medium text-slate-600">Minimum notice
-            <Select value={settings.minNoticeMinutes} onChange={(event) => setSettings((c) => ({ ...c, minNoticeMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
-              {NOTICE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </Select>
-          </label>
-          <label className="block text-xs font-medium text-slate-600">How far ahead people can book
-            <Select value={settings.horizonDays} onChange={(event) => setSettings((c) => ({ ...c, horizonDays: Number(event.target.value) }))} className="mt-1.5 w-full">
-              {HORIZON_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
-            </Select>
-          </label>
-          <label className="block text-xs font-medium text-slate-600">Reminder
-            <Select value={settings.reminderMinutes} onChange={(event) => setSettings((c) => ({ ...c, reminderMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
-              {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </Select>
-          </label>
-          <div className="sm:col-span-2">
-            <p className="text-xs font-medium text-slate-600">Reminder sequence</p>
-            <div className="mt-1.5 flex flex-wrap gap-2">{REMINDER_OPTIONS.map((option) => { const selected = (settings.reminderSchedule || [settings.reminderMinutes]).includes(option.value); return <button key={option.value} type="button" onClick={() => setSettings((current) => { const values = current.reminderSchedule || [current.reminderMinutes]; const next = selected ? values.filter((item) => item !== option.value) : [...values, option.value]; return next.length ? { ...current, reminderSchedule: next } : current; })} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${selected ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-500"}`}>{option.label}</button>; })}</div>
-          </div>
-          <label className="block text-xs font-medium text-slate-600 sm:col-span-2">Timezone
-            <input value={settings.timezone} onChange={(event) => setSettings((c) => ({ ...c, timezone: event.target.value }))} className={`mt-1.5 w-full ${inputClass}`} list="booking-timezones" />
-            <datalist id="booking-timezones">
-              {["America/Toronto", "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax", "Asia/Kolkata", "Europe/London"].map((zone) => <option key={zone} value={zone} />)}
-            </datalist>
-          </label>
-          <label className="block text-xs font-medium text-slate-600">Cancellation cutoff
-            <input type="number" min="0" value={settings.cancellationCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, cancellationCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
-          </label>
-          <label className="block text-xs font-medium text-slate-600">Reschedule cutoff
-            <input type="number" min="0" value={settings.rescheduleCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, rescheduleCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
-          </label>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
-          <Toggle checked={settings.freeConsultationsEnabled} onChange={(value) => setSettings((c) => ({ ...c, freeConsultationsEnabled: value }))} label="Free consultations enabled" />
-          <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Free consultations</p><p className="text-xs text-slate-400">Limit repeat bookings by email or client.</p></div>
-          <label className="text-xs font-medium text-slate-600">Per contact <input type="number" min="1" max="20" disabled={!settings.freeConsultationsEnabled} value={settings.freeConsultationsPerContact} onChange={(event) => setSettings((c) => ({ ...c, freeConsultationsPerContact: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
-          <Toggle checked={settings.consultFeeEnabled} onChange={(value) => setSettings((c) => ({ ...c, consultFeeEnabled: value }))} label="Paid consultation bookings enabled" />
-          <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Paid bookings</p><p className="text-xs text-slate-400">Client pays by card on QuickBooks before the slot is confirmed.</p></div>
-          <label className="text-xs font-medium text-slate-600">Fee (CAD) <input type="number" min="0.01" step="0.01" max="10000" disabled={!settings.consultFeeEnabled} value={settings.consultFeeAmount ?? ""} onChange={(event) => setSettings((c) => ({ ...c, consultFeeAmount: event.target.value === "" ? null : Number(event.target.value) }))} className={`${inputClass} ml-2 w-24`} /></label>
-          <label className="text-xs font-medium text-slate-600">Hold window (min) <input type="number" min="5" max="120" disabled={!settings.consultFeeEnabled} value={settings.consultFeeHoldMinutes} onChange={(event) => setSettings((c) => ({ ...c, consultFeeHoldMinutes: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
-          <label className="block w-full text-xs font-medium text-slate-600">Payment terms shown to clients
-            <textarea
-              value={settings.consultFeeTerms || ""}
-              maxLength={2000}
-              disabled={!settings.consultFeeEnabled}
-              onChange={(event) => setSettings((c) => ({ ...c, consultFeeTerms: event.target.value }))}
-              placeholder="e.g. Fully refundable if cancelled more than 24 hours before your appointment."
-              rows={2}
-              className={`${inputClass} mt-1.5 w-full font-normal`}
-            />
-          </label>
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.attendanceConfirmationEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, attendanceConfirmationEnabled: value }))} label="Attendance confirmation enabled" /><span><span className="block text-sm font-medium text-slate-800">Attendance confirmation</span><span className="block text-xs text-slate-400">Let clients confirm before arrival.</span></span></label>
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.onlineBookingEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, onlineBookingEnabled: value }))} label="Jitsi booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Jitsi video calls</span><span className="block text-xs text-slate-400">Create a secure Jitsi link without an external account.</span></span></label>
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.phoneBookingEnabled === true} onChange={(value) => setSettings((current) => ({ ...current, phoneBookingEnabled: value }))} label="Phone booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Phone calls</span><span className="block text-xs text-slate-400">Your team calls the client at the booked time.</span></span></label>
-          <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.zoomBookingEnabled === true} onChange={(value) => { if (value && (!zoomStatus?.connected || !(zoomStatus?.mappings || []).length)) setError("Connect Zoom and map at least one consultant before enabling Zoom bookings."); else setSettings((current) => ({ ...current, zoomBookingEnabled: value })); }} label="Zoom booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Zoom video calls</span><span className="block text-xs text-slate-400">Uses the connected organization and consultant host mappings.</span></span></label>
-        </div>
-        {settings.phoneBookingEnabled ? (
-          <div className="mt-3 grid gap-3 rounded-2xl border border-sky-100 bg-sky-50/50 p-3.5 sm:grid-cols-2">
-            <label className="text-xs font-semibold text-slate-600"><span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-sky-600" /> Number clients will see</span>
-              <input value={settings.phoneCallerId || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallerId: event.target.value }))} placeholder="+1 647 555 0100" autoComplete="tel" className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
-              <span className="mt-1 block font-normal leading-4 text-slate-400">Use the number consultants will call from. It is included in email, SMS, and calendar details.</span>
-            </label>
-            <label className="text-xs font-semibold text-slate-600">Client phone instructions
-              <textarea value={settings.phoneCallInstructions || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallInstructions: event.target.value }))} placeholder="Keep your phone nearby. We will call at the scheduled time." rows={3} maxLength={500} className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
-            </label>
-          </div>
+            </div>
+          </section>
         ) : null}
-        <details className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
-          <summary className="cursor-pointer text-sm font-medium text-slate-800">Email wording</summary>
-          <p className="mt-1 text-xs text-slate-400">Customize the headline and opening sentence while keeping the polished appointment details and actions.</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2"><Select value={emailPreviewKind} onChange={(event) => setEmailPreviewKind(event.target.value)}><option value="booked">Booking confirmation</option><option value="reminder">Reminder</option><option value="rescheduled">Rescheduled</option><option value="cancelled">Cancellation</option></Select><button type="button" disabled={emailPreviewBusy} onClick={() => loadEmailPreview()} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Preview</button><button type="button" disabled={emailPreviewBusy} onClick={sendTestEmail} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send test</button>{emailTestNotice ? <span className="text-xs font-semibold text-emerald-600">{emailTestNotice}</span> : null}</div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">{[["booked", "Booking confirmation"], ["reminder", "Reminder"], ["rescheduled", "Rescheduled"], ["cancelled", "Cancellation"]].map(([kind, label]) => <div key={kind} className="rounded-xl bg-white p-3"><p className="text-xs font-semibold text-slate-700">{label}</p><input value={settings.messageTemplates?.[kind]?.subject || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), subject: event.target.value } } }))} placeholder="Use default headline" className={`${inputClass} mt-2 w-full`} /><textarea value={settings.messageTemplates?.[kind]?.intro || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), intro: event.target.value } } }))} rows="2" placeholder="Use default opening message" className={`${inputClass} mt-2 w-full`} /></div>)}</div>
-        </details>
-      </section>
+
+        {activeTab === "locations" ? (
+          <>
+            <section className={card}>
+              <SectionHeader title="Meeting formats" description="Which ways clients can meet with you. Each format draws from the same shared team capacity." />
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.onlineBookingEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, onlineBookingEnabled: value }))} label="Jitsi booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Jitsi video calls</span><span className="block text-xs text-slate-400">Create a secure Jitsi link without an external account.</span></span></label>
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.phoneBookingEnabled === true} onChange={(value) => setSettings((current) => ({ ...current, phoneBookingEnabled: value }))} label="Phone booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Phone calls</span><span className="block text-xs text-slate-400">Your team calls the client at the booked time.</span></span></label>
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.zoomBookingEnabled === true} onChange={(value) => { if (value && (!zoomStatus?.connected || !(zoomStatus?.mappings || []).length)) setError("Connect Zoom and map at least one consultant before enabling Zoom bookings."); else setSettings((current) => ({ ...current, zoomBookingEnabled: value })); }} label="Zoom booking enabled" /><span><span className="block text-sm font-medium text-slate-800">Zoom video calls</span><span className="block text-xs text-slate-400">Uses the connected organization and consultant host mappings below.</span></span></label>
+              </div>
+              {settings.phoneBookingEnabled ? (
+                <div className="mt-3 grid gap-3 rounded-2xl border border-sky-100 bg-sky-50/50 p-3.5 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-slate-600"><span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-sky-600" /> Number clients will see</span>
+                    <input value={settings.phoneCallerId || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallerId: event.target.value }))} placeholder="+1 647 555 0100" autoComplete="tel" className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
+                    <span className="mt-1 block font-normal leading-4 text-slate-400">Use the number consultants will call from. It is included in email, SMS, and calendar details.</span>
+                  </label>
+                  <label className="text-xs font-semibold text-slate-600">Client phone instructions
+                    <textarea value={settings.phoneCallInstructions || ""} onChange={(event) => setSettings((current) => ({ ...current, phoneCallInstructions: event.target.value }))} placeholder="Keep your phone nearby. We will call at the scheduled time." rows={3} maxLength={500} className={`${inputClass} mt-1.5 w-full bg-white font-normal`} />
+                  </label>
+                </div>
+              ) : null}
+            </section>
+
+            <section className={card}>
+              <SectionHeader
+                title="Zoom organization"
+                description="Connect one consultancy Zoom account, then map each CaseDesk consultant to a distinct Zoom host."
+                action={zoomStatus?.connected ? (
+                  <button type="button" disabled={zoomBusy} onClick={removeZoomAccount} className="rounded-full border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Disconnect</button>
+                ) : (
+                  <button type="button" disabled={zoomBusy || zoomStatus?.configured === false} onClick={connectZoomAccount} className="inline-flex items-center gap-1.5 rounded-full bg-[#2D8CFF] px-4 py-2 text-xs font-semibold text-white hover:bg-[#237ee8] disabled:opacity-50">{zoomBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} Connect Zoom</button>
+                )}
+              />
+              {zoomStatus?.configured === false ? <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">The server needs ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET, ZOOM_REDIRECT_URI, ZOOM_WEBHOOK_SECRET_TOKEN, and a valid MAIL_SETTINGS_ENCRYPTION_KEY before an administrator can connect Zoom.</p> : null}
+              {zoomStatus?.lastError ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{zoomStatus.lastError}</p> : null}
+              {zoomStatus?.connected ? (
+                <>
+                  <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 px-3.5 py-3 text-xs text-emerald-800">
+                    <p className="font-semibold">Connected{zoomStatus.connectedUserEmail ? ` as ${zoomStatus.connectedUserEmail}` : ""}</p>
+                    <p className="mt-1 leading-5">CaseDesk creates one private meeting per appointment, keeps the join link synchronized on reschedule, and deletes the Zoom meeting on cancellation. Clients do not need a Zoom account.</p>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Consultant host mapping</p>
+                    {staff.map((member) => (
+                      <label key={member.id} className="grid items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2.5 sm:grid-cols-[1fr_1.3fr]">
+                        <span><span className="block text-sm font-medium text-slate-800">{member.fullName}</span><span className="block text-[11px] text-slate-400">{member.email}</span></span>
+                        <Select value={zoomMappingDraft[member.id] || ""} onChange={(event) => setZoomMappingDraft((current) => ({ ...current, [member.id]: event.target.value }))}>
+                          <option value="">Not available for Zoom</option>
+                          {(zoomStatus.hosts || []).map((host) => {
+                            const selectedByAnother = Object.entries(zoomMappingDraft).some(([userId, zoomUserId]) => userId !== member.id && zoomUserId === host.id);
+                            return <option key={host.id} value={host.id} disabled={selectedByAnother}>{host.name || host.email} · {host.email} · {host.licenseType || "Unknown license"}</option>;
+                          })}
+                        </Select>
+                      </label>
+                    ))}
+                    {!(zoomStatus.hosts || []).length ? <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">No active Zoom users were returned. Add users in Zoom or reconnect an account that can read organization users.</p> : null}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <p className="text-[11px] leading-5 text-slate-400">For two simultaneous Zoom appointments, map two different Zoom users. A free Basic host is suitable for a 30-minute one-to-one consultation.</p>
+                    <button type="button" disabled={zoomBusy} onClick={saveZoomHosts} className="shrink-0 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{zoomBusy ? "Saving…" : "Save hosts"}</button>
+                  </div>
+                </>
+              ) : null}
+            </section>
+
+            <section className={card}>
+              <SectionHeader title="Office locations" badge="In-person" description="Where clients meet you in person. The address is sent with every in-person confirmation; the Google Maps link is optional." />
+              <div className="mt-3 space-y-2">
+                {(settings.locations || []).map((location) => (
+                  <div key={location.id} className="rounded-2xl border border-slate-200 bg-white px-3.5 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"><MapPin className="h-4 w-4" /></span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{location.name}</p>
+                          <p className="truncate text-xs text-slate-500">{location.address}</p>
+                          {location.mapsUrl ? <a href={location.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-sky-600 hover:text-sky-800">Map link ↗</a> : null}
+                        </div>
+                      </div>
+                      <button type="button" aria-label={`Remove ${location.name}`} onClick={() => setSettings((c) => ({ ...c, locations: (c.locations || []).filter((item) => item.id !== location.id) }))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <LocationHoursEditor
+                      location={location}
+                      workspaceHours={hoursByDay}
+                      onChange={(nextLocation) => setSettings((c) => ({ ...c, locations: (c.locations || []).map((item) => (item.id === location.id ? nextLocation : item)) }))}
+                    />
+                  </div>
+                ))}
+                {!(settings.locations || []).length ? <p className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/50 px-3.5 py-3 text-xs text-amber-800">No locations yet — in-person appointments will remain unavailable until you add an office. Phone and video formats can still be offered.</p> : null}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.4fr]">
+                <input value={newLocation.name} onChange={(event) => setNewLocation((c) => ({ ...c, name: event.target.value }))} placeholder="Office name (e.g. Main Office)" className={inputClass} />
+                <div className="relative">
+                  <input
+                    value={newLocation.address}
+                    onChange={(event) => setNewLocation((c) => ({ ...c, address: event.target.value }))}
+                    onFocus={() => { if (addressSuggestions.length) setAddressSuggestionsOpen(true); }}
+                    onBlur={() => setAddressSuggestionsOpen(false)}
+                    placeholder="Full street address"
+                    autoComplete="off"
+                    className={`${inputClass} w-full`}
+                  />
+                  {addressSearching ? <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-slate-400" /> : null}
+                  {addressSuggestionsOpen && addressSuggestions.length ? (
+                    <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
+                      {addressSuggestions.map((result) => (
+                        <li key={result.place_id}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => { event.preventDefault(); pickAddressSuggestion(result); }}
+                            className="block w-full truncate px-3 py-2 text-left text-slate-700 hover:bg-sky-50 hover:text-sky-800"
+                          >
+                            {result.display_name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <input value={newLocation.mapsUrl} onChange={(event) => setNewLocation((c) => ({ ...c, mapsUrl: event.target.value }))} placeholder="Google Maps link (optional)" className={`${inputClass} sm:col-span-2`} />
+              </div>
+              <button
+                type="button"
+                disabled={!newLocation.name.trim() || !newLocation.address.trim()}
+                onClick={() => {
+                  setSettings((c) => ({ ...c, locations: [...(c.locations || []), { id: `loc-${Date.now()}`, name: newLocation.name.trim(), address: newLocation.address.trim(), mapsUrl: newLocation.mapsUrl.trim() || null }] }));
+                  setNewLocation({ name: "", address: "", mapsUrl: "" });
+                }}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add location
+              </button>
+            </section>
+          </>
+        ) : null}
+
+        {activeTab === "rules" ? (
+          <>
+            <section className={card}>
+              <SectionHeader title="Booking rules" description="Timing, notice, and cutoffs that apply to every appointment format." />
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-slate-600">Buffer between appointments
+                  <Select value={settings.bufferMinutes} onChange={(event) => setSettings((c) => ({ ...c, bufferMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
+                    {BUFFER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes ? `${minutes} minutes` : "No buffer"}</option>)}
+                  </Select>
+                </label>
+                <label className="block text-xs font-medium text-slate-600">Minimum notice
+                  <Select value={settings.minNoticeMinutes} onChange={(event) => setSettings((c) => ({ ...c, minNoticeMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
+                    {NOTICE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select>
+                </label>
+                <label className="block text-xs font-medium text-slate-600">How far ahead people can book
+                  <Select value={settings.horizonDays} onChange={(event) => setSettings((c) => ({ ...c, horizonDays: Number(event.target.value) }))} className="mt-1.5 w-full">
+                    {HORIZON_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
+                  </Select>
+                </label>
+                <label className="block text-xs font-medium text-slate-600">Reminder
+                  <Select value={settings.reminderMinutes} onChange={(event) => setSettings((c) => ({ ...c, reminderMinutes: Number(event.target.value) }))} className="mt-1.5 w-full">
+                    {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select>
+                </label>
+                <div className="sm:col-span-2">
+                  <p className="text-xs font-medium text-slate-600">Reminder sequence</p>
+                  <div className="mt-1.5 flex flex-wrap gap-2">{REMINDER_OPTIONS.map((option) => { const selected = (settings.reminderSchedule || [settings.reminderMinutes]).includes(option.value); return <button key={option.value} type="button" onClick={() => setSettings((current) => { const values = current.reminderSchedule || [current.reminderMinutes]; const next = selected ? values.filter((item) => item !== option.value) : [...values, option.value]; return next.length ? { ...current, reminderSchedule: next } : current; })} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${selected ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-500"}`}>{option.label}</button>; })}</div>
+                </div>
+                <label className="block text-xs font-medium text-slate-600 sm:col-span-2">Timezone
+                  <input value={settings.timezone} onChange={(event) => setSettings((c) => ({ ...c, timezone: event.target.value }))} className={`mt-1.5 w-full ${inputClass}`} list="booking-timezones" />
+                  <datalist id="booking-timezones">
+                    {["America/Toronto", "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax", "Asia/Kolkata", "Europe/London"].map((zone) => <option key={zone} value={zone} />)}
+                  </datalist>
+                </label>
+                <label className="block text-xs font-medium text-slate-600">Cancellation cutoff
+                  <input type="number" min="0" value={settings.cancellationCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, cancellationCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
+                </label>
+                <label className="block text-xs font-medium text-slate-600">Reschedule cutoff
+                  <input type="number" min="0" value={settings.rescheduleCutoffMinutes} onChange={(event) => setSettings((c) => ({ ...c, rescheduleCutoffMinutes: Number(event.target.value) }))} className={`mt-1.5 w-full ${inputClass}`} />
+                </label>
+              </div>
+            </section>
+
+            <section className={card}>
+              <SectionHeader title="Consultations" description="Free-consultation limits and paid, pay-to-hold bookings." />
+              <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+                <Toggle checked={settings.freeConsultationsEnabled} onChange={(value) => setSettings((c) => ({ ...c, freeConsultationsEnabled: value }))} label="Free consultations enabled" />
+                <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Free consultations</p><p className="text-xs text-slate-400">Limit repeat bookings by email or client.</p></div>
+                <label className="text-xs font-medium text-slate-600">Per contact <input type="number" min="1" max="20" disabled={!settings.freeConsultationsEnabled} value={settings.freeConsultationsPerContact} onChange={(event) => setSettings((c) => ({ ...c, freeConsultationsPerContact: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5">
+                <Toggle checked={settings.consultFeeEnabled} onChange={(value) => setSettings((c) => ({ ...c, consultFeeEnabled: value }))} label="Paid consultation bookings enabled" />
+                <div className="min-w-[160px] flex-1"><p className="text-sm font-medium text-slate-800">Paid bookings</p><p className="text-xs text-slate-400">Client pays by card on QuickBooks before the slot is confirmed.</p></div>
+                <label className="text-xs font-medium text-slate-600">Fee (CAD) <input type="number" min="0.01" step="0.01" max="10000" disabled={!settings.consultFeeEnabled} value={settings.consultFeeAmount ?? ""} onChange={(event) => setSettings((c) => ({ ...c, consultFeeAmount: event.target.value === "" ? null : Number(event.target.value) }))} className={`${inputClass} ml-2 w-24`} /></label>
+                <label className="text-xs font-medium text-slate-600">Hold window (min) <input type="number" min="5" max="120" disabled={!settings.consultFeeEnabled} value={settings.consultFeeHoldMinutes} onChange={(event) => setSettings((c) => ({ ...c, consultFeeHoldMinutes: Number(event.target.value) }))} className={`${inputClass} ml-2 w-20`} /></label>
+                <label className="block w-full text-xs font-medium text-slate-600">Payment terms shown to clients
+                  <textarea
+                    value={settings.consultFeeTerms || ""}
+                    maxLength={2000}
+                    disabled={!settings.consultFeeEnabled}
+                    onChange={(event) => setSettings((c) => ({ ...c, consultFeeTerms: event.target.value }))}
+                    placeholder="e.g. Fully refundable if cancelled more than 24 hours before your appointment."
+                    rows={2}
+                    className={`${inputClass} mt-1.5 w-full font-normal`}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.waitlistEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, waitlistEnabled: value }))} label="Waitlist enabled" /><span><span className="block text-sm font-medium text-slate-800">Waitlist</span><span className="block text-xs text-slate-400">Offer an option when slots are full.</span></span></label>
+                <label className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5"><Toggle checked={settings.attendanceConfirmationEnabled !== false} onChange={(value) => setSettings((current) => ({ ...current, attendanceConfirmationEnabled: value }))} label="Attendance confirmation enabled" /><span><span className="block text-sm font-medium text-slate-800">Attendance confirmation</span><span className="block text-xs text-slate-400">Let clients confirm before arrival.</span></span></label>
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {activeTab === "public" ? (
+          <>
+            <section className={card}>
+              <SectionHeader
+                title="Public booking page"
+                description="Share this link so clients can book directly with your immigration firm."
+                action={<Toggle checked={settings.publicBookingEnabled} onChange={(value) => setSettings((c) => ({ ...c, publicBookingEnabled: value }))} label="Public booking enabled" />}
+              />
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">{bookingUrl}</code>
+                <button
+                  type="button"
+                  onClick={() => { navigator.clipboard?.writeText(bookingUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5">
+                <label className="text-xs font-semibold text-slate-600">Headline
+                  <input
+                    value={settings.publicHeadline || ""}
+                    maxLength={140}
+                    onChange={(event) => setSettings((current) => ({ ...current, publicHeadline: event.target.value }))}
+                    placeholder="Schedule your consultation"
+                    className={`${inputClass} mt-1.5 w-full font-normal`}
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Welcome message
+                  <textarea
+                    value={settings.publicWelcomeMessage || ""}
+                    maxLength={2000}
+                    rows={4}
+                    onChange={(event) => setSettings((current) => ({ ...current, publicWelcomeMessage: event.target.value }))}
+                    placeholder="Welcome clients and help them prepare for their consultation."
+                    className={`${inputClass} mt-1.5 w-full resize-y font-normal leading-6`}
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Sign-off
+                  <input
+                    value={settings.publicSignOffName || ""}
+                    maxLength={160}
+                    onChange={(event) => setSettings((current) => ({ ...current, publicSignOffName: event.target.value }))}
+                    placeholder="TEAM — Your agency name"
+                    className={`${inputClass} mt-1.5 w-full font-normal`}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className={card}>
+              <SectionHeader title="Email wording" description="Customize the headline and opening sentence while keeping the polished appointment details and actions." />
+              <div className="mt-3 flex flex-wrap items-center gap-2"><Select value={emailPreviewKind} onChange={(event) => setEmailPreviewKind(event.target.value)}><option value="booked">Booking confirmation</option><option value="reminder">Reminder</option><option value="rescheduled">Rescheduled</option><option value="cancelled">Cancellation</option></Select><button type="button" disabled={emailPreviewBusy} onClick={() => loadEmailPreview()} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Preview</button><button type="button" disabled={emailPreviewBusy} onClick={sendTestEmail} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{emailPreviewBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send test</button>{emailTestNotice ? <span className="text-xs font-semibold text-emerald-600">{emailTestNotice}</span> : null}</div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">{[["booked", "Booking confirmation"], ["reminder", "Reminder"], ["rescheduled", "Rescheduled"], ["cancelled", "Cancellation"]].map(([kind, label]) => <div key={kind} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3"><p className="text-xs font-semibold text-slate-700">{label}</p><input value={settings.messageTemplates?.[kind]?.subject || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), subject: event.target.value } } }))} placeholder="Use default headline" className={`${inputClass} mt-2 w-full bg-white`} /><textarea value={settings.messageTemplates?.[kind]?.intro || ""} onChange={(event) => setSettings((current) => ({ ...current, messageTemplates: { ...(current.messageTemplates || {}), [kind]: { ...(current.messageTemplates?.[kind] || {}), intro: event.target.value } } }))} rows="2" placeholder="Use default opening message" className={`${inputClass} mt-2 w-full bg-white`} /></div>)}</div>
+            </section>
+          </>
+        ) : null}
+      </div>
 
       <EmailPreviewModal preview={emailPreview} kind={emailPreviewKind} onClose={() => setEmailPreview(null)} />
 
-      <section className={card}>
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-slate-900">Office locations</h3>
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">For in-person bookings</span>
-        </div>
-        <p className="mt-0.5 text-xs text-slate-500">Where clients meet you in person. The address is sent with every in-person confirmation; the Google Maps link is optional.</p>
-        <div className="mt-3 space-y-2">
-          {(settings.locations || []).map((location) => (
-            <div key={location.id} className="rounded-2xl border border-slate-200/80 bg-white px-3.5 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-2.5">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600"><MapPin className="h-4 w-4" /></span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{location.name}</p>
-                    <p className="truncate text-xs text-slate-500">{location.address}</p>
-                    {location.mapsUrl ? <a href={location.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-sky-600 hover:text-sky-800">Map link ↗</a> : null}
-                  </div>
-                </div>
-                <button type="button" aria-label={`Remove ${location.name}`} onClick={() => setSettings((c) => ({ ...c, locations: (c.locations || []).filter((item) => item.id !== location.id) }))} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-              <LocationHoursEditor
-                location={location}
-                workspaceHours={hoursByDay}
-                onChange={(nextLocation) => setSettings((c) => ({ ...c, locations: (c.locations || []).map((item) => (item.id === location.id ? nextLocation : item)) }))}
-              />
-            </div>
-          ))}
-          {!(settings.locations || []).length ? <p className="rounded-2xl border border-dashed border-amber-200 bg-amber-50/50 px-3.5 py-3 text-xs text-amber-800">No locations yet — in-person appointments will remain unavailable until you add an office. Phone and video formats can still be offered.</p> : null}
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1.4fr]">
-          <input value={newLocation.name} onChange={(event) => setNewLocation((c) => ({ ...c, name: event.target.value }))} placeholder="Office name (e.g. Main Office)" className={inputClass} />
-          <div className="relative">
-            <input
-              value={newLocation.address}
-              onChange={(event) => setNewLocation((c) => ({ ...c, address: event.target.value }))}
-              onFocus={() => { if (addressSuggestions.length) setAddressSuggestionsOpen(true); }}
-              onBlur={() => setAddressSuggestionsOpen(false)}
-              placeholder="Full street address"
-              autoComplete="off"
-              className={`${inputClass} w-full`}
-            />
-            {addressSearching ? <Loader2 className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-slate-400" /> : null}
-            {addressSuggestionsOpen && addressSuggestions.length ? (
-              <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
-                {addressSuggestions.map((result) => (
-                  <li key={result.place_id}>
-                    <button
-                      type="button"
-                      onMouseDown={(event) => { event.preventDefault(); pickAddressSuggestion(result); }}
-                      className="block w-full truncate px-3 py-2 text-left text-slate-700 hover:bg-sky-50 hover:text-sky-800"
-                    >
-                      {result.display_name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-          <input value={newLocation.mapsUrl} onChange={(event) => setNewLocation((c) => ({ ...c, mapsUrl: event.target.value }))} placeholder="Google Maps link (optional)" className={`${inputClass} sm:col-span-2`} />
-        </div>
-        <button
-          type="button"
-          disabled={!newLocation.name.trim() || !newLocation.address.trim()}
-          onClick={() => {
-            setSettings((c) => ({ ...c, locations: [...(c.locations || []), { id: `loc-${Date.now()}`, name: newLocation.name.trim(), address: newLocation.address.trim(), mapsUrl: newLocation.mapsUrl.trim() || null }] }));
-            setNewLocation({ name: "", address: "", mapsUrl: "" });
-          }}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
-        >
-          <Plus className="h-3.5 w-3.5" /> Add location
+      <div className="sticky bottom-0 z-10 -mx-1 border-t border-slate-200 bg-white/90 px-1 pb-1 pt-3 backdrop-blur-xl">
+        <button type="button" onClick={save} disabled={saving} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <Check className="h-4 w-4 text-emerald-300" /> : null}
+          {saving ? "Saving…" : saved ? "Saved" : "Save scheduling settings"}
         </button>
-      </section>
-
-      <section className={card}>
-        <h3 className="text-sm font-semibold text-slate-900">Session types</h3>
-        <p className="mt-0.5 text-xs text-slate-500">What people book — each with its own length.</p>
-        <div className="mt-3 divide-y divide-slate-100">
-          {sessionTypes.map((type) => (
-            <div key={type.id} className="flex items-center justify-between gap-3 py-2.5">
-              <div className="min-w-0">
-                <p className={`truncate text-sm font-medium ${type.isActive ? "text-slate-800" : "text-slate-400 line-through"}`}>{type.name}</p>
-                <p className="text-xs text-slate-400">{type.durationMinutes} minutes</p>
-                <div className="mt-1.5 flex gap-1.5">
-                  {[["InPerson", "In person"], ["Phone", "Phone"], ["Online", "Jitsi"], ["Zoom", "Zoom"]].map(([mode, label]) => <button key={mode} type="button" onClick={() => toggleTypeMode(type, mode)} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${(type.allowedMeetingModes || ["InPerson", "Online"]).includes(mode) ? "bg-sky-50 text-sky-700" : "bg-slate-100 text-slate-400"}`}>{label}</button>)}
-                </div>
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Eligible team · {type.eligibleStaff?.length ? type.eligibleStaff.length : "all"}</summary>
-                  <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
-                    <button type="button" onClick={() => setTypeStaff(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.eligibleStaff?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All participating</button>
-                    {staff.map((member) => <button key={member.id} type="button" onClick={() => setTypeStaff(type, member.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.eligibleStaff || []).some((item) => item.userId === member.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{member.fullName}</button>)}
-                  </div>
-                </details>
-                {(settings.locations || []).length ? <details className="mt-1.5">
-                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Locations · {type.allowedLocationIds?.length ? type.allowedLocationIds.length : "all"}</summary>
-                  <div className="mt-2 flex max-w-md flex-wrap gap-1.5">
-                    <button type="button" onClick={() => setTypeLocation(type, null)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${!type.allowedLocationIds?.length ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-500"}`}>All offices</button>
-                    {settings.locations.map((location) => <button key={location.id} type="button" onClick={() => setTypeLocation(type, location.id)} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${(type.allowedLocationIds || []).includes(location.id) ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"}`}>{location.name}</button>)}
-                  </div>
-                </details> : null}
-                <details className="mt-1.5">
-                  <summary className="cursor-pointer text-[11px] font-medium text-slate-500">Preparation & timing</summary>
-                  <div className="mt-2 grid max-w-2xl gap-2 sm:grid-cols-2">
-                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Session buffer<input type="number" min="0" max="240" defaultValue={type.bufferMinutes ?? ""} onBlur={(event) => changeType(type, { bufferMinutes: event.target.value === "" ? null : Number(event.target.value) })} placeholder="Use workspace buffer" className={`${inputClass} mt-1 w-full normal-case`} /></label>
-                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Checklist (one per line)<textarea defaultValue={(type.preparationChecklist || []).join("\n")} onBlur={(event) => changeType(type, { preparationChecklist: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean) })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
-                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Preparation instructions<textarea defaultValue={type.preparationInstructions || ""} onBlur={(event) => changeType(type, { preparationInstructions: event.target.value })} rows="2" placeholder="Documents to bring, arrival guidance…" className={`${inputClass} mt-1 w-full normal-case`} /></label>
-                    <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:col-span-2">Parking / arrival notes<textarea defaultValue={type.parkingInstructions || ""} onBlur={(event) => changeType(type, { parkingInstructions: event.target.value })} rows="2" className={`${inputClass} mt-1 w-full normal-case`} /></label>
-                  </div>
-                </details>
-              </div>
-              <div className="flex items-center gap-2">
-                <Toggle checked={type.isActive} onChange={() => toggleType(type)} label={`${type.name} active`} />
-                <button type="button" aria-label={`Delete ${type.name}`} onClick={() => removeType(type)} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          ))}
-          {!sessionTypes.length ? <p className="py-3 text-sm text-slate-400">No session types yet — add your first below.</p> : null}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input value={newType.name} onChange={(event) => setNewType((c) => ({ ...c, name: event.target.value }))} placeholder="Session name" className={`${inputClass} flex-1 min-w-[180px]`} />
-          <Select value={newType.durationMinutes} onChange={(event) => setNewType((c) => ({ ...c, durationMinutes: Number(event.target.value) }))}>
-            {[15, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
-          </Select>
-          <button type="button" disabled={addingType || !newType.name.trim()} onClick={addSessionType} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
-            {addingType ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
-          </button>
-        </div>
-      </section>
-
-      <section className={card}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">Public booking page</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Share this link so clients can book directly with your immigration firm.</p>
-          </div>
-          <Toggle checked={settings.publicBookingEnabled} onChange={(value) => setSettings((c) => ({ ...c, publicBookingEnabled: value }))} label="Public booking enabled" />
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <code className="min-w-0 flex-1 truncate rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">{bookingUrl}</code>
-          <button
-            type="button"
-            onClick={() => { navigator.clipboard?.writeText(bookingUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5">
-          <label className="text-xs font-semibold text-slate-600">Headline
-            <input
-              value={settings.publicHeadline || ""}
-              maxLength={140}
-              onChange={(event) => setSettings((current) => ({ ...current, publicHeadline: event.target.value }))}
-              placeholder="Schedule your consultation"
-              className={`${inputClass} mt-1.5 w-full font-normal`}
-            />
-          </label>
-          <label className="text-xs font-semibold text-slate-600">Welcome message
-            <textarea
-              value={settings.publicWelcomeMessage || ""}
-              maxLength={2000}
-              rows={4}
-              onChange={(event) => setSettings((current) => ({ ...current, publicWelcomeMessage: event.target.value }))}
-              placeholder="Welcome clients and help them prepare for their consultation."
-              className={`${inputClass} mt-1.5 w-full resize-y font-normal leading-6`}
-            />
-          </label>
-          <label className="text-xs font-semibold text-slate-600">Sign-off
-            <input
-              value={settings.publicSignOffName || ""}
-              maxLength={160}
-              onChange={(event) => setSettings((current) => ({ ...current, publicSignOffName: event.target.value }))}
-              placeholder="TEAM — Your agency name"
-              className={`${inputClass} mt-1.5 w-full font-normal`}
-            />
-          </label>
-        </div>
-      </section>
-
-      <button type="button" onClick={save} disabled={saving} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
-        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <Check className="h-4 w-4 text-emerald-300" /> : null}
-        {saving ? "Saving…" : saved ? "Saved" : "Save scheduling settings"}
-      </button>
+      </div>
     </div>
   );
 }

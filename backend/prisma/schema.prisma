@@ -1440,6 +1440,14 @@ model User {
   representativeType                   String?                         @map("representative_type")
   membershipBody                       String?                         @map("membership_body")
   membershipProvince                   String?                         @map("membership_province")
+  // Explicit office phone/email to show on government forms for this
+  // representative — separate from the account-level `phone`/`email` above,
+  // which are for login/notifications and aren't necessarily the firm's
+  // office line. Left blank, forms fall back to the shared agency phone/
+  // email so every representative shows the same office contact by default;
+  // set here to intentionally override it for one representative.
+  formOfficePhone                      String?                         @map("form_office_phone")
+  formOfficeEmail                      String?                         @map("form_office_email")
   // Drawn signature this licensed staff member has personally saved for
   // government forms. It belongs to the user, never to the agency.
   formSignatureImage                   String?                         @map("form_signature_image") @db.Text

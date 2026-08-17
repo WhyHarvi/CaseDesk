@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { Loader2, Paperclip, SendHorizonal, X } from "lucide-react";
 
 const ATTACH_ACCEPT = "image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.rtf";
@@ -25,12 +25,25 @@ export default function ChatComposer({
   sendingLabel = "Thinking",
 }) {
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
 
   function handleFileChange(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (file) onAttach?.(file);
   }
+
+  // Tied to `value` itself (the single source of truth) via a layout effect,
+  // not a native "input" event handler — that version only fired while the
+  // user was actively typing, so a programmatic value change (draft cleared
+  // after sending, a suggestion chip filling the box) never resized it back
+  // down, leaving a tall box behind for whatever short text came next.
+  useLayoutEffect(() => {
+    const node = textareaRef.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${Math.min(node.scrollHeight, 128)}px`;
+  }, [value]);
 
   return (
     <form
@@ -58,12 +71,13 @@ export default function ChatComposer({
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled}
             aria-label="Attach a file"
-            className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:opacity-40"
+            className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:opacity-40"
           >
             <Paperclip className="h-4 w-4" />
           </button>
         ) : null}
         <textarea
+          ref={textareaRef}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
@@ -76,16 +90,12 @@ export default function ChatComposer({
           maxLength={5000}
           disabled={disabled}
           placeholder={disabled && disabledReason ? disabledReason : placeholder}
-          className="max-h-32 min-h-[46px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-5 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
-          onInput={(event) => {
-            event.target.style.height = "auto";
-            event.target.style.height = `${Math.min(event.target.scrollHeight, 128)}px`;
-          }}
+          className="max-h-32 min-h-[50px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-6 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"
         />
         <button
           type="submit"
           disabled={disabled || sending || !value.trim()}
-          className={`flex h-[46px] shrink-0 items-center justify-center gap-2 rounded-full text-white shadow-[0_10px_24px_rgba(37,99,235,0.35)] transition-all duration-200 active:scale-90 disabled:opacity-40 ${sendLabel ? "min-w-[104px] px-4" : "w-[46px]"} ${accentClassName}`}
+          className={`flex h-[50px] shrink-0 items-center justify-center gap-2 rounded-full text-white shadow-[0_10px_24px_rgba(37,99,235,0.35)] transition-all duration-200 active:scale-90 disabled:opacity-40 ${sendLabel ? "min-w-[104px] px-4" : "w-[50px]"} ${accentClassName}`}
           aria-label="Send message"
         >
           {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}

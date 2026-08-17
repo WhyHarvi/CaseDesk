@@ -43,6 +43,8 @@ const include = {
       representativeType: true,
       membershipBody: true,
       membershipProvince: true,
+      formOfficePhone: true,
+      formOfficeEmail: true,
     },
   },
 };

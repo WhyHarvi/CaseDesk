@@ -5,6 +5,7 @@ import {
   closeClient,
   getClientArchiveImpact,
   getClientById,
+  findClientContactMatches,
   listClientAppointments,
   listClients,
   syncClientQuickBooks,
@@ -35,6 +36,11 @@ import {
 const router = Router();
 
 router.get("/", asyncHandler(listClients));
+router.get(
+  "/contact-matches",
+  rateLimit({ windowMs: 60_000, max: 120 }),
+  asyncHandler(findClientContactMatches),
+);
 router.post(
   "/:clientId/portal-account",
   requirePortalCapability("manageClientPortal"),

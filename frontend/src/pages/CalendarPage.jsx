@@ -1482,15 +1482,11 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 </div>
               )}
 
-              {freeEligibility?.enabled && !intakePaymentRequested ? (
+              {freeEligibility?.enabled && freeEligibility.contactEligible && !intakePaymentRequested ? (
                 freeEligibility.eligible ? (
-                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Free 15-minute follow-up available ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
-                ) : freeEligibility.reason === "PAID_BOOKING_REQUIRED" ? (
-                  <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Not eligible for a free follow-up — this contact has no prior paid consultation on file. The {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })} consultation fee applies.</p>
-                ) : freeEligibility.reason === "FIFTEEN_MINUTE_SESSION_REQUIRED" && freeEligibility.contactEligible ? (
-                  <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700">Eligible for a free follow-up, but only with a 15-minute appointment type. This appointment remains paid.</p>
+                  <p className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"><Check className="h-3.5 w-3.5 shrink-0" /> Eligible for a free 15-minute follow-up ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used)</p>
                 ) : (
-                  <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Free follow-up limit reached ({freeEligibility.priorFreeCount} of {freeEligibility.limit} used) — the {consultFeeAmount.toLocaleString("en-CA", { style: "currency", currency: "CAD" })} consultation fee applies.</p>
+                  <p className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"><Check className="h-3.5 w-3.5 shrink-0" /> Eligible for a free follow-up — choose a 15-minute appointment type to apply it.</p>
                 )
               ) : null}
 
