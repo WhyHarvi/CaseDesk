@@ -132,6 +132,8 @@ test("the client profile shows an attributed activity timeline below QuickBooks"
   assert.match(profile, /<h2[^>]*>Client activity<\/h2>/);
   assert.match(profile, /clientActivities\.map\(\(activity, index\)/);
   assert.ok(profile.indexOf("<QuickBooksSyncCard") < profile.indexOf(">Client activity</h2>"));
+  assert.match(profile, /xl:grid-cols-\[1\.62fr_0\.85fr\] xl:items-stretch/);
+  assert.match(profile, /flex min-h-64 flex-col p-6 xl:flex-1/);
 });
 
 test("front desk client intake separates consultation payments from professional fees", async () => {
