@@ -1,5 +1,5 @@
 import prisma from "../services/prisma/client.js";
-import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels, normalizeCaseType } from "../services/workflowService.js";
+import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels, evaluateWorkflowStepStageTriggers, normalizeCaseType } from "../services/workflowService.js";
 import { globalCaseTypeAliases, isGlobalCaseType, listAgencyCaseTypeOptions } from "../services/caseTypeOptionsService.js";
 import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNames.js";
 import { createHttpError } from "../utils/http.js";
@@ -484,6 +484,9 @@ export async function updateCase(req, res) {
   if (Object.hasOwn(payload, "stage") && payload.stage !== existing.stage) {
     await evaluateStageTriggers(req.auth.agencyId, result.data.id, existing.stage, payload.stage, req.auth.userId).catch((error) => {
       logger.warn("case.payment_trigger_failed", { caseId: result.data.id, reason: error.message });
+    });
+    await evaluateWorkflowStepStageTriggers(req.auth.agencyId, result.data.id, existing.stage, payload.stage, { actorUserId: req.auth.userId, clientId: existing.client.id }).catch((error) => {
+      logger.warn("case.workflow_trigger_failed", { caseId: result.data.id, reason: error.message });
     });
   }
 

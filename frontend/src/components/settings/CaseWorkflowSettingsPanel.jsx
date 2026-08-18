@@ -1,11 +1,12 @@
-import { ArrowDown, ArrowUp, ChevronDown, Plus, Save, ShieldCheck, Trash2, Workflow, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, Plus, Save, ShieldCheck, Sparkles, Trash2, Workflow, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
 import { getWorkflowPriorityStyles } from "../case-profile/caseProfileUtils";
+import { caseStagesForType } from "../../constants/caseStages";
 import Select from "../ui/Select";
 
-const emptyStep = () => ({ localId: Math.random().toString(36).slice(2), title: "", description: "", priority: "Normal" });
+const emptyStep = () => ({ localId: Math.random().toString(36).slice(2), title: "", description: "", priority: "Normal", autoCompleteTrigger: null, autoCompleteStage: null });
 
 const emptyForm = { name: "", caseType: "", description: "" };
 
@@ -23,6 +24,8 @@ function stepsFromTemplate(template) {
     title: step.title,
     description: step.description || "",
     priority: step.priority || "Normal",
+    autoCompleteTrigger: step.autoCompleteTrigger || null,
+    autoCompleteStage: step.autoCompleteStage || null,
   }));
 }
 
@@ -130,6 +133,40 @@ function TemplateEditor({ title, subtitle, form, steps, saving, error, onFormCha
                   className="mt-3 min-h-[64px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:bg-white"
                   placeholder="Optional consultant note for this milestone"
                 />
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={step.autoCompleteTrigger === "Stage"}
+                      onChange={(event) =>
+                        onUpdateStep(index, event.target.checked
+                          ? { autoCompleteTrigger: "Stage", autoCompleteStage: caseStagesForType(form.caseType)[0] || null }
+                          : { autoCompleteTrigger: null, autoCompleteStage: null })
+                      }
+                      className="h-4 w-4 rounded accent-emerald-600"
+                    />
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                    Auto-complete
+                  </label>
+                  {step.autoCompleteTrigger === "Stage" ? (
+                    <label className="flex items-center gap-2 text-xs text-slate-500">
+                      when the case reaches
+                      <Select
+                        value={step.autoCompleteStage || ""}
+                        onChange={(event) => onUpdateStep(index, { autoCompleteStage: event.target.value })}
+                        className="shrink-0"
+                        selectClassName="text-xs"
+                      >
+                        {caseStagesForType(form.caseType).map((stage) => (
+                          <option key={stage} value={stage}>{stage}</option>
+                        ))}
+                      </Select>
+                    </label>
+                  ) : (
+                    <span className="text-xs text-slate-400">Staff mark this one complete by hand.</span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -184,6 +221,11 @@ function TemplateCard({ template, expanded, onToggle, onEdit, onDelete }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-slate-800">{step.title}</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getWorkflowPriorityStyles(step.priority)}`}>{step.priority}</span>
+                    {step.autoCompleteTrigger === "Stage" ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        <Sparkles className="h-2.5 w-2.5" /> Auto at {step.autoCompleteStage}
+                      </span>
+                    ) : null}
                   </div>
                   {step.description ? <p className="mt-0.5 text-slate-500">{step.description}</p> : null}
                 </div>

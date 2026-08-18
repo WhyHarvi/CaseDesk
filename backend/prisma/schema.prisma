@@ -3046,19 +3046,26 @@ model WorkflowTemplate {
 }
 
 model WorkflowTemplateStep {
-  id          String               @id @default(uuid())
-  agencyId    String               @map("agency_id")
-  templateId  String               @map("template_id")
-  title       String
-  description String?
-  sortOrder   Int                  @map("sort_order")
-  priority    WorkflowStepPriority @default(Normal)
-  isRequired  Boolean              @default(true) @map("is_required")
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
-  agency      Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  template    WorkflowTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  caseSteps   CaseWorkflowStep[]
+  id                   String               @id @default(uuid())
+  agencyId             String               @map("agency_id")
+  templateId           String               @map("template_id")
+  title                String
+  description          String?
+  sortOrder            Int                  @map("sort_order")
+  priority             WorkflowStepPriority @default(Normal)
+  isRequired           Boolean              @default(true) @map("is_required")
+  // Mirrors PaymentScheduleTemplateInstallment's trigger fields exactly —
+  // null means the step stays manual (the default, and the only option
+  // today). "Stage" is currently the only supported trigger: the step
+  // auto-completes the moment the case's stage reaches autoCompleteStage,
+  // evaluated the same way a payment installment fires on a stage change.
+  autoCompleteTrigger  String?              @map("auto_complete_trigger")
+  autoCompleteStage    String?              @map("auto_complete_stage")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  agency               Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  template             WorkflowTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  caseSteps            CaseWorkflowStep[]
 
   @@index([agencyId])
   @@index([templateId])
@@ -3066,28 +3073,33 @@ model WorkflowTemplateStep {
 }
 
 model CaseWorkflowStep {
-  id               String                 @id @default(uuid())
-  agencyId         String                 @map("agency_id")
-  caseId           String                 @map("case_id")
-  templateId       String?                @map("template_id")
-  templateStepId   String?                @map("template_step_id")
-  title            String
-  description      String?
-  sortOrder        Int                    @map("sort_order")
-  priority         WorkflowStepPriority   @default(Normal)
-  isActive         Boolean                @default(true) @map("is_active")
-  status           CaseWorkflowStepStatus @default(Pending)
-  completedAt      DateTime?              @map("completed_at")
-  isStandaloneTask Boolean                @default(false) @map("is_standalone_task")
-  assignedToId     String?                @map("assigned_to_id")
-  dueAt            DateTime?              @map("due_at")
-  createdAt        DateTime               @default(now()) @map("created_at")
-  updatedAt        DateTime               @updatedAt @map("updated_at")
-  agency           Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case             Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  template         WorkflowTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  templateStep     WorkflowTemplateStep?  @relation(fields: [templateStepId], references: [id], onDelete: SetNull)
-  assignedTo       User?                  @relation("AssignedCaseTaskUser", fields: [assignedToId], references: [id], onDelete: SetNull)
+  id                  String                 @id @default(uuid())
+  agencyId            String                 @map("agency_id")
+  caseId              String                 @map("case_id")
+  templateId          String?                @map("template_id")
+  templateStepId      String?                @map("template_step_id")
+  title               String
+  description         String?
+  sortOrder           Int                    @map("sort_order")
+  priority            WorkflowStepPriority   @default(Normal)
+  isActive            Boolean                @default(true) @map("is_active")
+  status              CaseWorkflowStepStatus @default(Pending)
+  completedAt         DateTime?              @map("completed_at")
+  isStandaloneTask    Boolean                @default(false) @map("is_standalone_task")
+  assignedToId        String?                @map("assigned_to_id")
+  dueAt               DateTime?              @map("due_at")
+  // Copied from the template step at assignment time, same as
+  // CasePaymentInstallment copies its trigger fields from
+  // PaymentScheduleTemplateInstallment. See WorkflowTemplateStep above.
+  autoCompleteTrigger String?                @map("auto_complete_trigger")
+  autoCompleteStage   String?                @map("auto_complete_stage")
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+  agency              Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  template            WorkflowTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateStep        WorkflowTemplateStep?  @relation(fields: [templateStepId], references: [id], onDelete: SetNull)
+  assignedTo          User?                  @relation("AssignedCaseTaskUser", fields: [assignedToId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([caseId])

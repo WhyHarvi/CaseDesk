@@ -1,6 +1,9 @@
 import prisma from "../services/prisma/client.js";
 import { ensureDefaultWorkflowTemplates } from "../services/workflowService.js";
 import { createHttpError } from "../utils/http.js";
+import { isCaseStageAllowedForType } from "../constants/caseStages.js";
+
+const AUTO_COMPLETE_TRIGGERS = new Set(["Stage"]);
 
 const workflowTemplateInclude = {
   steps: {
@@ -28,7 +31,20 @@ function normalizePriority(value) {
   return value;
 }
 
-function normalizeTemplateSteps(steps) {
+function normalizeAutoComplete(step, caseType) {
+  const trigger = normalizeNullableString(step.autoCompleteTrigger);
+  if (!trigger) return { autoCompleteTrigger: null, autoCompleteStage: null };
+  if (!AUTO_COMPLETE_TRIGGERS.has(trigger)) {
+    throw createHttpError(400, "Unsupported auto-complete trigger.");
+  }
+  const stage = normalizeNullableString(step.autoCompleteStage);
+  if (!stage || !isCaseStageAllowedForType(caseType, stage)) {
+    throw createHttpError(400, `Choose a valid stage for "${step.title || "this milestone"}" to auto-complete on.`);
+  }
+  return { autoCompleteTrigger: trigger, autoCompleteStage: stage };
+}
+
+function normalizeTemplateSteps(steps, caseType) {
   if (!Array.isArray(steps) || !steps.length) {
     throw createHttpError(400, "Add at least one workflow milestone.");
   }
@@ -46,6 +62,7 @@ function normalizeTemplateSteps(steps) {
       sortOrder: Number(step.sortOrder) || index + 1,
       priority: normalizePriority(step.priority),
       isRequired: step.isRequired !== false,
+      ...normalizeAutoComplete(step, caseType),
     };
   });
 }
@@ -71,7 +88,6 @@ export async function createWorkflowTemplate(req, res) {
   const name = String(req.body.name || "").trim();
   const caseType = String(req.body.caseType || "").trim();
   const description = normalizeNullableString(req.body.description);
-  const steps = normalizeTemplateSteps(req.body.steps);
 
   if (!name) {
     throw createHttpError(400, "Workflow name is required.");
@@ -80,6 +96,8 @@ export async function createWorkflowTemplate(req, res) {
   if (!caseType) {
     throw createHttpError(400, "Case type is required.");
   }
+
+  const steps = normalizeTemplateSteps(req.body.steps, caseType);
 
   const data = await prisma.workflowTemplate.create({
     data: {
@@ -96,6 +114,8 @@ export async function createWorkflowTemplate(req, res) {
           sortOrder: index + 1,
           priority: step.priority,
           isRequired: step.isRequired,
+          autoCompleteTrigger: step.autoCompleteTrigger,
+          autoCompleteStage: step.autoCompleteStage,
         })),
       },
     },
@@ -132,7 +152,6 @@ export async function updateWorkflowTemplate(req, res) {
   const name = String(req.body.name || "").trim();
   const caseType = String(req.body.caseType || "").trim();
   const description = normalizeNullableString(req.body.description);
-  const steps = normalizeTemplateSteps(req.body.steps);
 
   if (!name) {
     throw createHttpError(400, "Workflow name is required.");
@@ -141,6 +160,8 @@ export async function updateWorkflowTemplate(req, res) {
   if (!caseType) {
     throw createHttpError(400, "Case type is required.");
   }
+
+  const steps = normalizeTemplateSteps(req.body.steps, caseType);
 
   const data = await prisma.$transaction(async (tx) => {
     await tx.workflowTemplateStep.deleteMany({ where: { agencyId, templateId: existing.id } });
@@ -158,6 +179,8 @@ export async function updateWorkflowTemplate(req, res) {
             sortOrder: index + 1,
             priority: step.priority,
             isRequired: step.isRequired,
+            autoCompleteTrigger: step.autoCompleteTrigger,
+            autoCompleteStage: step.autoCompleteStage,
           })),
         },
       },

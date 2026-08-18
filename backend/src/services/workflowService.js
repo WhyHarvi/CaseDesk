@@ -1,5 +1,8 @@
 import prisma from "./prisma/client.js";
 import { GLOBAL_CASE_TYPE_PROGRAMS } from "./documentProgramCatalog.js";
+import { CASE_STAGES } from "../constants/caseStages.js";
+import { recordActivity } from "../utils/prismaCrud.js";
+import { logger } from "./logger.js";
 
 function workflowStep(title, description, priority = "Normal") {
   return {
@@ -414,6 +417,8 @@ export async function assignDefaultWorkflowToCase(db = prisma, { agencyId, caseI
     sortOrder: index + 1,
     isActive: true,
     status: "Pending",
+    autoCompleteTrigger: step.autoCompleteTrigger,
+    autoCompleteStage: step.autoCompleteStage,
   }));
 
   const result = await db.caseWorkflowStep.createMany({
@@ -421,4 +426,50 @@ export async function assignDefaultWorkflowToCase(db = prisma, { agencyId, caseI
   });
 
   return { createdCount: result.count, template };
+}
+
+// Mirrors paymentScheduleService's evaluateStageTriggers exactly — a
+// workflow milestone configured with a Stage trigger auto-completes the
+// moment the case's stage crosses that point, the same way a payment
+// installment auto-invoices. Only ever moves a step from Pending to
+// Completed; a step someone already completed (or reopened) manually is
+// never touched, and there is deliberately no reverse trigger — moving a
+// case backward never un-completes a milestone.
+export async function evaluateWorkflowStepStageTriggers(agencyId, caseId, oldStage, newStage, { actorUserId, clientId = null } = {}) {
+  const newIndex = CASE_STAGES.indexOf(newStage);
+  const oldIndex = oldStage ? CASE_STAGES.indexOf(oldStage) : -1;
+  if (newIndex === -1 || newIndex <= oldIndex) return [];
+
+  const candidates = await prisma.caseWorkflowStep.findMany({
+    where: { agencyId, caseId, status: "Pending", autoCompleteTrigger: "Stage" },
+  });
+  const due = candidates.filter((step) => {
+    const stageIndex = CASE_STAGES.indexOf(step.autoCompleteStage);
+    return stageIndex > oldIndex && stageIndex <= newIndex;
+  });
+  if (!due.length) return [];
+
+  const now = new Date();
+  await prisma.caseWorkflowStep.updateMany({
+    where: { id: { in: due.map((step) => step.id) } },
+    data: { status: "Completed", completedAt: now },
+  });
+
+  for (const step of due) {
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId,
+      caseId,
+      action: "workflow_step.auto_completed",
+      details: `${step.title} auto-completed — case reached ${step.autoCompleteStage}`,
+      entityType: "caseWorkflowStep",
+      entityId: step.id,
+      metadata: { autoCompleteTrigger: "Stage", autoCompleteStage: step.autoCompleteStage },
+    }).catch((error) => {
+      logger.warn("workflow_step.auto_complete_activity_failed", { agencyId, caseId, stepId: step.id, reason: error.message });
+    });
+  }
+
+  return due.map((step) => ({ ...step, status: "Completed", completedAt: now }));
 }
