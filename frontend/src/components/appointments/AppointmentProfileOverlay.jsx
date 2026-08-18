@@ -91,6 +91,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [purpose, setPurpose] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
   const [note, setNote] = useState("");
+  const [autosavedNote, setAutosavedNote] = useState(null);
   const [showNoteComposer, setShowNoteComposer] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [editingNoteContent, setEditingNoteContent] = useState("");
@@ -127,6 +128,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setEditingContext(false);
       setShowNoteComposer(false);
       setNote("");
+      setAutosavedNote(null);
     }
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
@@ -170,16 +172,23 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     setEditingContext(false);
   }
 
-  async function addNote(event) {
+  async function addNote(event, { keepOpen = false } = {}) {
     event?.preventDefault();
     if (saving || !note.trim()) return;
     try {
       setSaving(true);
-      const created = await createAppointmentNote(appointment.id, note.trim());
-      const localNote = { ...created, appointment: { id: appointment.id, subject: appointment.subject, startsAt: appointment.startsAt } };
+      const saved = autosavedNote
+        ? await updateAppointmentNote(autosavedNote.id, note.trim())
+        : await createAppointmentNote(appointment.id, note.trim());
+      const localNote = { ...autosavedNote, ...saved, appointment: { id: appointment.id, subject: appointment.subject, startsAt: appointment.startsAt } };
       updateLocalNotes((items) => [localNote, ...items.filter((item) => item.id !== localNote.id)]);
-      setNote("");
-      setShowNoteComposer(false);
+      if (keepOpen) {
+        setAutosavedNote(localNote);
+      } else {
+        setNote("");
+        setAutosavedNote(null);
+        setShowNoteComposer(false);
+      }
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The note could not be saved.");
     } finally { setSaving(false); }
@@ -207,8 +216,9 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
 
   useDebouncedAutosave({
     value: note,
+    savedValue: autosavedNote?.content || "",
     enabled: showNoteComposer && !saving,
-    onSave: addNote,
+    onSave: () => addNote(null, { keepOpen: true }),
   });
 
   useDebouncedAutosave({
@@ -348,7 +358,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               </section>
               {canWrite ? <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Internal note</h3><p className="mt-1 text-xs text-slate-400">Discussion, outcome, or context for the next contact.</p></div>{!showNoteComposer ? <button type="button" onClick={() => setShowNoteComposer(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Note</button> : null}</div>
-                {showNoteComposer ? <form onSubmit={addNote} className="mt-4"><textarea autoFocus rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write an internal note…" className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => { setNote(""); setShowNoteComposer(false); }} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save note"}</button></div></form> : null}
+                {showNoteComposer ? <form onSubmit={addNote} className="mt-4"><textarea autoFocus rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write an internal note…" className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => { setNote(""); setAutosavedNote(null); setShowNoteComposer(false); }} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save note"}</button></div></form> : null}
               </section> : null}
               <section>
                 <div className="mb-3 flex items-center justify-between">

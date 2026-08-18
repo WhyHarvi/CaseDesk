@@ -231,6 +231,9 @@ test("calendar appointment-note autosave updates inline without reloading the ov
   const appointmentProfile = await readFile(new URL("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx", import.meta.url), "utf8");
   assert.match(appointmentProfile, /function updateLocalNotes\(updater\)/);
   assert.match(appointmentProfile, /updateLocalNotes\(\(items\) => \[localNote/);
+  assert.match(appointmentProfile, /onSave: \(\) => addNote\(null, \{ keepOpen: true \}\)/);
+  assert.match(appointmentProfile, /savedValue: autosavedNote\?\.content \|\| ""/);
+  assert.match(appointmentProfile, /keepOpen\) \{\s*setAutosavedNote\(localNote\)/);
   assert.match(appointmentProfile, /setEditingNote\(localNote\)/);
   const addNoteBlock = appointmentProfile.slice(appointmentProfile.indexOf("async function addNote"), appointmentProfile.indexOf("async function saveNoteEdit"));
   assert.doesNotMatch(addNoteBlock, /await load\(\)|onChanged/);
