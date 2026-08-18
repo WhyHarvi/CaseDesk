@@ -4,13 +4,38 @@ export const STANDARD_CASE_TYPES = [
   "LMIA - Employer Service",
   "PR - Express Entry - PNP",
   "Spousal and Family Sponsorship",
+  "Spousal Open Work Permit",
   "Study Permit",
   "Visitor Visa - TRV",
   "Work permit / Open Work permit",
 ];
 
+const CASE_TYPE_ALIASES = new Map([
+  ["sowp", "Spousal Open Work Permit"],
+  ["spousal owp", "Spousal Open Work Permit"],
+  ["spousal open wp", "Spousal Open Work Permit"],
+  ["spouse open work permit", "Spousal Open Work Permit"],
+  ["spousal open wok permit", "Spousal Open Work Permit"],
+]);
+
 export function normalizeCaseType(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function canonicalCaseType(value) {
+  const label = String(value || "").trim().replace(/\s+/g, " ");
+  const key = normalizeCaseType(label);
+  return CASE_TYPE_ALIASES.get(key)
+    || STANDARD_CASE_TYPES.find((type) => normalizeCaseType(type) === key)
+    || label;
+}
+
+export function caseTypeMatchesQuery(value, query) {
+  const needle = normalizeCaseType(query);
+  if (!needle) return true;
+  const canonical = canonicalCaseType(value);
+  if (normalizeCaseType(canonical).includes(needle)) return true;
+  return [...CASE_TYPE_ALIASES].some(([alias, label]) => label === canonical && alias.includes(needle));
 }
 
 export function isReusableCaseType(value) {
@@ -21,7 +46,7 @@ export function isReusableCaseType(value) {
 export function buildCaseTypeFilterOptions(cases = []) {
   const labels = new Map(STANDARD_CASE_TYPES.map((label) => [normalizeCaseType(label), label]));
   for (const item of cases) {
-    const label = String(item?.caseType || "").trim().replace(/\s+/g, " ");
+    const label = canonicalCaseType(item?.caseType);
     const key = normalizeCaseType(label);
     if (isReusableCaseType(label) && !labels.has(key)) labels.set(key, label);
   }

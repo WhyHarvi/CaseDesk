@@ -1,6 +1,7 @@
 import prisma from "./prisma/client.js";
 import {
   DEFAULT_WORKFLOW_TEMPLATES,
+  ADDITIONAL_CASE_TYPE_ALIASES,
   canonicalCaseType,
   normalizeCaseType,
 } from "./workflowService.js";
@@ -42,6 +43,8 @@ export async function listAgencyCaseTypeOptions(agencyId, db = prisma) {
 
   for (const template of DEFAULT_WORKFLOW_TEMPLATES)
     bump(template.caseType, 2_000);
+  for (const type of ADDITIONAL_CASE_TYPE_ALIASES)
+    bump(type.caseType, 2_000);
   for (const { caseType } of cases) bump(caseType, 1);
   for (const { caseType } of [...documentTemplates, ...workflowTemplates])
     bump(caseType, 1_000);

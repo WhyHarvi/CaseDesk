@@ -176,6 +176,13 @@ export function normalizeCaseType(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+export const ADDITIONAL_CASE_TYPE_ALIASES = [
+  {
+    caseType: "Spousal Open Work Permit",
+    aliases: ["SOWP", "Spousal OWP", "Spousal Open WP", "Spouse Open Work Permit", "Spousal Open Wok Permit"],
+  },
+];
+
 function normalizeNullableString(value) {
   const normalized = String(value || "").trim();
   return normalized || null;
@@ -192,6 +199,10 @@ export function canonicalCaseType(value) {
   const trimmed = String(value || "").trim().replace(/\s+/g, " ");
   if (!trimmed) return "";
   const normalized = normalizeCaseType(trimmed);
+  const additionalType = ADDITIONAL_CASE_TYPE_ALIASES.find((item) =>
+    [item.caseType, ...item.aliases].some((label) => normalizeCaseType(label) === normalized),
+  );
+  if (additionalType) return additionalType.caseType;
   const template = DEFAULT_WORKFLOW_TEMPLATES.find((item) => getTemplateCaseTypeKeys(item).includes(normalized));
   return template?.caseType || trimmed;
 }

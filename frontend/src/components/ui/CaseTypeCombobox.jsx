@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { caseTypeMatchesQuery, canonicalCaseType } from "../../utils/caseTypes";
 
 /**
  * Case type is free text (Case.caseType has no enum) but several other
@@ -60,8 +61,9 @@ export default function CaseTypeCombobox({ value, onChange, options, name = "cas
 
   const matches = useMemo(() => {
     const query = value.trim().toLowerCase();
-    const list = query ? options.filter((option) => option.toLowerCase().includes(query)) : options;
-    const isExactExistingMatch = options.some((option) => option.toLowerCase() === query);
+    const list = query ? options.filter((option) => caseTypeMatchesQuery(option, query)) : options;
+    const canonicalValue = canonicalCaseType(value);
+    const isExactExistingMatch = options.some((option) => option.toLowerCase() === canonicalValue.toLowerCase());
     return { list, isNew: Boolean(query) && !isExactExistingMatch };
   }, [options, value]);
 
