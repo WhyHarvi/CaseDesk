@@ -62,11 +62,16 @@ export async function deleteCaseRole(agencyId, id) {
   const current = await prisma.agencyCaseRole.findFirst({ where: { id, agencyId } });
   if (!current) throw createHttpError(404, "Case role not found.", "NOT_FOUND");
   if (current.isSystem) throw createHttpError(409, "Built-in case roles can be hidden but not deleted.", "SYSTEM_ROLE");
-  // TODO(M2): also block delete when the role is referenced by an
-  // IncentivePlanRoleShare once that model exists.
   const assignmentCount = await prisma.caseRoleAssignment.count({ where: { agencyId, caseRoleId: id } });
   if (assignmentCount > 0) {
     throw createHttpError(409, "This role is already assigned on a case. Hide it instead so history remains accurate.", "ROLE_IN_USE");
   }
-  await prisma.agencyCaseRole.delete({ where: { id } });
+  try {
+    await prisma.agencyCaseRole.delete({ where: { id } });
+  } catch (error) {
+    // IncentivePlanRoleShare.caseRoleId is onDelete: Restrict — a role used
+    // in a plan's split config can't be deleted out from under it.
+    if (error?.code === "P2003") throw createHttpError(409, "This role is used in an incentive plan. Hide it instead so the plan keeps working.", "ROLE_IN_USE");
+    throw error;
+  }
 }

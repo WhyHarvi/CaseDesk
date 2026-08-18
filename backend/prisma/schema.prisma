@@ -551,6 +551,7 @@ model Agency {
   feeCategories                  AgencyFeeCategory[]
   caseRoles                      AgencyCaseRole[]
   caseRoleAssignments            CaseRoleAssignment[]
+  incentivePlans                 IncentivePlan[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
   casePaymentInstallments        CasePaymentInstallment[]
@@ -998,12 +999,98 @@ model AgencyCaseRole {
   sortOrder   Int                   @default(0) @map("sort_order")
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
-  agency      Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  agency      Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   assignments CaseRoleAssignment[]
+  roleShares  IncentivePlanRoleShare[]
 
   @@unique([agencyId, code])
   @@index([agencyId, isActive, sortOrder])
   @@map("agency_case_roles")
+}
+
+// A configurable incentive-payout template. `formulaType` picks the shape
+// (flat/percent/tiered) and its own numbers (flatAmount/percentRate/tiers)
+// are admin-editable at any time — formulas are expected to keep changing,
+// so nothing here should require a code deploy to adjust a rate or target.
+// Exactly one plan may be `isActive` per (agencyId, caseType) scope; that
+// invariant is enforced by a hand-written partial unique index in this
+// model's migration (Prisma's @@unique can't express "only when active"),
+// and flipped atomically by the dedicated activate action rather than a
+// plain isActive toggle.
+model IncentivePlan {
+  id            String                   @id @default(uuid())
+  agencyId      String                   @map("agency_id")
+  name          String
+  caseType      String?                  @map("case_type")
+  formulaType   String                   @map("formula_type")
+  flatAmount    Decimal?                 @map("flat_amount") @db.Decimal(10, 2)
+  percentRate   Decimal?                 @map("percent_rate") @db.Decimal(5, 2)
+  isActive      Boolean                  @default(false) @map("is_active")
+  isSystem      Boolean                  @default(false) @map("is_system")
+  version       Int                      @default(1)
+  createdById   String?                  @map("created_by")
+  activatedAt   DateTime?                @map("activated_at")
+  deactivatedAt DateTime?                @map("deactivated_at")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+  agency        Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy     User?                    @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  tiers         IncentivePlanTier[]
+  roleShares    IncentivePlanRoleShare[]
+
+  @@index([agencyId, caseType, isActive])
+  @@map("incentive_plans")
+}
+
+// Only populated when the owning plan's formulaType is
+// TIERED_PERCENT_OF_REVENUE — the rate applied depends on the case's
+// cumulative collected revenue after the triggering payment.
+model IncentivePlanTier {
+  id                  String        @id @default(uuid())
+  planId              String        @map("plan_id")
+  minCumulativeAmount Decimal       @map("min_cumulative_amount") @db.Decimal(10, 2)
+  rate                Decimal       @map("rate") @db.Decimal(5, 2)
+  sortOrder           Int           @default(0) @map("sort_order")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+  plan                IncentivePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, minCumulativeAmount])
+  @@map("incentive_plan_tiers")
+}
+
+// How a plan's payout pool splits across the people who touched a case.
+// attributionKind CASE_ROLE requires caseRoleId (an AgencyCaseRole);
+// LEAD_OWNER/LEAD_CONVERTER attribute to the case's originating Lead
+// instead and never set caseRoleId. Shares on one plan must sum to exactly
+// 100.00 — enforced in incentivePlanService, not the database, the same way
+// AgencyFeeCategory's other invariants are app-level.
+//
+// caseRoleId is onDelete: Restrict so a role actively used in a plan's
+// split can't be silently deleted out from under it (caseRoleService
+// checks for this and returns a friendly error before ever reaching the
+// DB constraint). Known tradeoff: this makes a blind cascading delete of
+// an entire Agency fail once any role share exists, because Postgres
+// resolves each FK's action independently rather than waiting for the
+// sibling incentive_plans -> incentive_plan_role_shares cascade to run
+// first. The one place this repo deletes an Agency today
+// (onboardingController's invite-failure rollback) only ever runs against
+// a just-created agency that can't have incentive data yet, so this is
+// currently unreachable — but any future full-tenant-deletion flow must
+// delete incentive_plan_role_shares (or the owning incentive_plans) before
+// deleting the agency's case roles, not rely on cascade alone.
+model IncentivePlanRoleShare {
+  id             String         @id @default(uuid())
+  planId         String         @map("plan_id")
+  attributionKind String        @map("attribution_kind")
+  caseRoleId     String?        @map("case_role_id")
+  sharePercent   Decimal        @map("share_percent") @db.Decimal(5, 2)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  plan           IncentivePlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  caseRole       AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: Restrict)
+
+  @@map("incentive_plan_role_shares")
 }
 
 model AgencyMailSettings {
@@ -1156,6 +1243,7 @@ model User {
   assignedCaseAssignments              CaseAssignment[]                @relation("CaseAssignmentActor")
   caseRoleAssignments                  CaseRoleAssignment[]            @relation("CaseRoleAssignmentUser")
   assignedCaseRoleAssignments          CaseRoleAssignment[]            @relation("CaseRoleAssignmentActor")
+  createdIncentivePlans                IncentivePlan[]                 @relation("IncentivePlanCreatedByUser")
   assignedClients                      Client[]                        @relation("AssignedClientUser")
   assignedCases                        Case[]                          @relation("AssignedCaseUser")
   notes                                Note[]                          @relation("AuthoredNotes")
