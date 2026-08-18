@@ -590,6 +590,7 @@ model Agency {
   followUps                      FollowUp[]
   payments                       Payment[]
   activityLogs                   ActivityLog[]
+  supportTickets                 SupportTicket[]
   portalActivity                 UserPortalActivity[]
   workflowTemplates              WorkflowTemplate[]
   workflowTemplateSteps          WorkflowTemplateStep[]
@@ -1474,6 +1475,8 @@ model User {
   completedFollowUps                   FollowUp[]                      @relation("CompletedFollowUpUser")
   cancelledFollowUps                   FollowUp[]                      @relation("CancelledFollowUpUser")
   activityLogs                         ActivityLog[]
+  reportedSupportTickets               SupportTicket[]
+  updatedDeveloperSettings             DeveloperSetting[]
   portalActivity                       UserPortalActivity[]
   caseAssessments                      CaseAssessment[]
   uploadedDocuments                    ClientDocument[]                @relation("UploadedDocumentUser")
@@ -3883,6 +3886,53 @@ model ActivityLog {
   @@index([agencyId, action, createdAt])
   @@index([agencyId, userId, createdAt])
   @@map("activity_logs")
+}
+
+// Maps the existing "support_tickets" table (created directly via SQL in
+// supportTicketService.js, before this model existed) so the developer
+// dashboard can query it with Prisma instead of hand-written raw SQL.
+// Column list/types must match that migration exactly — no schema change,
+// this is purely giving an existing table a typed model.
+model SupportTicket {
+  id                  String    @id @default(uuid())
+  ticketNumber        String    @unique @map("ticket_number")
+  agencyId            String    @map("agency_id")
+  reportedById        String    @map("reported_by_id")
+  status              String    @default("Submitted")
+  description         String
+  novaSummary         String?   @map("nova_summary")
+  pagePath            String?   @map("page_path")
+  errorCode           String?   @map("error_code")
+  errorMessage        String?   @map("error_message")
+  diagnostics         Json?
+  screenshotStorageKey String?  @map("screenshot_storage_key")
+  screenshotMimeType  String?   @map("screenshot_mime_type")
+  deliveryStatus      String    @default("Pending") @map("delivery_status")
+  deliveryError       String?   @map("delivery_error")
+  deliveredAt         DateTime? @map("delivered_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+  agency              Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  reportedBy          User      @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+
+  @@index([agencyId, createdAt])
+  @@index([status, createdAt])
+  @@map("support_tickets")
+}
+
+// Small key/value store for developer-portal-controlled feature flags — a
+// DB-backed alternative to hardcoded consts like the retainer autosend
+// switch, so flipping one doesn't require a code change + deploy. Every
+// flag still has a hardcoded default (see featureFlags.js) so a missing
+// row behaves exactly like today's hardcoded const.
+model DeveloperSetting {
+  key           String   @id
+  value         String
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+  updatedById   String?  @map("updated_by_id")
+  updatedBy     User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("developer_settings")
 }
 
 // Coarse portal-usage tracking for the team workload dashboard — one row

@@ -11,6 +11,7 @@ import { renderRetainerDocumentHtml, wrapRetainerDocument } from "./retainerDocu
 import { sendAccountAccessEmail } from "../../services/accountAccessMailService.js";
 import { sendAgencyOomaSms } from "../../services/agencyOomaService.js";
 import { publicRetainerSignUrl } from "../../services/bookingPublicLinkService.js";
+import { isFeatureEnabled } from "../../services/featureFlags.js";
 
 const retainerTransactionOptions = { maxWait: 10_000, timeout: 20_000 };
 
@@ -406,11 +407,6 @@ export async function createLeadClientForPayment(leadId, { db = prisma, actorUse
   return created;
 }
 
-// Temporary kill switch — flip back to true to resume automatic retainer
-// sending. Paused at the user's request; nothing else about the flow
-// changes underneath this, the trigger just no-ops until it's back on.
-const RETAINER_AUTOSEND_ENABLED = false;
-
 // Shared by every place a lead's first consultation can be booked or
 // confirmed (staff booking it directly, a visitor self-booking free or
 // paid, or the guest later confirming attendance) — fire-and-forget, since
@@ -419,6 +415,12 @@ const RETAINER_AUTOSEND_ENABLED = false;
 // multiple trigger points for the same lead/client is safe — only the
 // first one to actually run does anything.
 //
+// Gated by the RETAINER_AUTOSEND_ENABLED flag in the developer portal
+// (see featureFlags.js) — flip it there instead of editing code. Still
+// defaults to off (see FEATURE_FLAGS' fallback) so a fresh environment
+// with no DeveloperSetting rows yet behaves the same as the old hardcoded
+// const did.
+//
 // clientId wins when both are set. createOrLinkLeadForConsultation
 // (lead.booking.js) can link an appointment to *both* — an existing Client
 // matched by contact info, and a separate open Lead that was never merged
@@ -426,19 +428,23 @@ const RETAINER_AUTOSEND_ENABLED = false;
 // would either collide with assertNoContactDuplicate or, worse, create a
 // second client for the same person if any contact field differs.
 export function triggerRetainerFlow(appointment) {
-  if (!RETAINER_AUTOSEND_ENABLED) {
-    logger.info("lead_retainer.autosend_paused", { agencyId: appointment?.agencyId, appointmentId: appointment?.id });
-    return;
-  }
-  if (appointment?.clientId) {
-    ensureRetainerCaseForClient(appointment).catch((error) => {
-      logger.warn("lead_retainer.client_trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, clientId: appointment.clientId, reason: error.message });
-    });
-  } else if (appointment?.leadId) {
-    ensureRetainerClientForLead(appointment).catch((error) => {
-      logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
-    });
-  }
+  isFeatureEnabled("RETAINER_AUTOSEND_ENABLED").then((enabled) => {
+    if (!enabled) {
+      logger.info("lead_retainer.autosend_paused", { agencyId: appointment?.agencyId, appointmentId: appointment?.id });
+      return;
+    }
+    if (appointment?.clientId) {
+      ensureRetainerCaseForClient(appointment).catch((error) => {
+        logger.warn("lead_retainer.client_trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, clientId: appointment.clientId, reason: error.message });
+      });
+    } else if (appointment?.leadId) {
+      ensureRetainerClientForLead(appointment).catch((error) => {
+        logger.warn("lead_retainer.trigger_failed", { agencyId: appointment.agencyId, appointmentId: appointment.id, leadId: appointment.leadId, reason: error.message });
+      });
+    }
+  }).catch((error) => {
+    logger.warn("lead_retainer.flag_check_failed", { agencyId: appointment?.agencyId, appointmentId: appointment?.id, reason: error.message });
+  });
 }
 
 // Best-effort — a delivery failure shouldn't undo the client/case/document
