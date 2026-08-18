@@ -762,6 +762,30 @@ export async function voidQuickBooksInvoice(agencyId, { id, syncToken }) {
   });
 }
 
+// Removes the Receive Payment transaction itself — distinct from a refund.
+// This says "this payment record never should have posted" and reopens
+// the invoice's balance with no implication money moved; a refund says
+// real money is being returned. Correcting a duplicate/mistaken payment
+// entry is this, not a refund.
+//
+// QuickBooks' own Payment void operation (operation=void) is not a general
+// reversal — confirmed live against a real e-transfer payment, it rejects
+// with "You can't void this credit card amount because this transaction
+// doesn't have an outstanding credit card amount." Void is reserved for
+// cancelling a pending *credit card* charge before it settles. Deleting
+// the transaction outright is QuickBooks' actual mechanism for erasing a
+// non-card payment record that should never have existed. Reads a fresh
+// SyncToken first since the one CaseDesk stored at creation time goes
+// stale the moment QuickBooks touches the payment again for any reason.
+export async function deleteQuickBooksPayment(agencyId, { id }) {
+  const current = await getQuickBooksPayment(agencyId, id);
+  await qboRequest(agencyId, {
+    method: "POST",
+    path: "/payment?operation=delete",
+    body: { Id: current.id, SyncToken: current.syncToken },
+  });
+}
+
 export async function findOrCreateQuickBooksPaymentMethod(agencyId, name) {
   const normalizedName = String(name || "").trim().slice(0, 50);
   if (!normalizedName) throw createHttpError(400, "A payment method is required.", "VALIDATION_ERROR");

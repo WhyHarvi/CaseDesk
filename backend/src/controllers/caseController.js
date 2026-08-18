@@ -7,6 +7,7 @@ import { createCrudController, fieldParsers, recordActivity } from "../utils/pri
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import { clientRecipientIds, notifyUsers, resolveNotifications } from "../services/notificationService.js";
 import { evaluateStageTriggers, getCasePaymentSummary } from "../services/paymentScheduleService.js";
+import { voidUnpaidCaseInvoice } from "../services/caseInvoiceService.js";
 import { logger } from "../services/logger.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "../services/bookingNotificationService.js";
 import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
@@ -993,8 +994,52 @@ export async function closeCase(req, res) {
   if (TERMINAL_CASE_STATUSES.has(existing.status)) throw createHttpError(409, "Case is already closed or inactive.", "CASE_ALREADY_CLOSED");
   const billingSummary = await getCasePaymentSummary(req.auth.agencyId, existing.id);
   const outstandingBalance = Number(billingSummary.balance || 0);
-  if (outstandingBalance > 0.01 && req.body?.billingDisposition !== "keep_outstanding") {
-    throw createHttpError(409, `Review the $${outstandingBalance.toFixed(2)} outstanding balance before closing this case.`, "OUTSTANDING_BILLING_REVIEW_REQUIRED");
+  const hasOutstandingBalance = outstandingBalance > 0.01;
+  const billingDisposition = hasOutstandingBalance ? String(req.body?.billingDisposition || "") : null;
+  const billingReason = String(req.body?.billingReason || "").trim().slice(0, 500);
+  if (hasOutstandingBalance) {
+    if (!["keep_outstanding", "write_off"].includes(billingDisposition)) {
+      throw createHttpError(409, `Review the $${outstandingBalance.toFixed(2)} outstanding balance before closing this case.`, "OUTSTANDING_BILLING_REVIEW_REQUIRED");
+    }
+    if (!billingReason) {
+      throw createHttpError(400, "Enter a reason for how the outstanding balance is being handled.", "VALIDATION_ERROR");
+    }
+    if (billingDisposition === "write_off" && req.auth.role !== "admin") {
+      throw createHttpError(403, "Only an admin can write off an outstanding balance.", "FORBIDDEN");
+    }
+  }
+  // Writing off happens before the case itself closes, and outside that
+  // transaction — voidUnpaidCaseInvoice makes its own real QuickBooks call
+  // for QB-synced invoices, which has no place inside a DB transaction.
+  // Best-effort per invoice: a schedule-linked or already-collected invoice
+  // failing to void must never block the case from closing, since the
+  // amount owed elsewhere on the case is unaffected by it. Only a fully
+  // uncollected invoice (balance === amount) is eligible — a partially
+  // paid one can't be silently erased without a proper refund, so it's
+  // left open and surfaced to the caller instead of guessed at.
+  const writeOff = { attempted: 0, voided: 0, voidedAmount: 0, failed: 0 };
+  if (billingDisposition === "write_off") {
+    const eligibleInvoices = await prisma.caseInvoice.findMany({
+      where: { agencyId: req.auth.agencyId, caseId: existing.id, status: "Open" },
+      select: { id: true, amount: true, balance: true },
+    });
+    for (const invoice of eligibleInvoices) {
+      if (Number(invoice.balance) !== Number(invoice.amount)) continue;
+      writeOff.attempted += 1;
+      try {
+        await voidUnpaidCaseInvoice(req.auth.agencyId, {
+          caseId: existing.id,
+          invoiceId: invoice.id,
+          reason: billingReason,
+          actorUserId: req.auth.userId,
+        });
+        writeOff.voided += 1;
+        writeOff.voidedAmount += Number(invoice.balance);
+      } catch (error) {
+        writeOff.failed += 1;
+        logger.warn("case.close_write_off_failed", { agencyId: req.auth.agencyId, caseId: existing.id, invoiceId: invoice.id, reason: error.message });
+      }
+    }
   }
   const now = new Date();
   const [scheduledAppointments, openFollowUps] = await Promise.all([prisma.appointment.findMany({
@@ -1060,17 +1105,24 @@ export async function closeCase(req, res) {
   })));
   if (result.cancelledAppointments.length) void processBookingMessageDeliveries();
   await Promise.all(result.cancelledAppointments.map((appointment) => offerWaitlistOpening(appointment).catch(() => {})));
+  const billingNote = !hasOutstandingBalance
+    ? ""
+    : billingDisposition === "write_off"
+      ? writeOff.voided
+        ? `; $${writeOff.voidedAmount.toFixed(2)} written off (${billingReason})${writeOff.failed ? ` — ${writeOff.failed} invoice${writeOff.failed === 1 ? "" : "s"} could not be written off automatically` : ""}`
+        : `; write-off requested but no invoice could be written off automatically (${billingReason})`
+      : `; $${outstandingBalance.toFixed(2)} retained for collection (${billingReason})`;
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
     clientId: existing.clientId,
     caseId: existing.id,
     action: "case.closed",
-    details: `${existing.caseType} closed; ${result.tasks} tasks, ${result.followUps} follow-ups, and ${result.cancelledAppointments.length} appointments cancelled${outstandingBalance > 0.01 ? `; $${outstandingBalance.toFixed(2)} retained for collection` : ""}`,
-    metadata: { outstandingBalance, billingDisposition: outstandingBalance > 0.01 ? "keep_outstanding" : "none" },
+    details: `${existing.caseType} closed; ${result.tasks} tasks, ${result.followUps} follow-ups, and ${result.cancelledAppointments.length} appointments cancelled${billingNote}`,
+    metadata: { outstandingBalance, billingDisposition: billingDisposition || "none", billingReason: billingReason || null, writeOff },
   });
   invalidateDashboardCache(req.auth.agencyId);
-  res.json({ data: result.data });
+  res.json({ data: result.data, meta: { outstandingBalance, billingDisposition, writeOff } });
 }
 
 export default controller;

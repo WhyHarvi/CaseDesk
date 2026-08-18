@@ -53,6 +53,8 @@ export default function CaseActionDialog({
   successMessage,
   blocked = null,
   acknowledgement = null,
+  extra = null,
+  confirmDisabled = false,
 }) {
   const [phase, setPhase] = useState("confirm");
   const [error, setError] = useState("");
@@ -151,11 +153,12 @@ export default function CaseActionDialog({
                     <span>{acknowledgement}</span>
                   </label>
                 ) : null}
+                {extra ? <div className="mt-4 text-left">{extra}</div> : null}
                 {error ? <p className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
                 <div className="mt-6 space-y-2">
                   <button
                     type="button"
-                    disabled={phase === "working" || Boolean(acknowledgement && !acknowledged)}
+                    disabled={phase === "working" || Boolean(acknowledgement && !acknowledged) || confirmDisabled}
                     onClick={confirm}
                     className={`flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-70 ${confirmClassName}`}
                   >

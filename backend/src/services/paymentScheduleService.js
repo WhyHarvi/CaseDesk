@@ -5,7 +5,7 @@ import { CASE_STAGES } from "../constants/caseStages.js";
 import { createInvoiceRecord } from "./caseInvoiceService.js";
 import { ensureFeeCategories, requireFeeCategory } from "./feeCategoryService.js";
 import { notifyInstallmentInvoiced, notifyStaffInstallmentVoided } from "./paymentNotificationService.js";
-import { voidQuickBooksInvoice } from "./quickbooksService.js";
+import { deleteQuickBooksPayment, getQuickBooksInvoice, voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
 import { templateMatchesCase } from "./correspondenceTemplateService.js";
 import { ensureDefaultBillingTemplates } from "./billingTemplateDefaults.js";
@@ -751,23 +751,46 @@ async function claimInstallmentForVoid(installmentId) {
 export async function voidInvoicedInstallment(agencyId, caseId, installmentId, { reason, actorUserId }) {
   const installment = await prisma.casePaymentInstallment.findFirst({
     where: { id: installmentId, agencyId, caseId },
-    include: { caseInvoice: true },
+    include: {
+      caseInvoice: {
+        include: { refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } }, select: { id: true } } },
+      },
+    },
   });
   if (!installment) throw createHttpError(404, "Installment not found.", "NOT_FOUND");
   if (installment.status !== "Invoiced" || !installment.caseInvoice) {
     throw createHttpError(400, "Only an invoiced installment can be voided this way.", "VALIDATION_ERROR");
   }
   const invoice = installment.caseInvoice;
-  if (Number(invoice.balance) !== Number(invoice.amount)) {
-    throw createHttpError(409, "This invoice already has a payment applied — void or refund it in QuickBooks first.", "INVOICE_HAS_PAYMENT");
+  const hasPayment = Number(invoice.balance) !== Number(invoice.amount);
+  // A paid installment invoice can still be voided, but only by voiding the
+  // mistaken payment itself first (see voidPaidCaseInvoicePayment for the
+  // same logic on a standalone invoice) — never silently, and never when a
+  // refund already exists for it.
+  if (hasPayment) {
+    if (invoice.refunds.length) {
+      throw createHttpError(409, "A refund already exists for this invoice — resolve or cancel it before voiding the payment instead.", "REFUND_ALREADY_EXISTS");
+    }
+    if (invoice.accountingProvider !== "QuickBooks" || !invoice.lastQbPaymentId) {
+      throw createHttpError(409, "This invoice already has a payment applied — void or refund it in QuickBooks first.", "INVOICE_HAS_PAYMENT");
+    }
+  }
+  const trimmedReason = String(reason || "").trim().slice(0, 500);
+  if (hasPayment && !trimmedReason) {
+    throw createHttpError(400, "Enter why this payment is being voided.", "VALIDATION_ERROR");
   }
 
   const claimed = await claimInstallmentForVoid(installment.id);
   if (!claimed) throw createHttpError(409, "This installment changed — reload and try again.", "CONFLICT");
 
-  const trimmedReason = String(reason || "").trim().slice(0, 500);
   try {
-    await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
+    if (hasPayment) {
+      await deleteQuickBooksPayment(agencyId, { id: invoice.lastQbPaymentId });
+      const freshInvoice = await getQuickBooksInvoice(agencyId, invoice.qbInvoiceId);
+      if (freshInvoice) await voidQuickBooksInvoice(agencyId, { id: freshInvoice.id, syncToken: freshInvoice.syncToken });
+    } else {
+      await voidQuickBooksInvoice(agencyId, { id: invoice.qbInvoiceId, syncToken: invoice.qbSyncToken });
+    }
 
     await prisma.$transaction([
       // balance: 0 alongside status: "Void" — a voided invoice isn't owed
@@ -787,7 +810,7 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
       clientId: installment.clientId,
       caseId,
       action: "payment_schedule.installment_invoice_voided",
-      details: `${installment.label} — $${Number(installment.amount).toFixed(2)} invoice voided${trimmedReason ? `: ${trimmedReason}` : ""}; reset to Scheduled`,
+      details: `${installment.label} — $${Number(installment.amount).toFixed(2)} invoice${hasPayment ? " and its QuickBooks payment (not a refund — no money moved)" : ""} voided${trimmedReason ? `: ${trimmedReason}` : ""}; reset to Scheduled`,
       entityType: "casePaymentInstallment",
       entityId: installment.id,
     });

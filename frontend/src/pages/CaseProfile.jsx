@@ -101,6 +101,8 @@ export default function CaseProfile() {
   const [assessmentOverlayOpen, setAssessmentOverlayOpen] = useState(false);
   const [applicantsOverlayOpen, setApplicantsOverlayOpen] = useState(false);
   const [closeCaseDialogOpen, setCloseCaseDialogOpen] = useState(false);
+  const [closeBillingDisposition, setCloseBillingDisposition] = useState("keep_outstanding");
+  const [closeBillingReason, setCloseBillingReason] = useState("");
   const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
   const [eSignCenterOpen, setESignCenterOpen] = useState(false);
   const [permissionsOverlayOpen, setPermissionsOverlayOpen] = useState(false);
@@ -1858,6 +1860,8 @@ export default function CaseProfile() {
           }}
           onCloseCase={() => {
             setActiveToolbarTray("");
+            setCloseBillingDisposition("keep_outstanding");
+            setCloseBillingReason("");
             setCloseCaseDialogOpen(true);
           }}
           onDeleteCase={() => {
@@ -1906,15 +1910,59 @@ export default function CaseProfile() {
           iconWrapClassName="bg-amber-50 text-amber-600"
           title="Close this case?"
           message={Number(paymentSummary.balance) > 0
-            ? `This case has ${Number(paymentSummary.balance).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} outstanding. Closing the case will keep that amount collectible and cancel pending tasks, follow-ups, and appointments.`
+            ? `This case has ${Number(paymentSummary.balance).toLocaleString("en-CA", { style: "currency", currency: "CAD" })} outstanding. Choose how to handle it below — closing will also cancel pending tasks, follow-ups, and appointments.`
             : "Pending tasks, follow-ups, and appointments will be cancelled. Documents, payments, and history stay on record."}
-          acknowledgement={Number(paymentSummary.balance) > 0
-            ? "I reviewed the outstanding invoices and confirm this balance must remain collectible after closure."
-            : null}
+          extra={Number(paymentSummary.balance) > 0 ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm leading-5 text-slate-700 has-[:checked]:border-amber-300 has-[:checked]:bg-amber-50">
+                  <input
+                    type="radio"
+                    name="close-billing-disposition"
+                    value="keep_outstanding"
+                    checked={closeBillingDisposition === "keep_outstanding"}
+                    onChange={() => setCloseBillingDisposition("keep_outstanding")}
+                    className="mt-0.5 h-4 w-4 accent-amber-600"
+                  />
+                  <span><span className="font-semibold">Keep collectible</span> — stays owed after closing.</span>
+                </label>
+                {role === "admin" ? (
+                  <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm leading-5 text-slate-700 has-[:checked]:border-rose-300 has-[:checked]:bg-rose-50">
+                    <input
+                      type="radio"
+                      name="close-billing-disposition"
+                      value="write_off"
+                      checked={closeBillingDisposition === "write_off"}
+                      onChange={() => setCloseBillingDisposition("write_off")}
+                      className="mt-0.5 h-4 w-4 accent-rose-600"
+                    />
+                    <span><span className="font-semibold">Write off</span> — this balance will also be closed. Nothing further will be collected.</span>
+                  </label>
+                ) : null}
+              </div>
+              <label className="block text-xs font-semibold text-slate-600">
+                Reason
+                <textarea
+                  required
+                  rows={2}
+                  maxLength={500}
+                  value={closeBillingReason}
+                  onChange={(event) => setCloseBillingReason(event.target.value)}
+                  placeholder="Why is this balance being handled this way?"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-sky-400"
+                />
+              </label>
+            </div>
+          ) : null}
+          confirmDisabled={Number(paymentSummary.balance) > 0 && !closeBillingReason.trim()}
           confirmLabel="Close case"
           workingLabel="Closing…"
           successTitle="Case closed"
-          successMessage="Everything stays on record."
+          successMessage={Number(paymentSummary.balance) > 0
+            ? closeBillingDisposition === "write_off"
+              ? "The outstanding balance was written off."
+              : "The outstanding balance stays collectible."
+            : "Everything stays on record."}
           blocked={
             TERMINAL_CASE_STATUSES.has(caseItem?.status)
               ? {
@@ -1923,7 +1971,7 @@ export default function CaseProfile() {
                 }
               : null
           }
-          action={async () => (await api.patch(`/cases/${caseItem.id}/close`, Number(paymentSummary.balance) > 0 ? { billingDisposition: "keep_outstanding" } : {})).data.data}
+          action={async () => (await api.patch(`/cases/${caseItem.id}/close`, Number(paymentSummary.balance) > 0 ? { billingDisposition: closeBillingDisposition, billingReason: closeBillingReason.trim() } : {})).data.data}
           onSuccess={(closedCase) => {
             setCaseItem((current) => ({ ...current, ...closedCase }));
             setFollowUps((current) =>

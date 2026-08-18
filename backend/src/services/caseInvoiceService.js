@@ -8,7 +8,9 @@ import { syncClientToQuickBooks } from "./clientQuickBooksSyncService.js";
 import {
   createQuickBooksInvoice,
   createQuickBooksReceivePayment,
+  deleteQuickBooksPayment,
   findOrCreateQuickBooksPaymentMethod,
+  getQuickBooksInvoice,
   getQuickBooksInvoicesByIds,
   quickBooksAppUrl,
   voidQuickBooksInvoice,
@@ -427,9 +429,14 @@ export function validateManualPaymentInput({ amount, method = "Cash", transactio
 
 export async function assertManualPaymentReferenceAvailable(agencyId, paymentReference) {
   if (!paymentReference) return;
+  // A voided invoice or payment hold keeps its old reference on record for
+  // audit history, but the payment itself no longer exists (deleted or
+  // voided in QuickBooks) — the reference isn't "in use" anymore and must
+  // be free to reuse, otherwise correcting a mistaken entry permanently
+  // locks out its own real transaction number from ever being recorded.
   const [invoiceDuplicate, appointmentDuplicate, cashDuplicate] = await Promise.all([
-    prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
-    prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference }, select: { id: true } }),
+    prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] } }, select: { id: true } }),
+    prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] } }, select: { id: true } }),
     prisma.cashTransaction.findFirst({ where: { agencyId, reference: paymentReference }, select: { id: true } }),
   ]);
   if (invoiceDuplicate || appointmentDuplicate || cashDuplicate) {
@@ -622,6 +629,68 @@ export async function voidUnpaidCaseInvoice(agencyId, { caseId, invoiceId, reaso
     entityType: "caseInvoice",
     entityId: invoice.id,
     metadata: { reason: voidReason, priorBalance: Number(invoice.balance) },
+  });
+  return updated;
+}
+
+// Reverses a mistakenly-recorded payment — a duplicate entry, wrong
+// invoice, split-by-mistake, etc. — where no real money is actually
+// changing hands. Distinct from a refund: a refund means the invoice was
+// legitimately paid and the client is genuinely getting money back; this
+// means the payment record itself should never have posted. Voids the
+// QuickBooks Receive Payment transaction directly (never a refund — no
+// money movement is implied), which reopens the invoice's real QuickBooks
+// balance, then voids the now-unpaid invoice so it drops out of the
+// case's Billing tab the same way any other voided invoice does.
+export async function voidPaidCaseInvoicePayment(agencyId, { caseId, invoiceId, reason, actorUserId }) {
+  const voidReason = String(reason || "").trim().slice(0, 500);
+  if (!voidReason) throw createHttpError(400, "Enter why this payment is being voided.", "VALIDATION_ERROR");
+
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: invoiceId, agencyId, caseId },
+    include: {
+      installments: { select: { id: true } },
+      refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } }, select: { id: true } },
+    },
+  });
+  if (!invoice) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
+  if (["Void", "Voided"].includes(invoice.status)) return invoice;
+  if (invoice.installments.length) {
+    throw createHttpError(409, "Void this invoice from its payment-schedule installment.", "SCHEDULE_INVOICE_REQUIRED");
+  }
+  if (invoice.refunds.length) {
+    throw createHttpError(409, "A refund already exists for this invoice — resolve or cancel it before voiding the payment instead.", "REFUND_ALREADY_EXISTS");
+  }
+  if (invoice.accountingProvider !== ACCOUNTING_PROVIDERS.QUICKBOOKS) {
+    throw createHttpError(409, "This invoice has no QuickBooks payment to void.", "NOT_A_QUICKBOOKS_PAYMENT");
+  }
+  if (!invoice.lastQbPaymentId) {
+    throw createHttpError(409, "No QuickBooks payment is linked to this invoice.", "QBO_PAYMENT_MISSING");
+  }
+
+  await deleteQuickBooksPayment(agencyId, { id: invoice.lastQbPaymentId });
+  // Voiding the payment changes the invoice's own SyncToken in QuickBooks —
+  // the value CaseDesk stored at creation/last-sync time is now stale, so
+  // it has to be re-read before the invoice itself can be voided.
+  const freshInvoice = await getQuickBooksInvoice(agencyId, invoice.qbInvoiceId);
+  if (freshInvoice) {
+    await voidQuickBooksInvoice(agencyId, { id: freshInvoice.id, syncToken: freshInvoice.syncToken });
+  }
+
+  const updated = await prisma.caseInvoice.update({
+    where: { id: invoice.id },
+    data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
+  });
+  await recordActivity({
+    agencyId,
+    userId: actorUserId,
+    clientId: invoice.clientId,
+    caseId,
+    action: "invoice.payment_voided",
+    details: `${invoice.invoiceNumber} (${invoice.description}) payment voided in QuickBooks (not a refund — no money moved) and invoice closed: ${voidReason}`,
+    entityType: "caseInvoice",
+    entityId: invoice.id,
+    metadata: { reason: voidReason, priorAmount: Number(invoice.amount), qbPaymentId: invoice.lastQbPaymentId },
   });
   return updated;
 }

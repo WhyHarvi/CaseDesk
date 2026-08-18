@@ -54,6 +54,7 @@ import {
   downloadInvoicePdf,
   listInvoices,
   voidInvoice,
+  voidInvoicePayment,
 } from "../controllers/caseInvoiceController.js";
 import {
   createSchedule,
@@ -232,6 +233,14 @@ router.post(
   requireRole("admin"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(voidInvoice),
+);
+router.post(
+  "/:id/invoices/:invoiceId/void-payment",
+  requirePortalCaseTab("billing"),
+  requirePortalCapability("financialData"),
+  requireRole("admin"),
+  rateLimit({ windowMs: 60_000, max: 20 }),
+  asyncHandler(voidInvoicePayment),
 );
 router.get(
   "/:id/invoices/:invoiceId/pdf",

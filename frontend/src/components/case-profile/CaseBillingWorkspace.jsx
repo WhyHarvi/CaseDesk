@@ -15,7 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice } from "../../api/caseInvoiceApi";
+import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice, voidCaseInvoicePayment } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
 import { voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
@@ -168,6 +168,9 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, 
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidReason, setVoidReason] = useState("");
   const [voidBusy, setVoidBusy] = useState(false);
+  const [voidPaymentOpen, setVoidPaymentOpen] = useState(false);
+  const [voidPaymentReason, setVoidPaymentReason] = useState("");
+  const [voidPaymentBusy, setVoidPaymentBusy] = useState(false);
   const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
   const refunded = (invoice.refunds || []).filter((item) => ["Requested", "AwaitingQuickBooks", "Completed"].includes(item.status)).reduce((sum, item) => sum + Number(item.amount), 0);
   const refundable = Math.max(0, collected - refunded);
@@ -234,6 +237,29 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, 
       setDownloadError(reason.response?.data?.message || "The invoice could not be voided.");
     } finally {
       setVoidBusy(false);
+    }
+  }
+
+  async function submitVoidPayment(event) {
+    event.preventDefault();
+    setVoidPaymentBusy(true);
+    setDownloadError("");
+    try {
+      if (invoicedInstallment) {
+        await voidInstallmentInvoice(invoice.caseId, invoicedInstallment.id, voidPaymentReason.trim());
+        setVoidPaymentOpen(false);
+        setVoidPaymentReason("");
+        await onVoided();
+      } else {
+        const updated = await voidCaseInvoicePayment(invoice.caseId, invoice.id, voidPaymentReason.trim());
+        setVoidPaymentOpen(false);
+        setVoidPaymentReason("");
+        onPaid(updated);
+      }
+    } catch (reason) {
+      setDownloadError(reason.response?.data?.message || "The payment could not be voided.");
+    } finally {
+      setVoidPaymentBusy(false);
     }
   }
 
@@ -331,6 +357,21 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, 
               </p>
               <input autoFocus required maxLength={500} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} placeholder="Reason, e.g. visa refused; approval fee not earned" className="mt-2 w-full rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400" />
               <div className="mt-2 flex gap-2"><button type="submit" disabled={voidBusy || !voidReason.trim()} className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{voidBusy ? "Voiding…" : "Confirm void"}</button><button type="button" disabled={voidBusy} onClick={() => { setVoidOpen(false); setVoidReason(""); }} className="rounded-full px-3 py-2 text-xs font-semibold text-slate-500">Cancel</button></div>
+            </form>
+          )}
+        </div>
+      ) : null}
+      {role === "admin" && invoice.accountingProvider === "QuickBooks" && invoice.status === "Paid" ? (
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          {!voidPaymentOpen ? (
+            <button type="button" onClick={() => setVoidPaymentOpen(true)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:underline"><Trash2 className="h-3.5 w-3.5" /> Void payment (mistaken entry)</button>
+          ) : (
+            <form onSubmit={submitVoidPayment} className="rounded-2xl border border-rose-200 bg-rose-50 p-3">
+              <p className="text-xs leading-5 text-rose-800">
+                Use this only when the payment itself was recorded by mistake (duplicate, wrong invoice, split by error) — not when the client is genuinely getting money back. This voids the Receive Payment in QuickBooks directly (no refund, no money moves) and closes this invoice. The reason is saved in case activity.
+              </p>
+              <input autoFocus required maxLength={500} value={voidPaymentReason} onChange={(event) => setVoidPaymentReason(event.target.value)} placeholder="Reason, e.g. one e-transfer mistakenly recorded against two invoices" className="mt-2 w-full rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400" />
+              <div className="mt-2 flex gap-2"><button type="submit" disabled={voidPaymentBusy || !voidPaymentReason.trim()} className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{voidPaymentBusy ? "Voiding…" : "Confirm void payment"}</button><button type="button" disabled={voidPaymentBusy} onClick={() => { setVoidPaymentOpen(false); setVoidPaymentReason(""); }} className="rounded-full px-3 py-2 text-xs font-semibold text-slate-500">Cancel</button></div>
             </form>
           )}
         </div>

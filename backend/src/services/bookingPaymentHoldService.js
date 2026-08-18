@@ -937,16 +937,21 @@ export async function recordWalkInManualPayment(agencyId, {
     if (existingHold?.status === "Paid") throw createHttpError(409, "QuickBooks already shows this consultation as paid.", "ALREADY_PAID");
   }
   if (paymentReference) {
+    // A voided/deleted payment keeps its old reference on record for audit
+    // history, but no longer represents a real transaction — the reference
+    // must be free to reuse, otherwise correcting a mistaken entry
+    // permanently locks out its own real transaction number.
     const [duplicateReference, duplicateInvoiceReference] = await Promise.all([
       prisma.bookingPaymentHold.findFirst({
         where: {
           agencyId,
           manualPaymentReference: paymentReference,
+          status: { notIn: ["Void", "Voided"] },
           ...(existingHold ? { id: { not: existingHold.id } } : {}),
         },
         select: { id: true },
       }),
-      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] } }, select: { id: true } }),
     ]);
     if (duplicateReference || duplicateInvoiceReference) {
       throw createHttpError(
@@ -1262,8 +1267,8 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
 
   if (paymentReference) {
     const [bookingDuplicate, invoiceDuplicate] = await Promise.all([
-      prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference, id: { not: hold.id } }, select: { id: true } }),
-      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference }, select: { id: true } }),
+      prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] }, id: { not: hold.id } }, select: { id: true } }),
+      prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] } }, select: { id: true } }),
     ]);
     if (bookingDuplicate || invoiceDuplicate) {
       throw createHttpError(409, "This transaction number is already attached to another payment.", "DUPLICATE_PAYMENT_REFERENCE");
