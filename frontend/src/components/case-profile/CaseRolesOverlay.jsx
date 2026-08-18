@@ -82,9 +82,9 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
       <header className="shrink-0 border-b border-white/80 bg-white/92 px-4 py-3 shadow-sm sm:px-6 sm:py-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600"><UserSquare2 className="h-5 w-5" /></span>
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-teal-50 text-teal-600"><UserSquare2 className="h-5 w-5" /></span>
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Incentive roles</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-600">Incentive roles</p>
               <h2 id="case-roles-title" className="truncate text-lg font-semibold text-slate-950">{caseItem.client?.fullName || "Client"} · {caseItem.caseType}</h2>
             </div>
           </div>
@@ -94,16 +94,16 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
 
       <main className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
         <div className="mx-auto w-full max-w-5xl space-y-4">
-          {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-indigo-500" /></div> : null}
+          {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-teal-500" /></div> : null}
           {!loading && roles ? (
             roles.length === 0 ? (
               <p className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">No case roles are set up yet. An administrator can add roles like "RCIC" or "Case Worker" in Settings → Case Roles.</p>
             ) : (
               <>
-                <aside className="rounded-[1.75rem] border border-indigo-100 bg-indigo-50/80 p-5">
-                  <UserSquare2 className="h-5 w-5 text-indigo-600" />
-                  <h3 className="mt-3 font-semibold text-indigo-950">What this controls</h3>
-                  <p className="mt-2 text-sm leading-6 text-indigo-800">Who's credited on this case for incentive purposes, and in what role. This is separate from case access — removing someone here doesn't change what they can see or work on.</p>
+                <aside className="rounded-[1.75rem] border border-teal-100 bg-teal-50/80 p-5">
+                  <UserSquare2 className="h-5 w-5 text-teal-600" />
+                  <h3 className="mt-3 font-semibold text-teal-950">What this controls</h3>
+                  <p className="mt-2 text-sm leading-6 text-teal-800">Who's credited on this case for incentive purposes, and in what role. This is separate from case access — removing someone here doesn't change what they can see or work on.</p>
                 </aside>
 
                 <label className="relative block w-full sm:w-72"><Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search staff" className="h-10 w-full rounded-full border border-slate-200 pl-10 pr-4 text-base outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
@@ -116,8 +116,8 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                       {visiblePeople.map((person) => {
                         const selected = assignments.some((item) => item.caseRoleId === role.id && item.userId === person.id);
                         return (
-                          <button key={person.id} type="button" disabled={saving} onClick={() => toggle(role.id, person.id)} className={["flex items-center gap-3 rounded-2xl border p-3.5 text-left transition", selected ? "border-indigo-200 bg-indigo-50/70" : "border-slate-200 hover:border-slate-300"].join(" ")}>
-                            <span className={["flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold", selected ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"].join(" ")}>{person.fullName.slice(0, 1).toUpperCase()}</span>
+                          <button key={person.id} type="button" disabled={saving} onClick={() => toggle(role.id, person.id)} className={["flex items-center gap-3 rounded-2xl border p-3.5 text-left transition", selected ? "border-teal-200 bg-teal-50/70" : "border-slate-200 hover:border-slate-300"].join(" ")}>
+                            <span className={["flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold", selected ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-500"].join(" ")}>{person.fullName.slice(0, 1).toUpperCase()}</span>
                             <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{person.fullName}</span><span className="block truncate text-xs text-slate-500">{person.email || ""}</span></span>
                           </button>
                         );
