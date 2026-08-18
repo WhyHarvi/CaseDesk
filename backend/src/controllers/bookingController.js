@@ -736,6 +736,9 @@ export async function createBookingAppointment(req, res) {
 
   const trimmedSubject = String(body.subject || "").trim();
   if (!trimmedSubject) throw createHttpError(400, "Add a subject for this appointment.", "SUBJECT_REQUIRED");
+  if (/transfer details|reference number\s*:|sent from\s*:|amount\s*:.*\b(?:cad|usd)\b/i.test(trimmedSubject)) {
+    throw createHttpError(400, "Use an appointment title such as Initial Consultation. Enter the e-transfer transaction number in the payment field.", "PAYMENT_DETAILS_IN_SUBJECT");
+  }
   const subjectWords = appointmentSubjectWordCount(trimmedSubject);
   if (subjectWords > APPOINTMENT_SUBJECT_MAX_WORDS) {
     throw createHttpError(400, `Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${subjectWords}).`, "SUBJECT_TOO_LONG");
@@ -964,7 +967,7 @@ export async function createBookingAppointment(req, res) {
       clientId: client?.id || null,
       caseId: null,
       action: "appointment.booked",
-      details: `${subject} booked for ${client?.fullName || guestName} on ${localDateKey(startsAt, settings.timezone)}${startDates.length > 1 ? ` (${startDates.length} recurring appointments)` : ""}`,
+      details: `${sessionType?.name || subject} booked for ${client?.fullName || guestName} on ${localDateKey(startsAt, settings.timezone)}${startDates.length > 1 ? ` (${startDates.length} recurring appointments)` : ""}`,
     });
     invalidateDashboardCache(req.auth.agencyId);
   }
@@ -1309,7 +1312,7 @@ export async function cancelBookingAppointment(req, res) {
       ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
     include: {
-      sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } },
+      sessionType: { select: { name: true, bufferMinutes: true, allowedMeetingModes: true } },
       assignedTo: { select: { schedulingPreference: { select: { bufferMinutes: true } } } },
       client: { select: { phone: true } },
     },
@@ -1549,7 +1552,7 @@ export async function rescheduleBookingAppointment(req, res) {
     clientId: existing.clientId,
     caseId: existing.caseId,
     action: "appointment.rescheduled",
-    details: `${existing.subject} rescheduled`,
+    details: `${existing.sessionType?.name || existing.subject} rescheduled`,
   });
   invalidateDashboardCache(req.auth.agencyId);
   if (existing.status === "NoShow") {

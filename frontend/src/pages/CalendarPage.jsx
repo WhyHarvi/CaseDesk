@@ -1353,6 +1353,10 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     if (!form.startsAt) { setError("Pick an available time."); return; }
     const trimmedSubject = form.subject.trim();
     if (!trimmedSubject) { setError("Add a subject for this appointment."); return; }
+    if (/transfer details|reference number\s*:|sent from\s*:|amount\s*:.*\b(?:cad|usd)\b/i.test(trimmedSubject)) {
+      setError("Use an appointment title such as Initial Consultation. Enter the e-transfer transaction number in the payment field.");
+      return;
+    }
     const subjectWords = subjectWordCount(trimmedSubject);
     if (subjectWords > APPOINTMENT_SUBJECT_MAX_WORDS) {
       setError(`Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${subjectWords}).`);
