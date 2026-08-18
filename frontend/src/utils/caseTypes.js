@@ -1,13 +1,13 @@
 export const STANDARD_CASE_TYPES = [
-  "Canadian Citizenship",
+  "Canadian Citizenship Grant",
   "General Consultation",
   "LMIA - Employer Service",
   "PR - Express Entry - PNP",
-  "Spousal and Family Sponsorship",
+  "Spouse, Partner or Conjugal Sponsorship",
   "Spousal Open Work Permit",
   "Study Permit",
-  "Visitor Visa - TRV",
-  "Work permit / Open Work permit",
+  "Visitor Visa (TRV)",
+  "Work Permit",
 ];
 
 const CASE_TYPE_ALIASES = new Map([
@@ -16,6 +16,15 @@ const CASE_TYPE_ALIASES = new Map([
   ["spousal open wp", "Spousal Open Work Permit"],
   ["spouse open work permit", "Spousal Open Work Permit"],
   ["spousal open wok permit", "Spousal Open Work Permit"],
+  ["visitor visa - trv", "Visitor Visa (TRV)"],
+  ["temporary resident visa", "Visitor Visa (TRV)"],
+  ["temporary resident visa (trv)", "Visitor Visa (TRV)"],
+  ["visitor visa", "Visitor Visa (TRV)"],
+  ["trv", "Visitor Visa (TRV)"],
+  ["work permit / open work permit", "Work Permit"],
+  ["spousal and family sponsorship", "Spouse, Partner or Conjugal Sponsorship"],
+  ["spousal sponsorship", "Spouse, Partner or Conjugal Sponsorship"],
+  ["canadian citizenship", "Canadian Citizenship Grant"],
 ]);
 
 export function normalizeCaseType(value) {

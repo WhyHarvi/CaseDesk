@@ -24,6 +24,15 @@ test("custom case types always start with a capital letter", () => {
   assert.equal(canonicalCaseType("Study Permit"), "Study Permit");
 });
 
+test("legacy service labels collapse into the global catalog", () => {
+  assert.equal(canonicalCaseType("Visitor Visa - TRV"), "Visitor Visa (TRV)");
+  assert.equal(canonicalCaseType("Temporary Resident Visa (TRV)"), "Visitor Visa (TRV)");
+  assert.equal(canonicalCaseType("TRV"), "Visitor Visa (TRV)");
+  assert.equal(canonicalCaseType("Canadian Citizenship"), "Canadian Citizenship Grant");
+  assert.equal(canonicalCaseType("Spousal and Family Sponsorship"), "Spouse, Partner or Conjugal Sponsorship");
+  assert.equal(canonicalCaseType("Work permit / Open Work permit"), "Work Permit");
+});
+
 test("lead immigration interests include defaults and agency-specific case types without duplicates", async () => {
   const db = {
     case: {
@@ -49,12 +58,14 @@ test("lead immigration interests include defaults and agency-specific case types
   const options = await listAgencyCaseTypeOptions("agency-1", db);
 
   assert.ok(options.includes("Study Permit"));
-  assert.ok(options.includes("Canadian Citizenship"));
+  assert.ok(options.includes("Canadian Citizenship Grant"));
   assert.ok(options.includes("Judicial Review"));
   assert.ok(options.includes("Mandamus Application"));
   assert.ok(options.includes("Canadian Experience Class"));
   assert.ok(options.includes("Humanitarian and Compassionate Considerations"));
   assert.ok(options.includes("Criminal Rehabilitation"));
+  assert.equal(options.filter((value) => /visitor.*visa|temporary resident visa/i.test(value)).length, 1);
+  assert.ok(options.includes("Visitor Visa (TRV)"));
   assert.equal(options.filter((value) => value === "Spousal Open Work Permit").length, 1);
   assert.ok(!options.includes("SOWP"));
   assert.ok(!options.includes("I want to discuss my spousal pr application process"));
