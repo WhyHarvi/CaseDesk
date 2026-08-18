@@ -19,5 +19,8 @@ test("appointment conversions and historical profiles always expose client creat
   assert.match(clientController, /activityLogs\.some\(\(item\) => item\.action === "client\.created"\)/);
   assert.match(clientController, /id: `client-created-\$\{client\.id\}`/);
   assert.match(clientController, /createdAt: client\.createdAt/);
+  assert.match(clientController, /id: `appointment-booked-\$\{appointment\.id\}`/);
+  assert.match(clientController, /details: `\$\{appointment\.source === "Public" \? "Public booking" : "Staff booking"\}: \$\{appointment\.subject\}`/);
+  assert.match(clientController, /client profile created from \$\{conversionAppointment\.source === "Public" \? "public" : "staff-booked"\} consultation/);
   assert.match(profile, /"appointment\.client_linked": "linked appointment to client"/);
 });

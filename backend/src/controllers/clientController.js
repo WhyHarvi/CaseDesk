@@ -327,6 +327,7 @@ export async function getClientById(req, res) {
     payments,
     notes,
     activityLogs,
+    clientAppointments,
     caseInvoices,
     bookingPayments,
   ] = await Promise.all([
@@ -419,6 +420,8 @@ export async function getClientById(req, res) {
       select: {
         id: true,
         caseId: true,
+        entityType: true,
+        entityId: true,
         action: true,
         details: true,
         createdAt: true,
@@ -429,6 +432,20 @@ export async function getClientById(req, res) {
             email: true,
           },
         },
+      },
+    }),
+    prisma.appointment.findMany({
+      where: relatedWhere,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        caseId: true,
+        subject: true,
+        source: true,
+        startsAt: true,
+        createdAt: true,
+        updatedAt: true,
+        createdBy: { select: { id: true, fullName: true, email: true } },
       },
     }),
     canAccessFinancialData
@@ -514,19 +531,43 @@ export async function getClientById(req, res) {
     paymentSummary,
     client,
   });
-  const clientActivityLogs = activityLogs.some((item) => item.action === "client.created")
-    ? activityLogs
-    : [
-        ...activityLogs,
+  const conversionAppointment = clientAppointments.find((appointment) => (
+    Math.abs(new Date(appointment.updatedAt) - new Date(client.createdAt)) < 10_000
+    && new Date(appointment.createdAt) <= new Date(client.createdAt)
+  ));
+  const synthesizedAppointmentActivity = clientAppointments
+    .filter((appointment) => !activityLogs.some((activity) => (
+      activity.action === "appointment.booked"
+      && (activity.entityId === appointment.id || Math.abs(new Date(activity.createdAt) - new Date(appointment.createdAt)) < 5_000)
+    )))
+    .map((appointment) => ({
+      id: `appointment-booked-${appointment.id}`,
+      caseId: appointment.caseId,
+      entityType: "appointment",
+      entityId: appointment.id,
+      action: "appointment.booked",
+      details: `${appointment.source === "Public" ? "Public booking" : "Staff booking"}: ${appointment.subject}`,
+      createdAt: appointment.createdAt,
+      user: appointment.createdBy,
+    }));
+  const clientActivityLogs = [
+    ...activityLogs,
+    ...synthesizedAppointmentActivity,
+    ...(activityLogs.some((item) => item.action === "client.created")
+      ? []
+      : [
         {
           id: `client-created-${client.id}`,
           caseId: null,
           action: "client.created",
-          details: `${client.fullName} client profile created`,
+          details: conversionAppointment
+            ? `${client.fullName} client profile created from ${conversionAppointment.source === "Public" ? "public" : "staff-booked"} consultation`
+            : `${client.fullName} client profile created`,
           createdAt: client.createdAt,
           user: null,
         },
-      ].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+      ]),
+  ].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
 
   res.json({
     data: {

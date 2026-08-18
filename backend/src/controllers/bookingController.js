@@ -1680,7 +1680,7 @@ export async function convertAppointmentToClient(req, res) {
     action: result.existing ? "appointment.client_linked" : "client.created",
     details: result.existing
       ? `${appointment.guestName} appointment linked to the existing client profile`
-      : `${result.client.fullName} created from appointment ${appointment.referenceCode || appointment.subject}`,
+      : `${result.client.fullName} created from ${appointment.source === "Public" ? "public" : "staff-booked"} appointment ${appointment.referenceCode || appointment.subject}`,
     entityType: "appointment",
     entityId: appointment.id,
   });
