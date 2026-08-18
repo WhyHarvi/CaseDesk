@@ -40,6 +40,7 @@ import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
 import caseRoleRoutes from "./routes/caseRoleRoutes.js";
 import incentivePlanRoutes from "./routes/incentivePlanRoutes.js";
+import incentiveRoutes from "./routes/incentiveRoutes.js";
 import caseBillingRetainerRoutes from "./routes/caseBillingRetainerRoutes.js";
 import agencyBillingSettingsRoutes from "./routes/agencyBillingSettingsRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
@@ -256,6 +257,16 @@ app.use(
   staffUser,
   requirePortalPage("cases"),
   incentivePlanRoutes,
+);
+app.use(
+  "/api/incentives",
+  requireAuth,
+  staffUser,
+  // Gated on the "incentives" portal page (added in M4) so admins can
+  // control per-person visibility the same way every other page does via
+  // PortalAccessSettingsPanel.
+  requirePortalPage("incentives"),
+  incentiveRoutes,
 );
 app.use(
   "/api/payment-schedules",

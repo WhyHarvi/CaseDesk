@@ -9,6 +9,7 @@ import { voidQuickBooksInvoice } from "./quickbooksService.js";
 import { logger } from "./logger.js";
 import { templateMatchesCase } from "./correspondenceTemplateService.js";
 import { ensureDefaultBillingTemplates } from "./billingTemplateDefaults.js";
+import { resetCreditCursor } from "./incentiveCreditingService.js";
 
 const TRIGGER_TYPES = new Set(["Date", "Stage"]);
 
@@ -567,6 +568,14 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
       details: `${installment.label} — $${Number(installment.amount).toFixed(2)} invoice voided${trimmedReason ? `: ${trimmedReason}` : ""}; reset to Scheduled`,
       entityType: "casePaymentInstallment",
       entityId: installment.id,
+    });
+
+    // The guard above only allows voiding an untouched invoice
+    // (balance === amount) — nothing was ever collected on it, so this
+    // balance-to-0 change must re-baseline the credit cursor, not be
+    // treated as a collection event (see resetCreditCursor's docs).
+    await resetCreditCursor(agencyId, invoice.id, 0).catch((resetError) => {
+      logger.warn("incentive.cursor_reset_failed", { agencyId, caseInvoiceId: invoice.id, reason: resetError.message });
     });
   } catch (error) {
     // Release the claim so the row doesn't get stuck on "Voiding" if the

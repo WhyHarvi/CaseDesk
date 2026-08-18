@@ -552,6 +552,8 @@ model Agency {
   caseRoles                      AgencyCaseRole[]
   caseRoleAssignments            CaseRoleAssignment[]
   incentivePlans                 IncentivePlan[]
+  caseInvoiceCreditCursors       CaseInvoiceCreditCursor[]
+  incentiveLedgerEntries         IncentiveLedgerEntry[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
   casePaymentInstallments        CasePaymentInstallment[]
@@ -764,6 +766,8 @@ model CaseInvoice {
   createdBy            User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   installments         CasePaymentInstallment[]
   followUps            FollowUp[]
+  creditCursor         CaseInvoiceCreditCursor?
+  incentiveLedgerEntries IncentiveLedgerEntry[]
 
   @@unique([agencyId, qbInvoiceId])
   @@unique([agencyId, creationIdempotencyKey])
@@ -771,6 +775,63 @@ model CaseInvoice {
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
   @@map("case_invoices")
+}
+
+// Idempotency anchor for the incentive-crediting engine — never exposed via
+// API. Four different call sites can each observe a CaseInvoice's balance
+// move (manual payment, QuickBooks webhook, the read-path resync in
+// listCaseInvoices, and the installment-void no-op); this cursor is the one
+// source of truth for "how much of this invoice's balance drop has already
+// been credited", claimed with a compare-and-swap so none of them can
+// double-credit the same collection.
+model CaseInvoiceCreditCursor {
+  id                  String      @id @default(uuid())
+  agencyId            String      @map("agency_id")
+  caseInvoiceId       String      @unique @map("case_invoice_id")
+  lastCreditedBalance Decimal     @map("last_credited_balance") @db.Decimal(10, 2)
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+  agency              Agency      @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseInvoice         CaseInvoice @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+
+  @@map("case_invoice_credit_cursors")
+}
+
+// One frozen, immutable row per (payment collection event, credited
+// person). No update/delete endpoint is ever exposed for this model —
+// editing a plan's formula or a role's name later must never rewrite what
+// someone already earned, so every value that could otherwise drift is
+// snapshotted here at credit time rather than derived live from the
+// current plan/role state.
+model IncentiveLedgerEntry {
+  id                    String         @id @default(uuid())
+  agencyId              String         @map("agency_id")
+  caseId                String         @map("case_id")
+  caseInvoiceId         String         @map("case_invoice_id")
+  incentivePlanId       String         @map("incentive_plan_id")
+  userId                String         @map("user_id")
+  attributionKind       String         @map("attribution_kind")
+  caseRoleId            String?        @map("case_role_id")
+  roleNameSnapshot       String        @map("role_name_snapshot")
+  sharePercentApplied   Decimal        @map("share_percent_applied") @db.Decimal(5, 2)
+  sourceAmountCollected Decimal        @map("source_amount_collected") @db.Decimal(10, 2)
+  creditedAmount        Decimal        @map("credited_amount") @db.Decimal(10, 2)
+  triggerSource         String         @map("trigger_source")
+  triggerRef            String?        @map("trigger_ref")
+  creditedAt            DateTime       @map("credited_at")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  agency                Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                  Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  caseInvoice           CaseInvoice    @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+  incentivePlan         IncentivePlan  @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  user                  User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  caseRole              AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, userId, creditedAt])
+  @@index([agencyId, caseId])
+  @@index([agencyId, caseInvoiceId])
+  @@index([agencyId, creditedAt])
+  @@map("incentive_ledger_entries")
 }
 
 // A lightweight, QuickBooks-independent record of money owed/received on a
@@ -999,9 +1060,10 @@ model AgencyCaseRole {
   sortOrder   Int                   @default(0) @map("sort_order")
   createdAt   DateTime              @default(now()) @map("created_at")
   updatedAt   DateTime              @updatedAt @map("updated_at")
-  agency      Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignments CaseRoleAssignment[]
-  roleShares  IncentivePlanRoleShare[]
+  agency        Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignments   CaseRoleAssignment[]
+  roleShares    IncentivePlanRoleShare[]
+  ledgerEntries IncentiveLedgerEntry[]
 
   @@unique([agencyId, code])
   @@index([agencyId, isActive, sortOrder])
@@ -1037,6 +1099,7 @@ model IncentivePlan {
   createdBy     User?                    @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
   tiers         IncentivePlanTier[]
   roleShares    IncentivePlanRoleShare[]
+  ledgerEntries IncentiveLedgerEntry[]
 
   @@index([agencyId, caseType, isActive])
   @@map("incentive_plans")
@@ -1244,6 +1307,7 @@ model User {
   caseRoleAssignments                  CaseRoleAssignment[]            @relation("CaseRoleAssignmentUser")
   assignedCaseRoleAssignments          CaseRoleAssignment[]            @relation("CaseRoleAssignmentActor")
   createdIncentivePlans                IncentivePlan[]                 @relation("IncentivePlanCreatedByUser")
+  incentiveLedgerEntries               IncentiveLedgerEntry[]
   assignedClients                      Client[]                        @relation("AssignedClientUser")
   assignedCases                        Case[]                          @relation("AssignedCaseUser")
   notes                                Note[]                          @relation("AuthoredNotes")
@@ -1584,6 +1648,7 @@ model Case {
   accountStatements            AccountStatementGeneration[]
   assignments                  CaseAssignment[]
   roleAssignments              CaseRoleAssignment[]
+  incentiveLedgerEntries       IncentiveLedgerEntry[]
   convertedFromLead            Lead?                          @relation("LeadConvertedCase")
   earlyForLead                 Lead?                          @relation("LeadEarlyCase")
   leadConversions              LeadConversion[]

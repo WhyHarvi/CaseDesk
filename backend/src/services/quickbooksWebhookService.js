@@ -16,6 +16,7 @@ import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
+import { creditCaseInvoiceCollection } from "./incentiveCreditingService.js";
 import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
@@ -335,7 +336,7 @@ async function processCaseInvoiceEvent(event, invoiceId) {
 
   const invoice = await getQuickBooksInvoice(event.agencyId, invoiceId);
   if (!invoice) return true;
-  await prisma.caseInvoice.update({
+  const updated = await prisma.caseInvoice.update({
     where: { id: row.id },
     data: {
       balance: invoice.balance,
@@ -346,6 +347,13 @@ async function processCaseInvoiceEvent(event, invoiceId) {
       qbInvoiceNumber: invoice.docNumber,
       lastSyncedAt: new Date(),
     },
+  });
+  // Best-effort — a client paying directly through a QuickBooks-hosted
+  // invoice link (or an accountant recording payment in QuickBooks itself)
+  // is a real collection event and must credit incentives, same as a
+  // payment recorded manually in CaseDesk.
+  await creditCaseInvoiceCollection(event.agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "QBO_WEBHOOK" }).catch((error) => {
+    logger.warn("incentive.credit_failed", { agencyId: event.agencyId, caseInvoiceId: updated.id, trigger: "QBO_WEBHOOK", reason: error.message });
   });
   return true;
 }

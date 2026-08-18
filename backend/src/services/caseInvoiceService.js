@@ -12,6 +12,7 @@ import {
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
+import { creditCaseInvoiceCollection } from "./incentiveCreditingService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
@@ -208,10 +209,20 @@ async function refreshInvoiceRows(agencyId, rows) {
         ? "Void"
         : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate });
       if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
-      return prisma.caseInvoice.update({
+      const updated = await prisma.caseInvoice.update({
         where: { id: row.id },
         data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
       });
+      // A staff member opening the billing tab (or a client opening the
+      // portal) is one of the ways a balance drop from a QuickBooks-side
+      // payment first gets observed here — this read path has to credit
+      // incentives too, not just the two write endpoints, or a payment
+      // made directly in QuickBooks could go uncredited until something
+      // else happens to resync it.
+      await creditCaseInvoiceCollection(agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "LAZY_RESYNC" }).catch((error) => {
+        logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "LAZY_RESYNC", reason: error.message });
+      });
+      return updated;
     }),
   );
 }
@@ -333,6 +344,13 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     entityType: "caseInvoice",
     entityId: row.id,
     metadata: { method, transactionReference: paymentReference, paymentDate: transactionDate?.qboDate || null, qboPaymentId: payment.id, note: note || null },
+  });
+
+  // Best-effort, same as the notification above — the payment already
+  // succeeded in QuickBooks by this point, so a crediting failure must
+  // never surface as a failure to record the payment itself.
+  await creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "MANUAL_PAYMENT" }).catch((error) => {
+    logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "MANUAL_PAYMENT", reason: error.message });
   });
 
   return updated;
