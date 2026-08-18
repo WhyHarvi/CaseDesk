@@ -69,3 +69,20 @@ test("incentive plans are mounted behind the incentives portal page, admin-gated
     /app\.use\(\s*"\/api\/incentive-plans",\s*requireAuth,\s*staffUser,[\s\S]*?requirePortalPage\("incentives"\),\s*incentivePlanRoutes,\s*\);/,
   );
 });
+
+test("admins can preview and explicitly apply an active plan to safe outstanding legacy invoices", async () => {
+  const [routes, service, panel] = await Promise.all([
+    source("../src/routes/incentivePlanRoutes.js"),
+    source("../src/services/incentivePlanService.js"),
+    source("../../frontend/src/components/settings/IncentivePlansSettingsPanel.jsx"),
+  ]);
+  assert.match(routes, /router\.get\("\/:id\/legacy-invoices", asyncHandler\(previewLegacyInvoices\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/legacy-invoices\/apply"/);
+  assert.match(service, /balance: \{ gt: 0 \}/);
+  assert.match(service, /incentiveLedgerEntries: \{ none: \{\} \}/);
+  assert.match(service, /incentiveSnapshot: \{ is: \{ incentivePlanId: null \} \}/);
+  assert.match(service, /only future collections qualify/);
+  assert.match(service, /skippedNoRecipients/);
+  assert.match(panel, /Apply to old invoices/);
+  assert.match(panel, /Only payments collected after applying this plan will create incentive credit/);
+});

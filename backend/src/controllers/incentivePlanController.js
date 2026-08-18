@@ -4,6 +4,8 @@ import {
   deleteIncentivePlan,
   getIncentivePlan,
   listIncentivePlans,
+  applyPlanToLegacyInvoices,
+  previewLegacyInvoicePlanApplication,
   updateIncentivePlan,
 } from "../services/incentivePlanService.js";
 
@@ -35,4 +37,14 @@ export async function activate(req, res) {
 export async function remove(req, res) {
   await deleteIncentivePlan(req.auth.agencyId, req.params.id);
   res.status(204).end();
+}
+
+export async function previewLegacyInvoices(req, res) {
+  const data = await previewLegacyInvoicePlanApplication(req.auth.agencyId, req.params.id);
+  res.json({ data });
+}
+
+export async function applyLegacyInvoices(req, res) {
+  const data = await applyPlanToLegacyInvoices(req.auth.agencyId, req.params.id, req.auth.userId);
+  res.json({ data });
 }

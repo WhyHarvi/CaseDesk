@@ -1,5 +1,8 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { recordActivity } from "../utils/prismaCrud.js";
+import { buildInvoiceIncentiveSnapshotForPlan } from "./incentiveCreditingService.js";
+import { logger } from "./logger.js";
 
 export const FORMULA_TYPES = ["FLAT_PER_PAYMENT", "PERCENT_OF_PAYMENT", "TIERED_PERCENT_OF_REVENUE"];
 export const ATTRIBUTION_KINDS = ["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER"];
@@ -207,4 +210,90 @@ export async function deleteIncentivePlan(agencyId, id) {
     if (error?.code === "P2003") throw createHttpError(409, "This plan has incentive history and can't be deleted. Deactivate it instead.", "PLAN_IN_USE");
     throw error;
   }
+}
+
+function legacyInvoiceWhere(agencyId, plan) {
+  return {
+    agencyId,
+    balance: { gt: 0 },
+    status: { notIn: ["Void", "Voided"] },
+    ...(plan.caseType ? { case: { caseType: plan.caseType, deletedAt: null } } : { case: { deletedAt: null } }),
+    incentiveLedgerEntries: { none: {} },
+    OR: [
+      { incentiveSnapshot: null },
+      { incentiveSnapshot: { is: { incentivePlanId: null } } },
+    ],
+  };
+}
+
+async function requireActivePlan(agencyId, id) {
+  const plan = await prisma.incentivePlan.findFirst({ where: { id, agencyId } });
+  if (!plan) throw createHttpError(404, "Incentive plan not found.", "NOT_FOUND");
+  if (!plan.isActive) throw createHttpError(409, "Activate this plan before applying it to old invoices.", "PLAN_NOT_ACTIVE");
+  return plan;
+}
+
+export async function previewLegacyInvoicePlanApplication(agencyId, id) {
+  const plan = await requireActivePlan(agencyId, id);
+  const where = legacyInvoiceWhere(agencyId, plan);
+  const [count, totals, invoices] = await Promise.all([
+    prisma.caseInvoice.count({ where }),
+    prisma.caseInvoice.aggregate({ where, _sum: { balance: true } }),
+    prisma.caseInvoice.findMany({
+      where,
+      take: 25,
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: {
+        id: true, balance: true, amount: true, description: true, createdAt: true,
+        case: { select: { id: true, caseType: true, client: { select: { id: true, fullName: true } } } },
+      },
+    }),
+  ]);
+  return { plan: { id: plan.id, name: plan.name, caseType: plan.caseType }, count, outstandingTotal: Number(totals._sum.balance || 0), invoices };
+}
+
+export async function applyPlanToLegacyInvoices(agencyId, id, actorUserId) {
+  const plan = await requireActivePlan(agencyId, id);
+  const candidates = await prisma.caseInvoice.findMany({
+    where: legacyInvoiceWhere(agencyId, plan),
+    select: { id: true, caseId: true, clientId: true, balance: true },
+  });
+  let applied = 0;
+  let skipped = 0;
+  let skippedNoRecipients = 0;
+  for (const invoice of candidates) {
+    const snapshot = await buildInvoiceIncentiveSnapshotForPlan(agencyId, invoice.caseId, plan.id);
+    if (!snapshot) throw createHttpError(409, "This plan is no longer active.", "PLAN_NOT_ACTIVE");
+    const hasRecipient = snapshot.recipients.some((share) => Array.isArray(share.userIds) && share.userIds.length > 0);
+    if (!hasRecipient) {
+      skippedNoRecipients += 1;
+      continue;
+    }
+    const changed = await prisma.$transaction(async (tx) => {
+      const current = await tx.caseInvoice.findFirst({
+        where: { id: invoice.id, ...legacyInvoiceWhere(agencyId, plan) },
+        select: { id: true, incentiveSnapshot: { select: { id: true } } },
+      });
+      if (!current) return false;
+      if (current.incentiveSnapshot) {
+        await tx.caseInvoiceIncentiveSnapshot.update({ where: { id: current.incentiveSnapshot.id }, data: snapshot });
+      } else {
+        await tx.caseInvoiceIncentiveSnapshot.create({ data: { ...snapshot, caseInvoiceId: invoice.id } });
+      }
+      return true;
+    });
+    if (!changed) {
+      skipped += 1;
+      continue;
+    }
+    applied += 1;
+    await recordActivity({
+      agencyId, userId: actorUserId, clientId: invoice.clientId, caseId: invoice.caseId,
+      action: "incentive.legacy_invoice_plan_applied",
+      details: `${plan.name} applied to an existing invoice with $${Number(invoice.balance).toFixed(2)} outstanding; only future collections qualify`,
+      entityType: "caseInvoice", entityId: invoice.id,
+      metadata: { incentivePlanId: plan.id, outstandingBalance: Number(invoice.balance) },
+    }).catch((error) => logger.warn("incentive.legacy_invoice_activity_failed", { agencyId, caseInvoiceId: invoice.id, reason: error.message }));
+  }
+  return { applied, skipped, skippedNoRecipients };
 }

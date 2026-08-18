@@ -23,3 +23,13 @@ export async function activateIncentivePlan(id) {
 export async function deleteIncentivePlan(id) {
   await api.delete(`/incentive-plans/${id}`);
 }
+
+export async function previewLegacyInvoicePlanApplication(id) {
+  const response = await api.get(`/incentive-plans/${id}/legacy-invoices`, { cache: false });
+  return response.data.data;
+}
+
+export async function applyPlanToLegacyInvoices(id) {
+  const response = await api.post(`/incentive-plans/${id}/legacy-invoices/apply`);
+  return response.data.data;
+}

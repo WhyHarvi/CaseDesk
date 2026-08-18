@@ -111,6 +111,10 @@ export async function buildInvoiceIncentiveSnapshot(agencyId, caseId, caseType) 
   if (!plan) {
     return { agencyId, tiers: [], recipients: [] };
   }
+  return buildSnapshotForResolvedPlan(agencyId, caseId, plan);
+}
+
+async function buildSnapshotForResolvedPlan(agencyId, caseId, plan) {
   const holders = await resolveHolders(agencyId, caseId);
   return {
     agencyId,
@@ -123,6 +127,15 @@ export async function buildInvoiceIncentiveSnapshot(agencyId, caseId, caseType) 
     tiers: plan.tiers.map((tier) => ({ minCumulativeAmount: Number(tier.minCumulativeAmount), rate: Number(tier.rate) })),
     recipients: snapshotRecipients(plan, holders),
   };
+}
+
+export async function buildInvoiceIncentiveSnapshotForPlan(agencyId, caseId, incentivePlanId) {
+  const plan = await prisma.incentivePlan.findFirst({
+    where: { id: incentivePlanId, agencyId, isActive: true },
+    include: planInclude,
+  });
+  if (!plan) return null;
+  return buildSnapshotForResolvedPlan(agencyId, caseId, plan);
 }
 
 // Splits one share's dollar amount evenly across its holders using

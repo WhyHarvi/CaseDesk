@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Calculator, Check, ChevronDown, Loader2, Plus, Sparkles, Trash2, Wallet2, X } from "lucide-react";
+import { ArrowRight, Calculator, Check, ChevronDown, History, Loader2, Plus, Sparkles, Trash2, Wallet2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCaseRoles } from "../../api/caseRoleApi";
-import { activateIncentivePlan, createIncentivePlan, deleteIncentivePlan, getIncentivePlans, updateIncentivePlan } from "../../api/incentivePlanApi";
+import { activateIncentivePlan, applyPlanToLegacyInvoices, createIncentivePlan, deleteIncentivePlan, getIncentivePlans, previewLegacyInvoicePlanApplication, updateIncentivePlan } from "../../api/incentivePlanApi";
 
 const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
 const inputClass = "w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100";
@@ -185,7 +185,39 @@ function PlanRow({ plan, caseRoles, onSaved, onActivated, onDeleted }) {
   const [draft, setDraft] = useState(() => draftFromPlan(plan));
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [legacyPreview, setLegacyPreview] = useState(null);
+  const [legacyLoading, setLegacyLoading] = useState(false);
+  const [legacyApplying, setLegacyApplying] = useState(false);
+  const [legacyResult, setLegacyResult] = useState(null);
   const [error, setError] = useState("");
+
+  async function loadLegacyPreview() {
+    if (legacyPreview) return setLegacyPreview(null);
+    setLegacyLoading(true);
+    setLegacyResult(null);
+    setError("");
+    try {
+      setLegacyPreview(await previewLegacyInvoicePlanApplication(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not check old invoices.");
+    } finally {
+      setLegacyLoading(false);
+    }
+  }
+
+  async function applyLegacyPlan() {
+    setLegacyApplying(true);
+    setError("");
+    try {
+      const result = await applyPlanToLegacyInvoices(plan.id);
+      setLegacyResult(result);
+      setLegacyPreview(await previewLegacyInvoicePlanApplication(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not apply this plan to old invoices.");
+    } finally {
+      setLegacyApplying(false);
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -253,11 +285,28 @@ function PlanRow({ plan, caseRoles, onSaved, onActivated, onDeleted }) {
                   <button type="button" onClick={activate} disabled={activating} className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-semibold text-white disabled:opacity-50">
                     {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Activate
                   </button>
-                ) : null}
+                ) : (
+                  <button type="button" onClick={loadLegacyPreview} disabled={legacyLoading} className="flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 disabled:opacity-50">
+                    {legacyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} Apply to old invoices
+                  </button>
+                )}
                 <button type="button" onClick={remove} className="flex h-9 items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-4 text-xs font-semibold text-rose-700">
                   <Trash2 className="h-3.5 w-3.5" /> Delete plan
                 </button>
               </div>
+              {legacyPreview ? (
+                <div className="border-t border-slate-200 pt-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-900">Eligible outstanding invoices</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">{legacyPreview.count} invoice{legacyPreview.count === 1 ? "" : "s"} · {new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(legacyPreview.outstandingTotal)} outstanding. Only payments collected after applying this plan will create incentive credit.</p>
+                    </div>
+                    {legacyPreview.count > 0 ? <button type="button" onClick={applyLegacyPlan} disabled={legacyApplying} className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-semibold text-white disabled:opacity-50">{legacyApplying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Apply to {legacyPreview.count}</button> : null}
+                  </div>
+                  {legacyPreview.invoices?.length ? <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">{legacyPreview.invoices.slice(0, 5).map((invoice) => <div key={invoice.id} className="flex items-center justify-between gap-3 py-2 text-xs"><span className="min-w-0 truncate text-slate-600">{invoice.case.client.fullName} · {invoice.case.caseType}</span><span className="shrink-0 font-semibold tabular-nums text-slate-800">{new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" }).format(invoice.balance)}</span></div>)}{legacyPreview.count > 5 ? <p className="py-2 text-xs text-slate-500">And {legacyPreview.count - 5} more eligible invoices</p> : null}</div> : null}
+                  {legacyResult ? <p className="mt-3 text-xs font-semibold text-emerald-700">Applied to {legacyResult.applied} invoice{legacyResult.applied === 1 ? "" : "s"}{legacyResult.skipped ? `; ${legacyResult.skipped} changed before confirmation and were skipped` : ""}{legacyResult.skippedNoRecipients ? `; ${legacyResult.skippedNoRecipients} had no eligible Case Worker, RCIC, lead owner, or converter` : ""}.</p> : null}
+                </div>
+              ) : null}
             </div>
           </motion.div>
         ) : null}
