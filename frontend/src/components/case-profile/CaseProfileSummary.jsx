@@ -40,11 +40,21 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                   </span>
                   {isStudyPermitCaseType(caseItem.caseType) ? <StudyIntakeBadge value={caseItem.studyIntakeMonth} /> : null}
                 </div>
-                <p className="mt-1 text-sm text-slate-500">
-                  {caseItem.client?.phone || "No mobile"} <span className="mx-1.5 text-slate-300">•</span>
-                  {caseItem.caseType || "No case type"} <span className="mx-1.5 text-slate-300">•</span>
-                  {caseItem.assignedUser?.fullName || "Unassigned"}
-                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-slate-500">
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate">{caseItem.client?.phone || "No mobile"}</span>
+                  </span>
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <BriefcaseBusiness className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate">{caseItem.caseType || "No case type"}</span>
+                  </span>
+                  <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-sky-50 px-2.5 py-1 font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
+                    <UserRound className="h-3.5 w-3.5 shrink-0" />
+                    <span className="text-[11px] font-semibold uppercase text-sky-600">Consultant</span>
+                    <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
+                  </span>
+                </div>
               </div>
             </div>
 
