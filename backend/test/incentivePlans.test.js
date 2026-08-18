@@ -52,6 +52,20 @@ test("activating a plan atomically deactivates whatever else holds its scope, in
   assert.match(service, /data: \{ isActive: true, activatedAt: now, deactivatedAt: null \}/);
 });
 
+test("an active plan has a dedicated deactivate action without deleting frozen history", async () => {
+  const [service, routes, api, panel] = await Promise.all([
+    source("../src/services/incentivePlanService.js"),
+    source("../src/routes/incentivePlanRoutes.js"),
+    source("../../frontend/src/api/incentivePlanApi.js"),
+    source("../../frontend/src/components/settings/IncentivePlansSettingsPanel.jsx"),
+  ]);
+  assert.match(service, /export async function deactivateIncentivePlan/);
+  assert.match(service, /data: \{ isActive: false, deactivatedAt: new Date\(\) \}/);
+  assert.match(routes, /router\.post\("\/:id\/deactivate"/);
+  assert.match(api, /deactivateIncentivePlan/);
+  assert.match(panel, /Confirm deactivate/);
+});
+
 test("the one-active-plan-per-scope invariant is a real database constraint, not just app logic", async () => {
   const migration = await source(
     "../prisma/migrations/20260818200000_add_incentive_plans/migration.sql",

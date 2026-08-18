@@ -199,6 +199,17 @@ export async function activateIncentivePlan(agencyId, id) {
   });
 }
 
+export async function deactivateIncentivePlan(agencyId, id) {
+  const plan = await prisma.incentivePlan.findFirst({ where: { id, agencyId } });
+  if (!plan) throw createHttpError(404, "Incentive plan not found.", "NOT_FOUND");
+  if (!plan.isActive) return getIncentivePlan(agencyId, id);
+  return prisma.incentivePlan.update({
+    where: { id },
+    data: { isActive: false, deactivatedAt: new Date() },
+    include: planInclude,
+  });
+}
+
 export async function deleteIncentivePlan(agencyId, id) {
   const current = await prisma.incentivePlan.findFirst({ where: { id, agencyId } });
   if (!current) throw createHttpError(404, "Incentive plan not found.", "NOT_FOUND");

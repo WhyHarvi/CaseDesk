@@ -20,6 +20,11 @@ export async function activateIncentivePlan(id) {
   return response.data.data;
 }
 
+export async function deactivateIncentivePlan(id) {
+  const response = await api.post(`/incentive-plans/${id}/deactivate`);
+  return response.data.data;
+}
+
 export async function deleteIncentivePlan(id) {
   await api.delete(`/incentive-plans/${id}`);
 }

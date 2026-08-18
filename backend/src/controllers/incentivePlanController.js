@@ -1,6 +1,7 @@
 import {
   activateIncentivePlan,
   createIncentivePlan,
+  deactivateIncentivePlan,
   deleteIncentivePlan,
   getIncentivePlan,
   listIncentivePlans,
@@ -31,6 +32,11 @@ export async function update(req, res) {
 
 export async function activate(req, res) {
   const data = await activateIncentivePlan(req.auth.agencyId, req.params.id);
+  res.json({ data });
+}
+
+export async function deactivate(req, res) {
+  const data = await deactivateIncentivePlan(req.auth.agencyId, req.params.id);
   res.json({ data });
 }
 
