@@ -26,6 +26,7 @@ const pageOptions = [
   ["payments", "Payments", "Agency-wide billing and transaction report"],
   ["workload", "Workload", "Team capacity and assignments"],
   ["caseEasyImport", "Case Easy Import", "Import and review migrated records"],
+  ["incentives", "Incentives", "Earnings, incentive ledger, and pipeline"],
 ];
 
 const caseTabOptions = [

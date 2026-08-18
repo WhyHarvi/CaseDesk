@@ -10,6 +10,7 @@ export const portalPageKeys = [
   "payments",
   "workload",
   "caseEasyImport",
+  "incentives",
 ];
 export const portalCaseTabKeys = [
   "profile",
@@ -50,6 +51,7 @@ export function defaultPortalAccess(role) {
         leads: true,
         calendar: true,
         caseEasyImport: true,
+        incentives: true,
       },
       caseTabs: all(portalCaseTabKeys, false),
       data: { leads: "all", clients: "none", cases: "none" },
@@ -69,6 +71,7 @@ export function defaultPortalAccess(role) {
       documents: true,
       workload: true,
       caseEasyImport: true,
+      incentives: true,
     },
     caseTabs: all(portalCaseTabKeys, true),
     data: { leads: "assigned", clients: "assigned", cases: "assigned" },

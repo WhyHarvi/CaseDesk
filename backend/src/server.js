@@ -255,16 +255,18 @@ app.use(
   "/api/incentive-plans",
   requireAuth,
   staffUser,
-  requirePortalPage("cases"),
+  // Admin-only regardless (enforced inside incentivePlanRoutes) — gated on
+  // "incentives" for the same reason the read APIs below are, now that page
+  // exists.
+  requirePortalPage("incentives"),
   incentivePlanRoutes,
 );
 app.use(
   "/api/incentives",
   requireAuth,
   staffUser,
-  // Gated on the "incentives" portal page (added in M4) so admins can
-  // control per-person visibility the same way every other page does via
-  // PortalAccessSettingsPanel.
+  // Lets admins control per-person visibility the same way every other
+  // page does, via PortalAccessSettingsPanel.
   requirePortalPage("incentives"),
   incentiveRoutes,
 );

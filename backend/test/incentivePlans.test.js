@@ -62,10 +62,10 @@ test("the one-active-plan-per-scope invariant is a real database constraint, not
   );
 });
 
-test("incentive plans are mounted admin-gated alongside the other case-scoped admin routes", async () => {
+test("incentive plans are mounted behind the incentives portal page, admin-gated underneath", async () => {
   const server = await source("../src/server.js");
   assert.match(
     server,
-    /app\.use\(\s*"\/api\/incentive-plans",\s*requireAuth,\s*staffUser,\s*requirePortalPage\("cases"\),\s*incentivePlanRoutes,\s*\);/,
+    /app\.use\(\s*"\/api\/incentive-plans",\s*requireAuth,\s*staffUser,[\s\S]*?requirePortalPage\("incentives"\),\s*incentivePlanRoutes,\s*\);/,
   );
 });

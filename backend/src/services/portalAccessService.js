@@ -12,6 +12,7 @@ export const portalPageKeys = Object.freeze([
   "payments",
   "workload",
   "caseEasyImport",
+  "incentives",
 ]);
 
 export const portalCaseTabKeys = Object.freeze([
@@ -57,6 +58,7 @@ export function defaultPortalAccess(role) {
         leads: true,
         calendar: true,
         caseEasyImport: true,
+        incentives: true,
       },
       caseTabs: allFalse(portalCaseTabKeys),
       data: { leads: "all", clients: "none", cases: "none" },
@@ -77,6 +79,7 @@ export function defaultPortalAccess(role) {
       documents: true,
       workload: true,
       caseEasyImport: true,
+      incentives: true,
     },
     caseTabs: allTrue(portalCaseTabKeys),
     data: { leads: "assigned", clients: "assigned", cases: "assigned" },
