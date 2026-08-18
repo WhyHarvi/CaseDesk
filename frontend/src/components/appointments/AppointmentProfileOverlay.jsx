@@ -141,6 +141,16 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const hasStarted = appointment ? new Date(appointment.startsAt) <= new Date() : false;
   const calendarUrl = appointment ? `/app/calendar?appointment=${appointment.id}&date=${new Date(appointment.startsAt).toISOString().slice(0, 10)}` : "/app/calendar";
 
+  function updateLocalNotes(updater) {
+    setAppointment((current) => {
+      if (!current) return current;
+      const next = { ...current };
+      if (Array.isArray(current.clientNotes)) next.clientNotes = updater(current.clientNotes);
+      if (Array.isArray(current.notes)) next.notes = updater(current.notes);
+      return next;
+    });
+  }
+
   async function saveContext() {
     try {
       setSaving(true);
@@ -166,11 +176,10 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     try {
       setSaving(true);
       const created = await createAppointmentNote(appointment.id, note.trim());
-      setAppointment((current) => ({ ...current, notes: [created, ...(current.notes || [])], events: current.events }));
+      const localNote = { ...created, appointment: { id: appointment.id, subject: appointment.subject, startsAt: appointment.startsAt } };
+      updateLocalNotes((items) => [localNote, ...items.filter((item) => item.id !== localNote.id)]);
       setNote("");
       setShowNoteComposer(false);
-      await load();
-      onChanged?.();
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The note could not be saved.");
     } finally { setSaving(false); }
@@ -182,11 +191,15 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     if (saving || !editingNote || !content) return;
     try {
       setSaving(true);
-      await updateAppointmentNote(editingNote.id, content);
-      setEditingNote(null);
-      setEditingNoteContent("");
-      await load();
-      onChanged?.();
+      const updated = await updateAppointmentNote(editingNote.id, content);
+      const localNote = { ...editingNote, ...updated };
+      updateLocalNotes((items) => items.map((item) => item.id === localNote.id ? { ...item, ...localNote } : item));
+      if (event) {
+        setEditingNote(null);
+        setEditingNoteContent("");
+      } else {
+        setEditingNote(localNote);
+      }
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The note could not be updated.");
     } finally { setSaving(false); }
@@ -216,8 +229,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         setEditingNoteContent("");
       }
       setDeleteNoteTarget(null);
-      await load();
-      onChanged?.();
+      updateLocalNotes((items) => items.filter((item) => item.id !== deleteNoteTarget.id));
     } catch (requestError) {
       setDeleteNoteError(requestError.response?.data?.message || "The note could not be archived.");
     } finally { setSaving(false); }

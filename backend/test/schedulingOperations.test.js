@@ -227,6 +227,17 @@ test("the New Appointment sheet survives a reload the same way the Add Client dr
   assert.match(calendar, /clearAppointmentDraft\(\);/);
 });
 
+test("calendar appointment-note autosave updates inline without reloading the overlay", async () => {
+  const appointmentProfile = await readFile(new URL("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx", import.meta.url), "utf8");
+  assert.match(appointmentProfile, /function updateLocalNotes\(updater\)/);
+  assert.match(appointmentProfile, /updateLocalNotes\(\(items\) => \[localNote/);
+  assert.match(appointmentProfile, /setEditingNote\(localNote\)/);
+  const addNoteBlock = appointmentProfile.slice(appointmentProfile.indexOf("async function addNote"), appointmentProfile.indexOf("async function saveNoteEdit"));
+  assert.doesNotMatch(addNoteBlock, /await load\(\)|onChanged/);
+  const editNoteBlock = appointmentProfile.slice(appointmentProfile.indexOf("async function saveNoteEdit"), appointmentProfile.indexOf("useDebouncedAutosave"));
+  assert.doesNotMatch(editNoteBlock, /await load\(\)|onChanged/);
+});
+
 test("assignment prefers the existing client's consultant when free", async () => {
   const users = ["alpha", "beta"].map((id) => ({ id, fullName: id, role: "consultant", schedulingPreference: null }));
   const db = {
