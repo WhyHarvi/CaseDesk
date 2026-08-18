@@ -22,12 +22,16 @@ export function normalizeCaseType(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function capitalizeFirstLetter(value) {
+  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : "";
+}
+
 export function canonicalCaseType(value) {
   const label = String(value || "").trim().replace(/\s+/g, " ");
   const key = normalizeCaseType(label);
   return CASE_TYPE_ALIASES.get(key)
     || STANDARD_CASE_TYPES.find((type) => normalizeCaseType(type) === key)
-    || label;
+    || capitalizeFirstLetter(label);
 }
 
 export function caseTypeMatchesQuery(value, query) {

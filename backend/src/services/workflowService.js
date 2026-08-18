@@ -176,6 +176,10 @@ export function normalizeCaseType(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function capitalizeFirstLetter(value) {
+  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : "";
+}
+
 export const ADDITIONAL_CASE_TYPE_ALIASES = [
   {
     caseType: "Spousal Open Work Permit",
@@ -204,7 +208,7 @@ export function canonicalCaseType(value) {
   );
   if (additionalType) return additionalType.caseType;
   const template = DEFAULT_WORKFLOW_TEMPLATES.find((item) => getTemplateCaseTypeKeys(item).includes(normalized));
-  return template?.caseType || trimmed;
+  return template?.caseType || capitalizeFirstLetter(trimmed);
 }
 
 export function canonicalCaseTypeLabels(value) {

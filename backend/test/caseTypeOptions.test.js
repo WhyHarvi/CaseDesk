@@ -18,6 +18,12 @@ test("SOWP aliases resolve to one case type without collapsing distinct SOWP ser
   assert.equal(canonicalCaseType("SOWP (Outside Canada)"), "SOWP (Outside Canada)");
 });
 
+test("custom case types always start with a capital letter", () => {
+  assert.equal(canonicalCaseType("study permit with spouse"), "Study permit with spouse");
+  assert.equal(canonicalCaseType("  judicial   review  "), "Judicial review");
+  assert.equal(canonicalCaseType("Study Permit"), "Study Permit");
+});
+
 test("lead immigration interests include defaults and agency-specific case types without duplicates", async () => {
   const db = {
     case: {
