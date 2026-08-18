@@ -20,7 +20,7 @@ import {
   UserRoundCheck,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
@@ -397,10 +397,22 @@ export default function ClientProfile() {
   const [assignmentFeedback, setAssignmentFeedback] = useState(null);
   const initialChatConversationId = new URLSearchParams(location.search).get("conversation");
   const [chatOpen, setChatOpen] = useState(Boolean(initialChatConversationId));
+  const notesPanelRef = useRef(null);
+  const [notesPanelHeight, setNotesPanelHeight] = useState(null);
 
   useEffect(() => {
     if (initialChatConversationId) setChatOpen(true);
   }, [initialChatConversationId]);
+
+  useEffect(() => {
+    const element = notesPanelRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return undefined;
+    const updateHeight = () => setNotesPanelHeight(Math.round(element.getBoundingClientRect().height));
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [canAccessInternalNotes, profile?.client?.id]);
 
   const isEditingNote = Boolean(editingNote);
   const client = profile?.client || null;
@@ -857,7 +869,7 @@ export default function ClientProfile() {
             consulted far less often — this is what actually uses the wide
             screens most desks run on instead of one long single-width
             scroll of same-weight cards. */}
-        <div className="grid gap-5 xl:grid-cols-[1.62fr_0.85fr] xl:items-stretch">
+        <div className="grid gap-5 xl:grid-cols-[1.62fr_0.85fr] xl:items-start">
           <div className="min-w-0 space-y-5">
             <ClientAppointmentsCard clientId={client.id} />
 
@@ -909,7 +921,7 @@ export default function ClientProfile() {
             ) : null}
 
             {canAccessInternalNotes ? (
-              <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.06 }} className={cx(glass, "p-6")}>
+              <motion.article ref={notesPanelRef} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.06 }} className={cx(glass, "p-6")}>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-50 text-violet-600 ring-1 ring-violet-100">
@@ -977,7 +989,7 @@ export default function ClientProfile() {
             ) : null}
           </div>
 
-          <div className="min-w-0 space-y-5 xl:flex xl:h-full xl:flex-col">
+          <div className="min-w-0 space-y-5">
             <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.03 }} className={cx(glass, "p-6")}>
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600">
@@ -1065,7 +1077,13 @@ export default function ClientProfile() {
               />
             ) : null}
 
-            <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.08 }} className={cx(glass, "flex min-h-64 flex-col p-6 xl:flex-1")}>
+            <motion.article
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ ...spring, delay: 0.08 }}
+              className={cx(glass, "flex flex-col p-6")}
+              style={notesPanelHeight ? { maxHeight: `${notesPanelHeight}px` } : undefined}
+            >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100">
@@ -1079,7 +1097,7 @@ export default function ClientProfile() {
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{clientActivities.length}</span>
               </div>
 
-              <div className="mt-5 min-h-0 flex-1 space-y-0 overflow-y-auto pr-1 xl:max-h-none">
+              <div className="mt-5 min-h-0 space-y-0 overflow-y-auto pr-1">
                 {clientActivities.length ? clientActivities.map((activity, index) => (
                   <div key={activity.id} className="flex gap-3">
                     <div className="flex flex-col items-center">
