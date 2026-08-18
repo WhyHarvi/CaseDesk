@@ -120,6 +120,20 @@ test("the client directory distinguishes consultation activity from a profile wi
   assert.match(clientsPage, /client\.relationshipLabel/);
 });
 
+test("the client profile shows an attributed activity timeline below QuickBooks", async () => {
+  const [controller, profile] = await Promise.all([
+    source("../src/controllers/clientController.js"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+  ]);
+
+  assert.match(controller, /prisma\.activityLog\.findMany\([\s\S]*user: \{[\s\S]*fullName: true/);
+  assert.match(profile, /function clientActivityTitle\(activity\)/);
+  assert.match(profile, /return `\$\{actor\} \$\{labels\[activity\.action\] \|\| fallback\}`/);
+  assert.match(profile, /<h2[^>]*>Client activity<\/h2>/);
+  assert.match(profile, /clientActivities\.map\(\(activity, index\)/);
+  assert.ok(profile.indexOf("<QuickBooksSyncCard") < profile.indexOf(">Client activity</h2>"));
+});
+
 test("front desk client intake separates consultation payments from professional fees", async () => {
   const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet, caseController] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),

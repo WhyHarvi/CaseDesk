@@ -4,6 +4,7 @@ import {
   Calendar,
   Check,
   ChevronDown,
+  History,
   IdCard,
   Languages,
   Loader2,
@@ -105,6 +106,25 @@ function getStatusStyles(status) {
   };
 
   return styles[status] || "bg-slate-100 text-slate-700";
+}
+
+function clientActivityTitle(activity) {
+  const actor = activity.user?.fullName || "CaseDesk";
+  const labels = {
+    "client.created": "created client",
+    "client.updated": "updated client",
+    "client.assigned": "changed client assignment",
+    "client.closed": "closed client",
+    "client.archived": "archived client",
+    "client.restored": "restored client",
+    "appointment.booked": "booked appointment",
+    "appointment.status_updated": "updated appointment status",
+    "appointment.session_type_corrected": "corrected appointment type",
+  };
+  const fallback = String(activity.action || "updated client")
+    .replace(/^client\./, "")
+    .replace(/[._]+/g, " ");
+  return `${actor} ${labels[activity.action] || fallback}`;
 }
 
 function EmptyState({ message }) {
@@ -391,6 +411,7 @@ export default function ClientProfile() {
   // case as if it were active whenever it was the client's only case.
   const currentCase = profile?.activeCase || null;
   const notes = profile?.notes || [];
+  const clientActivities = profile?.activityLogs || [];
 
   const profileNotes = useMemo(
     () => notes.filter((note) => !note.caseId || note.appointmentId),
@@ -1043,6 +1064,37 @@ export default function ClientProfile() {
                 }
               />
             ) : null}
+
+            <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.08 }} className={cx(glass, "p-6")}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100">
+                    <History className="h-4.5 w-4.5" />
+                  </span>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">Client activity</h2>
+                    <p className="mt-0.5 text-sm text-slate-500">Who changed what on this client.</p>
+                  </div>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{clientActivities.length}</span>
+              </div>
+
+              <div className="mt-5 max-h-[30rem] space-y-0 overflow-y-auto pr-1">
+                {clientActivities.length ? clientActivities.map((activity, index) => (
+                  <div key={activity.id} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-50" />
+                      {index < clientActivities.length - 1 ? <span className="my-1 w-px flex-1 bg-slate-200" /> : null}
+                    </div>
+                    <div className="min-w-0 pb-5">
+                      <p className="text-sm font-semibold text-slate-900">{clientActivityTitle(activity)}</p>
+                      {activity.details ? <p className="mt-1 text-xs leading-5 text-slate-500">{activity.details}</p> : null}
+                      <p className="mt-1.5 text-[11px] font-medium text-slate-400">{formatDateTime(activity.createdAt)}</p>
+                    </div>
+                  </div>
+                )) : <EmptyState message="No client activity recorded yet." />}
+              </div>
+            </motion.article>
 
             {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
           </div>
