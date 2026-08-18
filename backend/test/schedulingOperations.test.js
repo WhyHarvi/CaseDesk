@@ -208,6 +208,10 @@ test("free consultations have a dedicated calendar color and visible legend", as
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);
+  assert.match(calendar, /function calendarRowsEqual\(current, next\)/);
+  assert.match(calendar, /calendarRowsEqual\(current, calendar\) \? current : calendar/);
+  assert.match(calendar, /if \(!background\) setError/);
+  assert.doesNotMatch(calendar, /setInterval\(refreshWhenVisible, 60_000\)/);
   assert.match(calendar, /function readAppointmentDraft\(\)/);
   assert.match(calendar, /function writeAppointmentDraft\(draft\)/);
   assert.match(calendar, /function clearAppointmentDraft\(\)/);

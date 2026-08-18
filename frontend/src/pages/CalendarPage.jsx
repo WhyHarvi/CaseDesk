@@ -103,6 +103,18 @@ const EVENT_TONES = [
   { chip: "bg-rose-500", block: "border-rose-400 bg-rose-50/90 hover:bg-rose-100/90", title: "text-rose-900", meta: "text-rose-600" },
   { chip: "bg-indigo-500", block: "border-indigo-400 bg-indigo-50/90 hover:bg-indigo-100/90", title: "text-indigo-900", meta: "text-indigo-600" },
 ];
+
+function calendarRowsEqual(current, next) {
+  if (current.length !== next.length) return false;
+  return current.every((item, index) => {
+    const candidate = next[index];
+    return item.id === candidate?.id
+      && item.updatedAt === candidate.updatedAt
+      && item.startsAt === candidate.startsAt
+      && item.endsAt === candidate.endsAt
+      && item.status === candidate.status;
+  });
+}
 const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-50/90 hover:bg-slate-100/90", title: "text-slate-800", meta: "text-slate-500" };
 // Frontdesk-booked (walk-in) appointments get this fixed color regardless
 // of who they're assigned to, instead of the per-staff rotation below — a
@@ -1645,6 +1657,7 @@ export default function CalendarPage() {
   const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
   const [notesAppointmentId, setNotesAppointmentId] = useState(null);
   const [cancelling, setCancelling] = useState(false);
+  const lastBackgroundRefreshAt = useRef(0);
 
   const monthCursor = useMemo(() => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1), [selectedDate]);
   const rangeStart = useMemo(() => startOfWeek(monthCursor), [monthCursor]);
@@ -1652,17 +1665,22 @@ export default function CalendarPage() {
 
   const load = useCallback(async ({ fresh = false, background = false } = {}) => {
     if (!background) setLoading(true);
-    setError("");
+    if (!background) setError("");
     try {
-      const [calendar, settings] = await Promise.all([
-        getCalendarAppointments({ from: rangeStart.toISOString(), to: rangeEnd.toISOString(), fresh }),
-        getBookingSettings(),
-      ]);
-      setAppointments(calendar);
-      setSessionTypes(settings.sessionTypes);
-      setBookingSettings(settings.settings);
+      if (background) {
+        const calendar = await getCalendarAppointments({ from: rangeStart.toISOString(), to: rangeEnd.toISOString(), fresh });
+        setAppointments((current) => calendarRowsEqual(current, calendar) ? current : calendar);
+      } else {
+        const [calendar, settings] = await Promise.all([
+          getCalendarAppointments({ from: rangeStart.toISOString(), to: rangeEnd.toISOString(), fresh }),
+          getBookingSettings(),
+        ]);
+        setAppointments(calendar);
+        setSessionTypes(settings.sessionTypes);
+        setBookingSettings(settings.settings);
+      }
     } catch (reason) {
-      setError(reason.response?.data?.message || "The calendar could not be loaded.");
+      if (!background) setError(reason.response?.data?.message || "The calendar could not be loaded.");
     } finally {
       if (!background) setLoading(false);
     }
@@ -1706,11 +1724,14 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => {
-    const refreshWhenVisible = () => { if (document.visibilityState === "visible") load({ fresh: true, background: true }); };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "visible" || Date.now() - lastBackgroundRefreshAt.current < 30_000) return;
+      lastBackgroundRefreshAt.current = Date.now();
+      void load({ fresh: true, background: true });
+    };
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
-    const interval = window.setInterval(refreshWhenVisible, 60_000);
-    return () => { window.removeEventListener("focus", refreshWhenVisible); document.removeEventListener("visibilitychange", refreshWhenVisible); window.clearInterval(interval); };
+    return () => { window.removeEventListener("focus", refreshWhenVisible); document.removeEventListener("visibilitychange", refreshWhenVisible); };
   }, [load]);
 
   useEffect(() => {
