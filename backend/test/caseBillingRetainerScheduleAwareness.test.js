@@ -264,6 +264,7 @@ test("an editable retainer can be reset to the template state without touching b
 
 test("a voided installment invoice never fires again, and voided invoices drop out of the case's Billing tab", async () => {
   const service = await source("../src/services/paymentScheduleService.js");
+  const invoiceService = await source("../src/services/caseInvoiceService.js");
   const workspace = await source("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx");
 
   // voidInvoicedInstallment resets the installment to Scheduled so a real
@@ -282,4 +283,12 @@ test("a voided installment invoice never fires again, and voided invoices drop o
   assert.match(workspace, /const visibleInvoices = invoices\?\.filter\(\(invoice\) => invoice\.status !== "Void"\) \?\? invoices;/);
   assert.match(workspace, /visibleInvoices\.length === 0/);
   assert.match(workspace, /visibleInvoices\.map\(\(invoice\)/);
+
+  // Staff see invoices and schedules in the same Billing tab. Include the
+  // source installment on each invoice so the card can use the correct void
+  // operation without making an admin hunt through a second panel.
+  assert.match(invoiceService, /installments: \{ select: \{ id: true, status: true \} \}/);
+  assert.match(workspace, /invoice\.installments\?\.find\(\(item\) => item\.status === "Invoiced"\)/);
+  assert.match(workspace, /voidInstallmentInvoice\(invoice\.caseId, invoicedInstallment\.id, voidReason\.trim\(\)\)/);
+  assert.match(workspace, /voidCaseInvoice\(invoice\.caseId, invoice\.id, voidReason\.trim\(\)\)/);
 });

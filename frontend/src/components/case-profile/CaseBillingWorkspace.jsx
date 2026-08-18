@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { createCaseInvoice, downloadCaseInvoicePdf, getCaseInvoices, recordCaseInvoiceManualPayment, requestCaseInvoiceRefund, voidCaseInvoice } from "../../api/caseInvoiceApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
+import { voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
@@ -150,7 +151,7 @@ function CashPaymentRow({ invoice, onPaid }) {
   );
 }
 
-function InvoiceCard({ invoice, onPaid, onRefunded, canRecordPayment, canRefund, categories, highlighted, role }) {
+function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, canRefund, categories, highlighted, role }) {
   const category = categories.find((item) => item.code === invoice.paymentType);
   const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
@@ -170,6 +171,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, canRecordPayment, canRefund,
   const collected = Math.max(0, Number(invoice.amount) - Number(invoice.balance));
   const refunded = (invoice.refunds || []).filter((item) => ["Requested", "AwaitingQuickBooks", "Completed"].includes(item.status)).reduce((sum, item) => sum + Number(item.amount), 0);
   const refundable = Math.max(0, collected - refunded);
+  const invoicedInstallment = invoice.installments?.find((item) => item.status === "Invoiced");
 
   async function download() {
     setDownloading(true);
@@ -221,10 +223,13 @@ function InvoiceCard({ invoice, onPaid, onRefunded, canRecordPayment, canRefund,
     setVoidBusy(true);
     setDownloadError("");
     try {
-      const updated = await voidCaseInvoice(invoice.caseId, invoice.id, voidReason.trim());
+      const updated = invoicedInstallment
+        ? await voidInstallmentInvoice(invoice.caseId, invoicedInstallment.id, voidReason.trim())
+        : await voidCaseInvoice(invoice.caseId, invoice.id, voidReason.trim());
       setVoidOpen(false);
       setVoidReason("");
-      onPaid(updated);
+      if (invoicedInstallment) await onVoided();
+      else onPaid(updated);
     } catch (reason) {
       setDownloadError(reason.response?.data?.message || "The invoice could not be voided.");
     } finally {
@@ -319,7 +324,11 @@ function InvoiceCard({ invoice, onPaid, onRefunded, canRecordPayment, canRefund,
             <button type="button" onClick={() => setVoidOpen(true)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:underline"><Trash2 className="h-3.5 w-3.5" /> Void invoice</button>
           ) : (
             <form onSubmit={submitVoid} className="rounded-2xl border border-rose-200 bg-rose-50 p-3">
-              <p className="text-xs leading-5 text-rose-800">Use this only when the charge is no longer owed. The reason is saved in case activity.</p>
+              <p className="text-xs leading-5 text-rose-800">
+                {invoicedInstallment
+                  ? "This voids the invoice and resets its payment-schedule installment to Scheduled. The reason is saved in case activity."
+                  : "Use this only when the charge is no longer owed. The reason is saved in case activity."}
+              </p>
               <input autoFocus required maxLength={500} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} placeholder="Reason, e.g. visa refused; approval fee not earned" className="mt-2 w-full rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm outline-none focus:border-rose-400" />
               <div className="mt-2 flex gap-2"><button type="submit" disabled={voidBusy || !voidReason.trim()} className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{voidBusy ? "Voiding…" : "Confirm void"}</button><button type="button" disabled={voidBusy} onClick={() => { setVoidOpen(false); setVoidReason(""); }} className="rounded-full px-3 py-2 text-xs font-semibold text-slate-500">Cancel</button></div>
             </form>
@@ -514,7 +523,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {visibleInvoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} onRefunded={handleCashSaved} canRecordPayment={canManage} canRefund={canRefund} categories={categories} highlighted={invoice.id === activeHighlightId} role={role} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} onRefunded={handleCashSaved} onVoided={handleCashSaved} canRecordPayment={canManage} canRefund={canRefund} categories={categories} highlighted={invoice.id === activeHighlightId} role={role} />
             ))}
           </AnimatePresence>
         </div>

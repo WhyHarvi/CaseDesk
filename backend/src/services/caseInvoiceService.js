@@ -352,10 +352,11 @@ async function refreshInvoiceRows(agencyId, rows) {
         ? "Void"
         : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate, refunds: row.refunds });
       if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
-      return prisma.caseInvoice.update({
+      const updated = await prisma.caseInvoice.update({
         where: { id: row.id },
         data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
       });
+      return { ...row, ...updated };
     }),
   );
 }
@@ -363,7 +364,15 @@ async function refreshInvoiceRows(agencyId, rows) {
 export async function listCaseInvoices(agencyId, caseId) {
   const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { id: true } });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
-  const rows = await prisma.caseInvoice.findMany({ where: { agencyId, caseId }, include: { lines: { orderBy: { sortOrder: "asc" } }, refunds: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } });
+  const rows = await prisma.caseInvoice.findMany({
+    where: { agencyId, caseId },
+    include: {
+      lines: { orderBy: { sortOrder: "asc" } },
+      refunds: { orderBy: { createdAt: "desc" } },
+      installments: { select: { id: true, status: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
   const [refreshed, categories] = await Promise.all([refreshInvoiceRows(agencyId, rows), listFeeCategories(agencyId, { includeInactive: true })]);
   const cashRows = await prisma.paymentApproval.findMany({ where: { agencyId, caseInvoiceId: { in: refreshed.map((row) => row.id) }, status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } });
   const cashByInvoice = new Map();
