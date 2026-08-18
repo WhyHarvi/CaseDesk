@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion";
-import { ArrowLeft, Award, HandCoins, Search, Sparkles, TrendingUp, Users, Wallet } from "lucide-react";
+import { ArrowLeft, Award, HandCoins, Search, Settings2, Sparkles, TrendingUp, Users, Wallet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
 
@@ -309,14 +310,21 @@ export default function Incentives() {
     <main className="min-w-0 bg-[radial-gradient(circle_at_12%_-4%,rgba(16,185,129,0.08),transparent_36%),radial-gradient(circle_at_92%_16%,rgba(56,130,246,0.08),transparent_38%)] px-3 py-4 sm:px-5 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1680px] min-w-0 flex-col gap-5">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "overflow-hidden p-5 sm:p-7 lg:p-8")}>
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"><HandCoins className="h-5 w-5" /></span>
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Incentives</h1>
-              <p className="mt-1 max-w-2xl text-sm text-slate-500 sm:text-base">
-                {isAdmin ? "See what everyone is earning, and what's still in the pipeline." : "What you've earned, and what's still coming."}
-              </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"><HandCoins className="h-5 w-5" /></span>
+              <div className="min-w-0">
+                <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Incentives</h1>
+                <p className="mt-1 max-w-2xl text-sm text-slate-500 sm:text-base">
+                  {isAdmin ? "See what everyone is earning, and what's still in the pipeline." : "What you've earned, and what's still coming."}
+                </p>
+              </div>
             </div>
+            {isAdmin ? (
+              <Link to="/app/settings?section=incentive-plans" className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                <Settings2 className="h-4 w-4" /> Incentive plans
+              </Link>
+            ) : null}
           </div>
         </motion.div>
 

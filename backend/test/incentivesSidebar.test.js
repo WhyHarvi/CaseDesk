@@ -45,4 +45,5 @@ test("the Incentives page never lets a non-admin escape their own numbers, and l
   // code path where a consultant/frontdesk can pass another userId.
   assert.match(page, /<PersonView userId=\{appUser\?\.id\} \/>/);
   assert.match(page, /Potential — not guaranteed/);
+  assert.match(page, /isAdmin \? \(\s*<Link to="\/app\/settings\?section=incentive-plans"/);
 });
