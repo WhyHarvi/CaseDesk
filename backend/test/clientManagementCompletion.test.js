@@ -95,7 +95,7 @@ test("clients converted from a Case Easy import are labeled everywhere a client 
     2,
   );
 
-  assert.match(badge, /Imported from Case Easy/);
+  assert.match(badge, />\s*Case Easy\s*</);
 
   assert.match(clientsPage, /client\.caseEasyImportContacts\?\.length \? <CaseEasyOriginBadge \/> : null/);
   assert.equal(
