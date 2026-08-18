@@ -42,6 +42,7 @@ export default function CasesCommandBar({
   filters,
   setFilters,
   studyIntakeOptions = [],
+  caseTypeOptions = [],
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -58,7 +59,7 @@ export default function CasesCommandBar({
     ...studyIntakeOptions,
     ...cases.map((item) => studyIntakeValue(item.studyIntakeMonth)).filter(Boolean),
   ])].sort(), [cases, studyIntakeOptions]);
-  const visibleCaseTypes = useMemo(() => buildCaseTypeFilterOptions(cases), [cases]);
+  const visibleCaseTypes = useMemo(() => buildCaseTypeFilterOptions(cases, caseTypeOptions), [cases, caseTypeOptions]);
 
   const activeFilters = Object.entries(filters || {}).filter(
     ([, value]) => value && value !== "all"

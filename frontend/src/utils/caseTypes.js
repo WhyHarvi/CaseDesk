@@ -47,8 +47,8 @@ export function isReusableCaseType(value) {
   return Boolean(label) && !/^(?:i|we)\s+(?:am|are|have|need|want|would|wish)\b/i.test(label);
 }
 
-export function buildCaseTypeFilterOptions(cases = []) {
-  const labels = new Map(STANDARD_CASE_TYPES.map((label) => [normalizeCaseType(label), label]));
+export function buildCaseTypeFilterOptions(cases = [], configuredOptions = []) {
+  const labels = new Map([...STANDARD_CASE_TYPES, ...configuredOptions].map((label) => [normalizeCaseType(label), label]));
   for (const item of cases) {
     const label = canonicalCaseType(item?.caseType);
     const key = normalizeCaseType(label);

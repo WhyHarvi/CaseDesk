@@ -31,6 +31,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
+  const [caseTypeAliases, setCaseTypeAliases] = useState({});
   const [contactMatches, setContactMatches] = useState([]);
   const [caseEasyMatches, setCaseEasyMatches] = useState([]);
   const [importingCaseEasyId, setImportingCaseEasyId] = useState("");
@@ -57,7 +58,10 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     ]).then(([clientResult, userResult, typeResult]) => {
       if (clientResult.status === "fulfilled") setClients(clientResult.value.data.data || []);
       if (userResult.status === "fulfilled") setUsers(userResult.value.data.data || []);
-      if (typeResult.status === "fulfilled") setCaseTypeOptions(typeResult.value.data.data || []);
+      if (typeResult.status === "fulfilled") {
+        setCaseTypeOptions(typeResult.value.data.data || []);
+        setCaseTypeAliases(typeResult.value.data.aliases || {});
+      }
     });
   }, [kind]);
 
@@ -190,7 +194,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   }
 
   if (kind === "case") {
-    return <CaseFormDrawer formState={caseForm} onChange={handleCaseChange} onSubmit={submitCase} onCancel={close} saving={saving} formError={formError} clients={clients} users={users} caseTypeOptions={caseTypeOptions} isEditing={false} editingClientName="" closing={closing} />;
+    return <CaseFormDrawer formState={caseForm} onChange={handleCaseChange} onSubmit={submitCase} onCancel={close} saving={saving} formError={formError} clients={clients} users={users} caseTypeOptions={caseTypeOptions} caseTypeAliases={caseTypeAliases} isEditing={false} editingClientName="" closing={closing} />;
   }
 
   return null;

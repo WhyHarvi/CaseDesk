@@ -245,8 +245,8 @@ test("the case type filter collapses capitalization variants and matches them co
   const caseTypes = await readFile(new URL("../../frontend/src/utils/caseTypes.js", import.meta.url), "utf8");
   const casesPage = await readFile(new URL("../../frontend/src/pages/Cases.jsx", import.meta.url), "utf8");
   const commandBar = await readFile(new URL("../../frontend/src/components/cases/CasesCommandBar.jsx", import.meta.url), "utf8");
-  assert.match(caseTypes, /STANDARD_CASE_TYPES\.map\(\(label\) => \[normalizeCaseType\(label\), label\]\)/);
-  assert.match(commandBar, /buildCaseTypeFilterOptions\(cases\)/);
+  assert.match(caseTypes, /\[\.\.\.STANDARD_CASE_TYPES, \.\.\.configuredOptions\]\.map/);
+  assert.match(commandBar, /buildCaseTypeFilterOptions\(cases, caseTypeOptions\)/);
   assert.match(casesPage, /normalizeCaseType\(caseItem\.caseType\) === normalizeCaseType\(filters\.caseType\)/);
 });
 

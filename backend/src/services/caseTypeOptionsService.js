@@ -5,6 +5,7 @@ import {
   canonicalCaseType,
   normalizeCaseType,
 } from "./workflowService.js";
+import { GLOBAL_CASE_TYPE_PROGRAMS } from "./documentProgramCatalog.js";
 
 export function isCaseTypeOption(value) {
   const label = String(value || "").trim().replace(/\s+/g, " ");
@@ -13,6 +14,28 @@ export function isCaseTypeOption(value) {
   // Intake answers occasionally land in legacy caseType fields. They describe
   // what the person wants to discuss, but are not reusable case categories.
   return !/^(?:i|we)\s+(?:am|are|have|need|want|would|wish)\b/i.test(label);
+}
+
+export function globalCaseTypeAliases() {
+  const aliases = {};
+  const groups = [
+    ...GLOBAL_CASE_TYPE_PROGRAMS.map((program) => ({ caseType: program.title, aliases: program.aliases || [] })),
+    ...ADDITIONAL_CASE_TYPE_ALIASES,
+  ];
+  for (const group of groups) {
+    for (const alias of group.aliases || []) aliases[normalizeCaseType(alias)] = group.caseType;
+  }
+  return aliases;
+}
+
+export function isGlobalCaseType(value) {
+  const canonical = canonicalCaseType(value);
+  const labels = [
+    ...DEFAULT_WORKFLOW_TEMPLATES.map((template) => template.caseType),
+    ...ADDITIONAL_CASE_TYPE_ALIASES.map((type) => type.caseType),
+    ...GLOBAL_CASE_TYPE_PROGRAMS.map((program) => program.title),
+  ];
+  return labels.some((label) => normalizeCaseType(label) === normalizeCaseType(canonical));
 }
 
 export async function listAgencyCaseTypeOptions(agencyId, db = prisma) {
@@ -45,6 +68,8 @@ export async function listAgencyCaseTypeOptions(agencyId, db = prisma) {
     bump(template.caseType, 2_000);
   for (const type of ADDITIONAL_CASE_TYPE_ALIASES)
     bump(type.caseType, 2_000);
+  for (const program of GLOBAL_CASE_TYPE_PROGRAMS)
+    bump(program.title, 2_000);
   for (const { caseType } of cases) bump(caseType, 1);
   for (const { caseType } of [...documentTemplates, ...workflowTemplates])
     bump(caseType, 1_000);

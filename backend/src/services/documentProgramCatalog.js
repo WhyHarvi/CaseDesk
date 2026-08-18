@@ -56,7 +56,7 @@ const sources = {
   citizenshipProof: "https://www.canada.ca/en/immigration-refugees-citizenship/services/application/application-forms-guides/application-citizenship-certificate-adults-minors.html",
 };
 
-const programs = [
+export const GLOBAL_CASE_TYPE_PROGRAMS = [
   {
     id: "visitor-visa",
     title: "Visitor Visa (TRV)",
@@ -376,7 +376,7 @@ function slugify(value) {
 }
 
 export function buildDocumentProgramCatalog(agencyTemplates = []) {
-  const catalog = programs.map((program) => ({
+  const catalog = GLOBAL_CASE_TYPE_PROGRAMS.map((program) => ({
     id: program.id,
     title: program.title,
     category: program.category,

@@ -1,4 +1,5 @@
 import prisma from "./prisma/client.js";
+import { GLOBAL_CASE_TYPE_PROGRAMS } from "./documentProgramCatalog.js";
 
 function workflowStep(title, description, priority = "Normal") {
   return {
@@ -207,6 +208,10 @@ export function canonicalCaseType(value) {
     [item.caseType, ...item.aliases].some((label) => normalizeCaseType(label) === normalized),
   );
   if (additionalType) return additionalType.caseType;
+  const globalType = GLOBAL_CASE_TYPE_PROGRAMS.find((item) =>
+    [item.title, ...(item.aliases || [])].some((label) => normalizeCaseType(label) === normalized),
+  );
+  if (globalType) return globalType.title;
   const template = DEFAULT_WORKFLOW_TEMPLATES.find((item) => getTemplateCaseTypeKeys(item).includes(normalized));
   return template?.caseType || capitalizeFirstLetter(trimmed);
 }

@@ -30,7 +30,8 @@ import { offerWaitlistOpening } from "../../services/bookingWaitlistService.js";
 import { assertZoomOperational } from "../../services/zoomService.js";
 import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
 import { triggerRetainerFlow } from "./lead.retainer.service.js";
-import { listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
+import { isGlobalCaseType, listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
+import { normalizeCaseType } from "../../services/workflowService.js";
 import { staleLeadOutreachOverview } from "./lead.staleOutreach.service.js";
 
 const leadInclude = {
@@ -1327,6 +1328,13 @@ export async function convertLead(req, db = prisma) {
   const values = parseLeadConversion(req.body);
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
+
+  if (req.auth.role === "consultant" && !isGlobalCaseType(values.caseType)) {
+    const caseTypes = await listAgencyCaseTypeOptions(agencyId, db);
+    if (!caseTypes.some((caseType) => normalizeCaseType(caseType) === normalizeCaseType(values.caseType))) {
+      throw createHttpError(400, "Choose a case type from the global or agency list. Ask an administrator to configure a genuinely new service in Settings.", "CASE_TYPE_NOT_CONFIGURED");
+    }
+  }
 
   return db.$transaction(async (tx) => {
     const lead = await requireLead(tx, req, req.params.id);

@@ -52,6 +52,9 @@ test("lead immigration interests include defaults and agency-specific case types
   assert.ok(options.includes("Canadian Citizenship"));
   assert.ok(options.includes("Judicial Review"));
   assert.ok(options.includes("Mandamus Application"));
+  assert.ok(options.includes("Canadian Experience Class"));
+  assert.ok(options.includes("Humanitarian and Compassionate Considerations"));
+  assert.ok(options.includes("Criminal Rehabilitation"));
   assert.equal(options.filter((value) => value === "Spousal Open Work Permit").length, 1);
   assert.ok(!options.includes("SOWP"));
   assert.ok(!options.includes("I want to discuss my spousal pr application process"));

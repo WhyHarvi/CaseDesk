@@ -3,20 +3,15 @@ import { createPortal } from "react-dom";
 import { caseTypeMatchesQuery, canonicalCaseType } from "../../utils/caseTypes";
 
 /**
- * Case type is free text (Case.caseType has no enum) but several other
- * systems — document checklists, workflow templates — match against it by
- * exact string equality. A plain text input lets "Study Permit" and
- * "study permit" silently become two different, unlinked case types. This
- * surfaces the agency's known case types (in use on a case, or configured
- * as a document/workflow template — see GET /cases/case-types) as you
- * type, so picking an existing one is the easy default, while still
- * allowing a genuinely new case type to be typed freely.
+ * Searchable controlled input backed by CaseDesk's global immigration
+ * catalog plus services deliberately configured by the agency.
  */
-export default function CaseTypeCombobox({ value, onChange, options, name = "caseType", required = false, placeholder = "Study Permit" }) {
+export default function CaseTypeCombobox({ value, onChange, options, aliases = {}, name = "caseType", required = false, placeholder = "Study Permit" }) {
   const [open, setOpen] = useState(false);
   const [panelRect, setPanelRect] = useState(null);
   const containerRef = useRef(null);
   const panelRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -61,11 +56,21 @@ export default function CaseTypeCombobox({ value, onChange, options, name = "cas
 
   const matches = useMemo(() => {
     const query = value.trim().toLowerCase();
-    const list = query ? options.filter((option) => caseTypeMatchesQuery(option, query)) : options;
-    const canonicalValue = canonicalCaseType(value);
+    const list = query ? options.filter((option) =>
+      caseTypeMatchesQuery(option, query)
+      || Object.entries(aliases).some(([alias, label]) => label === option && alias.includes(query)),
+    ) : options;
+    const canonicalValue = aliases[query] || canonicalCaseType(value);
     const isExactExistingMatch = options.some((option) => option.toLowerCase() === canonicalValue.toLowerCase());
     return { list, isNew: Boolean(query) && !isExactExistingMatch };
-  }, [options, value]);
+  }, [aliases, options, value]);
+
+  useEffect(() => {
+    const message = value.trim() && matches.isNew
+      ? "Choose a case type from the global or agency list. Ask an administrator to configure a genuinely new service."
+      : "";
+    inputRef.current?.setCustomValidity(message);
+  }, [matches.isNew, value]);
 
   function select(option) {
     onChange({ target: { name, value: option } });
@@ -75,11 +80,17 @@ export default function CaseTypeCombobox({ value, onChange, options, name = "cas
   return (
     <div ref={containerRef} className="relative">
       <input
+        ref={inputRef}
         required={required}
         name={name}
         value={value}
         onChange={(event) => { onChange(event); setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onBlur={() => {
+          const canonical = aliases[value.trim().toLowerCase()] || canonicalCaseType(value);
+          const option = options.find((item) => item.toLowerCase() === canonical.toLowerCase());
+          if (option && option !== value) onChange({ target: { name, value: option } });
+        }}
         placeholder={placeholder}
         autoComplete="off"
         className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
@@ -104,7 +115,7 @@ export default function CaseTypeCombobox({ value, onChange, options, name = "cas
               ))}
               {matches.isNew ? (
                 <div className="mt-0.5 border-t border-slate-100 px-3 py-2 text-xs text-slate-400">
-                  "{value.trim()}" is a new case type — no existing document or workflow checklist will apply to it yet.
+                  Choose the closest global case type. An administrator can configure a genuinely new agency service in Settings.
                 </div>
               ) : null}
             </div>,

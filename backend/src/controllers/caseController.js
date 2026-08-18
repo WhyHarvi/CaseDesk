@@ -1,6 +1,6 @@
 import prisma from "../services/prisma/client.js";
-import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels } from "../services/workflowService.js";
-import { listAgencyCaseTypeOptions } from "../services/caseTypeOptionsService.js";
+import { assignDefaultWorkflowToCase, canonicalCaseType, canonicalCaseTypeLabels, normalizeCaseType } from "../services/workflowService.js";
+import { globalCaseTypeAliases, isGlobalCaseType, listAgencyCaseTypeOptions } from "../services/caseTypeOptionsService.js";
 import { normalizeDocumentName, uniqueDocumentNames } from "../utils/documentNames.js";
 import { createHttpError } from "../utils/http.js";
 import { createCrudController, fieldParsers, recordActivity } from "../utils/prismaCrud.js";
@@ -134,6 +134,18 @@ function validateCasePayload(payload, existing = null) {
   return resolved;
 }
 
+async function assertConsultantCaseType(req, caseType) {
+  if (req.auth.role !== "consultant" || !caseType) return;
+  if (isGlobalCaseType(caseType)) return;
+  const options = await listAgencyCaseTypeOptions(req.auth.agencyId);
+  if (options.some((option) => normalizeCaseType(option) === normalizeCaseType(caseType))) return;
+  throw createHttpError(
+    400,
+    "Choose a case type from the global or agency list. Ask an administrator to configure a genuinely new service in Settings.",
+    "CASE_TYPE_NOT_CONFIGURED",
+  );
+}
+
 function studyPermitCaseTypeWhere() {
   return {
     OR: [
@@ -258,6 +270,7 @@ async function syncCaseDocumentsFromTemplates(tx, { agencyId, clientId, caseId, 
 
 export async function createCase(req, res) {
   const payload = validateCasePayload(parsePayload(req.body, fields));
+  await assertConsultantCaseType(req, payload.caseType);
   const idempotencyKey = String(req.body?.idempotencyKey || "").trim().replace(/[^a-zA-Z0-9:_-]/g, "").slice(0, 200) || null;
 
   if (!payload.clientId) {
@@ -398,6 +411,7 @@ export async function updateCase(req, res) {
   }
 
   const payload = validateCasePayload(parsePayload(req.body, fields), existing);
+  await assertConsultantCaseType(req, payload.caseType);
   if (
     Object.hasOwn(payload, "clientId") &&
     payload.clientId !== existing.clientId
@@ -829,7 +843,7 @@ export async function updateCaseDocumentAssignment(req, res) {
 // template — so the case form can suggest exact matches instead of
 // letting free text drift.
 export async function listCaseTypes(req, res) {
-  res.json({ data: await listAgencyCaseTypeOptions(req.user.agencyId) });
+  res.json({ data: await listAgencyCaseTypeOptions(req.user.agencyId), aliases: globalCaseTypeAliases() });
 }
 
 export async function listStudyIntakes(req, res) {

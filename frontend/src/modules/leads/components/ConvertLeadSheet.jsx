@@ -31,6 +31,7 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
     notes: "",
   });
   const [caseTypeOptions, setCaseTypeOptions] = useState(initialCaseType ? [initialCaseType] : []);
+  const [caseTypeAliases, setCaseTypeAliases] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -42,6 +43,7 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
         const options = [...(response.data.data || []), initialCaseType].filter(Boolean);
         const unique = new Map(options.map((option) => [String(option).trim().toLowerCase(), String(option).trim()]));
         setCaseTypeOptions([...unique.values()].sort((left, right) => left.localeCompare(right)));
+        setCaseTypeAliases(response.data.aliases || {});
       })
       .catch(() => {
         // Keep the lead's existing immigration interest usable when the
@@ -108,6 +110,7 @@ export default function ConvertLeadSheet({ lead, onClose, onConverted }) {
                   value={form.caseType}
                   onChange={update}
                   options={caseTypeOptions}
+                  aliases={caseTypeAliases}
                   placeholder="Select or search case type"
                 />
               </div>

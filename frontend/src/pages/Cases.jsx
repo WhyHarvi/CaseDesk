@@ -866,6 +866,7 @@ export function CaseFormDrawer({
   clients,
   users,
   caseTypeOptions,
+  caseTypeAliases = {},
   isEditing,
   editingClientName,
   closing,
@@ -946,6 +947,7 @@ export function CaseFormDrawer({
                   value={formState.caseType}
                   onChange={onChange}
                   options={caseTypeOptions}
+                  aliases={caseTypeAliases}
                 />
               </label>
 
@@ -1221,6 +1223,7 @@ export default function Cases() {
   const [documents, setDocuments] = useState([]);
   const [payments, setPayments] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
+  const [caseTypeAliases, setCaseTypeAliases] = useState({});
   const [studyIntakeOptions, setStudyIntakeOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1264,7 +1267,10 @@ export default function Cases() {
   }, [registerView, filters.intake]);
 
   useEffect(() => {
-    api.get("/cases/case-types").then((response) => setCaseTypeOptions(response.data.data || [])).catch(() => {});
+    api.get("/cases/case-types").then((response) => {
+      setCaseTypeOptions(response.data.data || []);
+      setCaseTypeAliases(response.data.aliases || {});
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -1922,6 +1928,7 @@ export default function Cases() {
                 filters={filters}
                 setFilters={setFilters}
                 studyIntakeOptions={studyIntakeOptions}
+                caseTypeOptions={caseTypeOptions}
                 onNewCase={openCreateForm}
                 onSelectCase={(caseItem) => {
                   openQuickView(caseItem);
@@ -2203,6 +2210,7 @@ export default function Cases() {
           clients={clients}
           users={users}
           caseTypeOptions={caseTypeOptions}
+          caseTypeAliases={caseTypeAliases}
           isEditing={isEditing}
           editingClientName={
             editingCase?.client?.fullName ||
