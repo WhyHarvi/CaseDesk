@@ -5,18 +5,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { formatStudyIntake, isStudyPermitCaseType, studyIntakeValue } from "../../utils/studyIntake";
+import { buildCaseTypeFilterOptions } from "../../utils/caseTypes";
 import { CASE_STAGES } from "../../constants/caseStages";
-
-const CASE_TYPES = [
-  "Canadian Citizenship",
-  "General Consultation",
-  "LMIA - Employer Service",
-  "PR - Express Entry - PNP",
-  "Spousal and Family Sponsorship",
-  "Study Permit",
-  "Visitor Visa - TRV",
-  "Work permit / Open Work permit",
-];
 
 const STAGES = CASE_STAGES;
 
@@ -68,10 +58,7 @@ export default function CasesCommandBar({
     ...studyIntakeOptions,
     ...cases.map((item) => studyIntakeValue(item.studyIntakeMonth)).filter(Boolean),
   ])].sort(), [cases, studyIntakeOptions]);
-  const visibleCaseTypes = useMemo(() => [...new Set([
-    ...CASE_TYPES,
-    ...cases.map((item) => String(item.caseType || "").trim()).filter(Boolean),
-  ])].sort((left, right) => left.localeCompare(right)), [cases]);
+  const visibleCaseTypes = useMemo(() => buildCaseTypeFilterOptions(cases), [cases]);
 
   const activeFilters = Object.entries(filters || {}).filter(
     ([, value]) => value && value !== "all"

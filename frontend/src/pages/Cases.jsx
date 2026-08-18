@@ -27,6 +27,7 @@ import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
 import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
 import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 import { CASE_STAGES, caseStagesForType } from "../constants/caseStages";
+import { normalizeCaseType } from "../utils/caseTypes";
 
 export const newCaseOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 
@@ -1470,7 +1471,7 @@ export default function Cases() {
           .some((value) => String(value).toLowerCase().includes(query));
 
       const matchesCaseType =
-        filters.caseType === "all" || caseItem.caseType === filters.caseType;
+        filters.caseType === "all" || normalizeCaseType(caseItem.caseType) === normalizeCaseType(filters.caseType);
       const matchesStage =
         filters.stage === "all" || caseItem.stage === filters.stage;
       const matchesStatus =

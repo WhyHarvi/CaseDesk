@@ -241,6 +241,15 @@ test("calendar appointment-note autosave updates inline without reloading the ov
   assert.doesNotMatch(editNoteBlock, /await load\(\)|onChanged/);
 });
 
+test("the case type filter collapses capitalization variants and matches them consistently", async () => {
+  const caseTypes = await readFile(new URL("../../frontend/src/utils/caseTypes.js", import.meta.url), "utf8");
+  const casesPage = await readFile(new URL("../../frontend/src/pages/Cases.jsx", import.meta.url), "utf8");
+  const commandBar = await readFile(new URL("../../frontend/src/components/cases/CasesCommandBar.jsx", import.meta.url), "utf8");
+  assert.match(caseTypes, /STANDARD_CASE_TYPES\.map\(\(label\) => \[normalizeCaseType\(label\), label\]\)/);
+  assert.match(commandBar, /buildCaseTypeFilterOptions\(cases\)/);
+  assert.match(casesPage, /normalizeCaseType\(caseItem\.caseType\) === normalizeCaseType\(filters\.caseType\)/);
+});
+
 test("assignment prefers the existing client's consultant when free", async () => {
   const users = ["alpha", "beta"].map((id) => ({ id, fullName: id, role: "consultant", schedulingPreference: null }));
   const db = {
