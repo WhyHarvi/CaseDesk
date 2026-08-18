@@ -135,6 +135,7 @@ test("the client profile shows an attributed activity timeline below QuickBooks"
   assert.match(profile, /ref=\{notesPanelRef\}/);
   assert.match(profile, /new ResizeObserver\(updateHeight\)/);
   assert.match(profile, /maxHeight: `\$\{notesPanelHeight\}px`/);
+  assert.match(profile, /h-fit self-start flex flex-col/);
 });
 
 test("front desk client intake separates consultation payments from professional fees", async () => {

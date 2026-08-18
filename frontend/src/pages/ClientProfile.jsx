@@ -1081,8 +1081,8 @@ export default function ClientProfile() {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ ...spring, delay: 0.08 }}
-              className={cx(glass, "flex flex-col p-6")}
-              style={notesPanelHeight ? { maxHeight: `${notesPanelHeight}px` } : undefined}
+              className={cx(glass, "h-fit self-start flex flex-col p-6")}
+              style={notesPanelHeight ? { height: "fit-content", maxHeight: `${notesPanelHeight}px` } : { height: "fit-content" }}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -1097,7 +1097,7 @@ export default function ClientProfile() {
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{clientActivities.length}</span>
               </div>
 
-              <div className="mt-5 min-h-0 space-y-0 overflow-y-auto pr-1">
+              <div className="mt-5 min-h-0 flex-1 space-y-0 overflow-y-auto pr-1">
                 {clientActivities.length ? clientActivities.map((activity, index) => (
                   <div key={activity.id} className="flex gap-3">
                     <div className="flex flex-col items-center">
