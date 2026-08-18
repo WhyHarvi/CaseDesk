@@ -12,7 +12,7 @@ import {
 const router = Router();
 router.get("/case/:caseId", asyncHandler(listCaseAppointments));
 router.get("/:id/profile", asyncHandler(getAppointmentProfile));
-router.patch("/:id/profile", requireRole("admin", "consultant"), asyncHandler(updateAppointmentProfileContext));
+router.patch("/:id/profile", requireRole("admin", "consultant", "frontdesk"), asyncHandler(updateAppointmentProfileContext));
 router.post("/:id/notes", requireRole("admin", "consultant"), asyncHandler(createAppointmentNote));
 router.post("/:id/follow-ups", requireRole("admin", "consultant"), asyncHandler(createAppointmentFollowUp));
 router.post("/", asyncHandler(createAppointment));

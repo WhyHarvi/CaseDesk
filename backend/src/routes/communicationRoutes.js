@@ -25,6 +25,7 @@ import {
   restoreCommunication,
   retryCommunicationDelivery,
   sendCommunicationDraft,
+  shortenCommunicationSubject,
   toggleCommunicationMessageReaction,
   updateCommunicationConversation,
   updateCommunicationDraft,
@@ -132,6 +133,7 @@ router.post("/conversations/:id/read", asyncHandler(markCommunicationRead));
 router.post("/messages", asyncHandler(createCommunicationMessage));
 router.patch("/messages/:id/draft", asyncHandler(updateCommunicationDraft));
 router.post("/messages/:id/send", asyncHandler(sendCommunicationDraft));
+router.post("/subject/shorten", asyncHandler(shortenCommunicationSubject));
 router.post("/messages/:id/retry", asyncHandler(retryCommunicationDelivery));
 router.post("/messages/:id/restore", asyncHandler(restoreCommunication));
 router.post(

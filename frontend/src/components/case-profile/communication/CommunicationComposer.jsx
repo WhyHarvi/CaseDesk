@@ -9,6 +9,7 @@ import {
   Paperclip,
   PhoneCall,
   Send,
+  Sparkles,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -50,6 +51,13 @@ const splitAddresses = (value) =>
     .split(/[;,]/)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const EMAIL_SUBJECT_MAX_WORDS = 10;
+const subjectWordCount = (value) =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
 
 function mergeTemplate(value, caseItem) {
   const replacements = {
@@ -111,11 +119,14 @@ export default function CommunicationComposer({
   const [error, setError] = useState("");
   const [draftId, setDraftId] = useState(null);
   const [savedAt, setSavedAt] = useState(null);
+  const [shorteningSubject, setShorteningSubject] = useState(false);
+  const [subjectSuggestion, setSubjectSuggestion] = useState(null);
   const idempotencyKey = useRef(crypto.randomUUID());
   const submitting = useRef(false);
   const config = channels[values.channel];
   const provider = providers[values.channel] || {};
   const allowed = permissions?.[config.permission] !== false;
+  const subjectWords = subjectWordCount(values.subject);
   const channelTemplates = useMemo(
     () => templates.filter((item) => item.channel === values.channel),
     [templates, values.channel],
@@ -207,6 +218,34 @@ export default function CommunicationComposer({
     }));
   };
 
+  const updateSubject = (value) => {
+    setSubjectSuggestion(null);
+    update("subject", value);
+  };
+
+  const shortenSubject = async () => {
+    try {
+      setShorteningSubject(true);
+      const response = await api.post("/communications/subject/shorten", {
+        subject: values.subject,
+      });
+      setSubjectSuggestion(response.data.data.subject);
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          "Nova could not shorten this subject right now.",
+      );
+    } finally {
+      setShorteningSubject(false);
+    }
+  };
+
+  const acceptSubjectSuggestion = () => {
+    if (!subjectSuggestion) return;
+    update("subject", subjectSuggestion);
+    setSubjectSuggestion(null);
+  };
+
   const persistDraft = async () => {
     const response = draftId
       ? await api.patch(
@@ -232,6 +271,20 @@ export default function CommunicationComposer({
   const submit = async (event) => {
     event.preventDefault();
     const intent = event.nativeEvent.submitter?.value || "send";
+    if (intent !== "draft" && values.channel === "Email") {
+      const trimmedSubject = values.subject.trim();
+      if (!trimmedSubject) {
+        setError("Add a subject before sending this email.");
+        return;
+      }
+      const words = subjectWordCount(trimmedSubject);
+      if (words > EMAIL_SUBJECT_MAX_WORDS) {
+        setError(
+          `Keep the subject to ${EMAIL_SUBJECT_MAX_WORDS} words or fewer (currently ${words}).`,
+        );
+        return;
+      }
+    }
     try {
       submitting.current = true;
       setSaving(true);
@@ -444,12 +497,62 @@ export default function CommunicationComposer({
               <label className="mt-4 block text-sm font-semibold text-slate-800">
                 Subject
                 <input
-                  required
                   value={values.subject}
-                  onChange={(event) => update("subject", event.target.value)}
+                  onChange={(event) => updateSubject(event.target.value)}
                   className={inputClass}
                 />
               </label>
+            ) : null}
+            {values.channel === "Email" ? (
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] font-normal">
+                <span
+                  className={
+                    subjectWords > EMAIL_SUBJECT_MAX_WORDS
+                      ? "font-semibold text-rose-600"
+                      : "text-slate-400"
+                  }
+                >
+                  {subjectWords}/{EMAIL_SUBJECT_MAX_WORDS} words
+                </span>
+                {subjectWords > EMAIL_SUBJECT_MAX_WORDS ? (
+                  <button
+                    type="button"
+                    onClick={shortenSubject}
+                    disabled={shorteningSubject}
+                    className="inline-flex items-center gap-1 font-semibold text-sky-700 disabled:opacity-50"
+                  >
+                    {shorteningSubject ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3 w-3" />
+                    )}
+                    {shorteningSubject ? "Asking Nova…" : "Shorten with Nova"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {values.channel === "Email" && subjectSuggestion ? (
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                <span className="min-w-0 flex-1">
+                  Nova suggests: <span className="font-semibold">“{subjectSuggestion}”</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={acceptSubjectSuggestion}
+                    className="font-semibold text-sky-700"
+                  >
+                    Use this
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubjectSuggestion(null)}
+                    className="text-slate-400"
+                  >
+                    Dismiss
+                  </button>
+                </span>
+              </div>
             ) : null}
             {channelTemplates.length && values.channel !== "Call" ? (
               <label className="mt-4 block text-sm font-semibold text-slate-800">
@@ -639,7 +742,10 @@ export default function CommunicationComposer({
                 !allowed ||
                 (values.channel !== "Call" || values.callMode === "start"
                   ? !provider.sendConfigured
-                  : false)
+                  : false) ||
+                (values.channel === "Email" &&
+                  (!values.subject.trim() ||
+                    subjectWords > EMAIL_SUBJECT_MAX_WORDS))
               }
               className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
             >

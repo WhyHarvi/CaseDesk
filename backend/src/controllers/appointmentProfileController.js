@@ -3,9 +3,14 @@ import { createHttpError } from "../utils/http.js";
 import { caseNotificationActionUrl, notifyUsers } from "../services/notificationService.js";
 import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 import { requireAppointmentProfile } from "../services/appointmentProfileService.js";
+import { APPOINTMENT_SUBJECT_MAX_WORDS } from "./bookingController.js";
 
 function clean(value, max) {
   return String(value ?? "").trim().slice(0, max);
+}
+
+function wordCount(value) {
+  return String(value || "").trim().split(/\s+/).filter(Boolean).length;
 }
 
 export async function getAppointmentProfile(req, res) {
@@ -16,10 +21,25 @@ export async function updateAppointmentProfileContext(req, res) {
   const existing = await requireAppointmentProfile(req, req.params.id);
   const purpose = Object.hasOwn(req.body || {}, "purpose") ? clean(req.body.purpose, 5000) || null : existing.purpose;
   const internalNotes = Object.hasOwn(req.body || {}, "internalNotes") ? clean(req.body.internalNotes, 10000) || null : existing.internalNotes;
+  // Staff correcting a bad entry (e.g. a walk-in confirmation pasted into
+  // the subject by mistake) must be held to the same required + word-cap
+  // rule the booking sheet enforces at creation — otherwise "fixing" it
+  // could just paste in another oversized blob.
+  let subject = existing.subject;
+  if (Object.hasOwn(req.body || {}, "subject")) {
+    const trimmedSubject = clean(req.body.subject, 200);
+    if (!trimmedSubject) throw createHttpError(400, "Add a subject for this appointment.", "SUBJECT_REQUIRED");
+    const subjectWords = wordCount(trimmedSubject);
+    if (subjectWords > APPOINTMENT_SUBJECT_MAX_WORDS) {
+      throw createHttpError(400, `Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${subjectWords}).`, "SUBJECT_TOO_LONG");
+    }
+    subject = trimmedSubject;
+  }
   const data = await prisma.$transaction(async (tx) => {
     const updated = await tx.appointment.update({
       where: { id: existing.id },
       data: {
+        subject,
         purpose,
         // Keep legacy consumers working while purpose replaces description.
         description: purpose,
@@ -31,11 +51,11 @@ export async function updateAppointmentProfileContext(req, res) {
       appointmentId: existing.id,
       actorUserId: req.auth.userId,
       type: "CONTEXT_UPDATED",
-      summary: "Appointment context updated",
+      summary: subject !== existing.subject ? "Appointment subject and context updated" : "Appointment context updated",
     });
     return updated;
   });
-  res.json({ data: { purpose: data.purpose || data.description || null, internalNotes: data.internalNotes } });
+  res.json({ data: { subject: data.subject, purpose: data.purpose || data.description || null, internalNotes: data.internalNotes } });
 }
 
 export async function createAppointmentNote(req, res) {

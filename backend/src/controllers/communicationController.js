@@ -25,8 +25,16 @@ import {
 } from "../middleware/authorization.js";
 import { resolveNotifications } from "../services/notificationService.js";
 import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
+import { shortenSubjectLine } from "../services/ollama.service.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
+// A subject is only ever collected for Email — Sms/Chat/Call have no
+// subject field in the composer at all, so this applies exclusively there.
+export const EMAIL_SUBJECT_MAX_WORDS = 10;
+
+function subjectWordCount(value) {
+  return String(value || "").trim().split(/\s+/).filter(Boolean).length;
+}
 const directions = new Set(["Inbound", "Outbound", "Internal"]);
 const statuses = new Set([
   "Draft",
@@ -1168,6 +1176,14 @@ export async function sendCommunicationDraft(req, res) {
     !["Email", "Sms"].includes(existing.channel)
   )
     throw createHttpError(400, "Only outbound email or SMS drafts can be sent");
+  if (existing.channel === "Email") {
+    const subjectText = String(existing.subject || "").trim();
+    if (!subjectText) throw createHttpError(400, "Add a subject before sending this email.", "SUBJECT_REQUIRED");
+    const words = subjectWordCount(subjectText);
+    if (words > EMAIL_SUBJECT_MAX_WORDS) {
+      throw createHttpError(400, `Keep the subject to ${EMAIL_SUBJECT_MAX_WORDS} words or fewer (currently ${words}).`, "SUBJECT_TOO_LONG");
+    }
+  }
   if (
     ["Queued", "Scheduled", "Sending", "Sent", "Delivered"].includes(
       existing.status,
@@ -2137,4 +2153,14 @@ export async function assignUnmatchedCommunication(req, res) {
     metadata: { unmatchedId: unmatched.id, caseId: caseItem.id },
   });
   res.json({ data });
+}
+
+// A suggestion only — nothing is saved here. The composer still requires
+// the sender to accept it (or edit further) before it ever reaches the
+// subject field that actually gets sent.
+export async function shortenCommunicationSubject(req, res) {
+  const subject = String(req.body?.subject || "").trim();
+  if (!subject) throw createHttpError(400, "Enter a subject to shorten.", "VALIDATION_ERROR");
+  const suggestion = await shortenSubjectLine({ subject, maxWords: EMAIL_SUBJECT_MAX_WORDS });
+  res.json({ data: { subject: suggestion, maxWords: EMAIL_SUBJECT_MAX_WORDS } });
 }

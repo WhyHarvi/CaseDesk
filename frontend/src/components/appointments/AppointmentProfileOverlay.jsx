@@ -14,6 +14,7 @@ import {
   Plus,
   Pencil,
   Save,
+  Sparkles,
   Trash2,
   UserRound,
   Video,
@@ -30,6 +31,7 @@ import {
   createAppointmentNote,
   archiveAppointmentNote,
   getAppointmentRegistryDetail,
+  shortenAppointmentSubject,
   updateAppointmentProfileContext,
   updateAppointmentNote,
   updateBookingAppointmentStatus,
@@ -45,6 +47,13 @@ const tabs = [
   ["history", "History", History],
   ["messages", "Messages", MessageSquareText],
 ];
+
+const APPOINTMENT_SUBJECT_MAX_WORDS = 10;
+const subjectWordCount = (value) =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
 
 const statusTone = {
   Scheduled: "bg-sky-50 text-sky-700 ring-sky-200",
@@ -90,6 +99,10 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [editingContext, setEditingContext] = useState(false);
   const [purpose, setPurpose] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
+  const [editingSubject, setEditingSubject] = useState(false);
+  const [subjectDraft, setSubjectDraft] = useState("");
+  const [shorteningSubject, setShorteningSubject] = useState(false);
+  const [subjectSuggestion, setSubjectSuggestion] = useState(null);
   const [note, setNote] = useState("");
   const [autosavedNote, setAutosavedNote] = useState(null);
   const [showNoteComposer, setShowNoteComposer] = useState(false);
@@ -113,6 +126,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setAppointment(data);
       setPurpose(data.purpose || data.description || "");
       setInternalNotes(data.internalNotes || "");
+      setSubjectDraft(data.subject || "");
       setError("");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Appointment details could not be loaded.");
@@ -126,6 +140,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     if (appointmentId) {
       setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
       setEditingContext(false);
+      setEditingSubject(false);
+      setSubjectSuggestion(null);
       setShowNoteComposer(false);
       setNote("");
       setAutosavedNote(null);
@@ -170,6 +186,58 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     setPurpose(appointment?.purpose || appointment?.description || "");
     setInternalNotes(appointment?.internalNotes || "");
     setEditingContext(false);
+  }
+
+  function updateSubjectDraft(value) {
+    setSubjectSuggestion(null);
+    setSubjectDraft(value);
+  }
+
+  async function shortenSubjectDraft() {
+    try {
+      setShorteningSubject(true);
+      const suggestion = await shortenAppointmentSubject(subjectDraft);
+      setSubjectSuggestion(suggestion);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Nova could not shorten this subject right now.");
+    } finally {
+      setShorteningSubject(false);
+    }
+  }
+
+  function acceptSubjectSuggestion() {
+    if (!subjectSuggestion) return;
+    setSubjectDraft(subjectSuggestion);
+    setSubjectSuggestion(null);
+  }
+
+  async function saveSubject() {
+    const trimmed = subjectDraft.trim();
+    if (!trimmed) { setError("Add a subject for this appointment."); return; }
+    const words = subjectWordCount(trimmed);
+    if (words > APPOINTMENT_SUBJECT_MAX_WORDS) {
+      setError(`Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${words}).`);
+      return;
+    }
+    try {
+      setSaving(true);
+      const patch = await updateAppointmentProfileContext(appointment.id, { subject: trimmed });
+      setAppointment((current) => ({ ...current, ...patch }));
+      setEditingSubject(false);
+      setSubjectSuggestion(null);
+      await load();
+      onChanged?.();
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Appointment subject could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancelSubjectEdit() {
+    setSubjectDraft(appointment?.subject || "");
+    setSubjectSuggestion(null);
+    setEditingSubject(false);
   }
 
   async function addNote(event, { keepOpen = false } = {}) {
@@ -292,12 +360,50 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         <motion.aside initial={{ opacity: 0, x: 36 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 24 }} transition={{ type: "spring", stiffness: 380, damping: 36 }} className="relative flex h-full w-full max-w-3xl flex-col overflow-hidden border-l border-white/80 bg-[#f5f7fa] shadow-[-30px_0_100px_rgba(15,23,42,0.25)]">
           <header className="border-b border-slate-200/70 bg-white/90 px-6 pt-5 backdrop-blur-xl">
             <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-600">Appointment profile</p>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{appointment?.subject || "Loading appointment…"}</h2>
-                  {appointment?.status ? <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${statusTone[appointment.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{appointment.status === "NoShow" ? "No-show" : appointment.status}</span> : null}
-                </div>
+                {editingSubject ? (
+                  <div className="mt-1">
+                    <input
+                      autoFocus
+                      value={subjectDraft}
+                      onChange={(event) => updateSubjectDraft(event.target.value)}
+                      className="w-full rounded-xl border border-sky-200 bg-white px-3 py-1.5 text-base font-semibold text-slate-950 outline-none focus:border-sky-400"
+                    />
+                    <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] font-normal">
+                      <span className={subjectWordCount(subjectDraft) > APPOINTMENT_SUBJECT_MAX_WORDS ? "font-semibold text-rose-600" : "text-slate-400"}>
+                        {subjectWordCount(subjectDraft)}/{APPOINTMENT_SUBJECT_MAX_WORDS} words
+                      </span>
+                      {subjectWordCount(subjectDraft) > APPOINTMENT_SUBJECT_MAX_WORDS ? (
+                        <button type="button" onClick={shortenSubjectDraft} disabled={shorteningSubject} className="inline-flex items-center gap-1 font-semibold text-sky-700 disabled:opacity-50">
+                          {shorteningSubject ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                          {shorteningSubject ? "Asking Nova…" : "Shorten with Nova"}
+                        </button>
+                      ) : null}
+                    </div>
+                    {subjectSuggestion ? (
+                      <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                        <span className="min-w-0 flex-1">
+                          Nova suggests: <span className="font-semibold">“{subjectSuggestion}”</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <button type="button" onClick={acceptSubjectSuggestion} className="font-semibold text-sky-700">Use this</button>
+                          <button type="button" onClick={() => setSubjectSuggestion(null)} className="text-slate-400">Dismiss</button>
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{appointment?.subject || "Loading appointment…"}</h2>
+                    {appointment?.status ? <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${statusTone[appointment.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{appointment.status === "NoShow" ? "No-show" : appointment.status}</span> : null}
+                    {canWrite && appointment ? (
+                      <button type="button" onClick={() => setEditingSubject(true)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-800" aria-label="Edit subject">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                )}
                 <p className="mt-1 text-sm text-slate-500">
                   {appointment?.client?.id ? (
                     <Link
@@ -319,7 +425,14 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {onEditScheduling && appointment ? <button type="button" onClick={() => onEditScheduling(appointment)} className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700">Edit schedule</button> : null}
+                {editingSubject ? (
+                  <>
+                    <button type="button" onClick={cancelSubjectEdit} disabled={saving} className="rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200 disabled:opacity-50">Cancel</button>
+                    <button type="button" onClick={saveSubject} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save subject"}</button>
+                  </>
+                ) : onEditScheduling && appointment ? (
+                  <button type="button" onClick={() => onEditScheduling(appointment)} className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700">Edit schedule</button>
+                ) : null}
                 <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500" aria-label="Close"><X className="h-4 w-4" /></button>
               </div>
             </div>

@@ -143,6 +143,44 @@ test("every internal staff role — not just frontdesk — sees today's already-
   assert.doesNotMatch(controller, /ignorePastCutoff: req\.auth\.role === "frontdesk"/);
 });
 
+// A real report: an office's own hours had specific days turned off (e.g.
+// closed Mondays), which correctly stops the public widget from offering
+// those days — but staff booking a walk-in who is already there, in
+// person, on one of those "closed" days had no way to do it either, since
+// the office's narrower hours were merged into availabilityForRange's
+// settings unconditionally. Live-verified against the real Brampton
+// office (Mondays disabled there): 0 slots before the fix, 13 real slots
+// after, using the agency's normal hours for that day instead — while a
+// specific staff member's own day off (a real vacation, not an office
+// policy) still correctly blocks them regardless.
+test("ignoreLocationClosure lets staff book on a day the office's own hours mark closed, using the agency's normal hours instead", () => {
+  const agencyHours = [{ day: 1, enabled: true, start: "09:00", end: "17:00" }]; // Monday open agency-wide
+  const now = new Date("2026-08-03T13:00:00.000Z"); // 09:00 America/Toronto — before the office opens
+
+  // What availabilityForRange builds when the office's own hours say
+  // Monday is closed and ignoreLocationClosure is NOT set (today).
+  const officeClosedMonday = { timezone: "America/Toronto", workingHours: [{ day: 1, enabled: false, start: "10:00", end: "17:30" }], daysOff: [], minNoticeMinutes: 0, horizonDays: 365, bufferMinutes: 0 };
+  assert.equal(slotsForDay({ settings: officeClosedMonday, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15 }).length, 0);
+
+  // What it builds once ignoreLocationClosure skips merging the office's
+  // own hours in — falls back to the agency default, same as any other day.
+  const agencyDefault = { timezone: "America/Toronto", workingHours: agencyHours, daysOff: [], minNoticeMinutes: 0, horizonDays: 365, bufferMinutes: 0 };
+  const bypassedSlots = slotsForDay({ settings: agencyDefault, dateKey: "2026-08-03", durationMinutes: 30, busy: [], now, stepMinutes: 15 });
+  assert.ok(bypassedSlots.length > 0, "staff should see real slots using the agency's normal Monday hours");
+});
+
+test("availabilityForRange only skips the office's own hours override when ignoreLocationClosure is set, and every staff role gets it", async () => {
+  const [service, controller] = await Promise.all([
+    readFile(new URL("../src/services/bookingAvailabilityService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(service, /ignoreLocationClosure = false/);
+  assert.match(service, /location\?\.useCustomHours && !ignoreLocationClosure \?/);
+
+  const usages = controller.match(/ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS\.has\(req\.auth\.role\)/g) || [];
+  assert.equal(usages.length, 4, "same four call sites as ignorePastCutoff — getAvailability, create, and both reschedule paths");
+});
+
 test("the day/week calendar grid labels every half hour, not just each whole hour", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
 

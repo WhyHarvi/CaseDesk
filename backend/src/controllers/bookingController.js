@@ -23,6 +23,7 @@ import {
   schedulingBlockRecurrenceEnd,
 } from "../services/bookingAvailabilityService.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
+import { shortenSubjectLine } from "../services/ollama.service.js";
 import { lockAgencyContactIntake, normalizeContact } from "../services/contactDuplicateService.js";
 import {
   chooseAppointmentAssignee,
@@ -76,6 +77,11 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 // match reality after the fact. Was previously frontdesk-only; every
 // internal role hits this same need when managing the calendar directly.
 const STAFF_ROLES_SEEING_PAST_SLOTS = new Set(["admin", "consultant", "frontdesk"]);
+
+export const APPOINTMENT_SUBJECT_MAX_WORDS = 10;
+function appointmentSubjectWordCount(value) {
+  return String(value || "").trim().split(/\s+/).filter(Boolean).length;
+}
 
 function requireAdmin(req) {
   if (req.auth.role !== "admin") {
@@ -561,7 +567,7 @@ export async function getAvailability(req, res) {
     minNoticeOverrideMinutes: 0,
     locationId: meetingMode === MEETING_MODES.IN_PERSON ? String(req.query.locationId || "") || null : null,
     meetingMode,
-    ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
+    ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role), ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
   });
   res.json({ data: { days, timezone: settings.timezone } });
 }
@@ -728,7 +734,13 @@ export async function createBookingAppointment(req, res) {
   });
   if (requestedMeetingMode === MEETING_MODES.ZOOM) await assertZoomOperational(req.auth.agencyId);
 
-  const subject = String(body.subject || "").trim().slice(0, 200) || (sessionType ? sessionType.name : "Appointment");
+  const trimmedSubject = String(body.subject || "").trim();
+  if (!trimmedSubject) throw createHttpError(400, "Add a subject for this appointment.", "SUBJECT_REQUIRED");
+  const subjectWords = appointmentSubjectWordCount(trimmedSubject);
+  if (subjectWords > APPOINTMENT_SUBJECT_MAX_WORDS) {
+    throw createHttpError(400, `Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${subjectWords}).`, "SUBJECT_TOO_LONG");
+  }
+  const subject = trimmedSubject.slice(0, 200);
   const effectiveBuffer = sessionType?.bufferMinutes ?? settings.bufferMinutes;
   const paymentMethod = ["Card", "Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
   const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
@@ -758,7 +770,7 @@ export async function createBookingAppointment(req, res) {
       minNoticeOverrideMinutes: 0,
       locationId: requestedMeetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null,
       meetingMode: requestedMeetingMode,
-      ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
+      ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role), ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role),
     });
     if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === occurrenceStart.toISOString())) {
       throw createHttpError(409, `${dayKey} at the selected time is unavailable. No appointments were created.`, "SLOT_TAKEN");
@@ -1437,7 +1449,7 @@ export async function rescheduleBookingAppointment(req, res) {
     });
     for (const move of moves) {
       const key = localDateKey(move.startsAt, settings.timezone);
-      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
+      const offered = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: move.item.assignedToId, durationMinutes: Math.round((move.endsAt - move.startsAt) / 60_000), sessionBufferMinutes: existing.sessionType?.bufferMinutes, fromKey: key, toKey: key, excludeAppointmentIds: seriesIds, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role), ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
       if (!(offered.days[key] || []).some((slot) => slot.startsAt === move.startsAt.toISOString())) throw createHttpError(409, `${key} at the recurring time is unavailable. The series was not changed.`, "SLOT_TAKEN");
     }
     const updated = await prisma.$transaction(async (tx) => {
@@ -1478,7 +1490,7 @@ export async function rescheduleBookingAppointment(req, res) {
     invalidateDashboardCache(req.auth.agencyId);
     return res.json({ data: { ...updated.find((item) => item.id === existing.id), seriesAffected: updated.length } });
   }
-  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
+  const offeredAvailability = await availabilityForRange({ agencyId: req.auth.agencyId, assignedToId: existing.assignedToId, durationMinutes: duration, sessionBufferMinutes: effectiveBuffer, fromKey: dayKey, toKey: dayKey, excludeAppointmentId: existing.id, minNoticeOverrideMinutes: 0, locationId: meetingMode === MEETING_MODES.IN_PERSON ? selectedLocation?.id || existing.locationId || null : null, meetingMode, ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role), ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS.has(req.auth.role) });
   if (!(offeredAvailability.days[dayKey] || []).some((slot) => slot.startsAt === startsAt.toISOString())) throw createHttpError(409, "That time is outside bookable hours or no longer available.", "SLOT_TAKEN");
 
   const data = await prisma.$transaction(async (tx) => {
@@ -1967,4 +1979,14 @@ export async function testBookingEmailTemplate(req, res) {
   const messageTemplates = req.body?.messageTemplates && typeof req.body.messageTemplates === "object" ? req.body.messageTemplates : null;
   const data = await sendBookingTemplateTest({ agencyId: req.auth.agencyId, userId: req.auth.userId, kind, messageTemplates });
   res.json({ data });
+}
+
+// A suggestion only — nothing is saved here. The booking sheet still
+// requires the staff member to accept it (or edit further) before it ever
+// reaches the subject that actually gets booked.
+export async function shortenAppointmentSubject(req, res) {
+  const subject = String(req.body?.subject || "").trim();
+  if (!subject) throw createHttpError(400, "Enter a subject to shorten.", "VALIDATION_ERROR");
+  const suggestion = await shortenSubjectLine({ subject, maxWords: APPOINTMENT_SUBJECT_MAX_WORDS });
+  res.json({ data: { subject: suggestion, maxWords: APPOINTMENT_SUBJECT_MAX_WORDS } });
 }

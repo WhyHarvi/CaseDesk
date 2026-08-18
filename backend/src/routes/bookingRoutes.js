@@ -32,6 +32,7 @@ import {
   cancelBookingPaymentHoldRequest,
   getAppointmentRefundEstimate,
   updatePaidAppointmentPaymentDetails,
+  shortenAppointmentSubject,
 } from "../controllers/bookingController.js";
 import { asyncHandler } from "../utils/http.js";
 
@@ -62,6 +63,7 @@ router.delete("/session-types/:id", asyncHandler(deleteSessionType));
 router.get("/availability", asyncHandler(getAvailability));
 router.get("/calendar", asyncHandler(listCalendarAppointments));
 router.post("/appointments", asyncHandler(createBookingAppointment));
+router.post("/appointments/subject/shorten", asyncHandler(shortenAppointmentSubject));
 router.patch("/appointments/:id/cancel", asyncHandler(cancelBookingAppointment));
 router.patch("/appointments/:id/reschedule", asyncHandler(rescheduleBookingAppointment));
 router.patch("/appointments/:id/status", asyncHandler(updateBookingAppointmentStatus));

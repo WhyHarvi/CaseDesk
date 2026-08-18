@@ -174,6 +174,11 @@ export async function createBookingAppointment(values) {
   return response.data.data;
 }
 
+export async function shortenAppointmentSubject(subject) {
+  const response = await api.post("/booking/appointments/subject/shorten", { subject });
+  return response.data.data.subject;
+}
+
 export async function getBookingPaymentHoldStatus(id) {
   const response = await api.get(`/booking/payment-holds/${id}`, { cache: false });
   return response.data.data;

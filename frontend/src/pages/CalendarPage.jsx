@@ -17,6 +17,7 @@ import {
   Phone,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   UserRound,
   Video,
@@ -43,6 +44,7 @@ import {
   recordWalkInManualPayment,
   resendBookingPaymentHoldRequest,
   rescheduleBookingAppointment,
+  shortenAppointmentSubject,
   updateBookingAppointmentStatus,
   updatePaidAppointmentPaymentDetails,
 } from "../api/bookingApi";
@@ -54,6 +56,13 @@ import ClientCombobox, { useClientMatches } from "../components/ui/ClientCombobo
 import api from "../services/api";
 
 const newBookingOperationKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+
+const APPOINTMENT_SUBJECT_MAX_WORDS = 10;
+const subjectWordCount = (value) =>
+  String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
 
 // Keeps the New Appointment sheet open (and whatever was filled in) across a
 // browser reload, the same way the Add Client drawer does — sessionStorage
@@ -1128,6 +1137,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   const [paymentActionError, setPaymentActionError] = useState("");
   const [paymentRecipient, setPaymentRecipient] = useState("");
   const [confirmPaymentCancel, setConfirmPaymentCancel] = useState(false);
+  const [shorteningSubject, setShorteningSubject] = useState(false);
+  const [subjectSuggestion, setSubjectSuggestion] = useState(null);
 
   const searchClients = useCallback((query) => role === "frontdesk"
     ? lookupBookingClients({ search: query })
@@ -1314,9 +1325,39 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
 
   useEffect(() => { if (open) loadSlots(); }, [open, loadSlots]);
 
+  function updateSubject(value) {
+    setSubjectSuggestion(null);
+    setForm((c) => ({ ...c, subject: value }));
+  }
+
+  async function shortenSubject() {
+    try {
+      setShorteningSubject(true);
+      const suggestion = await shortenAppointmentSubject(form.subject);
+      setSubjectSuggestion(suggestion);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Nova could not shorten this subject right now.");
+    } finally {
+      setShorteningSubject(false);
+    }
+  }
+
+  function acceptSubjectSuggestion() {
+    if (!subjectSuggestion) return;
+    setForm((c) => ({ ...c, subject: subjectSuggestion }));
+    setSubjectSuggestion(null);
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (!form.startsAt) { setError("Pick an available time."); return; }
+    const trimmedSubject = form.subject.trim();
+    if (!trimmedSubject) { setError("Add a subject for this appointment."); return; }
+    const subjectWords = subjectWordCount(trimmedSubject);
+    if (subjectWords > APPOINTMENT_SUBJECT_MAX_WORDS) {
+      setError(`Keep the subject to ${APPOINTMENT_SUBJECT_MAX_WORDS} words or fewer (currently ${subjectWords}).`);
+      return;
+    }
     if (showsPaymentStep && !form.paymentMethod) { setError("Choose how the client will pay."); return; }
     if (showsPaymentStep && !["Card", "Cash", "ETransfer", "Skip"].includes(form.paymentMethod)) { setError("Choose card, cash, or e-transfer."); return; }
     setSaving(true);
@@ -1603,9 +1644,33 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 )}
               </div>
 
-              <label className="block text-xs font-medium text-slate-600">Subject (optional)
-                <input value={form.subject} onChange={(event) => setForm((c) => ({ ...c, subject: event.target.value }))} placeholder={selectedType?.name || "Appointment"} className={`mt-1.5 ${input}`} />
-              </label>
+              <div>
+                <label className="block text-xs font-medium text-slate-600">Subject
+                  <input value={form.subject} onChange={(event) => updateSubject(event.target.value)} placeholder="What's this appointment about? (e.g. Initial consultation)" className={`mt-1.5 ${input}`} />
+                </label>
+                <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] font-normal">
+                  <span className={subjectWordCount(form.subject) > APPOINTMENT_SUBJECT_MAX_WORDS ? "font-semibold text-rose-600" : "text-slate-400"}>
+                    {subjectWordCount(form.subject)}/{APPOINTMENT_SUBJECT_MAX_WORDS} words
+                  </span>
+                  {subjectWordCount(form.subject) > APPOINTMENT_SUBJECT_MAX_WORDS ? (
+                    <button type="button" onClick={shortenSubject} disabled={shorteningSubject} className="inline-flex items-center gap-1 font-semibold text-sky-700 disabled:opacity-50">
+                      {shorteningSubject ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                      {shorteningSubject ? "Asking Nova…" : "Shorten with Nova"}
+                    </button>
+                  ) : null}
+                </div>
+                {subjectSuggestion ? (
+                  <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                    <span className="min-w-0 flex-1">
+                      Nova suggests: <span className="font-semibold">“{subjectSuggestion}”</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={acceptSubjectSuggestion} className="font-semibold text-sky-700">Use this</button>
+                      <button type="button" onClick={() => setSubjectSuggestion(null)} className="text-slate-400">Dismiss</button>
+                    </span>
+                  </div>
+                ) : null}
+              </div>
               {form.meetingMode === "Phone" ? <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {form.mode === "client" ? selectedClient?.phone || "the client’s saved number" : form.guestPhone || "the visitor’s number"}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}. A valid client phone number is required.</p> : null}
 
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
@@ -1620,7 +1685,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
             )}
             {!pendingHold && !bookedWarning ? (
             <footer className="border-t border-slate-100 p-4">
-              <button type="button" onClick={submit} disabled={saving || !form.startsAt || (form.mode === "guest" && !form.guestEmail.trim() && !form.guestPhone.trim()) || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+              <button type="button" onClick={submit} disabled={saving || !form.startsAt || !form.subject.trim() || subjectWordCount(form.subject) > APPOINTMENT_SUBJECT_MAX_WORDS || (form.mode === "guest" && !form.guestEmail.trim() && !form.guestPhone.trim()) || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : form.paymentMethod === "Card" ? "Reserve & send payment link" : "Book appointment"}
               </button>
             </footer>
