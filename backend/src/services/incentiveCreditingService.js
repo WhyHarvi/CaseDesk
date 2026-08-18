@@ -79,6 +79,52 @@ async function resolveHolders(agencyId, caseId) {
   };
 }
 
+function snapshotRecipients(plan, holders) {
+  return plan.roleShares.map((share) => {
+    let userIds = [];
+    let roleName = "Case role";
+    if (share.attributionKind === "LEAD_OWNER") {
+      roleName = "Lead owner";
+      if (holders.leadOwnerUserId) userIds = [holders.leadOwnerUserId];
+    } else if (share.attributionKind === "LEAD_CONVERTER") {
+      roleName = "Lead converter";
+      if (holders.leadConverterUserId) userIds = [holders.leadConverterUserId];
+    } else {
+      const bucket = holders.caseRoleHolders.get(share.caseRoleId);
+      roleName = bucket?.name || roleName;
+      userIds = bucket?.userIds || [];
+    }
+    return {
+      attributionKind: share.attributionKind,
+      caseRoleId: share.caseRoleId,
+      roleName,
+      sharePercent: Number(share.sharePercent),
+      userIds: [...new Set(userIds)],
+    };
+  });
+}
+
+// Called before an invoice is persisted. Even "no plan" is snapshotted so
+// activating a plan later never reaches backward into earlier invoices.
+export async function buildInvoiceIncentiveSnapshot(agencyId, caseId, caseType) {
+  const plan = await resolvePlan(agencyId, caseType || null);
+  if (!plan) {
+    return { agencyId, tiers: [], recipients: [] };
+  }
+  const holders = await resolveHolders(agencyId, caseId);
+  return {
+    agencyId,
+    incentivePlanId: plan.id,
+    planName: plan.name,
+    planVersion: plan.version,
+    formulaType: plan.formulaType,
+    flatAmount: plan.flatAmount,
+    percentRate: plan.percentRate,
+    tiers: plan.tiers.map((tier) => ({ minCumulativeAmount: Number(tier.minCumulativeAmount), rate: Number(tier.rate) })),
+    recipients: snapshotRecipients(plan, holders),
+  };
+}
+
 // Splits one share's dollar amount evenly across its holders using
 // largest-remainder rounding, so the holders' credited cents always sum to
 // exactly round(shareAmount * 100) — no cent ever silently vanishes or
@@ -133,6 +179,76 @@ function computeSplits(plan, pool, holders) {
   return entries;
 }
 
+function computeSnapshotSplits(snapshot, pool) {
+  const poolCents = Math.round(pool * 100);
+  const entries = [];
+  for (const share of Array.isArray(snapshot.recipients) ? snapshot.recipients : []) {
+    const shareCents = Math.round((poolCents * Number(share.sharePercent)) / 100);
+    const userIds = Array.isArray(share.userIds) ? share.userIds : [];
+    if (shareCents <= 0 || !userIds.length) continue;
+    for (const split of splitEvenly(shareCents, userIds)) {
+      if (split.cents <= 0) continue;
+      entries.push({
+        userId: split.userId,
+        attributionKind: share.attributionKind,
+        caseRoleId: share.caseRoleId || null,
+        roleNameSnapshot: share.roleName || "Case role",
+        sharePercentApplied: share.sharePercent,
+        amount: split.cents / 100,
+      });
+    }
+  }
+  return entries;
+}
+
+async function computeSnapshotPool(snapshot, { agencyId, caseId, delta }) {
+  if (snapshot.formulaType === "FLAT_PER_PAYMENT") return Number(snapshot.flatAmount);
+  if (snapshot.formulaType === "PERCENT_OF_PAYMENT") return (delta * Number(snapshot.percentRate)) / 100;
+  if (snapshot.formulaType !== "TIERED_PERCENT_OF_REVENUE") return 0;
+  const summary = await getCasePaymentSummary(agencyId, caseId);
+  const rate = tierRateFor(Array.isArray(snapshot.tiers) ? snapshot.tiers : [], Number(summary.paidAmount));
+  return rate === null ? 0 : (delta * rate) / 100;
+}
+
+async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refundAmount, trigger, newBalance }) {
+  const credits = await tx.incentiveLedgerEntry.findMany({
+    where: { agencyId, caseId, caseInvoiceId, entryType: "CREDIT", creditedAmount: { gt: 0 } },
+    include: { reversalEntries: { select: { creditedAmount: true } } },
+    orderBy: [{ creditedAt: "desc" }, { id: "desc" }],
+  });
+  let remainingSource = refundAmount;
+  const rows = [];
+  const batches = new Map();
+  for (const credit of credits) {
+    const key = `${credit.creditedAt.toISOString()}:${Number(credit.sourceAmountCollected)}`;
+    const batch = batches.get(key) || { sourceAmount: Number(credit.sourceAmountCollected), credits: [] };
+    batch.credits.push(credit);
+    batches.set(key, batch);
+  }
+  for (const batch of batches.values()) {
+    if (!(remainingSource > 0)) break;
+    const sourceToReverse = Math.min(remainingSource, batch.sourceAmount);
+    const ratio = sourceToReverse / batch.sourceAmount;
+    for (const credit of batch.credits) {
+      const alreadyReversed = credit.reversalEntries.reduce((sum, row) => sum + Math.abs(Number(row.creditedAmount)), 0);
+      const available = Math.max(0, Number(credit.creditedAmount) - alreadyReversed);
+      const amount = Math.min(available, Math.round(Number(credit.creditedAmount) * ratio * 100) / 100);
+      if (!(amount > 0)) continue;
+      rows.push({
+        agencyId, caseId, caseInvoiceId, incentivePlanId: credit.incentivePlanId, userId: credit.userId,
+        attributionKind: credit.attributionKind, caseRoleId: credit.caseRoleId,
+        roleNameSnapshot: credit.roleNameSnapshot, sharePercentApplied: credit.sharePercentApplied,
+        sourceAmountCollected: -sourceToReverse, creditedAmount: -amount, triggerSource: trigger,
+        triggerRef: `balance:${Number(newBalance).toFixed(2)}`, entryType: "REVERSAL",
+        reversesEntryId: credit.id, creditedAt: new Date(),
+      });
+    }
+    remainingSource -= sourceToReverse;
+  }
+  if (rows.length) await tx.incentiveLedgerEntry.createMany({ data: rows });
+  return rows.length;
+}
+
 // Called for genuine collection events only (a payment applied that shrinks
 // the balance). Idempotent via a compare-and-swap on
 // CaseInvoiceCreditCursor: a caller can invoke this any number of times
@@ -152,8 +268,24 @@ function computeSplits(plan, pool, holders) {
 // re-baselines the cursor to the new balance without crediting anything.
 export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId, newBalance, trigger }) {
   const newBalanceNumber = Number(newBalance);
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: caseInvoiceId, caseId, agencyId },
+    select: { id: true, caseId: true, balance: true, incentiveSnapshot: true, case: { select: { caseType: true } } },
+  });
+  if (!invoice) return { credited: false, reason: "invoice_not_found" };
 
-  let cursor = await prisma.caseInvoiceCreditCursor.findUnique({ where: { caseInvoiceId } });
+  let snapshot = invoice.incentiveSnapshot;
+  if (!snapshot) {
+    const data = await buildInvoiceIncentiveSnapshot(agencyId, caseId, invoice.case.caseType);
+    try {
+      snapshot = await prisma.caseInvoiceIncentiveSnapshot.create({ data: { ...data, caseInvoiceId } });
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+      snapshot = await prisma.caseInvoiceIncentiveSnapshot.findUnique({ where: { caseInvoiceId } });
+    }
+  }
+
+  let cursor = await prisma.caseInvoiceCreditCursor.findFirst({ where: { caseInvoiceId, agencyId } });
   if (!cursor) {
     try {
       cursor = await prisma.caseInvoiceCreditCursor.create({ data: { agencyId, caseInvoiceId, lastCreditedBalance: newBalanceNumber } });
@@ -169,24 +301,39 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
   }
 
   const delta = Number(cursor.lastCreditedBalance) - newBalanceNumber;
-  if (!(delta > 0)) return { credited: false, reason: "no_new_collection" };
+  if (delta === 0) return { credited: false, reason: "no_balance_change" };
 
-  const caseItem = await prisma.case.findUnique({ where: { id: caseId }, select: { caseType: true } });
-  const plan = await resolvePlan(agencyId, caseItem?.caseType || null);
-  if (!plan) return { credited: false, reason: "no_active_plan" };
+  if (delta < 0) {
+    return prisma.$transaction(async (tx) => {
+      const claim = await tx.caseInvoiceCreditCursor.updateMany({
+        where: { caseInvoiceId, agencyId, lastCreditedBalance: cursor.lastCreditedBalance },
+        data: { lastCreditedBalance: newBalanceNumber },
+      });
+      if (claim.count !== 1) return { credited: false, reason: "lost_race" };
+      const entryCount = await reverseInvoiceCredits(tx, {
+        agencyId, caseId, caseInvoiceId, refundAmount: Math.abs(delta), trigger, newBalance: newBalanceNumber,
+      });
+      return { credited: false, reversed: true, entryCount };
+    });
+  }
 
-  const pool = await computePool(plan, { agencyId, caseId, delta });
-  if (!(pool > 0)) return { credited: false, reason: "zero_pool" };
+  // A no-plan snapshot is intentional. Advance the cursor so activating a
+  // plan later cannot retroactively pay this collection.
+  if (!snapshot?.incentivePlanId) {
+    const claim = await prisma.caseInvoiceCreditCursor.updateMany({
+      where: { caseInvoiceId, agencyId, lastCreditedBalance: cursor.lastCreditedBalance },
+      data: { lastCreditedBalance: newBalanceNumber },
+    });
+    return { credited: false, reason: "no_plan_at_invoice_creation", claimed: claim.count === 1 };
+  }
 
-  const holders = await resolveHolders(agencyId, caseId);
-  // No active team member currently holds one of this plan's global
-  // attribution roles — that share of the pool goes uncredited rather
-  // than being redistributed to the remaining shares (see computeSplits).
-  const rows = computeSplits(plan, pool, holders).map((entry) => ({
+  const pool = await computeSnapshotPool(snapshot, { agencyId, caseId, delta });
+  const creditedAt = new Date();
+  const rows = computeSnapshotSplits(snapshot, pool).map((entry) => ({
     agencyId,
     caseId,
     caseInvoiceId,
-    incentivePlanId: plan.id,
+    incentivePlanId: snapshot.incentivePlanId,
     userId: entry.userId,
     attributionKind: entry.attributionKind,
     caseRoleId: entry.caseRoleId,
@@ -195,13 +342,14 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     sourceAmountCollected: delta,
     creditedAmount: entry.amount,
     triggerSource: trigger,
-    triggerRef: null,
-    creditedAt: new Date(),
+    triggerRef: `balance:${newBalanceNumber.toFixed(2)}`,
+    entryType: "CREDIT",
+    creditedAt,
   }));
 
   const result = await prisma.$transaction(async (tx) => {
     const claim = await tx.caseInvoiceCreditCursor.updateMany({
-      where: { caseInvoiceId, lastCreditedBalance: cursor.lastCreditedBalance },
+      where: { caseInvoiceId, agencyId, lastCreditedBalance: cursor.lastCreditedBalance },
       data: { lastCreditedBalance: newBalanceNumber },
     });
     if (claim.count !== 1) return { credited: false, reason: "lost_race" };
@@ -234,6 +382,20 @@ export async function estimatePotentialCredit(agencyId, { caseId, caseType, outs
   return { planId: plan.id, planName: plan.name, entries: computeSplits(plan, pool, holders) };
 }
 
+export async function estimateInvoicePotentialCredit(agencyId, { caseInvoiceId, outstandingBalance }) {
+  const balance = Number(outstandingBalance);
+  if (!(balance > 0)) return null;
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: caseInvoiceId, agencyId },
+    select: { caseId: true, incentiveSnapshot: true },
+  });
+  const snapshot = invoice?.incentiveSnapshot;
+  if (!snapshot?.incentivePlanId) return null;
+  const pool = await computeSnapshotPool(snapshot, { agencyId, caseId: invoice.caseId, delta: balance });
+  if (!(pool > 0)) return null;
+  return { planId: snapshot.incentivePlanId, planName: snapshot.planName, entries: computeSnapshotSplits(snapshot, pool) };
+}
+
 // Re-baselines an invoice's cursor to its new balance without crediting
 // anything — for balance changes that don't represent real collected
 // revenue (currently: voiding an untouched installment invoice back to
@@ -246,4 +408,57 @@ export async function resetCreditCursor(agencyId, caseInvoiceId, newBalance) {
     create: { agencyId, caseInvoiceId, lastCreditedBalance: Number(newBalance) },
     update: { lastCreditedBalance: Number(newBalance) },
   });
+}
+
+let retryTimer = null;
+
+export async function backfillMissingInvoiceSnapshots(limit = 100) {
+  const invoices = await prisma.caseInvoice.findMany({
+    where: { incentiveSnapshot: null },
+    take: limit,
+    orderBy: { createdAt: "asc" },
+    select: { id: true, agencyId: true, caseId: true, case: { select: { caseType: true } } },
+  });
+  for (const invoice of invoices) {
+    const data = await buildInvoiceIncentiveSnapshot(invoice.agencyId, invoice.caseId, invoice.case.caseType);
+    await prisma.caseInvoiceIncentiveSnapshot.create({ data: { ...data, caseInvoiceId: invoice.id } }).catch((error) => {
+      if (error?.code !== "P2002") throw error;
+    });
+  }
+  return invoices.length;
+}
+
+export async function reconcilePendingIncentiveCredits() {
+  await backfillMissingInvoiceSnapshots();
+  const rows = await prisma.$queryRaw`
+    SELECT i."agency_id" AS "agencyId", i."case_id" AS "caseId", i."id" AS "caseInvoiceId",
+           i."balance", i."status"
+    FROM "case_invoices" i
+    JOIN "case_invoice_credit_cursors" c ON c."case_invoice_id" = i."id"
+    WHERE c."last_credited_balance" <> i."balance"
+    ORDER BY i."updated_at" ASC
+    LIMIT 100
+  `;
+  for (const row of rows) {
+    const operation = ["Void", "Voided"].includes(row.status)
+      ? resetCreditCursor(row.agencyId, row.caseInvoiceId, row.balance)
+      : creditCaseInvoiceCollection(row.agencyId, {
+          caseId: row.caseId, caseInvoiceId: row.caseInvoiceId, newBalance: row.balance, trigger: "RETRY_WORKER",
+        });
+    await operation.catch((error) => logger.warn("incentive.retry_failed", { caseInvoiceId: row.caseInvoiceId, reason: error.message }));
+  }
+  return rows.length;
+}
+
+export function startIncentiveRetryWorker() {
+  if (retryTimer) return;
+  const run = () => void reconcilePendingIncentiveCredits().catch((error) => logger.warn("incentive.retry_sweep_failed", { reason: error.message }));
+  run();
+  retryTimer = setInterval(run, 60_000);
+  retryTimer.unref?.();
+}
+
+export function stopIncentiveRetryWorker() {
+  if (retryTimer) clearInterval(retryTimer);
+  retryTimer = null;
 }

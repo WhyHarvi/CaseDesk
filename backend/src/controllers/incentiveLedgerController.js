@@ -1,6 +1,5 @@
 import prisma from "../services/prisma/client.js";
-import { getCasePaymentSummary } from "../services/paymentScheduleService.js";
-import { estimatePotentialCredit } from "../services/incentiveCreditingService.js";
+import { estimateInvoicePotentialCredit } from "../services/incentiveCreditingService.js";
 
 // Incentive figures are personal financial data, not general case
 // visibility — admins can look at anyone's, everyone else only ever sees
@@ -98,52 +97,35 @@ export async function getTeamSummary(req, res) {
   res.json({ data });
 }
 
-// In-flight cases the target user is attributed on (holds a case role, or
-// owns/converted the lead this case came from), with an estimated payout
-// if the outstanding balance were collected right now. Read-only — no
-// ledger rows, response explicitly flagged `estimated: true` per row so
-// the frontend never confuses this with earned history.
+// Outstanding invoices use their frozen attribution snapshots, so a case
+// transfer cannot silently move an earlier invoice's projected incentive.
 export async function getPipeline(req, res) {
   const agencyId = req.auth.agencyId;
   const userId = targetUserId(req);
   if (!userId) return res.json({ data: [] });
 
-  const [roleCaseIds, leadCaseIds] = await Promise.all([
-    prisma.caseRoleAssignment.findMany({ where: { agencyId, userId, status: "active" }, select: { caseId: true } }),
-    prisma.lead.findMany({
-      where: { agencyId, convertedCaseId: { not: null }, OR: [{ ownerUserId: userId }, { conversion: { convertedById: userId } }] },
-      select: { convertedCaseId: true },
-    }),
-  ]);
-  const caseIds = [...new Set([...roleCaseIds.map((row) => row.caseId), ...leadCaseIds.map((row) => row.convertedCaseId)])];
-  if (!caseIds.length) return res.json({ data: [] });
-
-  const cases = await prisma.case.findMany({
-    where: { id: { in: caseIds }, agencyId, archivedAt: null, deletedAt: null },
-    select: { id: true, caseType: true, stage: true, client: { select: { id: true, fullName: true } } },
+  const invoices = await prisma.caseInvoice.findMany({
+    where: { agencyId, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] }, case: { archivedAt: null, deletedAt: null } },
+    select: { id: true, caseId: true, balance: true, case: { select: { caseType: true, stage: true, client: { select: { id: true, fullName: true } } } } },
   });
-
-  const rows = [];
-  for (const caseItem of cases) {
-    const summary = await getCasePaymentSummary(agencyId, caseItem.id);
-    const outstandingBalance = Number(summary.balance || 0);
-    if (!(outstandingBalance > 0)) continue;
-    const estimate = await estimatePotentialCredit(agencyId, { caseId: caseItem.id, caseType: caseItem.caseType, outstandingBalance });
+  const byCase = new Map();
+  for (const invoice of invoices) {
+    const outstandingBalance = Number(invoice.balance);
+    const estimate = await estimateInvoicePotentialCredit(agencyId, { caseInvoiceId: invoice.id, outstandingBalance });
     if (!estimate) continue;
     const mine = estimate.entries.filter((entry) => entry.userId === userId);
     const myTotal = mine.reduce((sum, entry) => sum + entry.amount, 0);
     if (!(myTotal > 0)) continue;
-    rows.push({
-      caseId: caseItem.id,
-      caseType: caseItem.caseType,
-      stage: caseItem.stage,
-      client: caseItem.client,
-      outstandingBalance,
-      planName: estimate.planName,
-      estimatedAmount: myTotal,
-      estimated: true,
-    });
+    const existing = byCase.get(invoice.caseId);
+    if (existing) {
+      existing.outstandingBalance += outstandingBalance;
+      existing.estimatedAmount += myTotal;
+      continue;
+    }
+    byCase.set(invoice.caseId, { caseId: invoice.caseId, caseType: invoice.case.caseType, stage: invoice.case.stage,
+      client: invoice.case.client, outstandingBalance, planName: estimate.planName, estimatedAmount: myTotal, estimated: true });
   }
+  const rows = [...byCase.values()];
   rows.sort((a, b) => b.estimatedAmount - a.estimatedAmount);
   res.json({ data: rows });
 }

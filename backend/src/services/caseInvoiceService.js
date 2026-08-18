@@ -12,7 +12,7 @@ import {
   getQuickBooksInvoicesByIds,
 } from "./quickbooksService.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
-import { creditCaseInvoiceCollection } from "./incentiveCreditingService.js";
+import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 
@@ -53,6 +53,11 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
     if (existing) return existing;
   }
   const itemId = await requireMappedItem(agencyId, paymentType);
+  const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { caseType: true } });
+  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  // Freeze the people and formula before the external invoice is created.
+  // A later case transfer therefore applies only to later invoices.
+  const incentiveSnapshot = await buildInvoiceIncentiveSnapshot(agencyId, caseId, caseItem.caseType);
 
   // Validate the cached customer link before every new invoice. A numeric
   // QBO id can become stale or resolve to a different contact after a
@@ -99,7 +104,7 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
   }
 
   try {
-    return await prisma.caseInvoice.create({
+    return await prisma.$transaction(async (tx) => tx.caseInvoice.create({
       data: {
         agencyId,
         caseId,
@@ -117,8 +122,10 @@ export async function createInvoiceRecord(agencyId, { caseId, clientId, paymentT
         createdById: actorUserId,
         creationIdempotencyKey: operationKey,
         lastSyncedAt: new Date(),
+        creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },
+        incentiveSnapshot: { create: incentiveSnapshot },
       },
-    });
+    }));
   } catch (error) {
     if (error?.code !== "P2002") throw error;
     const existing = await prisma.caseInvoice.findFirst({
@@ -208,18 +215,23 @@ async function refreshInvoiceRows(agencyId, rows) {
       const status = fresh.isVoided
         ? "Void"
         : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate });
-      if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
-      const updated = await prisma.caseInvoice.update({
-        where: { id: row.id },
-        data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
-      });
+      const changed = Number(fresh.balance) !== Number(row.balance) || status !== row.status;
+      const updated = changed
+        ? await prisma.caseInvoice.update({
+            where: { id: row.id },
+            data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
+          })
+        : row;
       // A staff member opening the billing tab (or a client opening the
       // portal) is one of the ways a balance drop from a QuickBooks-side
       // payment first gets observed here — this read path has to credit
       // incentives too, not just the two write endpoints, or a payment
       // made directly in QuickBooks could go uncredited until something
       // else happens to resync it.
-      await creditCaseInvoiceCollection(agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "LAZY_RESYNC" }).catch((error) => {
+      const processBalance = fresh.isVoided
+        ? resetCreditCursor(agencyId, updated.id, updated.balance)
+        : creditCaseInvoiceCollection(agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "LAZY_RESYNC" });
+      await processBalance.catch((error) => {
         logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "LAZY_RESYNC", reason: error.message });
       });
       return updated;

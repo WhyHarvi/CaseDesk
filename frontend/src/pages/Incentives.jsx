@@ -138,10 +138,12 @@ function LedgerTable({ rows, showPerson = false, delay = 0 }) {
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">{row.case?.client?.fullName} · {row.case?.caseType}</p>
               <p className="truncate text-xs text-slate-500">
-                {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {row.incentivePlan?.name} · {new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(row.creditedAt))}
+                {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {row.incentivePlan?.name} · {row.entryType === "REVERSAL" ? "Refund adjustment · " : ""}{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(row.creditedAt))}
               </p>
             </div>
-            <span className="shrink-0 text-sm font-semibold text-emerald-600 tabular-nums">+{money.format(row.creditedAmount)}</span>
+            <span className={`shrink-0 text-sm font-semibold tabular-nums ${Number(row.creditedAmount) < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+              {Number(row.creditedAmount) > 0 ? "+" : ""}{money.format(row.creditedAmount)}
+            </span>
           </div>
         )) : <EmptyRow>Nothing credited yet — earnings appear here the moment a payment comes in.</EmptyRow>}
       </div>

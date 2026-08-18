@@ -43,15 +43,38 @@ test("crediting is idempotent via a compare-and-swap on the cursor, claimed in t
   // A first-ever observation only establishes a baseline — it must not credit,
   // whether that's a brand-new $0 invoice or the pre-launch backfill.
   assert.match(service, /return \{ credited: false, reason: "baseline" \};/);
-  // Balance went up (or is unchanged) relative to the cursor -> nothing new
-  // was collected. This alone is what makes voids/amount-edits/lost races
-  // automatically safe without any special-casing.
-  assert.match(service, /if \(!\(delta > 0\)\) return \{ credited: false, reason: "no_new_collection" \};/);
+  assert.match(service, /if \(delta === 0\) return \{ credited: false, reason: "no_balance_change" \};/);
+  assert.match(service, /if \(delta < 0\) \{/);
+  assert.match(service, /reverseInvoiceCredits/);
   // The claim (CAS) and the ledger inserts happen inside one transaction —
   // if they were two separate awaited calls, a crash between them would
   // permanently lose that credit (cursor says caught-up, no ledger rows
   // exist, and nothing would ever retry it).
-  assert.match(service, /const result = await prisma\.\$transaction\(async \(tx\) => \{\s*\n\s*const claim = await tx\.caseInvoiceCreditCursor\.updateMany\(\{\s*\n\s*where: \{ caseInvoiceId, lastCreditedBalance: cursor\.lastCreditedBalance \},\s*\n\s*data: \{ lastCreditedBalance: newBalanceNumber \},\s*\n\s*\}\);\s*\n\s*if \(claim\.count !== 1\) return \{ credited: false, reason: "lost_race" \};/);
+  assert.match(service, /const result = await prisma\.\$transaction\(async \(tx\) => \{\s*\n\s*const claim = await tx\.caseInvoiceCreditCursor\.updateMany\(\{\s*\n\s*where: \{ caseInvoiceId, agencyId, lastCreditedBalance: cursor\.lastCreditedBalance \},\s*\n\s*data: \{ lastCreditedBalance: newBalanceNumber \},\s*\n\s*\}\);\s*\n\s*if \(claim\.count !== 1\) return \{ credited: false, reason: "lost_race" \};/);
+});
+
+test("new invoices freeze attribution and establish the original balance before any payment", async () => {
+  const [service, invoices, schema] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../prisma/schema.prisma"),
+  ]);
+  assert.match(schema, /model CaseInvoiceIncentiveSnapshot \{/);
+  assert.match(service, /export async function buildInvoiceIncentiveSnapshot/);
+  assert.match(invoices, /creditCursor: \{ create: \{ agencyId, lastCreditedBalance: invoice\.balance \} \}/);
+  assert.match(invoices, /incentiveSnapshot: \{ create: incentiveSnapshot \}/);
+});
+
+test("voids rebaseline without credit and refunds create auditable negative reversals", async () => {
+  const [service, invoiceService, webhook] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/services/quickbooksWebhookService.js"),
+  ]);
+  assert.match(webhook, /resetCreditCursor\(event\.agencyId, updated\.id, 0\)/);
+  assert.match(invoiceService, /fresh\.isVoided\s*\n\s*\? resetCreditCursor/);
+  assert.match(service, /entryType: "REVERSAL"/);
+  assert.match(service, /reversesEntryId: credit\.id/);
 });
 
 test("the payout pool is computed per formulaType, and a share with no current holder is dropped rather than reallocated", async () => {

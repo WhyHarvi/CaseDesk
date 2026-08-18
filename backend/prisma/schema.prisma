@@ -554,6 +554,7 @@ model Agency {
   teamIncentiveRoleAssignments   TeamIncentiveRoleAssignment[]
   incentivePlans                 IncentivePlan[]
   caseInvoiceCreditCursors       CaseInvoiceCreditCursor[]
+  caseInvoiceIncentiveSnapshots  CaseInvoiceIncentiveSnapshot[]
   incentiveLedgerEntries         IncentiveLedgerEntry[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
@@ -737,38 +738,39 @@ model ExpiringDocumentReminderDelivery {
 }
 
 model CaseInvoice {
-  id                   String                   @id @default(uuid())
-  agencyId             String                   @map("agency_id")
-  caseId               String                   @map("case_id")
-  clientId             String                   @map("client_id")
-  paymentType          String                   @map("payment_type")
-  description          String
-  qbInvoiceId          String                   @map("qb_invoice_id")
-  qbInvoiceNumber      String?                  @map("qb_invoice_number")
-  qbInvoiceLink        String?                  @map("qb_invoice_link")
-  qbSyncToken          String                   @map("qb_sync_token")
-  amount               Decimal                  @db.Decimal(10, 2)
-  balance              Decimal                  @db.Decimal(10, 2)
-  status               String                   @default("Open")
-  dueDate              DateTime?                @map("due_date")
-  lastPaymentMethod    String?                  @map("last_payment_method")
-  lastPaymentReference String?                  @map("last_payment_reference")
-  lastPaymentAt        DateTime?                @map("last_payment_at")
-  lastQbPaymentId      String?                  @map("last_qb_payment_id")
-  creationIdempotencyKey String?                @map("creation_idempotency_key")
-  lastPaymentIdempotencyKey String?             @map("last_payment_idempotency_key")
-  createdById          String?                  @map("created_by_id")
-  createdAt            DateTime                 @default(now()) @map("created_at")
-  updatedAt            DateTime                 @updatedAt @map("updated_at")
-  lastSyncedAt         DateTime                 @map("last_synced_at")
-  agency               Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                 Case                     @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  client               Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  createdBy            User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  installments         CasePaymentInstallment[]
-  followUps            FollowUp[]
-  creditCursor         CaseInvoiceCreditCursor?
-  incentiveLedgerEntries IncentiveLedgerEntry[]
+  id                        String                        @id @default(uuid())
+  agencyId                  String                        @map("agency_id")
+  caseId                    String                        @map("case_id")
+  clientId                  String                        @map("client_id")
+  paymentType               String                        @map("payment_type")
+  description               String
+  qbInvoiceId               String                        @map("qb_invoice_id")
+  qbInvoiceNumber           String?                       @map("qb_invoice_number")
+  qbInvoiceLink             String?                       @map("qb_invoice_link")
+  qbSyncToken               String                        @map("qb_sync_token")
+  amount                    Decimal                       @db.Decimal(10, 2)
+  balance                   Decimal                       @db.Decimal(10, 2)
+  status                    String                        @default("Open")
+  dueDate                   DateTime?                     @map("due_date")
+  lastPaymentMethod         String?                       @map("last_payment_method")
+  lastPaymentReference      String?                       @map("last_payment_reference")
+  lastPaymentAt             DateTime?                     @map("last_payment_at")
+  lastQbPaymentId           String?                       @map("last_qb_payment_id")
+  creationIdempotencyKey    String?                       @map("creation_idempotency_key")
+  lastPaymentIdempotencyKey String?                       @map("last_payment_idempotency_key")
+  createdById               String?                       @map("created_by_id")
+  createdAt                 DateTime                      @default(now()) @map("created_at")
+  updatedAt                 DateTime                      @updatedAt @map("updated_at")
+  lastSyncedAt              DateTime                      @map("last_synced_at")
+  agency                    Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                      Case                          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  client                    Client                        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdBy                 User?                         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  installments              CasePaymentInstallment[]
+  followUps                 FollowUp[]
+  creditCursor              CaseInvoiceCreditCursor?
+  incentiveSnapshot         CaseInvoiceIncentiveSnapshot?
+  incentiveLedgerEntries    IncentiveLedgerEntry[]
 
   @@unique([agencyId, qbInvoiceId])
   @@unique([agencyId, creationIdempotencyKey])
@@ -798,6 +800,29 @@ model CaseInvoiceCreditCursor {
   @@map("case_invoice_credit_cursors")
 }
 
+// Frozen when the invoice is created. Payments against this invoice keep
+// using the people and plan captured here even if the case is transferred.
+model CaseInvoiceIncentiveSnapshot {
+  id               String          @id @default(uuid())
+  agencyId         String          @map("agency_id")
+  caseInvoiceId    String          @unique @map("case_invoice_id")
+  incentivePlanId  String?         @map("incentive_plan_id")
+  planName         String?         @map("plan_name")
+  planVersion      Int?            @map("plan_version")
+  formulaType      String?         @map("formula_type")
+  flatAmount       Decimal?        @map("flat_amount") @db.Decimal(10, 2)
+  percentRate      Decimal?        @map("percent_rate") @db.Decimal(5, 2)
+  tiers            Json
+  recipients       Json
+  createdAt        DateTime        @default(now()) @map("created_at")
+  agency           Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseInvoice      CaseInvoice     @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+  incentivePlan    IncentivePlan?  @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+
+  @@index([agencyId])
+  @@map("case_invoice_incentive_snapshots")
+}
+
 // One frozen, immutable row per (payment collection event, credited
 // person). No update/delete endpoint is ever exposed for this model —
 // editing a plan's formula or a role's name later must never rewrite what
@@ -805,33 +830,38 @@ model CaseInvoiceCreditCursor {
 // snapshotted here at credit time rather than derived live from the
 // current plan/role state.
 model IncentiveLedgerEntry {
-  id                    String         @id @default(uuid())
-  agencyId              String         @map("agency_id")
-  caseId                String         @map("case_id")
-  caseInvoiceId         String         @map("case_invoice_id")
-  incentivePlanId       String         @map("incentive_plan_id")
-  userId                String         @map("user_id")
-  attributionKind       String         @map("attribution_kind")
-  caseRoleId            String?        @map("case_role_id")
-  roleNameSnapshot       String        @map("role_name_snapshot")
-  sharePercentApplied   Decimal        @map("share_percent_applied") @db.Decimal(5, 2)
-  sourceAmountCollected Decimal        @map("source_amount_collected") @db.Decimal(10, 2)
-  creditedAmount        Decimal        @map("credited_amount") @db.Decimal(10, 2)
-  triggerSource         String         @map("trigger_source")
-  triggerRef            String?        @map("trigger_ref")
-  creditedAt            DateTime       @map("credited_at")
-  createdAt             DateTime       @default(now()) @map("created_at")
-  agency                Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                  Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  caseInvoice           CaseInvoice    @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
-  incentivePlan         IncentivePlan  @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
-  user                  User           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  caseRole              AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+  id                    String                 @id @default(uuid())
+  agencyId              String                 @map("agency_id")
+  caseId                String                 @map("case_id")
+  caseInvoiceId         String                 @map("case_invoice_id")
+  incentivePlanId       String                 @map("incentive_plan_id")
+  userId                String                 @map("user_id")
+  attributionKind       String                 @map("attribution_kind")
+  caseRoleId            String?                @map("case_role_id")
+  roleNameSnapshot      String                 @map("role_name_snapshot")
+  sharePercentApplied   Decimal                @map("share_percent_applied") @db.Decimal(5, 2)
+  sourceAmountCollected Decimal                @map("source_amount_collected") @db.Decimal(10, 2)
+  creditedAmount        Decimal                @map("credited_amount") @db.Decimal(10, 2)
+  triggerSource         String                 @map("trigger_source")
+  triggerRef            String?                @map("trigger_ref")
+  entryType             String                 @default("CREDIT") @map("entry_type")
+  reversesEntryId       String?                @map("reverses_entry_id")
+  creditedAt            DateTime               @map("credited_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  agency                Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                  Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  caseInvoice           CaseInvoice            @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+  incentivePlan         IncentivePlan          @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  user                  User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  caseRole              AgencyCaseRole?        @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+  reversesEntry         IncentiveLedgerEntry?  @relation("IncentiveLedgerReversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
+  reversalEntries       IncentiveLedgerEntry[] @relation("IncentiveLedgerReversal")
 
   @@index([agencyId, userId, creditedAt])
   @@index([agencyId, caseId])
   @@index([agencyId, caseInvoiceId])
   @@index([agencyId, creditedAt])
+  @@index([reversesEntryId])
   @@map("incentive_ledger_entries")
 }
 
@@ -1008,18 +1038,18 @@ model AgencyQuickBooksSettings {
 }
 
 model AgencyBillingSettings {
-  id                          String    @id @default(uuid())
-  agencyId                    String    @unique @map("agency_id")
+  id                           String    @id @default(uuid())
+  agencyId                     String    @unique @map("agency_id")
   taxRatePercent               Decimal   @default(13.0) @map("tax_rate_percent") @db.Decimal(5, 2)
-  taxRegisteredName           String?   @map("tax_registered_name")
-  taxNumber                   String?   @map("tax_number")
-  retainerSignatureImage      String?   @map("retainer_signature_image")
-  retainerSignatureUpdatedAt  DateTime? @map("retainer_signature_updated_at")
-  retainerSignatureUpdatedById String?  @map("retainer_signature_updated_by_id")
-  createdAt                   DateTime  @default(now()) @map("created_at")
-  updatedAt                   DateTime  @updatedAt @map("updated_at")
-  agency                      Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  retainerSignatureUpdatedBy  User?     @relation("RetainerSignatureUpdatedByUser", fields: [retainerSignatureUpdatedById], references: [id], onDelete: SetNull)
+  taxRegisteredName            String?   @map("tax_registered_name")
+  taxNumber                    String?   @map("tax_number")
+  retainerSignatureImage       String?   @map("retainer_signature_image")
+  retainerSignatureUpdatedAt   DateTime? @map("retainer_signature_updated_at")
+  retainerSignatureUpdatedById String?   @map("retainer_signature_updated_by_id")
+  createdAt                    DateTime  @default(now()) @map("created_at")
+  updatedAt                    DateTime  @updatedAt @map("updated_at")
+  agency                       Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  retainerSignatureUpdatedBy   User?     @relation("RetainerSignatureUpdatedByUser", fields: [retainerSignatureUpdatedById], references: [id], onDelete: SetNull)
 
   @@map("agency_billing_settings")
 }
@@ -1051,21 +1081,21 @@ model AgencyFeeCategory {
 // permissions today. Renaming or adding a role here is a settings change,
 // not a migration.
 model AgencyCaseRole {
-  id          String                @id @default(uuid())
-  agencyId    String                @map("agency_id")
-  code        String
-  name        String
-  description String?
-  isActive    Boolean               @default(true) @map("is_active")
-  isSystem    Boolean               @default(false) @map("is_system")
-  sortOrder   Int                   @default(0) @map("sort_order")
-  createdAt   DateTime              @default(now()) @map("created_at")
-  updatedAt   DateTime              @updatedAt @map("updated_at")
-  agency        Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignments   CaseRoleAssignment[]
-  teamAssignments TeamIncentiveRoleAssignment[]
-  roleShares    IncentivePlanRoleShare[]
-  ledgerEntries IncentiveLedgerEntry[]
+  id               String                         @id @default(uuid())
+  agencyId         String                         @map("agency_id")
+  code             String
+  name             String
+  description      String?
+  isActive         Boolean                        @default(true) @map("is_active")
+  isSystem         Boolean                        @default(false) @map("is_system")
+  sortOrder        Int                            @default(0) @map("sort_order")
+  createdAt        DateTime                       @default(now()) @map("created_at")
+  updatedAt        DateTime                       @updatedAt @map("updated_at")
+  agency           Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignments      CaseRoleAssignment[]
+  teamAssignments  TeamIncentiveRoleAssignment[]
+  roleShares       IncentivePlanRoleShare[]
+  ledgerEntries    IncentiveLedgerEntry[]
 
   @@unique([agencyId, code])
   @@index([agencyId, isActive, sortOrder])
@@ -1082,26 +1112,27 @@ model AgencyCaseRole {
 // and flipped atomically by the dedicated activate action rather than a
 // plain isActive toggle.
 model IncentivePlan {
-  id            String                   @id @default(uuid())
-  agencyId      String                   @map("agency_id")
-  name          String
-  caseType      String?                  @map("case_type")
-  formulaType   String                   @map("formula_type")
-  flatAmount    Decimal?                 @map("flat_amount") @db.Decimal(10, 2)
-  percentRate   Decimal?                 @map("percent_rate") @db.Decimal(5, 2)
-  isActive      Boolean                  @default(false) @map("is_active")
-  isSystem      Boolean                  @default(false) @map("is_system")
-  version       Int                      @default(1)
-  createdById   String?                  @map("created_by")
-  activatedAt   DateTime?                @map("activated_at")
-  deactivatedAt DateTime?                @map("deactivated_at")
-  createdAt     DateTime                 @default(now()) @map("created_at")
-  updatedAt     DateTime                 @updatedAt @map("updated_at")
-  agency        Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  createdBy     User?                    @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
-  tiers         IncentivePlanTier[]
-  roleShares    IncentivePlanRoleShare[]
-  ledgerEntries IncentiveLedgerEntry[]
+  id                            String                         @id @default(uuid())
+  agencyId                      String                         @map("agency_id")
+  name                          String
+  caseType                      String?                        @map("case_type")
+  formulaType                   String                         @map("formula_type")
+  flatAmount                    Decimal?                       @map("flat_amount") @db.Decimal(10, 2)
+  percentRate                   Decimal?                       @map("percent_rate") @db.Decimal(5, 2)
+  isActive                      Boolean                        @default(false) @map("is_active")
+  isSystem                      Boolean                        @default(false) @map("is_system")
+  version                       Int                            @default(1)
+  createdById                   String?                        @map("created_by")
+  activatedAt                   DateTime?                      @map("activated_at")
+  deactivatedAt                 DateTime?                      @map("deactivated_at")
+  createdAt                     DateTime                       @default(now()) @map("created_at")
+  updatedAt                     DateTime                       @updatedAt @map("updated_at")
+  agency                        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy                     User?                          @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  tiers                         IncentivePlanTier[]
+  roleShares                    IncentivePlanRoleShare[]
+  ledgerEntries                 IncentiveLedgerEntry[]
+  caseInvoiceIncentiveSnapshots CaseInvoiceIncentiveSnapshot[]
 
   @@index([agencyId, caseType, isActive])
   @@map("incentive_plans")
@@ -1145,15 +1176,15 @@ model IncentivePlanTier {
 // delete incentive_plan_role_shares (or the owning incentive_plans) before
 // deleting the agency's case roles, not rely on cascade alone.
 model IncentivePlanRoleShare {
-  id             String         @id @default(uuid())
-  planId         String         @map("plan_id")
-  attributionKind String        @map("attribution_kind")
-  caseRoleId     String?        @map("case_role_id")
-  sharePercent   Decimal        @map("share_percent") @db.Decimal(5, 2)
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
-  plan           IncentivePlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
-  caseRole       AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: Restrict)
+  id              String          @id @default(uuid())
+  planId          String          @map("plan_id")
+  attributionKind String          @map("attribution_kind")
+  caseRoleId      String?         @map("case_role_id")
+  sharePercent    Decimal         @map("share_percent") @db.Decimal(5, 2)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  plan            IncentivePlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  caseRole        AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: Restrict)
 
   @@map("incentive_plan_role_shares")
 }
@@ -1685,8 +1716,8 @@ model Case {
   caseEasyImportCases          CaseEasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportReportRow[]
 
-  @@index([agencyId])
   @@unique([agencyId, creationIdempotencyKey])
+  @@index([agencyId])
   @@index([agencyId, studyIntakeMonth])
   @@index([clientId])
   @@index([assignedUserId])
@@ -2794,16 +2825,16 @@ model ClientDocument {
 }
 
 model DocumentFolder {
-  id          String          @id @default(uuid())
-  agencyId    String          @map("agency_id")
-  caseId      String          @map("case_id")
+  id          String           @id @default(uuid())
+  agencyId    String           @map("agency_id")
+  caseId      String           @map("case_id")
   name        String
-  createdById String?         @map("created_by_id")
-  createdAt   DateTime        @default(now()) @map("created_at")
-  updatedAt   DateTime        @updatedAt @map("updated_at")
-  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case        Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdById String?          @map("created_by_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case        Case             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  createdBy   User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
   documents   ClientDocument[]
 
   @@unique([caseId, name])

@@ -16,7 +16,7 @@ import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
-import { creditCaseInvoiceCollection } from "./incentiveCreditingService.js";
+import { creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
 import { notifyUsers, resolveNotifications, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
@@ -327,10 +327,11 @@ async function processCaseInvoiceEvent(event, invoiceId) {
   if (!row) return false;
 
   if (["Delete", "Void"].includes(event.operation)) {
-    await prisma.caseInvoice.update({
+    const updated = await prisma.caseInvoice.update({
       where: { id: row.id },
       data: { status: "Void", balance: 0, lastSyncedAt: new Date() },
     });
+    await resetCreditCursor(event.agencyId, updated.id, 0);
     return true;
   }
 
@@ -352,7 +353,10 @@ async function processCaseInvoiceEvent(event, invoiceId) {
   // invoice link (or an accountant recording payment in QuickBooks itself)
   // is a real collection event and must credit incentives, same as a
   // payment recorded manually in CaseDesk.
-  await creditCaseInvoiceCollection(event.agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "QBO_WEBHOOK" }).catch((error) => {
+  const processBalance = invoice.isVoided
+    ? resetCreditCursor(event.agencyId, updated.id, updated.balance)
+    : creditCaseInvoiceCollection(event.agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "QBO_WEBHOOK" });
+  await processBalance.catch((error) => {
     logger.warn("incentive.credit_failed", { agencyId: event.agencyId, caseInvoiceId: updated.id, trigger: "QBO_WEBHOOK", reason: error.message });
   });
   return true;
