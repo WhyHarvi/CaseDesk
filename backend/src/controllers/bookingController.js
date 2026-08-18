@@ -1673,6 +1673,17 @@ export async function convertAppointmentToClient(req, res) {
     await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "CLIENT_LINKED", summary: existing ? "Linked to an existing client" : "Visitor converted to a client", metadata: { clientId: created.id } });
     return { client: created, existing: Boolean(existing) };
   });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: result.client.id,
+    action: result.existing ? "appointment.client_linked" : "client.created",
+    details: result.existing
+      ? `${appointment.guestName} appointment linked to the existing client profile`
+      : `${result.client.fullName} created from appointment ${appointment.referenceCode || appointment.subject}`,
+    entityType: "appointment",
+    entityId: appointment.id,
+  });
   res.status(result.existing ? 200 : 201).json({ data: { clientId: result.client.id, existing: result.existing } });
 }
 

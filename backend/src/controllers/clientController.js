@@ -514,6 +514,19 @@ export async function getClientById(req, res) {
     paymentSummary,
     client,
   });
+  const clientActivityLogs = activityLogs.some((item) => item.action === "client.created")
+    ? activityLogs
+    : [
+        ...activityLogs,
+        {
+          id: `client-created-${client.id}`,
+          caseId: null,
+          action: "client.created",
+          details: `${client.fullName} client profile created`,
+          createdAt: client.createdAt,
+          user: null,
+        },
+      ].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
 
   res.json({
     data: {
@@ -525,7 +538,7 @@ export async function getClientById(req, res) {
       payments,
       paymentSummary,
       notes,
-      activityLogs,
+      activityLogs: clientActivityLogs,
       nextAction,
     },
   });

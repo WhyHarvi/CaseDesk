@@ -118,6 +118,7 @@ function clientActivityTitle(activity) {
     "client.archived": "archived client",
     "client.restored": "restored client",
     "appointment.booked": "booked appointment",
+    "appointment.client_linked": "linked appointment to client",
     "appointment.status_updated": "updated appointment status",
     "appointment.session_type_corrected": "corrected appointment type",
   };
