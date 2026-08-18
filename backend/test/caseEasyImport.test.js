@@ -8,6 +8,7 @@ import {
   CONTACT_HEADER_MAP,
   caseEasyAssigneeNameMatches,
   classifyWorkbookHeaders,
+  linkImportedContactsToExistingClients,
   mapRow,
   resolveCaseEasyAssigneeUserId,
 } from "../src/services/caseEasyImportService.js";
@@ -24,6 +25,32 @@ test("Case Easy contacts and cases exports are classified from their real header
   );
   assert.equal(classifyWorkbookHeaders(contactHeaders).type, "contacts");
   assert.equal(classifyWorkbookHeaders(caseHeaders).type, "cases");
+});
+
+test("late Case Easy imports link to one exact existing client without guessing", async () => {
+  const updates = [];
+  const db = {
+    caseEasyImportContact: {
+      findMany: async () => [
+        { id: "anwari-import", email: "anwarimalik15@gmail.com", phone: "+1 647 676 0329" },
+        { id: "ambiguous-import", email: "shared@example.com", phone: null },
+      ],
+      update: async (operation) => updates.push(operation),
+    },
+    client: {
+      findMany: async () => [
+        { id: "anwari-client", emailNormalized: "anwarimalik15@gmail.com", phoneNormalized: "+16476760329" },
+        { id: "shared-1", emailNormalized: "shared@example.com", phoneNormalized: null },
+        { id: "shared-2", emailNormalized: "shared@example.com", phoneNormalized: null },
+      ],
+    },
+  };
+
+  assert.equal(await linkImportedContactsToExistingClients("agency-1", db), 1);
+  assert.deepEqual(updates, [{
+    where: { id: "anwari-import" },
+    data: { convertedClientId: "anwari-client", importStatus: "converted" },
+  }]);
 });
 
 test("Case Easy raw fields preserve UCI and marital status for conversion", () => {

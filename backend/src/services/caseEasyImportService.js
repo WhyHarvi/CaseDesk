@@ -416,6 +416,46 @@ async function batchUpsertCases(agencyId, mappedCases, importBatchId, stats) {
   stats.casesSkippedConverted = (stats.casesSkippedConverted || 0) + skipped.length;
 }
 
+export async function linkImportedContactsToExistingClients(agencyId, db = prisma) {
+  const [contacts, clients] = await Promise.all([
+    db.caseEasyImportContact.findMany({
+      where: { agencyId, convertedClientId: null },
+      select: { id: true, email: true, phone: true },
+    }),
+    db.client.findMany({
+      where: { agencyId, archivedAt: null },
+      select: { id: true, emailNormalized: true, phoneNormalized: true },
+    }),
+  ]);
+  const byEmail = new Map();
+  const byPhone = new Map();
+  const add = (map, key, client) => {
+    if (!key) return;
+    const matches = map.get(key) || [];
+    matches.push(client);
+    map.set(key, matches);
+  };
+  for (const client of clients) {
+    add(byEmail, normalizeKey(client.emailNormalized), client);
+    add(byPhone, normalizePhoneKey(client.phoneNormalized), client);
+  }
+
+  let linked = 0;
+  for (const contact of contacts) {
+    const emailMatches = contact.email ? byEmail.get(normalizeKey(contact.email)) || [] : [];
+    const phoneMatches = contact.phone ? byPhone.get(normalizePhoneKey(contact.phone)) || [] : [];
+    const candidateIds = new Set([...emailMatches, ...phoneMatches].map((client) => client.id));
+    if (candidateIds.size !== 1) continue;
+    const [convertedClientId] = candidateIds;
+    await db.caseEasyImportContact.update({
+      where: { id: contact.id },
+      data: { convertedClientId, importStatus: "converted" },
+    });
+    linked += 1;
+  }
+  return linked;
+}
+
 function normalizeToggle(raw) {
   const value = normalizeKey(raw);
   if (value.includes("client")) return "client";
@@ -874,6 +914,7 @@ export async function importCaseEasyExports({ agencyId, contactsWorkbook, casesW
     await batchUpsertContacts(agencyId, mappedContacts, importBatchId, stats);
     await batchUpsertCases(agencyId, mappedCases, importBatchId, stats);
     await resolveCaseEasyLinks(agencyId, stats);
+    stats.contactsLinkedToExistingClients = await linkImportedContactsToExistingClients(agencyId);
   }
 
   return {
