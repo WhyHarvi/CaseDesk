@@ -70,13 +70,13 @@ function RoleShareEditor({ roleShares, caseRoles, onChange }) {
         <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_110px_auto] sm:items-end">
           <label className="text-[11px] font-medium text-slate-500">Credit based on
           <select value={share.attributionKind} onChange={(event) => update(index, "attributionKind", event.target.value)} className={`mt-1.5 ${inputClass}`}>
-            <option value="CASE_ROLE">Assigned case role</option>
+            <option value="CASE_ROLE">Global team role</option>
             <option value="LEAD_OWNER">Lead owner</option>
             <option value="LEAD_CONVERTER">Lead converter</option>
           </select>
           </label>
           {share.attributionKind === "CASE_ROLE" ? (
-            <label className="text-[11px] font-medium text-slate-500">Case role
+            <label className="text-[11px] font-medium text-slate-500">Incentive role
             <select value={share.caseRoleId} onChange={(event) => update(index, "caseRoleId", event.target.value)} className={`mt-1.5 ${inputClass}`}>
               <option value="">Select role</option>
               {caseRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
@@ -121,7 +121,7 @@ function PlanExample({ draft, caseRoles }) {
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
         {draft.roleShares.map((share, index) => <span key={index}>{recipientName(share)}: <strong className="text-slate-700">{money.format(pool * (Number(share.sharePercent) || 0) / 100)}</strong></span>)}
       </div>
-      <p className="mt-2 text-[11px] leading-4 text-slate-400">Credit is created only when money is collected. A case-role share is credited only when someone holds that role on the case.</p>
+      <p className="mt-2 text-[11px] leading-4 text-slate-400">Credit is created only when money is collected. Assign roles once in Team Members; matching case owners and collaborators are credited automatically.</p>
     </div>
   );
 }
@@ -160,7 +160,7 @@ function PlanFormFields({ draft, setDraft, caseRoles }) {
       )}
       </section>
       <section className="border-t border-slate-200 pt-4">
-      <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">3</span><div><p className="text-xs font-semibold text-slate-800">Split the pool</p><p className="text-[11px] text-slate-500">Choose which attributed people receive the incentive credit.</p></div></div>
+      <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">3</span><div><p className="text-xs font-semibold text-slate-800">Split the pool</p><p className="text-[11px] text-slate-500">Choose global team roles, lead owner, or lead converter as recipients.</p></div></div>
       <RoleShareEditor roleShares={draft.roleShares} caseRoles={caseRoles} onChange={(roleShares) => setDraft((c) => ({ ...c, roleShares }))} />
       </section>
       <PlanExample draft={draft} caseRoles={caseRoles} />

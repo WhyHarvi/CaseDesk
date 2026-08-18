@@ -62,9 +62,12 @@ export async function deleteCaseRole(agencyId, id) {
   const current = await prisma.agencyCaseRole.findFirst({ where: { id, agencyId } });
   if (!current) throw createHttpError(404, "Case role not found.", "NOT_FOUND");
   if (current.isSystem) throw createHttpError(409, "Built-in case roles can be hidden but not deleted.", "SYSTEM_ROLE");
-  const assignmentCount = await prisma.caseRoleAssignment.count({ where: { agencyId, caseRoleId: id } });
-  if (assignmentCount > 0) {
-    throw createHttpError(409, "This role is already assigned on a case. Hide it instead so history remains accurate.", "ROLE_IN_USE");
+  const [caseAssignmentCount, teamAssignmentCount] = await Promise.all([
+    prisma.caseRoleAssignment.count({ where: { agencyId, caseRoleId: id } }),
+    prisma.teamIncentiveRoleAssignment.count({ where: { agencyId, caseRoleId: id } }),
+  ]);
+  if (caseAssignmentCount + teamAssignmentCount > 0) {
+    throw createHttpError(409, "This role is already assigned to cases or team members. Hide it instead so history remains accurate.", "ROLE_IN_USE");
   }
   try {
     await prisma.agencyCaseRole.delete({ where: { id } });

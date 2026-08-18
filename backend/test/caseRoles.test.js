@@ -23,7 +23,8 @@ test("case-role settings CRUD mirrors the fee-category admin-list pattern", asyn
   // both guards mirror deleteFeeCategory's shape.
   assert.match(service, /if \(current\.isSystem\) throw createHttpError\(409, "Built-in case roles can be hidden but not deleted\."/);
   assert.match(service, /prisma\.caseRoleAssignment\.count\(\{ where: \{ agencyId, caseRoleId: id \} \}\)/);
-  assert.match(service, /throw createHttpError\(409, "This role is already assigned on a case\. Hide it instead/);
+  assert.match(service, /prisma\.teamIncentiveRoleAssignment\.count\(\{ where: \{ agencyId, caseRoleId: id \} \}\)/);
+  assert.match(service, /throw createHttpError\(409, "This role is already assigned to cases or team members\. Hide it instead/);
 
   // Duplicate code/name is a real unique constraint (agencyId, code), not
   // just app-level validation — confirm the P2002 translation exists so a

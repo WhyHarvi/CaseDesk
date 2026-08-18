@@ -12,5 +12,5 @@ test("the incentive plan editor starts complete and explains the calculation", a
   assert.match(panel, /Split the pool/);
   assert.match(panel, /Example when \{money\.format\(collected\)\} is collected/);
   assert.match(panel, /Split the incentive pool, not the client payment/);
-  assert.match(panel, /A case-role share is credited only when someone holds that role on the case/);
+  assert.match(panel, /Assign roles once in Team Members; matching case owners and collaborators are credited automatically/);
 });

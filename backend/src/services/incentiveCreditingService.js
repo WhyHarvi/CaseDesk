@@ -41,20 +41,35 @@ async function computePool(plan, { agencyId, caseId, delta }) {
 }
 
 async function resolveHolders(agencyId, caseId) {
-  const [lead, roleAssignments] = await Promise.all([
+  const [lead, caseTeam, roleAssignments] = await Promise.all([
     prisma.lead.findFirst({
       where: { convertedCaseId: caseId, agencyId },
       select: { ownerUserId: true, conversion: { select: { convertedById: true } } },
     }),
-    prisma.caseRoleAssignment.findMany({
-      where: { agencyId, caseId, status: "active" },
+    prisma.case.findFirst({
+      where: { id: caseId, agencyId },
+      select: {
+        assignedUserId: true,
+        assignments: { where: { status: "active" }, select: { consultantUserId: true } },
+      },
+    }),
+    prisma.teamIncentiveRoleAssignment.findMany({
+      where: {
+        agencyId,
+        user: { status: "active", memberships: { some: { agencyId, isActive: true } } },
+      },
       select: { caseRoleId: true, userId: true, caseRole: { select: { name: true } } },
     }),
   ]);
+  const caseTeamUserIds = new Set([
+    caseTeam?.assignedUserId,
+    ...(caseTeam?.assignments || []).map((assignment) => assignment.consultantUserId),
+  ].filter(Boolean));
   const byCaseRoleId = new Map();
   for (const row of roleAssignments) {
+    if (!caseTeamUserIds.has(row.userId)) continue;
     const bucket = byCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
-    bucket.userIds.push(row.userId);
+    if (!bucket.userIds.includes(row.userId)) bucket.userIds.push(row.userId);
     byCaseRoleId.set(row.caseRoleId, bucket);
   }
   return {
@@ -164,8 +179,8 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
   if (!(pool > 0)) return { credited: false, reason: "zero_pool" };
 
   const holders = await resolveHolders(agencyId, caseId);
-  // No one currently holds any of this plan's attribution points on this
-  // case — that share of the pool goes uncredited for this event rather
+  // No active team member currently holds one of this plan's global
+  // attribution roles — that share of the pool goes uncredited rather
   // than being redistributed to the remaining shares (see computeSplits).
   const rows = computeSplits(plan, pool, holders).map((entry) => ({
     agencyId,

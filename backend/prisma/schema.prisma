@@ -551,6 +551,7 @@ model Agency {
   feeCategories                  AgencyFeeCategory[]
   caseRoles                      AgencyCaseRole[]
   caseRoleAssignments            CaseRoleAssignment[]
+  teamIncentiveRoleAssignments   TeamIncentiveRoleAssignment[]
   incentivePlans                 IncentivePlan[]
   caseInvoiceCreditCursors       CaseInvoiceCreditCursor[]
   incentiveLedgerEntries         IncentiveLedgerEntry[]
@@ -1062,6 +1063,7 @@ model AgencyCaseRole {
   updatedAt   DateTime              @updatedAt @map("updated_at")
   agency        Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   assignments   CaseRoleAssignment[]
+  teamAssignments TeamIncentiveRoleAssignment[]
   roleShares    IncentivePlanRoleShare[]
   ledgerEntries IncentiveLedgerEntry[]
 
@@ -1305,6 +1307,7 @@ model User {
   caseAssignments                      CaseAssignment[]                @relation("AssignedConsultant")
   assignedCaseAssignments              CaseAssignment[]                @relation("CaseAssignmentActor")
   caseRoleAssignments                  CaseRoleAssignment[]            @relation("CaseRoleAssignmentUser")
+  incentiveRoleAssignments             TeamIncentiveRoleAssignment[]   @relation("TeamIncentiveRoleUser")
   assignedCaseRoleAssignments          CaseRoleAssignment[]            @relation("CaseRoleAssignmentActor")
   createdIncentivePlans                IncentivePlan[]                 @relation("IncentivePlanCreatedByUser")
   incentiveLedgerEntries               IncentiveLedgerEntry[]
@@ -1536,6 +1539,26 @@ model CaseRoleAssignment {
   @@index([agencyId, caseId, status])
   @@index([agencyId, userId, status])
   @@map("case_role_assignments")
+}
+
+// Global incentive attribution configured once on Team Members. These
+// assignments determine who may receive CASE_ROLE shares when they own or
+// collaborate on a case; they do not grant access or alter a login role.
+model TeamIncentiveRoleAssignment {
+  id         String         @id @default(uuid())
+  agencyId   String         @map("agency_id")
+  caseRoleId String         @map("case_role_id")
+  userId     String         @map("user_id")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+  agency     Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseRole   AgencyCaseRole @relation(fields: [caseRoleId], references: [id], onDelete: Cascade)
+  user       User           @relation("TeamIncentiveRoleUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, caseRoleId, userId])
+  @@index([agencyId, caseRoleId])
+  @@index([agencyId, userId])
+  @@map("team_incentive_role_assignments")
 }
 
 model Client {

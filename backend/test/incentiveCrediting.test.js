@@ -65,10 +65,29 @@ test("the payout pool is computed per formulaType, and a share with no current h
   assert.match(service, /const rate = tierRateFor\(plan\.tiers, cumulativeAfterPayment\);/);
 
   // LEAD_OWNER / LEAD_CONVERTER resolve off the case's originating Lead;
-  // CASE_ROLE resolves off active CaseRoleAssignment rows for that role.
+  // CASE_ROLE resolves from active global Team Member assignments.
   assert.match(service, /prisma\.lead\.findFirst\(\{\s*\n\s*where: \{ convertedCaseId: caseId, agencyId \},\s*\n\s*select: \{ ownerUserId: true, conversion: \{ select: \{ convertedById: true \} \} \},/);
-  assert.match(service, /prisma\.caseRoleAssignment\.findMany\(\{\s*\n\s*where: \{ agencyId, caseId, status: "active" \},/);
+  assert.match(service, /prisma\.teamIncentiveRoleAssignment\.findMany\(\{/);
+  assert.match(service, /user: \{ status: "active", memberships: \{ some: \{ agencyId, isActive: true \} \} \}/);
+  assert.match(service, /const caseTeamUserIds = new Set/);
+  assert.match(service, /if \(!caseTeamUserIds\.has\(row\.userId\)\) continue;/);
   assert.match(service, /if \(!userIds\.length\) continue;/);
+});
+
+test("global incentive roles are stored on team members and existing case assignments are carried forward", async () => {
+  const [schema, migration, controller, teamMembers] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260818220000_add_team_incentive_roles/migration.sql"),
+    source("../src/controllers/adminTeamMemberController.js"),
+    source("../../frontend/src/pages/TeamMembers.jsx"),
+  ]);
+  assert.match(schema, /model TeamIncentiveRoleAssignment \{/);
+  assert.match(migration, /INSERT INTO "team_incentive_role_assignments"/);
+  assert.match(migration, /FROM "case_role_assignments"/);
+  assert.match(controller, /incentiveRoleIds/);
+  assert.match(controller, /tx\.teamIncentiveRoleAssignment\.deleteMany/);
+  assert.match(teamMembers, /Incentive roles/);
+  assert.match(teamMembers, /No incentive role/);
 });
 
 test("largest-remainder rounding keeps a share's holders summing exactly to its rounded cent amount", async () => {

@@ -2,7 +2,6 @@ export const caseOptionItems = [
   "Download application",
   "Applicants",
   "Manage Permissions",
-  "Incentive Roles",
   "E-Sign",
   "Archive",
   "Delete",
