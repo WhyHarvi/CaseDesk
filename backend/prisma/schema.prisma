@@ -549,6 +549,8 @@ model Agency {
   caseInvoices                   CaseInvoice[]
   caseManualLedgerEntries        CaseManualLedgerEntry[]
   feeCategories                  AgencyFeeCategory[]
+  caseRoles                      AgencyCaseRole[]
+  caseRoleAssignments            CaseRoleAssignment[]
   paymentScheduleTemplates       PaymentScheduleTemplate[]
   casePaymentSchedules           CasePaymentSchedule[]
   casePaymentInstallments        CasePaymentInstallment[]
@@ -980,6 +982,30 @@ model AgencyFeeCategory {
   @@map("agency_fee_categories")
 }
 
+// Admin-managed vocabulary of case-level incentive roles (e.g. "RCIC",
+// "Case Worker", "Reviewer") — deliberately decoupled from the
+// CaseAssignment/AssignmentType enum, which is load-bearing for case access
+// permissions today. Renaming or adding a role here is a settings change,
+// not a migration.
+model AgencyCaseRole {
+  id          String                @id @default(uuid())
+  agencyId    String                @map("agency_id")
+  code        String
+  name        String
+  description String?
+  isActive    Boolean               @default(true) @map("is_active")
+  isSystem    Boolean               @default(false) @map("is_system")
+  sortOrder   Int                   @default(0) @map("sort_order")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  updatedAt   DateTime              @updatedAt @map("updated_at")
+  agency      Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignments CaseRoleAssignment[]
+
+  @@unique([agencyId, code])
+  @@index([agencyId, isActive, sortOrder])
+  @@map("agency_case_roles")
+}
+
 model AgencyMailSettings {
   id                     String    @id @default(uuid())
   agencyId               String    @unique @map("agency_id")
@@ -1128,6 +1154,8 @@ model User {
   clientUsers                          ClientUser[]
   caseAssignments                      CaseAssignment[]                @relation("AssignedConsultant")
   assignedCaseAssignments              CaseAssignment[]                @relation("CaseAssignmentActor")
+  caseRoleAssignments                  CaseRoleAssignment[]            @relation("CaseRoleAssignmentUser")
+  assignedCaseRoleAssignments          CaseRoleAssignment[]            @relation("CaseRoleAssignmentActor")
   assignedClients                      Client[]                        @relation("AssignedClientUser")
   assignedCases                        Case[]                          @relation("AssignedCaseUser")
   notes                                Note[]                          @relation("AuthoredNotes")
@@ -1330,6 +1358,34 @@ model CaseAssignment {
   @@map("case_assignments")
 }
 
+// Who holds which incentive-attribution role on a case (e.g. this case's
+// RCIC, this case's Case Worker). Deliberately separate from
+// CaseAssignment, which governs case access/permissions — incentive
+// attribution and case access are different concerns that can evolve
+// independently (see AgencyCaseRole).
+model CaseRoleAssignment {
+  id           String           @id @default(uuid())
+  agencyId     String           @map("agency_id")
+  caseId       String           @map("case_id")
+  caseRoleId   String           @map("case_role_id")
+  userId       String           @map("user_id")
+  assignedById String?          @map("assigned_by")
+  status       AssignmentStatus @default(active)
+  assignedAt   DateTime         @default(now()) @map("assigned_at")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  agency       Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case         Case             @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  caseRole     AgencyCaseRole   @relation(fields: [caseRoleId], references: [id], onDelete: Cascade)
+  user         User             @relation("CaseRoleAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy   User?            @relation("CaseRoleAssignmentActor", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([agencyId, caseId, caseRoleId, userId])
+  @@index([agencyId, caseId, status])
+  @@index([agencyId, userId, status])
+  @@map("case_role_assignments")
+}
+
 model Client {
   id                         String                       @id @default(uuid())
   agencyId                   String                       @map("agency_id")
@@ -1439,6 +1495,7 @@ model Case {
   immigrationProfileAccesses   ImmigrationProfileCaseAccess[]
   accountStatements            AccountStatementGeneration[]
   assignments                  CaseAssignment[]
+  roleAssignments              CaseRoleAssignment[]
   convertedFromLead            Lead?                          @relation("LeadConvertedCase")
   earlyForLead                 Lead?                          @relation("LeadEarlyCase")
   leadConversions              LeadConversion[]

@@ -12,6 +12,7 @@ import {
   PhoneCall,
   ShieldCheck,
   UserRound,
+  UserSquare2,
   Users,
   Workflow,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import AutomatedRemindersSettingsPanel from "../components/settings/AutomatedRem
 import SecuritySettingsPanel from "../components/settings/SecuritySettingsPanel";
 import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettingsPanel";
 import PortalAccessSettingsPanel from "../components/settings/PortalAccessSettingsPanel";
+import CaseRolesSettingsPanel from "../components/settings/CaseRolesSettingsPanel";
 
 const adminSettingsItems = [
   {
@@ -106,6 +108,14 @@ const adminSettingsItems = [
     title: "Document Templates",
     subtitle:
       "Organize reusable templates for case documents and workspace forms.",
+  },
+  {
+    id: "case-roles",
+    label: "Case Roles",
+    icon: UserSquare2,
+    title: "Case Roles",
+    subtitle:
+      "Manage who can be credited on a case — e.g. RCIC, Case Worker, Reviewer.",
   },
   {
     id: "payments-fees",
@@ -936,6 +946,8 @@ export default function Settings() {
                     <CaseWorkflowSettingsPanel />
                   ) : isAdmin && activeSection === "document-templates" ? (
                     <DocumentTemplatesSettingsPanel />
+                  ) : isAdmin && activeSection === "case-roles" ? (
+                    <CaseRolesSettingsPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}

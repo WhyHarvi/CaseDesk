@@ -38,6 +38,7 @@ import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
+import caseRoleRoutes from "./routes/caseRoleRoutes.js";
 import caseBillingRetainerRoutes from "./routes/caseBillingRetainerRoutes.js";
 import agencyBillingSettingsRoutes from "./routes/agencyBillingSettingsRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
@@ -240,6 +241,13 @@ app.use(
   staffUser,
   requirePortalPage("cases"),
   caseRoutes,
+);
+app.use(
+  "/api/case-roles",
+  requireAuth,
+  staffUser,
+  requirePortalPage("cases"),
+  caseRoleRoutes,
 );
 app.use(
   "/api/payment-schedules",
