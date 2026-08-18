@@ -105,6 +105,21 @@ test("clients converted from a Case Easy import are labeled everywhere a client 
   assert.match(profile, /client\.caseEasyImportContacts\?\.length \? <CaseEasyOriginBadge \/> : null/);
 });
 
+test("the client directory distinguishes consultation activity from a profile with no activity", async () => {
+  const [controller, clientsPage] = await Promise.all([
+    source("../src/controllers/clientController.js"),
+    source("../../frontend/src/pages/Clients.jsx"),
+  ]);
+
+  assert.match(controller, /appointments: \{\s*orderBy: \{ startsAt: "desc" \},\s*take: 1/);
+  assert.match(controller, /sessionType: \{ select: \{ name: true \} \}/);
+  assert.match(clientsPage, /latestAppointment \? `\$\{isConsultation \? "Consultation" : "Appointment"\} \$\{appointmentStatus\}`/);
+  assert.match(clientsPage, /hasBillingActivity \? "Billing activity"/);
+  assert.match(clientsPage, /relatedActivityCount > 0 \? "Client activity"/);
+  assert.match(clientsPage, /\|\| "No case"/);
+  assert.match(clientsPage, /client\.relationshipLabel/);
+});
+
 test("front desk client intake separates consultation payments from professional fees", async () => {
   const [clientsPage, calendarPage, casesPage, profile, billingCard, entrySheet, caseController] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),

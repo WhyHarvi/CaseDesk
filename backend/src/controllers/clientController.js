@@ -42,6 +42,20 @@ const include = {
   // take: 1 is enough to answer "did this client come from a Case Easy
   // conversion" — the UI only needs a boolean, not the actual staging rows.
   caseEasyImportContacts: { select: { id: true }, take: 1 },
+  appointments: {
+    orderBy: { startsAt: "desc" },
+    take: 1,
+    select: {
+      id: true,
+      subject: true,
+      status: true,
+      startsAt: true,
+      sessionType: { select: { name: true } },
+    },
+  },
+  _count: {
+    select: { notes: true, followUps: true, clientDocuments: true },
+  },
   cases: {
     where: { deletedAt: null },
     orderBy: { updatedAt: "desc" },

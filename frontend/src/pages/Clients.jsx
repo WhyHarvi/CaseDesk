@@ -214,8 +214,19 @@ function matchesView(client, view) {
 
 function buildClientViewModel(client) {
   const currentCase = client.cases?.[0] || null;
-  const caseType = currentCase?.caseType || "No case";
-  const stage = currentCase?.stage || client.status || "Lead";
+  const latestAppointment = client.appointments?.[0] || null;
+  const appointmentName = latestAppointment?.sessionType?.name || latestAppointment?.subject || "Appointment";
+  const isConsultation = /consult/i.test(appointmentName);
+  const appointmentStatus = latestAppointment?.status === "NoShow" ? "no-show" : String(latestAppointment?.status || "").toLowerCase();
+  const relatedActivityCount = Number(client._count?.notes || 0) + Number(client._count?.followUps || 0) + Number(client._count?.clientDocuments || 0);
+  const hasBillingActivity = Number(client.billingSummary?.totalCharges || 0) > 0;
+  const relationshipLabel = currentCase?.caseType
+    || (latestAppointment ? `${isConsultation ? "Consultation" : "Appointment"} ${appointmentStatus}` : null)
+    || (hasBillingActivity ? "Billing activity" : null)
+    || (relatedActivityCount > 0 ? "Client activity" : null)
+    || "No case";
+  const caseType = currentCase?.caseType || "";
+  const stage = currentCase?.stage || (latestAppointment ? (latestAppointment.status === "NoShow" ? "No-show" : latestAppointment.status) : client.status || "Lead");
   const nextAction = currentCase?.nextAction || "No next action";
   const missingDocs = (currentCase?.clientDocuments || []).filter((document) => ["Requested", "ChangesRequested"].includes(document.status)).length;
   const legacyPaymentTotals = (currentCase?.payments || []).reduce((summary, paymentItem) => ({
@@ -232,6 +243,7 @@ function buildClientViewModel(client) {
   return {
     ...client,
     caseType,
+    relationshipLabel,
     stage,
     missingDocs,
     payment,
@@ -815,7 +827,7 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
           <p className="text-slate-400">Case type</p>
-          <p className="mt-1 font-medium text-slate-700">{client.caseType}</p>
+          <p className="mt-1 font-medium text-slate-700">{client.relationshipLabel}</p>
         </div>
         <div>
           <p className="text-slate-400">Assigned</p>
@@ -1006,7 +1018,7 @@ export default function Clients() {
         client.phone,
         client.phoneNormalized,
         client.fileNumber,
-        client.caseType,
+        client.relationshipLabel,
         client.nextAction,
       ]
         .filter(Boolean)
@@ -1055,7 +1067,7 @@ export default function Clients() {
     staffFilter !== "All Staff";
 
   const caseTypeOptions = useMemo(
-    () => ["All Case Types", ...new Set(enrichedClients.map((client) => client.caseType).filter((value) => value && value !== "No case"))],
+    () => ["All Case Types", ...new Set(enrichedClients.filter((client) => client.hasCase).map((client) => client.caseType).filter(Boolean))],
     [enrichedClients]
   );
 
@@ -1633,7 +1645,7 @@ export default function Clients() {
                         </td>
                         <td className="px-4 py-5">
                           <span className={`${pillClassName} bg-slate-100 text-slate-700`}>
-                            {client.caseType}
+                            {client.relationshipLabel}
                           </span>
                         </td>
                         <td className="px-4 py-5">
