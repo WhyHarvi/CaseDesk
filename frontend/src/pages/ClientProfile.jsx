@@ -1082,7 +1082,7 @@ export default function ClientProfile() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ ...spring, delay: 0.08 }}
               className={cx(glass, "h-fit self-start flex flex-col p-6")}
-              style={notesPanelHeight ? { height: "fit-content", maxHeight: `${notesPanelHeight}px` } : { height: "fit-content" }}
+              style={notesPanelHeight ? { height: `${notesPanelHeight}px` } : { height: "fit-content" }}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">

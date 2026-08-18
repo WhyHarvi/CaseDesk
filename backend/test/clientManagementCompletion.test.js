@@ -134,7 +134,10 @@ test("the client profile shows an attributed activity timeline below QuickBooks"
   assert.ok(profile.indexOf("<QuickBooksSyncCard") < profile.indexOf(">Client activity</h2>"));
   assert.match(profile, /ref=\{notesPanelRef\}/);
   assert.match(profile, /new ResizeObserver\(updateHeight\)/);
-  assert.match(profile, /maxHeight: `\$\{notesPanelHeight\}px`/);
+  // A maxHeight-only cap let a short activity list collapse below Notes'
+  // height instead of matching it — this must be a real height, not a
+  // ceiling, once Notes' height is known.
+  assert.match(profile, /style=\{notesPanelHeight \? \{ height: `\$\{notesPanelHeight\}px` \} : \{ height: "fit-content" \}\}/);
   assert.match(profile, /h-fit self-start flex flex-col/);
 });
 
