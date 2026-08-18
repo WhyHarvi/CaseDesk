@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronDown, Loader2, Plus, Sparkles, Trash2, Wallet2, X } from "lucide-react";
+import { ArrowRight, Calculator, Check, ChevronDown, Loader2, Plus, Sparkles, Trash2, Wallet2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCaseRoles } from "../../api/caseRoleApi";
 import { activateIncentivePlan, createIncentivePlan, deleteIncentivePlan, getIncentivePlans, updateIncentivePlan } from "../../api/incentivePlanApi";
@@ -14,11 +14,11 @@ const formulaLabels = {
 };
 
 function blankShare() {
-  return { attributionKind: "CASE_ROLE", caseRoleId: "", sharePercent: "" };
+  return { attributionKind: "CASE_ROLE", caseRoleId: "", sharePercent: "100" };
 }
 
 function blankTier() {
-  return { minCumulativeAmount: "", rate: "" };
+  return { minCumulativeAmount: "0", rate: "" };
 }
 
 function blankDraft() {
@@ -35,11 +35,18 @@ function TierEditor({ tiers, onChange }) {
   }
   return (
     <div className="space-y-2">
-      <p className="text-[11px] font-medium text-slate-500">Tiers — rate applied depends on the case's cumulative collected revenue after the payment</p>
+      <div>
+        <p className="text-xs font-semibold text-slate-700">Revenue tiers</p>
+        <p className="mt-0.5 text-[11px] leading-4 text-slate-500">The payment uses the rate for the case&apos;s total collected revenue after that payment. Keep the first tier at $0 so every collection qualifies.</p>
+      </div>
       {tiers.map((tier, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <input type="number" min="0" step="0.01" value={tier.minCumulativeAmount} onChange={(event) => update(index, "minCumulativeAmount", event.target.value)} placeholder="Starts at $" className={inputClass} />
-          <input type="number" min="0" max="100" step="0.01" value={tier.rate} onChange={(event) => update(index, "rate", event.target.value)} placeholder="Rate %" className={inputClass} />
+        <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+          <label className="text-[11px] font-medium text-slate-500">Collected revenue starts at
+            <span className="relative mt-1.5 block"><span className="pointer-events-none absolute left-3 top-2.5 text-sm text-slate-400">$</span><input aria-label={`Tier ${index + 1} starting revenue`} type="number" min="0" step="0.01" value={tier.minCumulativeAmount} onChange={(event) => update(index, "minCumulativeAmount", event.target.value)} className={`${inputClass} pl-7`} /></span>
+          </label>
+          <label className="text-[11px] font-medium text-slate-500">Incentive rate
+            <span className="relative mt-1.5 block"><input aria-label={`Tier ${index + 1} incentive rate`} type="number" min="0" max="100" step="0.01" value={tier.rate} onChange={(event) => update(index, "rate", event.target.value)} placeholder="5" className={`${inputClass} pr-8`} /><span className="pointer-events-none absolute right-3 top-2.5 text-sm text-slate-400">%</span></span>
+          </label>
           <button type="button" onClick={() => onChange(tiers.filter((_, i) => i !== index))} disabled={tiers.length <= 1} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><X className="h-4 w-4" /></button>
         </div>
       ))}
@@ -56,23 +63,29 @@ function RoleShareEditor({ roleShares, caseRoles, onChange }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium text-slate-500">Who gets credited, and how the payout splits between them</p>
-        <span className={`text-xs font-semibold ${Math.abs(total - 100) < 0.01 ? "text-emerald-600" : "text-rose-600"}`}>{total.toFixed(2)}% of 100%</span>
+        <div><p className="text-xs font-semibold text-slate-700">Credit recipients</p><p className="mt-0.5 text-[11px] text-slate-500">Split the incentive pool, not the client payment. Shares must total 100%.</p></div>
+        <span className={`shrink-0 text-xs font-semibold ${Math.abs(total - 100) < 0.01 ? "text-emerald-600" : "text-rose-600"}`}>{total.toFixed(2)}% allocated</span>
       </div>
       {roleShares.map((share, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <select value={share.attributionKind} onChange={(event) => update(index, "attributionKind", event.target.value)} className={inputClass}>
-            <option value="CASE_ROLE">Case role…</option>
+        <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_110px_auto] sm:items-end">
+          <label className="text-[11px] font-medium text-slate-500">Credit based on
+          <select value={share.attributionKind} onChange={(event) => update(index, "attributionKind", event.target.value)} className={`mt-1.5 ${inputClass}`}>
+            <option value="CASE_ROLE">Assigned case role</option>
             <option value="LEAD_OWNER">Lead owner</option>
             <option value="LEAD_CONVERTER">Lead converter</option>
           </select>
+          </label>
           {share.attributionKind === "CASE_ROLE" ? (
-            <select value={share.caseRoleId} onChange={(event) => update(index, "caseRoleId", event.target.value)} className={inputClass}>
-              <option value="">Choose a role</option>
+            <label className="text-[11px] font-medium text-slate-500">Case role
+            <select value={share.caseRoleId} onChange={(event) => update(index, "caseRoleId", event.target.value)} className={`mt-1.5 ${inputClass}`}>
+              <option value="">Select role</option>
               {caseRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
             </select>
-          ) : null}
-          <input type="number" min="0" max="100" step="0.01" value={share.sharePercent} onChange={(event) => update(index, "sharePercent", event.target.value)} placeholder="Share %" className={`${inputClass} max-w-28`} />
+            </label>
+          ) : <span className="hidden sm:block" />}
+          <label className="text-[11px] font-medium text-slate-500">Pool share
+            <span className="relative mt-1.5 block"><input type="number" min="0" max="100" step="0.01" value={share.sharePercent} onChange={(event) => update(index, "sharePercent", event.target.value)} className={`${inputClass} pr-8`} /><span className="pointer-events-none absolute right-3 top-2.5 text-sm text-slate-400">%</span></span>
+          </label>
           <button type="button" onClick={() => onChange(roleShares.filter((_, i) => i !== index))} disabled={roleShares.length <= 1} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><X className="h-4 w-4" /></button>
         </div>
       ))}
@@ -81,9 +94,43 @@ function RoleShareEditor({ roleShares, caseRoles, onChange }) {
   );
 }
 
+function incentivePoolExample(draft, collected = 1000) {
+  if (draft.formulaType === "FLAT_PER_PAYMENT") return Number(draft.flatAmount) || 0;
+  if (draft.formulaType === "PERCENT_OF_PAYMENT") return collected * (Number(draft.percentRate) || 0) / 100;
+  const tier = [...draft.tiers]
+    .filter((item) => Number(item.minCumulativeAmount) <= collected && Number(item.rate) > 0)
+    .sort((left, right) => Number(right.minCumulativeAmount) - Number(left.minCumulativeAmount))[0];
+  return collected * (Number(tier?.rate) || 0) / 100;
+}
+
+function PlanExample({ draft, caseRoles }) {
+  const collected = 1000;
+  const pool = incentivePoolExample(draft, collected);
+  const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" });
+  const recipientName = (share) => share.attributionKind === "LEAD_OWNER"
+    ? "Lead owner"
+    : share.attributionKind === "LEAD_CONVERTER"
+      ? "Lead converter"
+      : caseRoles.find((role) => role.id === share.caseRoleId)?.name || "Select a case role";
+  return (
+    <div className="border-t border-slate-200 pt-3">
+      <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><Calculator className="h-4 w-4 text-emerald-600" /> Example when {money.format(collected)} is collected</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium text-slate-600">{money.format(collected)} payment</span><ArrowRight className="h-3.5 w-3.5 text-slate-300" /><span className="font-semibold text-emerald-700">{money.format(pool)} incentive pool</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        {draft.roleShares.map((share, index) => <span key={index}>{recipientName(share)}: <strong className="text-slate-700">{money.format(pool * (Number(share.sharePercent) || 0) / 100)}</strong></span>)}
+      </div>
+      <p className="mt-2 text-[11px] leading-4 text-slate-400">Credit is created only when money is collected. A case-role share is credited only when someone holds that role on the case.</p>
+    </div>
+  );
+}
+
 function PlanFormFields({ draft, setDraft, caseRoles }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
+      <section>
+        <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">1</span><div><p className="text-xs font-semibold text-slate-800">Name and scope</p><p className="text-[11px] text-slate-500">Leave case type blank to make this the fallback for every case without a more specific plan.</p></div></div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block text-[11px] font-medium text-slate-500">Plan name
           <input required value={draft.name} onChange={(event) => setDraft((c) => ({ ...c, name: event.target.value }))} placeholder="e.g. Study Permit consultants" className={`mt-1.5 ${inputClass}`} />
@@ -92,6 +139,9 @@ function PlanFormFields({ draft, setDraft, caseRoles }) {
           <input value={draft.caseType} onChange={(event) => setDraft((c) => ({ ...c, caseType: event.target.value }))} placeholder="e.g. Study Permit" className={`mt-1.5 ${inputClass}`} />
         </label>
       </div>
+      </section>
+      <section className="border-t border-slate-200 pt-4">
+      <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">2</span><div><p className="text-xs font-semibold text-slate-800">Calculate the incentive pool</p><p className="text-[11px] text-slate-500">This determines the total credit created by each collected payment.</p></div></div>
       <label className="block text-[11px] font-medium text-slate-500">Formula
         <select value={draft.formulaType} onChange={(event) => setDraft((c) => ({ ...c, formulaType: event.target.value }))} className={`mt-1.5 ${inputClass}`}>
           {Object.entries(formulaLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -108,7 +158,12 @@ function PlanFormFields({ draft, setDraft, caseRoles }) {
       ) : (
         <TierEditor tiers={draft.tiers} onChange={(tiers) => setDraft((c) => ({ ...c, tiers }))} />
       )}
+      </section>
+      <section className="border-t border-slate-200 pt-4">
+      <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">3</span><div><p className="text-xs font-semibold text-slate-800">Split the pool</p><p className="text-[11px] text-slate-500">Choose which attributed people receive the incentive credit.</p></div></div>
       <RoleShareEditor roleShares={draft.roleShares} caseRoles={caseRoles} onChange={(roleShares) => setDraft((c) => ({ ...c, roleShares }))} />
+      </section>
+      <PlanExample draft={draft} caseRoles={caseRoles} />
     </div>
   );
 }
@@ -255,7 +310,7 @@ export default function IncentivePlansSettingsPanel() {
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><Wallet2 className="h-4 w-4" /></span>
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Incentive plans</h3>
-            <p className="text-xs text-slate-500">Formulas that turn collected payments into incentive credit, split across whoever's attributed on a case. Edit the numbers anytime.</p>
+            <p className="text-xs text-slate-500">Decide how collected payments create incentive credit and who receives it.</p>
           </div>
         </div>
         <button type="button" onClick={() => setCreating((v) => !v)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white">
