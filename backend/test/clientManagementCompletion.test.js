@@ -132,13 +132,16 @@ test("the client profile shows an attributed activity timeline below QuickBooks"
   assert.match(profile, /<h2[^>]*>Client activity<\/h2>/);
   assert.match(profile, /clientActivities\.map\(\(activity, index\)/);
   assert.ok(profile.indexOf("<QuickBooksSyncCard") < profile.indexOf(">Client activity</h2>"));
-  assert.match(profile, /ref=\{notesPanelRef\}/);
-  assert.match(profile, /new ResizeObserver\(updateHeight\)/);
-  // A maxHeight-only cap let a short activity list collapse below Notes'
-  // height instead of matching it — this must be a real height, not a
-  // ceiling, once Notes' height is known.
-  assert.match(profile, /style=\{notesPanelHeight \? \{ height: `\$\{notesPanelHeight\}px` \} : \{ height: "fit-content" \}\}/);
-  assert.match(profile, /h-fit self-start flex flex-col/);
+  // Notes and Activity aren't even in the same grid column (Notes sits in
+  // the wide left/main column, Activity in the narrow right/sidebar
+  // column, each stacked among unrelated sibling cards) — matching
+  // Activity's height to Notes' measured height via a ResizeObserver could
+  // never produce real visual alignment between two cards that aren't
+  // vertically adjacent, and left Activity collapsing to fit a short
+  // activity list. A plain CSS min-height is the real fix.
+  assert.doesNotMatch(profile, /notesPanelRef/);
+  assert.doesNotMatch(profile, /notesPanelHeight/);
+  assert.match(profile, /flex min-h-\[320px\] flex-col p-6/);
 });
 
 test("front desk client intake separates consultation payments from professional fees", async () => {

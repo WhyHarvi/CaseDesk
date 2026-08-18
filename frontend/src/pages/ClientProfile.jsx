@@ -20,7 +20,7 @@ import {
   UserRoundCheck,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
@@ -398,22 +398,10 @@ export default function ClientProfile() {
   const [assignmentFeedback, setAssignmentFeedback] = useState(null);
   const initialChatConversationId = new URLSearchParams(location.search).get("conversation");
   const [chatOpen, setChatOpen] = useState(Boolean(initialChatConversationId));
-  const notesPanelRef = useRef(null);
-  const [notesPanelHeight, setNotesPanelHeight] = useState(null);
 
   useEffect(() => {
     if (initialChatConversationId) setChatOpen(true);
   }, [initialChatConversationId]);
-
-  useEffect(() => {
-    const element = notesPanelRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return undefined;
-    const updateHeight = () => setNotesPanelHeight(Math.round(element.getBoundingClientRect().height));
-    updateHeight();
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [canAccessInternalNotes, profile?.client?.id]);
 
   const isEditingNote = Boolean(editingNote);
   const client = profile?.client || null;
@@ -922,7 +910,7 @@ export default function ClientProfile() {
             ) : null}
 
             {canAccessInternalNotes ? (
-              <motion.article ref={notesPanelRef} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.06 }} className={cx(glass, "p-6")}>
+              <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.06 }} className={cx(glass, "p-6")}>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-50 text-violet-600 ring-1 ring-violet-100">
@@ -1082,8 +1070,7 @@ export default function ClientProfile() {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ ...spring, delay: 0.08 }}
-              className={cx(glass, "h-fit self-start flex flex-col p-6")}
-              style={notesPanelHeight ? { height: `${notesPanelHeight}px` } : { height: "fit-content" }}
+              className={cx(glass, "flex min-h-[320px] flex-col p-6")}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
