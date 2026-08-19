@@ -93,6 +93,8 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.match(bookingService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return hold;/);
   assert.match(invoiceService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return updated;/);
   assert.match(bookingService, /if \(paymentReference && method !== "Cash"\)/);
+  assert.match(bookingService, /const bookingPaymentReference = method === "Cash" \? null : paymentReference;/);
+  assert.match(bookingService, /manualPaymentReference: bookingPaymentReference/);
   assert.match(invoiceService, /if \(method !== "Cash"\) await assertManualPaymentReferenceAvailable/);
   assert.match(paymentsPage, /timeZone: "UTC"/);
   assert.match(routes, /approvals\/:id\/approve/);

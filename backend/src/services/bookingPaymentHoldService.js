@@ -905,6 +905,7 @@ export async function recordWalkInManualPayment(agencyId, {
     throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   }
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
+  const bookingPaymentReference = method === "Cash" ? null : paymentReference;
   const transactionDate = normalizeManualPaymentDate(paymentDate);
   if (method !== "Cash" && !paymentReference) {
     throw createHttpError(
@@ -1023,7 +1024,7 @@ export async function recordWalkInManualPayment(agencyId, {
         clientId: appointment.clientId || null,
         createdById: actorUserId,
         paymentMethod: method,
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
       },
     });
@@ -1033,7 +1034,7 @@ export async function recordWalkInManualPayment(agencyId, {
       data: {
         status: "RecordingPayment",
         paymentMethod: method,
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
         paymentError: null,
         clientId: appointment.clientId || hold.clientId,
@@ -1056,7 +1057,7 @@ export async function recordWalkInManualPayment(agencyId, {
         status: "Paid",
         paidAt: transactionDate?.paidAt || new Date(),
         paymentMethod: "Cash",
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
         paymentError: null,
         qbPaymentId: null,
@@ -1158,7 +1159,7 @@ export async function recordWalkInManualPayment(agencyId, {
         paidAt: transactionDate?.paidAt || new Date(),
         qbPaymentId: payment.id,
         paymentMethod: method,
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         manualPaymentNote: String(note || "").trim().slice(0, 500) || null,
         paymentError: null,
         clientId: appointment.clientId || hold.clientId,
@@ -1195,7 +1196,7 @@ export async function recordWalkInManualPayment(agencyId, {
       data: {
         status: "PaymentFailed",
         paymentMethod: method,
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         paymentError,
       },
     }).catch(() => {});
@@ -1248,6 +1249,7 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
     throw createHttpError(400, "Choose a supported payment method.", "VALIDATION_ERROR");
   }
   const paymentReference = String(transactionReference || "").trim().slice(0, 100) || null;
+  const bookingPaymentReference = method === "Cash" ? null : paymentReference;
   if (method !== "Cash" && !paymentReference) {
     throw createHttpError(400, method === "ETransfer" ? "Enter the e-transfer transaction number." : `Enter the ${MANUAL_PAYMENT_METHOD_LABELS[method].toLowerCase()} reference.`, "VALIDATION_ERROR");
   }
@@ -1284,7 +1286,7 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
       where: { id: hold.id },
       data: {
         paymentMethod: "Cash",
-        manualPaymentReference: paymentReference,
+        manualPaymentReference: bookingPaymentReference,
         ...(transactionDate ? { paidAt: transactionDate.paidAt } : {}),
       },
     });
@@ -1335,7 +1337,7 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
     data: {
       qbPaymentId,
       paymentMethod: method,
-      manualPaymentReference: paymentReference,
+      manualPaymentReference: bookingPaymentReference,
       ...(transactionDate ? { paidAt: transactionDate.paidAt } : {}),
     },
   });
