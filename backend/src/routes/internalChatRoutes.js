@@ -16,6 +16,7 @@ import {
   removeParticipant,
   serveThreadAttachment,
   serveThreadAvatar,
+  serveStaffAvatar,
   toggleReaction,
   updateMessage,
   updateThread,
@@ -25,6 +26,7 @@ import {
 const router = Router();
 
 router.get("/colleagues", asyncHandler(listMyColleagues));
+router.get("/users/:userId/avatar", asyncHandler(serveStaffAvatar));
 router.get("/threads", asyncHandler(listThreads));
 router.post("/threads", rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(createThread));
 router.get("/threads/:id", asyncHandler(getThread));

@@ -1644,6 +1644,7 @@ model User {
   jobTitle                             String?                         @map("job_title")
   avatarStorageKey                     String?                         @map("avatar_storage_key")
   avatarMimeType                       String?                         @map("avatar_mime_type")
+  avatarPreset                         String?                         @map("avatar_preset")
   licenseNumber                        String?                         @map("license_number")
   // Representative-of-record fields for government forms (IMM 5476 and
   // similar). Deliberately on User, not ConsultantProfile — either an

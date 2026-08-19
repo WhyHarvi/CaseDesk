@@ -28,6 +28,7 @@ import PortalAccessCard from "../components/clients/PortalAccessCard";
 import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
 import CaseEasyReportsCard from "../components/clients/CaseEasyReportsCard";
 import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
+import StaffAvatar from "../components/staff/StaffAvatar";
 import StatementOfAccountOverlay from "../components/statements/StatementOfAccountOverlay";
 import { useAuth } from "../auth/AuthContext";
 import ClientAppointmentsCard from "../components/appointments/ClientAppointmentsCard";
@@ -1000,7 +1001,9 @@ export default function ClientProfile() {
               <div className="mt-5">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Assigned consultant</p>
                 {canReassignClient ? (
-                  <div className="mt-1.5">
+                  <div className="mt-1.5 flex items-center gap-2.5">
+                    {client.assignedUser ? <StaffAvatar user={client.assignedUser} alt={`${client.assignedUser.fullName} profile`} className="h-9 w-9 shrink-0" /> : null}
+                    <div className="min-w-0 flex-1">
                     <div className="relative">
                       <UserRoundCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                       <select
@@ -1027,9 +1030,13 @@ export default function ClientProfile() {
                         {assignmentFeedback.message}
                       </p>
                     ) : null}
+                    </div>
                   </div>
                 ) : (
-                  <p className="mt-1 text-sm font-medium text-slate-800">{client.assignedUser?.fullName || "Unassigned"}</p>
+                  <div className="mt-1.5 flex items-center gap-2.5">
+                    {client.assignedUser ? <StaffAvatar user={client.assignedUser} alt={`${client.assignedUser.fullName} profile`} className="h-9 w-9 shrink-0" /> : null}
+                    <p className="text-sm font-medium text-slate-800">{client.assignedUser?.fullName || "Unassigned"}</p>
+                  </div>
                 )}
               </div>
 

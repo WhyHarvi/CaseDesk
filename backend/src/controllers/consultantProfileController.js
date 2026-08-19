@@ -5,6 +5,7 @@ import { AVATAR_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFil
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
+import { avatarPresetBuffer, normalizeAvatarPreset, resolvedAvatarPreset } from "../services/staffAvatarPresetService.js";
 
 const profileSelect = {
   id: true,
@@ -13,6 +14,8 @@ const profileSelect = {
   phone: true,
   jobTitle: true,
   avatarStorageKey: true,
+  avatarPreset: true,
+  role: true,
   consultantProfiles: {
     select: { specializations: true },
   },
@@ -26,13 +29,15 @@ function publicProfile(user, stats = undefined) {
     phone: user.phone,
     jobTitle: user.jobTitle,
     specializations: user.consultantProfiles?.[0]?.specializations || [],
-    hasAvatar: Boolean(user.avatarStorageKey),
+    hasAvatar: true,
+    hasUploadedAvatar: Boolean(user.avatarStorageKey),
+    avatarPreset: resolvedAvatarPreset(user),
     ...(stats ? { stats } : {}),
   };
 }
 
 function profileDeploymentError(error) {
-  if (error?.code === "P2022" && /avatar_(storage_key|mime_type)/i.test(String(error?.meta?.column || error.message))) {
+  if (error?.code === "P2022" && /avatar_(storage_key|mime_type|preset)/i.test(String(error?.meta?.column || error.message))) {
     return createHttpError(503, "Profile customization is waiting for the latest database migration. Run `npx prisma migrate deploy` on the backend and try again.", "PROFILE_MIGRATION_REQUIRED");
   }
   return error;
@@ -82,13 +87,13 @@ async function currentUser(req) {
   let user;
   try {
     user = await prisma.user.findFirst({
-      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: "consultant" },
+      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
       select: profileSelect,
     });
   } catch (error) {
     throw profileDeploymentError(error);
   }
-  if (!user) throw createHttpError(404, "Consultant profile not found.", "NOT_FOUND");
+  if (!user) throw createHttpError(404, "Staff profile not found.", "NOT_FOUND");
   return user;
 }
 
@@ -126,6 +131,8 @@ export async function updateMyProfile(req, res) {
   const phone = optionalText(req.body.phone, "Phone", 40);
   const jobTitle = optionalText(req.body.jobTitle, "Job title", 100);
   const specializations = parseSpecializations(req.body.specializations ?? []);
+  const avatarPreset = normalizeAvatarPreset(req.body.avatarPreset) || resolvedAvatarPreset(existing);
+  const removeUploadedAvatar = String(req.body.removeUploadedAvatar || "") === "true" && !req.file;
   let nextAvatar = null;
 
   if (req.file) {
@@ -137,16 +144,20 @@ export async function updateMyProfile(req, res) {
 
   try {
     const user = await prisma.$transaction(async (tx) => {
-      await tx.consultantProfile.update({
-        where: { agencyId_userId: { agencyId: req.auth.agencyId, userId: req.auth.userId } },
-        data: { specializations },
-      });
+      if (existing.role === "consultant") {
+        await tx.consultantProfile.update({
+          where: { agencyId_userId: { agencyId: req.auth.agencyId, userId: req.auth.userId } },
+          data: { specializations },
+        });
+      }
       return tx.user.update({
         where: { id: req.auth.userId },
         data: {
           fullName,
           phone,
           jobTitle,
+          avatarPreset,
+          ...(removeUploadedAvatar ? { avatarStorageKey: null, avatarMimeType: null } : {}),
           ...(nextAvatar ? { avatarStorageKey: nextAvatar.storageKey, avatarMimeType: nextAvatar.mimeType } : {}),
         },
         select: profileSelect,
@@ -155,6 +166,7 @@ export async function updateMyProfile(req, res) {
     if (nextAvatar && existing.avatarStorageKey !== nextAvatar.storageKey) {
       await removeStoredAvatar(existing.avatarStorageKey);
     }
+    if (removeUploadedAvatar) await removeStoredAvatar(existing.avatarStorageKey);
     await recordActivity({
       agencyId: req.auth.agencyId,
       userId: req.auth.userId,
@@ -174,17 +186,19 @@ export async function getMyAvatar(req, res) {
   let user;
   try {
     user = await prisma.user.findFirst({
-      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: "consultant" },
-      select: { avatarStorageKey: true, avatarMimeType: true },
+      where: { id: req.auth.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
+      select: { id: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true },
     });
   } catch (error) {
     throw profileDeploymentError(error);
   }
-  if (!user?.avatarStorageKey) throw createHttpError(404, "No profile image is available.", "NOT_FOUND");
-  const buffer = await downloadStorageFile(AVATAR_BUCKET, user.avatarStorageKey, { allowMissing: true });
-  if (!buffer) throw createHttpError(404, "The profile image could not be found.", "NOT_FOUND");
+  if (!user) throw createHttpError(404, "No profile image is available.", "NOT_FOUND");
+  const uploaded = user.avatarStorageKey
+    ? await downloadStorageFile(AVATAR_BUCKET, user.avatarStorageKey, { allowMissing: true })
+    : null;
+  const buffer = uploaded || await avatarPresetBuffer(resolvedAvatarPreset(user));
   res.set("Cache-Control", "private, max-age=300");
-  res.type(user.avatarMimeType || "application/octet-stream");
+  res.type(uploaded ? user.avatarMimeType || "application/octet-stream" : "image/png");
   res.send(buffer);
 }
 
@@ -195,5 +209,5 @@ export async function deleteMyAvatar(req, res) {
     data: { avatarStorageKey: null, avatarMimeType: null },
   });
   await removeStoredAvatar(existing.avatarStorageKey);
-  res.status(204).send();
+  res.json({ success: true, data: { avatarPreset: resolvedAvatarPreset(existing), hasAvatar: true, hasUploadedAvatar: false } });
 }

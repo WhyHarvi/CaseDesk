@@ -6,6 +6,7 @@ import { AVATAR_BUCKET, DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile,
 import { broadcastInternalChatMessage, getRealtimeClientConfig } from "../services/supabaseRealtimeService.js";
 import { CHAT_ATTACH_GRACE_MS, storeInternalChatAttachment } from "../services/internalChatAttachmentStorage.js";
 import { notifyUsers } from "../services/notificationService.js";
+import { avatarPresetBuffer, resolvedAvatarPreset } from "../services/staffAvatarPresetService.js";
 
 const staffRoles = new Set(["admin", "consultant", "frontdesk"]);
 
@@ -21,7 +22,7 @@ function pagination(query, defaultLimit = 50) {
   return { page, limit, skip: (page - 1) * limit };
 }
 
-const colleagueSelect = { id: true, fullName: true, email: true, role: true, jobTitle: true };
+const colleagueSelect = { id: true, fullName: true, email: true, role: true, jobTitle: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true };
 
 // A small fixed set, tapback-style (like iMessage's own reaction model)
 // rather than a full emoji-picker library.
@@ -119,7 +120,7 @@ export async function listThreads(req, res) {
         id: row.thread.id,
         isGroup: row.thread.isGroup,
         name: displayName(row.thread, others),
-        hasAvatar: Boolean(row.thread.avatarStorageKey),
+        hasAvatar: row.thread.isGroup ? Boolean(row.thread.avatarStorageKey) : Boolean(others[0]),
         participants: others,
         lastMessageAt: row.thread.lastMessageAt,
         latestMessage: row.thread.messages[0] || null,
@@ -206,7 +207,7 @@ export async function getThread(req, res) {
       id: thread.id,
       isGroup: thread.isGroup,
       name: displayName(thread, others),
-      hasAvatar: Boolean(thread.avatarStorageKey),
+      hasAvatar: thread.isGroup ? Boolean(thread.avatarStorageKey) : Boolean(others[0]),
       participants: thread.participants.map((item) => ({ ...item.user, lastReadAt: item.lastReadAt })),
       messages,
     },
@@ -255,12 +256,40 @@ export async function serveThreadAvatar(req, res) {
   await requireParticipant(req, req.params.id);
   const thread = await prisma.internalChatThread.findUnique({
     where: { id: req.params.id },
-    select: { avatarStorageKey: true, avatarMimeType: true },
+    select: {
+      isGroup: true,
+      avatarStorageKey: true,
+      avatarMimeType: true,
+      participants: {
+        where: { userId: { not: req.auth.userId } },
+        take: 1,
+        select: { user: { select: { id: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true } } },
+      },
+    },
   });
-  if (!thread?.avatarStorageKey) throw createHttpError(404, "This group has no photo", "NOT_FOUND");
-  const buffer = await downloadStorageFile(AVATAR_BUCKET, thread.avatarStorageKey, { allowMissing: true });
-  if (!buffer) throw createHttpError(404, "Stored group photo was not found", "NOT_FOUND");
-  res.type(thread.avatarMimeType || "application/octet-stream");
+  if (!thread) throw createHttpError(404, "Conversation not found", "NOT_FOUND");
+  const person = thread.isGroup ? null : thread.participants[0]?.user;
+  const storageKey = thread.isGroup ? thread.avatarStorageKey : person?.avatarStorageKey;
+  const mimeType = thread.isGroup ? thread.avatarMimeType : person?.avatarMimeType;
+  const uploaded = storageKey ? await downloadStorageFile(AVATAR_BUCKET, storageKey, { allowMissing: true }) : null;
+  const buffer = uploaded || (!thread.isGroup && person ? await avatarPresetBuffer(resolvedAvatarPreset(person)) : null);
+  if (!buffer) throw createHttpError(404, "This conversation has no photo", "NOT_FOUND");
+  res.type(uploaded ? mimeType || "application/octet-stream" : "image/png");
+  res.send(buffer);
+}
+
+export async function serveStaffAvatar(req, res) {
+  const user = await prisma.user.findFirst({
+    where: { id: req.params.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
+    select: { id: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true },
+  });
+  if (!user) throw createHttpError(404, "Staff profile not found", "NOT_FOUND");
+  const uploaded = user.avatarStorageKey
+    ? await downloadStorageFile(AVATAR_BUCKET, user.avatarStorageKey, { allowMissing: true })
+    : null;
+  const buffer = uploaded || await avatarPresetBuffer(resolvedAvatarPreset(user));
+  res.set("Cache-Control", "private, max-age=300");
+  res.type(uploaded ? user.avatarMimeType || "application/octet-stream" : "image/png");
   res.send(buffer);
 }
 

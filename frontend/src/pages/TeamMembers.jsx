@@ -5,6 +5,7 @@ import api from "../services/api";
 import { fieldClass, FormField, FormMessage } from "../components/auth/AuthShell";
 import Select from "../components/ui/Select";
 import { getCaseRoles } from "../api/caseRoleApi";
+import StaffAvatar from "../components/staff/StaffAvatar";
 
 const ROLE_OPTIONS = [
   { value: "consultant", label: "Consultant" },
@@ -27,6 +28,9 @@ const statusBadge = {
   invited: "bg-sky-50 text-sky-700",
   disabled: "bg-slate-100 text-slate-500",
 };
+
+const AVATAR_PRESETS = Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`);
+const avatarUrl = (preset) => `/staff-avatars/${preset || "avatar-1"}.png`;
 
 const knownErrors = {
   INVITATION_RATE_LIMITED: "The invitation email limit was reached. Wait a few minutes and try again — when possible a secure link is generated so you can send it directly.",
@@ -58,6 +62,7 @@ const emptyForm = {
   membershipBody: "College of Immigration and Citizenship Consultants (CICC)",
   membershipProvince: "",
   incentiveRoleIds: [],
+  avatarPreset: "avatar-1",
 };
 
 function formFromMember(member) {
@@ -77,6 +82,7 @@ function formFromMember(member) {
     membershipBody: member.membershipBody || "College of Immigration and Citizenship Consultants (CICC)",
     membershipProvince: member.membershipProvince || "",
     incentiveRoleIds: (member.incentiveRoleAssignments || []).map((assignment) => assignment.caseRoleId),
+    avatarPreset: member.avatarPreset || "avatar-1",
   };
 }
 
@@ -88,6 +94,7 @@ function memberPayload(form, { creating = false } = {}) {
     phone: form.phone,
     jobTitle: form.jobTitle,
     incentiveRoleIds: form.incentiveRoleIds,
+    avatarPreset: form.avatarPreset,
     ...(form.role === "consultant"
       ? {
           employeeId: form.employeeId,
@@ -166,6 +173,19 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
           </FormField>
         </>
       ) : null}
+      <div className="sm:col-span-2">
+        <p className="text-sm font-semibold text-slate-800">Profile avatar</p>
+        <div className="mt-3 grid grid-cols-6 gap-2">
+          {AVATAR_PRESETS.map((preset) => {
+            const selected = form.avatarPreset === preset;
+            return (
+              <button key={preset} type="button" onClick={() => update("avatarPreset")({ target: { value: preset } })} className={`aspect-square overflow-hidden rounded-full border-2 transition ${selected ? "border-sky-600 ring-2 ring-sky-100" : "border-transparent hover:border-slate-300"}`} aria-label={`Choose professional avatar ${preset.split("-")[1]}`}>
+                <img src={avatarUrl(preset)} alt="" className="h-full w-full object-cover" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div className="sm:col-span-2">
         <p className="text-sm font-semibold text-slate-800">Incentive roles</p>
         <p className="mt-1 text-xs leading-5 text-slate-500">Assign once here. When this member owns or collaborates on a case, matching incentive plans credit them automatically. This does not change access permissions.</p>
@@ -337,9 +357,12 @@ export default function TeamMembers() {
         return (
           <button key={item.id} type="button" onClick={() => openEdit(item)} className="rounded-3xl border border-white bg-white/80 p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
             <div className="flex justify-between gap-4">
-              <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-3">
+                <StaffAvatar user={item} alt={`${item.fullName} profile`} className="h-12 w-12 shrink-0 ring-2 ring-white" />
+                <div className="min-w-0">
                 <h2 className="truncate font-semibold">{item.fullName}</h2>
                 <p className="mt-1 truncate text-sm text-slate-500">{item.email}</p>
+                </div>
               </div>
               <div className="flex h-fit shrink-0 items-center gap-2">
                 <span className={`rounded-full px-3 py-1 text-xs font-semibold ${roleBadge[item.role] || "bg-slate-100 text-slate-600"}`}>{item.role === "frontdesk" ? "Front Desk" : "Consultant"}</span>

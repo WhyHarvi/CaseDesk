@@ -37,6 +37,7 @@ const include = {
       fullName: true,
       email: true,
       role: true,
+      avatarPreset: true,
     },
   },
   // take: 1 is enough to answer "did this client come from a Case Easy

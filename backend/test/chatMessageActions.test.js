@@ -249,7 +249,7 @@ test("schema adds a group photo to InternalChatThread, and the migration matches
   assert.match(migration, /ALTER TABLE "internal_chat_threads" ADD COLUMN "avatar_mime_type" TEXT;/);
 });
 
-test("group rename/avatar/membership endpoints are groups-only, reusing the profile-avatar validation pattern", async () => {
+test("group customization stays group-only while the avatar endpoint also resolves direct-message staff", async () => {
   const controller = await source("../src/controllers/internalChatController.js");
   assert.match(controller, /AVATAR_BUCKET, DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile/);
   assert.match(controller, /function detectedImage\(buffer\) \{/);
@@ -264,7 +264,8 @@ test("group rename/avatar/membership endpoints are groups-only, reusing the prof
   assert.match(updateFn, /res\.json\(\{ data: \{ id: updated\.id, name: updated\.name, hasAvatar: Boolean\(updated\.avatarStorageKey\) \} \}\);/);
 
   const serveFn = controller.slice(controller.indexOf("export async function serveThreadAvatar"), controller.indexOf("export async function addParticipants"));
-  assert.match(serveFn, /if \(!thread\?\.avatarStorageKey\) throw createHttpError\(404, "This group has no photo", "NOT_FOUND"\);/);
+  assert.match(serveFn, /const person = thread\.isGroup \? null : thread\.participants\[0\]\?\.user;/);
+  assert.match(serveFn, /avatarPresetBuffer\(resolvedAvatarPreset\(person\)\)/);
 });
 
 test("adding participants dedupes against current members and validates same-agency active staff", async () => {
@@ -286,9 +287,9 @@ test("removing a participant enforces a 2-person floor and 404s a non-member", a
 test("listThreads and getThread both surface hasAvatar, and every group mutation re-broadcasts", async () => {
   const controller = await source("../src/controllers/internalChatController.js");
   const listFn = controller.slice(controller.indexOf("export async function listThreads"), controller.indexOf("export async function createThread"));
-  assert.match(listFn, /hasAvatar: Boolean\(row\.thread\.avatarStorageKey\),/);
+  assert.match(listFn, /hasAvatar: row\.thread\.isGroup \? Boolean\(row\.thread\.avatarStorageKey\) : Boolean\(others\[0\]\),/);
   const getFn = controller.slice(controller.indexOf("export async function getThread"), controller.indexOf("async function requireGroupThread"));
-  assert.match(getFn, /hasAvatar: Boolean\(thread\.avatarStorageKey\),/);
+  assert.match(getFn, /hasAvatar: thread\.isGroup \? Boolean\(thread\.avatarStorageKey\) : Boolean\(others\[0\]\),/);
 
   assert.match(controller, /rebroadcast\(req, \{ id: updated\.id, occurredAt: updated\.updatedAt \}\);/);
   const addFn = controller.slice(controller.indexOf("export async function addParticipants"), controller.indexOf("export async function removeParticipant"));

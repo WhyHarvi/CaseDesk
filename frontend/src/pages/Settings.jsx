@@ -289,6 +289,7 @@ function PersonalProfilePanel({ user, agency }) {
     phone: user?.phone || "",
     jobTitle: user?.jobTitle || "",
     specializations: [],
+    avatarPreset: "avatar-1",
     hasAvatar: Boolean(user?.hasAvatar),
     stats: { clients: 0, activeCases: 0, openFollowUps: 0 },
   });
@@ -297,6 +298,8 @@ function PersonalProfilePanel({ user, agency }) {
     phone: user?.phone || "",
     jobTitle: user?.jobTitle || "",
     specializations: "",
+    avatarPreset: "avatar-1",
+    removeUploadedAvatar: false,
   });
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -321,6 +324,8 @@ function PersonalProfilePanel({ user, agency }) {
           phone: data.phone || "",
           jobTitle: data.jobTitle || "",
           specializations: data.specializations.join(", "),
+          avatarPreset: data.avatarPreset || "avatar-1",
+          removeUploadedAvatar: false,
         });
         if (data.hasAvatar) {
           const avatarResponse = await api.get("/consultants/me/avatar", {
@@ -355,6 +360,7 @@ function PersonalProfilePanel({ user, agency }) {
       return;
     }
     setAvatarFile(file);
+    setForm((current) => ({ ...current, removeUploadedAvatar: false }));
     setError("");
     const reader = new FileReader();
     reader.onload = () => setAvatarPreview(String(reader.result || ""));
@@ -368,6 +374,8 @@ function PersonalProfilePanel({ user, agency }) {
       phone: profile.phone || "",
       jobTitle: profile.jobTitle || "",
       specializations: (profile.specializations || []).join(", "),
+      avatarPreset: profile.avatarPreset || "avatar-1",
+      removeUploadedAvatar: false,
     });
     setAvatarFile(null);
     setAvatarPreview("");
@@ -412,6 +420,8 @@ function PersonalProfilePanel({ user, agency }) {
             .filter(Boolean),
         ),
       );
+      data.append("avatarPreset", form.avatarPreset);
+      if (form.removeUploadedAvatar) data.append("removeUploadedAvatar", "true");
       if (avatarFile) data.append("avatar", avatarFile);
       const response = await api.patch("/consultants/me/profile", data);
       setProfile(response.data.data);
@@ -437,9 +447,10 @@ function PersonalProfilePanel({ user, agency }) {
       await api.delete("/consultants/me/avatar");
       setAvatarFile(null);
       setAvatarPreview("");
-      setAvatarUrl("");
-      setProfile((current) => ({ ...current, hasAvatar: false }));
-      setNotice("Profile image removed.");
+      const preset = profile.avatarPreset || "avatar-1";
+      setAvatarUrl(`/staff-avatars/${preset}.png`);
+      setProfile((current) => ({ ...current, hasAvatar: true, hasUploadedAvatar: false }));
+      setNotice("Uploaded image removed. Your selected avatar is restored.");
       await refreshIdentity();
     } catch (reason) {
       setError(
@@ -685,6 +696,17 @@ function PersonalProfilePanel({ user, agency }) {
                         Remove
                       </button>
                     ) : null}
+                  </div>
+
+                  <div className="border-b border-slate-100 px-6 py-5">
+                    <p className="text-sm font-semibold text-slate-800">Professional avatar</p>
+                    <div className="mt-3 grid grid-cols-6 gap-2">
+                      {Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`).map((preset) => (
+                        <button key={preset} type="button" onClick={() => { setForm((current) => ({ ...current, avatarPreset: preset, removeUploadedAvatar: true })); setAvatarFile(null); setAvatarPreview(`/staff-avatars/${preset}.png`); }} className={`aspect-square overflow-hidden rounded-full border-2 transition ${form.avatarPreset === preset ? "border-sky-600 ring-2 ring-sky-100" : "border-transparent hover:border-slate-300"}`} aria-label={`Choose professional avatar ${index + 1}`}>
+                          <img src={`/staff-avatars/${preset}.png`} alt="" className="h-full w-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="space-y-5 p-6">
@@ -987,11 +1009,7 @@ export default function Settings() {
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                 >
                   {!isAdmin && activeSection === "personal-profile" ? (
-                    role === "frontdesk" ? (
-                      <FrontdeskProfilePanel user={appUser} agency={agency} />
-                    ) : (
-                      <PersonalProfilePanel user={appUser} agency={agency} />
-                    )
+                    <PersonalProfilePanel user={appUser} agency={agency} />
                   ) : activeSection === "security" ? (
                     <SecuritySettingsPanel />
                   ) : activeSection === "form-signature" ? (

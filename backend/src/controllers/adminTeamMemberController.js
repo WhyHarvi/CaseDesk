@@ -19,6 +19,8 @@ import {
   portalPageKeys,
 } from "../services/portalAccessService.js";
 import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
+import { defaultAvatarPreset, normalizeAvatarPreset } from "../services/staffAvatarPresetService.js";
+import { AVATAR_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
 
 const managedRoles = new Set(["consultant", "frontdesk"]);
 const teamMemberSelect = {
@@ -29,6 +31,8 @@ const teamMemberSelect = {
   status: true,
   phone: true,
   jobTitle: true,
+  avatarStorageKey: true,
+  avatarPreset: true,
   licenseNumber: true,
   representativeType: true,
   membershipBody: true,
@@ -134,6 +138,7 @@ function memberPayload(body, { creating = false } = {}) {
       : Array.isArray(body.incentiveRoleIds)
         ? [...new Set(body.incentiveRoleIds.map((id) => String(id || "").trim()).filter(Boolean))]
         : [],
+    avatarPreset: body.avatarPreset === undefined ? undefined : normalizeAvatarPreset(body.avatarPreset, { required: true }),
   };
 }
 
@@ -280,6 +285,7 @@ export async function createTeamMember(req, res) {
         mustChangePassword: false,
         phone: input.phone,
         jobTitle: input.jobTitle,
+        avatarPreset: input.avatarPreset || defaultAvatarPreset(input.email),
         licenseNumber: input.licenseNumber,
         representativeType: input.representativeType,
         membershipBody: input.membershipBody,
@@ -503,6 +509,8 @@ export async function updateTeamMember(req, res) {
         fullName: input.fullName,
         phone: input.phone,
         jobTitle: input.jobTitle,
+        ...(input.avatarPreset ? { avatarPreset: input.avatarPreset } : {}),
+        ...(input.avatarPreset && input.avatarPreset !== existing.avatarPreset ? { avatarStorageKey: null, avatarMimeType: null } : {}),
         licenseNumber: input.licenseNumber,
         representativeType: input.representativeType,
         membershipBody: input.membershipBody,
@@ -530,6 +538,9 @@ export async function updateTeamMember(req, res) {
       select: teamMemberSelect,
     });
   });
+  if (input.avatarPreset && input.avatarPreset !== existing.avatarPreset && existing.avatarStorageKey) {
+    await removeStorageFile(AVATAR_BUCKET, existing.avatarStorageKey).catch(() => {});
+  }
   if (existing.authUserId)
     await updateAuthUser(existing.authUserId, {
       user_metadata: { full_name: input.fullName },
