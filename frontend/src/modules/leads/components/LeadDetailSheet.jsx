@@ -34,6 +34,7 @@ import ConvertLeadSheet from "./ConvertLeadSheet";
 import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import CompleteConsultationSheet, { getDraftConsultationId } from "./CompleteConsultationSheet";
+import useDebouncedAutosave from "../../../hooks/useDebouncedAutosave";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
@@ -118,6 +119,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [note, setNote] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState("");
+  const [savedNote, setSavedNote] = useState(null);
 
   useEffect(() => {
     setLead(initialLead);
@@ -127,6 +129,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     setNoteOpen(false);
     setNote("");
     setNoteError("");
+    setSavedNote(null);
     api.getFresh(`/leads/${initialLead.id}`)
       .then((response) => setLead(response.data.data))
       .catch((requestError) => setError(requestError.response?.data?.message || "Complete lead details could not be loaded."))
@@ -310,32 +313,42 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     }
   }
 
-  async function saveNote(event) {
-    event.preventDefault();
+  async function saveNote(event, { keepOpen = false } = {}) {
+    event?.preventDefault();
     const description = note.trim();
-    if (!description) {
-      setNoteError("Enter a note before saving.");
-      return;
-    }
+    if (noteSaving || !description) return;
     setNoteSaving(true);
     setNoteError("");
     try {
-      await api.post(`/leads/${lead.id}/activities`, {
-        activityType: "INTERNAL_NOTE",
-        direction: "INTERNAL",
-        channel: "SYSTEM",
-        title: "Lead note",
-        description,
-      });
-      setNote("");
-      setNoteOpen(false);
+      const response = savedNote
+        ? await api.patch(`/leads/${lead.id}/activities/${savedNote.id}/note`, { description })
+        : await api.post(`/leads/${lead.id}/activities`, {
+            activityType: "INTERNAL_NOTE",
+            direction: "INTERNAL",
+            channel: "SYSTEM",
+            title: "Lead note",
+            description,
+          });
+      setSavedNote(response.data.data);
       await refreshLead();
+      if (!keepOpen) {
+        setNote("");
+        setSavedNote(null);
+        setNoteOpen(false);
+      }
     } catch (reason) {
       setNoteError(reason.response?.data?.message || "The note could not be saved.");
     } finally {
       setNoteSaving(false);
     }
   }
+
+  useDebouncedAutosave({
+    value: note,
+    savedValue: savedNote?.description || "",
+    enabled: noteOpen && !noteSaving,
+    onSave: () => saveNote(null, { keepOpen: true }),
+  });
   // The consultation fee (paid at booking time) is a separate amount from
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
@@ -589,6 +602,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                               if (action.id === "note") {
                                 setNoteOpen((current) => !current);
                                 setNoteError("");
+                                if (noteOpen) {
+                                  setNote("");
+                                  setSavedNote(null);
+                                }
                                 return;
                               }
                               setActiveAction(action.id);
@@ -626,8 +643,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                       />
                       {noteError ? <p className="mt-2 text-xs font-medium text-rose-600">{noteError}</p> : null}
                       <div className="mt-3 flex items-center justify-end gap-2">
-                        <button type="button" disabled={noteSaving} onClick={() => { setNoteOpen(false); setNote(""); setNoteError(""); }} className="h-9 rounded-lg px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
-                        <button type="submit" disabled={noteSaving || !note.trim()} className="h-9 rounded-lg bg-brand-600 px-4 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300">{noteSaving ? "Saving..." : "Save note"}</button>
+                        <button type="button" disabled={noteSaving} onClick={() => { setNoteOpen(false); setNote(""); setSavedNote(null); setNoteError(""); }} className="h-9 rounded-lg px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+                        <button type="submit" disabled={noteSaving || !note.trim()} className="h-9 rounded-lg bg-brand-600 px-4 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300">{noteSaving ? "Saving..." : savedNote ? "Save changes" : "Create note"}</button>
                       </div>
                     </form>
                   ) : null}

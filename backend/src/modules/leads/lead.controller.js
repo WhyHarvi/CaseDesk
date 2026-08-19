@@ -141,6 +141,10 @@ export async function recordLeadActivity(req, res) {
   res.status(201).json({ data: await service.recordLeadActivity(req) });
 }
 
+export async function updateLeadNote(req, res) {
+  res.json({ data: await service.updateLeadNote(req) });
+}
+
 export async function createLeadFollowUp(req, res) {
   res.status(201).json({ data: await service.createLeadFollowUp(req) });
 }

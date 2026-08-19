@@ -503,6 +503,31 @@ export async function recordLeadActivity(req, db = prisma) {
   }, leadTransactionOptions);
 }
 
+export async function updateLeadNote(req, db = prisma) {
+  const description = String(req.body?.description || "").trim();
+  if (!description) throw createHttpError(400, "Note is required.", "VALIDATION_ERROR");
+  if (description.length > 5000) throw createHttpError(400, "Note is too long.", "VALIDATION_ERROR");
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  return db.$transaction(async (tx) => {
+    const lead = await requireLead(tx, req, req.params.id);
+    const note = await tx.leadActivity.findFirst({
+      where: { id: req.params.activityId, leadId: lead.id, agencyId, activityType: "INTERNAL_NOTE" },
+    });
+    if (!note) throw createHttpError(404, "Lead note not found.", "LEAD_NOTE_NOT_FOUND");
+    if (req.auth.role !== "admin" && note.performedById !== actorId) {
+      throw createHttpError(403, "You can edit only notes you created.", "FORBIDDEN");
+    }
+    const updated = await tx.leadActivity.update({
+      where: { id: note.id },
+      data: { description },
+      include: { performedBy: { select: { id: true, fullName: true } } },
+    });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.note_updated", details: `${lead.leadNumber}: Lead note updated`, entityType: "lead", entityId: lead.id, metadata: { activityId: note.id } } });
+    return updated;
+  }, leadTransactionOptions);
+}
+
 export async function createLeadFollowUp(req, db = prisma) {
   const values = parseLeadFollowUp(req.body);
   const agencyId = req.auth.agencyId;

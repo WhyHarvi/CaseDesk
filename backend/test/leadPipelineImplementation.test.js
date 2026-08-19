@@ -6,6 +6,7 @@ import {
   recordLeadActivity,
   updateConsultation,
   updateLeadDetails,
+  updateLeadNote,
 } from "../src/modules/leads/lead.service.js";
 import { reactivateDueNurtureLeads } from "../src/modules/leads/lead.reactivation.worker.js";
 import { parseCommercialStatus } from "../src/modules/leads/lead.validation.js";
@@ -134,6 +135,27 @@ test("an internal lead note is audited without changing contact history or stage
   assert.deepEqual(leadUpdate, { version: { increment: 1 } });
   assert.equal(audit.action, "lead.note_added");
   assert.equal(audit.metadata.activityType, "INTERNAL_NOTE");
+});
+
+test("lead note autosave updates the same authored note", async () => {
+  let updated;
+  const tx = {
+    lead: { findFirst: async () => ({ id: "lead-1", leadNumber: "LD-1", status: "OPEN" }) },
+    leadActivity: {
+      findFirst: async () => ({ id: "note-1", leadId: "lead-1", activityType: "INTERNAL_NOTE", performedById: "consultant-1" }),
+      update: async ({ data }) => { updated = data; return { id: "note-1", ...data }; },
+    },
+    activityLog: { create: async () => {} },
+  };
+
+  const result = await updateLeadNote({
+    auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" },
+    params: { id: "lead-1", activityId: "note-1" },
+    body: { description: "Updated after autosave." },
+  }, { $transaction: async (operation) => operation(tx) });
+
+  assert.deepEqual(updated, { description: "Updated after autosave." });
+  assert.equal(result.id, "note-1");
 });
 
 test("due nurture leads automatically reopen and close their reactivation work", async () => {
