@@ -372,7 +372,7 @@ export function NotificationProvider({ children }) {
   }, [sidebarCounts]);
 
   const openNotification = useCallback(
-    (notification) => {
+    async (notification) => {
       const permissions = membership?.permissions || {};
       const canOpenFinancialNotification =
         role === "client" ||
@@ -389,7 +389,26 @@ export function NotificationProvider({ children }) {
         );
         return;
       }
-      if (!notification.readAt) markRead(notification.id, true);
+      if (notification.type === "payment.approval_required") {
+        try {
+          const current = await markNotificationRead(notification.id, true);
+          if (current.resolvedAt) {
+            setItems((items) => items.filter((item) => item.id !== notification.id));
+            setMeta((value) => ({ ...value, total: Math.max(0, value.total - 1) }));
+            const counts = await getSidebarNotificationCounts();
+            setUnreadCount(counts.unread || 0);
+            setSidebarCounts(counts.destinations || {});
+            setError("This payment request has already been completed.");
+            return;
+          }
+          setItems((items) => items.map((item) => item.id === notification.id ? { ...item, readAt: current.readAt } : item));
+        } catch {
+          setError("Payment approval status could not be checked. Please try again.");
+          return;
+        }
+      } else if (!notification.readAt) {
+        markRead(notification.id, true);
+      }
       setPanelOpen(false);
       const raw = actionPathForNotification(notification);
       const safe = raw.startsWith("/") && !raw.startsWith("//");

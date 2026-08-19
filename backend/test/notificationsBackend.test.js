@@ -189,6 +189,9 @@ test("payment producers use the financial audience and cancellation notices are 
   assert.match(delivery, /cancelUnauthorizedNotification/);
   assert.match(provider, /isFinancialNotification/);
   assert.match(provider, /Payments access is not enabled/);
+  assert.match(provider, /notification\.type === "payment\.approval_required"/);
+  assert.match(provider, /if \(current\.resolvedAt\)/);
+  assert.match(provider, /This payment request has already been completed/);
 });
 
 test("document, reminder, and questionnaire notification gaps are normalized", async () => {
