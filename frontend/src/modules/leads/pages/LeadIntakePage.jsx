@@ -55,6 +55,29 @@ export default function LeadIntakePage() {
     finally { setLoading(false); }
   }, [role]);
   useEffect(() => { load(); }, [load]);
+  // The three panels below (new connector, saved credentials, new form) are
+  // fixed-position overlays with their own internal overflow-y-auto scroll
+  // area, but without this the page behind them was never actually locked —
+  // this tab's content is tall enough to scroll on its own, so opening a
+  // panel let mouse-wheel/touch input keep scrolling that background page
+  // instead of the panel itself. Matches the scroll-lock pattern every other
+  // modal/overlay in the app already uses (e.g. CasePermissionsOverlay.jsx).
+  useEffect(() => {
+    if (!websiteOpen && !credentials && !formOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKeyDown(event) {
+      if (event.key !== "Escape" || busy) return;
+      if (credentials) setCredentials(null);
+      else if (websiteOpen) setWebsiteOpen(false);
+      else if (formOpen) setFormOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [websiteOpen, credentials, formOpen, busy]);
   useEffect(() => {
     if (role !== "admin" || !requestedEventId) return undefined;
     setTab("events");

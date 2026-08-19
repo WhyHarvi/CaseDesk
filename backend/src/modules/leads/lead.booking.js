@@ -208,8 +208,16 @@ export async function createOrLinkLeadForConsultation(tx, {
  * unpaid state (Expired or Voided) from releaseExpiredPaymentHolds and both
  * "invoice voided" branches in quickbooksWebhookService.js, so their contact
  * info isn't simply lost.
+ *
+ * Idempotent on the Lead itself (via hold.leadId), but callable more than
+ * once per hold on purpose — releaseExpiredPaymentHolds calls this right
+ * away with sendEmail:false (there's a void grace period now, so a hold
+ * that just expired might still revive; only the CRM lead/follow-up task
+ * is safe to create immediately), then attemptVoid calls it again once the
+ * void actually succeeds to send the client-facing email exactly once, at
+ * the point the checkout is genuinely, irreversibly dead.
  */
-export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
+export async function captureAbandonedPublicBookingLead(agencyId, holdId, { sendEmail = true } = {}) {
   const result = await prisma.$transaction(async (tx) => {
     // None of this function's callers check their own status-flip update's
     // affected-row count before calling here, so two of them can race on the
@@ -219,8 +227,13 @@ export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`booking_payment_hold_lead:${holdId}`}, 0))`;
 
     const hold = await tx.bookingPaymentHold.findFirst({ where: { id: holdId, agencyId }, include: { sessionType: { select: { name: true } } } });
-    if (!hold || hold.leadId || hold.source !== "Public" || hold.appointmentId || !["Expired", "Voided"].includes(hold.status)) {
+    if (!hold || hold.source !== "Public" || hold.appointmentId || !["Expired", "Voided"].includes(hold.status)) {
       return { leadId: hold?.leadId || null, created: false, hold: null };
+    }
+    if (hold.leadId) {
+      // Lead already captured by an earlier call on this same hold — just
+      // hand back the hold so the caller can still (maybe) send the email.
+      return { leadId: hold.leadId, created: false, hold };
     }
 
     const phoneNormalized = normalizePhoneSafe(hold.guestPhone);
@@ -346,12 +359,12 @@ export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
     return { leadId: lead.id, created: !existingLead, hold };
   });
 
-  // Sent once, exactly when a hold is first processed here (result.hold is
-  // only populated on that branch above, never on the no-op/already-claimed
-  // one) — outside the transaction since a network call to SMTP has no
-  // business holding the advisory lock open, and a mail hiccup must never
-  // undo the lead capture that already committed.
-  if (result.hold) {
+  // Outside the transaction since a network call to SMTP has no business
+  // holding the advisory lock open, and a mail hiccup must never undo the
+  // lead capture that already committed. result.hold is only populated for
+  // an applicable hold (not a not-found/wrong-status one); sendEmail is
+  // what actually controls whether this specific call sends it.
+  if (result.hold && sendEmail) {
     await sendAbandonedBookingPaymentEmail({ agencyId, hold: result.hold, sessionType: result.hold.sessionType }).catch((error) => {
       logger.warn("booking_payment_hold.abandoned_email_failed", { agencyId, holdId, reason: error.message });
     });

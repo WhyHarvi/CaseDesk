@@ -14,6 +14,21 @@ export default function DuplicateReviewSheet({ eventId, onClose, onResolved }) {
   const [error, setError] = useState("");
   const load = () => api.getFresh(`/leads/intake/events/${eventId}/duplicates`).then((response) => setEvent(response.data.data)).catch((requestError) => setError(requestError.response?.data?.message || "Duplicate details could not be loaded.")).finally(() => setLoading(false));
   useEffect(() => { load(); }, [eventId]);
+  // This sheet's <main> scrolls on its own (overflow-y-auto) but nothing
+  // stopped the page underneath from scrolling too — same fix as every
+  // other overlay in the app (see CasePermissionsOverlay.jsx).
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKeyDown(event) {
+      if (event.key === "Escape" && !busy) onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose, busy]);
   async function resolve(candidateId, action) {
     try {
       setBusy(candidateId);

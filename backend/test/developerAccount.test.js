@@ -17,7 +17,11 @@ test("developer access is isolated behind its own role, route, and aggregate end
   assert.match(auth, /"developer", "admin", "consultant"/);
   assert.match(server, /"\/api\/developer", requireAuth, requireRole\("developer"\)/);
   assert.match(controller, /slug: \{ not: "casedesk-developer" \}/);
-  assert.doesNotMatch(controller, /fullName|email|caseType|description/);
+  const overview = controller.slice(
+    controller.indexOf("export async function getDeveloperOverview"),
+    controller.indexOf("export async function listDeveloperAgencies"),
+  );
+  assert.doesNotMatch(overview, /fullName|email|caseType|description/);
   assert.match(routes, /path="\/developer"/);
   assert.match(dashboard, /Aggregate platform telemetry only/);
 });

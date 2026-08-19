@@ -38,6 +38,7 @@ import {
   saveCaseWorkflow,
   updateCaseWorkflowStep,
 } from "../controllers/caseWorkflowController.js";
+import { getCaseTimelineProgress } from "../controllers/caseTimelineProgressController.js";
 import { asyncHandler } from "../utils/http.js";
 import {
   createCaseApplicant,
@@ -158,6 +159,7 @@ router.patch(
   asyncHandler(saveCaseAssessment),
 );
 router.get("/:id/workflow", asyncHandler(getCaseWorkflow));
+router.get("/:id/timeline-progress", asyncHandler(getCaseTimelineProgress));
 router.post(
   "/:id/tasks",
   requirePortalCaseTab("tasks"),

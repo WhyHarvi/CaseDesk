@@ -106,7 +106,7 @@ test("case and lead user interfaces expose the selector, badges, search, and fil
   assert.match(commandBar, /Intake Not Set/);
   assert.match(commandBar, /Past Intakes/);
   assert.match(commandBar, /isStudyPermitCaseType\(value\)/);
-  assert.match(commandBar, /\.\.\.cases\.map\(\(item\) => String\(item\.caseType/);
+  assert.match(commandBar, /buildCaseTypeFilterOptions\(cases, caseTypeOptions\)/);
   assert.match(profileSummary, /<StudyIntakeBadge value=\{caseItem\.studyIntakeMonth\}/);
   assert.match(conversionSheet, /studyIntakeMonth/);
   assert.match(conversionSheet, /<StudyIntakeSelect/);

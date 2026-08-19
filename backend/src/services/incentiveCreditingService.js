@@ -1,10 +1,11 @@
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { getCasePaymentSummary } from "./paymentScheduleService.js";
+import { evaluateCaseTimelineLegs } from "./incentiveTimelineService.js";
 
 const planInclude = { roleShares: true, tiers: { orderBy: { minCumulativeAmount: "asc" } } };
 
-async function resolvePlan(agencyId, caseType) {
+export async function resolvePlan(agencyId, caseType) {
   const specific = caseType
     ? await prisma.incentivePlan.findFirst({ where: { agencyId, caseType, isActive: true }, include: planInclude })
     : null;
@@ -40,8 +41,8 @@ async function computePool(plan, { agencyId, caseId, delta }) {
   return (delta * rate) / 100;
 }
 
-async function resolveHolders(agencyId, caseId) {
-  const [lead, caseTeam, roleAssignments] = await Promise.all([
+export async function resolveHolders(agencyId, caseId) {
+  const [lead, caseTeam, roleAssignments, caseRoleAssignments] = await Promise.all([
     prisma.lead.findFirst({
       where: { convertedCaseId: caseId, agencyId },
       select: { ownerUserId: true, conversion: { select: { convertedById: true } } },
@@ -60,18 +61,50 @@ async function resolveHolders(agencyId, caseId) {
       },
       select: { caseRoleId: true, userId: true, caseRole: { select: { name: true } } },
     }),
+    // The per-case overlay (CaseRolesOverlay.jsx) — who's actually the RCIC
+    // etc. on THIS case, not just who's a member of the case team. Already
+    // case-scoped by its own caseId column, so no case-team intersection.
+    prisma.caseRoleAssignment.findMany({
+      where: {
+        agencyId,
+        caseId,
+        status: "active",
+        user: { status: "active", memberships: { some: { agencyId, isActive: true } } },
+      },
+      select: { caseRoleId: true, userId: true, caseRole: { select: { name: true } } },
+    }),
   ]);
   const caseTeamUserIds = new Set([
     caseTeam?.assignedUserId,
     ...(caseTeam?.assignments || []).map((assignment) => assignment.consultantUserId),
   ].filter(Boolean));
-  const byCaseRoleId = new Map();
+
+  const globalByCaseRoleId = new Map();
   for (const row of roleAssignments) {
     if (!caseTeamUserIds.has(row.userId)) continue;
-    const bucket = byCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
+    const bucket = globalByCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
     if (!bucket.userIds.includes(row.userId)) bucket.userIds.push(row.userId);
-    byCaseRoleId.set(row.caseRoleId, bucket);
+    globalByCaseRoleId.set(row.caseRoleId, bucket);
   }
+
+  const overlayByCaseRoleId = new Map();
+  for (const row of caseRoleAssignments) {
+    const bucket = overlayByCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
+    if (!bucket.userIds.includes(row.userId)) bucket.userIds.push(row.userId);
+    overlayByCaseRoleId.set(row.caseRoleId, bucket);
+  }
+
+  // Resolved per role, independently: the per-case overlay wins whenever it
+  // has any holder for that role, otherwise fall back to the global
+  // Team-Members-intersected-with-case-team result. Never merges the two for
+  // the same role — an explicit per-case assignment fully overrides the
+  // global default rather than adding to it.
+  const byCaseRoleId = new Map();
+  for (const caseRoleId of new Set([...globalByCaseRoleId.keys(), ...overlayByCaseRoleId.keys()])) {
+    const overlay = overlayByCaseRoleId.get(caseRoleId);
+    byCaseRoleId.set(caseRoleId, overlay?.userIds.length ? overlay : globalByCaseRoleId.get(caseRoleId));
+  }
+
   return {
     leadOwnerUserId: lead?.ownerUserId || null,
     leadConverterUserId: lead?.conversion?.convertedById || null,
@@ -157,7 +190,7 @@ function splitEvenly(shareAmountCents, userIds) {
 // attribution point, returns one entry per (user, share) with a positive
 // amount. A share with no current holder contributes nothing and isn't
 // redistributed (see the crediting-engine docs on this tradeoff).
-function computeSplits(plan, pool, holders) {
+export function computeSplits(plan, pool, holders) {
   const poolCents = Math.round(pool * 100);
   const entries = [];
   for (const share of plan.roleShares) {
@@ -372,6 +405,12 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
 
   if (result.credited) {
     logger.info("incentive.credited", { agencyId, caseId, caseInvoiceId, trigger, delta, entryCount: result.entryCount });
+    // Gives FIRST_PAYMENT_COLLECTED-anchored timeline legs a hook, and a
+    // free retry sweep via the existing reconcilePendingIncentiveCredits
+    // worker (this function is already called from there).
+    await evaluateCaseTimelineLegs(agencyId, caseId).catch((error) => {
+      logger.warn("incentive.timeline_bonus_evaluation_failed", { agencyId, caseId, reason: error.message });
+    });
   }
   return result;
 }

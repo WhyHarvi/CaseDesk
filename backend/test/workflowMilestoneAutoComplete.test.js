@@ -36,8 +36,12 @@ test("a workflow milestone can auto-complete off a case's stage, mirroring the e
   assert.match(workflowService, /action: "workflow_step\.auto_completed"/);
 
   // Wired into the exact same stage-change hook the payment trigger uses.
+  // Anchored past recordActivity so this finds the post-transaction hook
+  // block, not the earlier in-transaction CaseStageHistory guard (same
+  // condition text, different purpose — see incentiveTimelineHooks.test.js).
   const updateCaseIndex = caseController.indexOf("export async function updateCase(");
-  const stageHookIndex = caseController.indexOf('Object.hasOwn(payload, "stage")', updateCaseIndex);
+  const recordActivityIndex = caseController.indexOf("await recordActivity(", updateCaseIndex);
+  const stageHookIndex = caseController.indexOf('Object.hasOwn(payload, "stage")', recordActivityIndex);
   const stageHookBlock = caseController.slice(stageHookIndex, stageHookIndex + 700);
   assert.match(stageHookBlock, /evaluateStageTriggers\(/);
   assert.match(stageHookBlock, /evaluateWorkflowStepStageTriggers\(req\.auth\.agencyId, result\.data\.id, existing\.stage, payload\.stage, \{ actorUserId: req\.auth\.userId, clientId: existing\.client\.id \}\)/);

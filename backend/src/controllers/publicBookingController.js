@@ -438,6 +438,12 @@ function publicHoldView(hold, settings) {
       ? bookingConfirmationView(hold.appointment, settings)
       : null,
     requiresStaffResolution: hold.status === "Paid" && !hold.appointmentId,
+    // Expired doesn't mean dead — there's a grace period (see VOID_GRACE_MS
+    // in bookingPaymentHoldService.js) before the invoice is actually
+    // voided, during which a payment that's still in flight can revive
+    // this hold into a real appointment. This tells the client UI whether
+    // to keep gently polling or to show the truly-final "book again" state.
+    voidPending: hold.status === "Expired" && !hold.voidedAt,
   };
 }
 

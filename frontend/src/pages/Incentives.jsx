@@ -3,7 +3,9 @@ import { ArrowLeft, Award, HandCoins, Search, Settings2, Sparkles, TrendingUp, U
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
+import { getActiveTimelines, getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
+import TimelineProgressStrip from "../components/incentives/TimelineProgressStrip";
+import useNow from "../hooks/useNow";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
 const moneyWhole = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 });
@@ -130,23 +132,70 @@ function PipelineCard({ rows, delay = 0 }) {
   );
 }
 
+// The forward-looking counterpart to PipelineCard, for timeline bonuses
+// specifically — "here's what's still in motion, and how much time is
+// left to lock in the best tier." Same amber "not guaranteed" framing.
+function ActiveTimelinesCard({ rows, delay = 0 }) {
+  const now = useNow();
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ ...spring, delay }}
+      className="min-w-0 rounded-[1.6rem] border border-amber-200/80 bg-amber-50/80 p-5 shadow-[0_18px_50px_rgba(245,158,11,0.10)] backdrop-blur-2xl"
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 ring-1 ring-amber-200"><Sparkles className="h-5 w-5" /></span>
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-slate-950">Active timelines</h2>
+          <p className="text-[12px] text-slate-500">Milestone bonuses still in motion — keep them moving before a tier drops.</p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-3">
+        {rows?.length ? rows.map((row, index) => (
+          <motion.div
+            key={row.caseId}
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ ...spring, delay: delay + 0.04 * index }}
+            className="rounded-2xl border border-white bg-white/80 px-3.5 py-3"
+          >
+            <p className="truncate text-sm font-semibold text-slate-900">{row.client?.fullName}</p>
+            <p className="truncate text-xs text-slate-500">{row.caseType} · {row.stage}</p>
+            <div className="mt-2">
+              <TimelineProgressStrip legs={row.legs} now={now} />
+            </div>
+          </motion.div>
+        )) : <EmptyRow>No active timeline bonuses right now.</EmptyRow>}
+      </div>
+    </motion.section>
+  );
+}
+
 function LedgerTable({ rows, showPerson = false, delay = 0 }) {
   return (
     <ChartCard title="Recent activity" subtitle="Every payment that credited you, most recent first" delay={delay}>
       <div className="space-y-2">
-        {rows?.length ? rows.map((row) => (
-          <div key={row.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/60 px-3.5 py-2.5">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-900">{row.case?.client?.fullName} · {row.case?.caseType}</p>
-              <p className="truncate text-xs text-slate-500">
-                {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {row.incentivePlan?.name} · {row.entryType === "REVERSAL" ? "Refund adjustment · " : ""}{new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(row.creditedAt))}
-              </p>
+        {rows?.length ? rows.map((row) => {
+          const date = new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(row.creditedAt));
+          const isTimelineBonus = row.entryType === "TIMELINE_BONUS";
+          const context = isTimelineBonus
+            ? `${row.timelineLegEvaluation?.legNameSnapshot || "Timeline"} milestone${row.timelineLegEvaluation?.multiplierPercent != null ? ` · ${Number(row.timelineLegEvaluation.multiplierPercent)}%` : ""}`
+            : `${row.incentivePlan?.name}${row.entryType === "REVERSAL" ? " · Refund adjustment" : ""}`;
+          return (
+            <div key={row.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white/60 px-3.5 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{row.case?.client?.fullName} · {row.case?.caseType}</p>
+                <p className="truncate text-xs text-slate-500">
+                  {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {context} · {date}
+                </p>
+              </div>
+              <span className={`shrink-0 text-sm font-semibold tabular-nums ${Number(row.creditedAmount) < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                {Number(row.creditedAmount) > 0 ? "+" : ""}{money.format(row.creditedAmount)}
+              </span>
             </div>
-            <span className={`shrink-0 text-sm font-semibold tabular-nums ${Number(row.creditedAmount) < 0 ? "text-rose-600" : "text-emerald-600"}`}>
-              {Number(row.creditedAmount) > 0 ? "+" : ""}{money.format(row.creditedAmount)}
-            </span>
-          </div>
-        )) : <EmptyRow>Nothing credited yet — earnings appear here the moment a payment comes in.</EmptyRow>}
+          );
+        }) : <EmptyRow>Nothing credited yet — earnings appear here the moment a payment comes in.</EmptyRow>}
       </div>
     </ChartCard>
   );
@@ -155,6 +204,7 @@ function LedgerTable({ rows, showPerson = false, delay = 0 }) {
 function PersonView({ userId, fullName, onBack }) {
   const [summary, setSummary] = useState(null);
   const [pipeline, setPipeline] = useState(null);
+  const [activeTimelines, setActiveTimelines] = useState(null);
   const [ledger, setLedger] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -165,12 +215,14 @@ function PersonView({ userId, fullName, onBack }) {
     Promise.all([
       getIncentiveSummary({ userId }),
       getIncentivePipeline({ userId }),
+      getActiveTimelines({ userId }),
       getIncentiveLedger({ userId, pageSize: 20 }),
     ])
-      .then(([summaryData, pipelineData, ledgerData]) => {
+      .then(([summaryData, pipelineData, activeTimelinesData, ledgerData]) => {
         if (!active) return;
         setSummary(summaryData);
         setPipeline(pipelineData);
+        setActiveTimelines(activeTimelinesData);
         setLedger(ledgerData.data);
         setError("");
       })
@@ -210,6 +262,7 @@ function PersonView({ userId, fullName, onBack }) {
 
       <RoleBreakdown byRole={summary?.byRole} delay={0.12} />
       <PipelineCard rows={pipeline} delay={0.16} />
+      <ActiveTimelinesCard rows={activeTimelines} delay={0.18} />
       <LedgerTable rows={ledger} delay={0.2} />
     </div>
   );

@@ -19,3 +19,8 @@ export async function getIncentivePipeline({ userId } = {}) {
   const response = await api.get("/incentives/pipeline", { params: { userId }, cache: false });
   return response.data.data;
 }
+
+export async function getActiveTimelines({ userId } = {}) {
+  const response = await api.get("/incentives/timelines", { params: { userId }, cache: false });
+  return response.data.data;
+}

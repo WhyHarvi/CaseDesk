@@ -192,6 +192,7 @@ export default function AgencyProfilePanel() {
       setAvatarFile(null);
       setAgency((current) => ({ ...current, hasAvatar: false }));
       setNotice("Workspace image removed.");
+      await refreshIdentity();
     } catch (reason) {
       setError(reason.response?.data?.message || "The workspace image could not be removed.");
     } finally {

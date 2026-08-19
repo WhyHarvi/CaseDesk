@@ -1,5 +1,6 @@
 import prisma from "../services/prisma/client.js";
-import { estimateInvoicePotentialCredit } from "../services/incentiveCreditingService.js";
+import { estimateInvoicePotentialCredit, resolvePlan, resolveHolders, computeSplits } from "../services/incentiveCreditingService.js";
+import { fetchPlanTimelineLegs, projectCaseTimelineLegs } from "../services/incentiveTimelineService.js";
 
 // Incentive figures are personal financial data, not general case
 // visibility — admins can look at anyone's, everyone else only ever sees
@@ -54,6 +55,7 @@ export async function getLedger(req, res) {
         user: { select: { id: true, fullName: true } },
         case: { select: { id: true, caseType: true, client: { select: { id: true, fullName: true } } } },
         incentivePlan: { select: { id: true, name: true } },
+        timelineLegEvaluation: { select: { legNameSnapshot: true, elapsedMinutes: true, multiplierPercent: true } },
       },
     }),
     prisma.incentiveLedgerEntry.count({ where }),
@@ -127,5 +129,73 @@ export async function getPipeline(req, res) {
   }
   const rows = [...byCase.values()];
   rows.sort((a, b) => b.estimatedAmount - a.estimatedAmount);
+  res.json({ data: rows });
+}
+
+// "Every in-progress/not-started timeline-bonus leg across cases where I
+// could plausibly be credited" — the forward-looking counterpart to the
+// Ledger tab's resolved history. Bounded to a "my plausible cases" scan,
+// never an agency-wide one: resolveHolders' own attribution sources are
+// either case-team membership (assignedUserId / active CaseAssignment /
+// active CaseRoleAssignment — mirrors caseAccessWhere's "assigned" scope)
+// or lead-derived attribution (LEAD_OWNER/LEAD_CONVERTER), which isn't
+// case-team-gated at all, so both have to be unioned into the candidate set
+// before any per-case work happens.
+export async function getActiveTimelines(req, res) {
+  const agencyId = req.auth.agencyId;
+  const userId = targetUserId(req);
+  if (!userId) return res.json({ data: [] });
+
+  const [ownedLeadCases, convertedLeadCases] = await Promise.all([
+    prisma.lead.findMany({ where: { agencyId, ownerUserId: userId, convertedCaseId: { not: null } }, select: { convertedCaseId: true } }),
+    prisma.leadConversion.findMany({ where: { agencyId, convertedById: userId, caseId: { not: null } }, select: { caseId: true } }),
+  ]);
+  const leadDerivedCaseIds = [...new Set([...ownedLeadCases.map((row) => row.convertedCaseId), ...convertedLeadCases.map((row) => row.caseId)])];
+
+  const candidateCases = await prisma.case.findMany({
+    where: {
+      agencyId,
+      archivedAt: null,
+      deletedAt: null,
+      OR: [
+        { assignedUserId: userId },
+        { assignments: { some: { consultantUserId: userId, status: "active" } } },
+        { roleAssignments: { some: { userId, status: "active" } } },
+        ...(leadDerivedCaseIds.length ? [{ id: { in: leadDerivedCaseIds } }] : []),
+      ],
+    },
+    select: { id: true, caseType: true, stage: true, client: { select: { id: true, fullName: true } } },
+  });
+  if (!candidateCases.length) return res.json({ data: [] });
+
+  // Cheapest filter first: resolve each distinct caseType's plan+legs once
+  // (a small, bounded set) before touching any per-case data.
+  const resolvedByCaseType = new Map();
+  const legsByPlanId = new Map();
+  for (const caseType of new Set(candidateCases.map((row) => row.caseType))) {
+    const plan = await resolvePlan(agencyId, caseType);
+    if (!plan) continue;
+    if (!legsByPlanId.has(plan.id)) legsByPlanId.set(plan.id, await fetchPlanTimelineLegs(plan.id));
+    const legs = legsByPlanId.get(plan.id);
+    if (legs.length) resolvedByCaseType.set(caseType, { plan, legs });
+  }
+
+  const rows = [];
+  for (const caseItem of candidateCases) {
+    const resolved = resolvedByCaseType.get(caseItem.caseType);
+    if (!resolved) continue;
+
+    // Confirm this user is actually a holder on this case before doing any
+    // per-leg work — reuses computeSplits (already-tested attribution
+    // logic) with a large nominal pool so a small sharePercent doesn't
+    // round to 0 cents and produce a false negative.
+    const holders = await resolveHolders(agencyId, caseItem.id);
+    const splits = computeSplits(resolved.plan, 10000, holders);
+    if (!splits.some((entry) => entry.userId === userId)) continue;
+
+    const legs = (await projectCaseTimelineLegs(agencyId, caseItem.id, resolved.legs)).filter((leg) => leg.state !== "RESOLVED");
+    if (!legs.length) continue;
+    rows.push({ caseId: caseItem.id, caseType: caseItem.caseType, stage: caseItem.stage, client: caseItem.client, legs });
+  }
   res.json({ data: rows });
 }

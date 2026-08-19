@@ -1085,6 +1085,12 @@ export default function PublicBookingPage() {
     if (!claimToken) return undefined;
     let stopped = false;
     let timer = null;
+    const pollingStartedAt = Date.now();
+    // Matches the backend's own worst-case void-grace window (10 min grace
+    // + up to one 15-min sweep cycle) — a payment that's genuinely still
+    // resolving gets that long before we stop checking and show the final
+    // "book again" state.
+    const MAX_VOID_PENDING_POLL_MS = 30 * 60_000;
 
     async function checkPayment() {
       let keepPolling = true;
@@ -1117,9 +1123,17 @@ export default function PublicBookingPage() {
           keepPolling = false;
         } else if (
           result.requiresStaffResolution ||
-          ["Expired", "Voided", "Failed"].includes(result.status)
+          ["Voided", "Failed"].includes(result.status)
         ) {
           keepPolling = false;
+        } else if (result.status === "Expired") {
+          // Expired doesn't mean dead — there's a void grace period during
+          // which a payment still in flight can revive this hold. Keep
+          // checking while that's still possible, capped so this doesn't
+          // poll forever if she's genuinely gone.
+          keepPolling =
+            result.voidPending &&
+            Date.now() - pollingStartedAt < MAX_VOID_PENDING_POLL_MS;
         }
       } catch (reason) {
         if (stopped) return;
@@ -2220,7 +2234,9 @@ export default function PublicBookingPage() {
                     {paymentChecking ||
                     ["AwaitingPayment", "Confirming"].includes(
                       pendingPayment?.status,
-                    ) ? (
+                    ) ||
+                    (pendingPayment?.status === "Expired" &&
+                      pendingPayment?.voidPending) ? (
                       <Loader2 className="h-8 w-8 animate-spin" />
                     ) : pendingPayment?.requiresStaffResolution ? (
                       <CheckCircle2 className="h-8 w-8" />
@@ -2232,13 +2248,16 @@ export default function PublicBookingPage() {
                   <h2 className="mt-5 text-[19px] font-bold text-[#1A1F36]">
                     {pendingPayment?.requiresStaffResolution
                       ? "Payment received"
-                      : ["Expired", "Voided", "Failed"].includes(
-                            pendingPayment?.status,
-                          )
-                        ? "Payment window closed"
-                        : pendingPayment?.status === "Confirming"
-                          ? "Confirming your payment"
-                          : "Complete your payment"}
+                      : pendingPayment?.status === "Expired" &&
+                          pendingPayment?.voidPending
+                        ? "Still confirming your payment"
+                        : ["Expired", "Voided", "Failed"].includes(
+                              pendingPayment?.status,
+                            )
+                          ? "Payment window closed"
+                          : pendingPayment?.status === "Confirming"
+                            ? "Confirming your payment"
+                            : "Complete your payment"}
                   </h2>
 
                   {pendingPayment?.requiresStaffResolution ? (
@@ -2247,6 +2266,14 @@ export default function PublicBookingPage() {
                       be created automatically. The scheduling team has received
                       an urgent alert and will contact you to arrange the time
                       or issue a refund.
+                    </p>
+                  ) : pendingPayment?.status === "Expired" &&
+                    pendingPayment?.voidPending ? (
+                    <p className="mt-2 text-sm leading-6 text-[#4D5865]">
+                      We're still confirming your payment — this can take a
+                      few minutes. If you already paid, please don't pay
+                      again; stay on this page or check back shortly and
+                      we'll confirm your appointment automatically.
                     </p>
                   ) : ["Expired", "Voided", "Failed"].includes(
                       pendingPayment?.status,

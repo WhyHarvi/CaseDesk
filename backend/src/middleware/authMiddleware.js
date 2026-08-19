@@ -31,6 +31,7 @@ export async function requireAuth(req, res, next) {
         mustChangePassword: true,
         phone: true,
         jobTitle: true,
+        avatarPreset: true,
         memberships: {
           where: { isActive: true },
           include: { agency: true },

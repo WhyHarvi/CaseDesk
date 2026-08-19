@@ -12,6 +12,7 @@ import {
   WorkflowTemplateCreateOverlay,
 } from "../components/case-profile/WorkflowEditorOverlay";
 import WorkflowTimeline from "../components/case-profile/WorkflowTimeline";
+import TimelineProgressStrip from "../components/incentives/TimelineProgressStrip";
 import { normalizeDocumentName } from "../components/case-profile/documentNames";
 import ApplicantsOverlay from "../components/case-profile/applicants/ApplicantsOverlay";
 import DownloadApplicationOverlay from "../components/case-profile/DownloadApplicationOverlay";
@@ -25,13 +26,14 @@ import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOv
 import CaseRolesOverlay from "../components/case-profile/CaseRolesOverlay";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import { useAuth } from "../auth/AuthContext";
-import { canAccessCaseTab, hasCapability } from "../auth/portalAccess";
+import { canAccessCaseTab, canAccessPage, hasCapability } from "../auth/portalAccess";
 import {
   buildBlankTemplateStep,
   buildDraftStepFromTemplateStep,
   buildDraftStepFromWorkflowStep,
 } from "../components/case-profile/workflowDrafts";
 import PageContainer from "../components/layout/PageContainer";
+import useNow from "../hooks/useNow";
 import api from "../services/api";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
@@ -80,6 +82,7 @@ export default function CaseProfile() {
   // archiving/closing/deleting the case itself stays admin/consultant only
   // (enforced server-side in caseRoutes.js too).
   const canManageCase = ["admin", "consultant"].includes(role);
+  const canAccessIncentives = canAccessPage(role, membership?.permissions, "incentives");
   const [caseItem, setCaseItem] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
@@ -90,6 +93,8 @@ export default function CaseProfile() {
   const [workflowSteps, setWorkflowSteps] = useState([]);
   const [workflowTemplates, setWorkflowTemplates] = useState([]);
   const [workflowLoadError, setWorkflowLoadError] = useState("");
+  const [timelineProgress, setTimelineProgress] = useState(null);
+  const timelineNow = useNow();
   const [loading, setLoading] = useState(true);
   const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState("");
@@ -233,6 +238,7 @@ export default function CaseProfile() {
         get(`/cases/${id}/assessment`),
         get(`/cases/${id}/workflow`),
         get("/workflow-templates"),
+        canAccessIncentives ? get(`/cases/${id}/timeline-progress`) : Promise.resolve({ data: { data: null } }),
       ]);
 
       if (!mountedRef.current || generation !== loadGenerationRef.current) return;
@@ -245,6 +251,7 @@ export default function CaseProfile() {
         assessmentResult,
         workflowResult,
         workflowTemplateResult,
+        timelineProgressResult,
       ] = results;
 
       setCaseItem(caseResponse.data.data || null);
@@ -292,6 +299,11 @@ export default function CaseProfile() {
             "Workflow could not load. Refresh after the backend is restarted.",
         );
       }
+      // Supplementary panel — unlike workflow, no dedicated error UI; a
+      // failed/ungated fetch just means the strip doesn't render.
+      setTimelineProgress(
+        timelineProgressResult.status === "fulfilled" ? timelineProgressResult.value.data.data : null,
+      );
 
       const recoverablePanelFailure = results.find(
         (result) => result.status === "rejected" && isRecoverableCaseLoadError(result.reason),
@@ -316,7 +328,7 @@ export default function CaseProfile() {
         setRecovering(false);
       }
     }
-  }, [canAccessFinancialData, canAccessInternalNotes, id]);
+  }, [canAccessFinancialData, canAccessInternalNotes, canAccessIncentives, id]);
 
   const refreshPaymentSummary = useCallback(async () => {
     if (!canAccessFinancialData) return;
@@ -2026,6 +2038,18 @@ export default function CaseProfile() {
           savingStepId={savingWorkflowStepId}
           onOpen={openWorkflowOverlay}
         />
+
+        {canAccessIncentives && timelineProgress?.legs?.length ? (
+          <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Incentives</p>
+              <h3 className="mt-1 text-base font-semibold text-slate-950">{timelineProgress.planName} — timeline bonuses</h3>
+            </div>
+            <div className="mt-5">
+              <TimelineProgressStrip legs={timelineProgress.legs} now={timelineNow} />
+            </div>
+          </article>
+        ) : null}
 
         <CaseWorkspaceTabs
           caseItem={caseItem}

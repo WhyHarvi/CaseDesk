@@ -1,5 +1,7 @@
 import * as service from "./lead.service.js";
 import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
+import { evaluateCaseTimelineLegs } from "../../services/incentiveTimelineService.js";
+import { logger } from "../../services/logger.js";
 import { getLeadDashboard as loadLeadDashboard, getLeadDashboardDrilldown as loadLeadDashboardDrilldown } from "./lead.dashboard.service.js";
 import { getAgeingReport as loadAgeingReport, getConversionTrendReport as loadConversionTrendReport, getEmployeeReport as loadEmployeeReport, getFunnelReport as loadFunnelReport, getLostReport as loadLostReport, getResponseTimeReport as loadResponseTimeReport, getSourceReport as loadSourceReport, getWorkloadReport as loadWorkloadReport } from "./lead.report.service.js";
 import { requestStaleLeadOutreachForAgency } from "./lead.staleOutreach.service.js";
@@ -134,6 +136,12 @@ export async function convertLead(req, res) {
   // Fired after the transaction commits — an external QuickBooks call has no
   // place inside a DB transaction, and syncClientToQuickBooks never throws.
   await syncClientToQuickBooks(req.auth.agencyId, result.client.id).catch(() => null);
+  // Best-effort: this is the one hook point for LEAD_CREATED/LEAD_STAGE_REACHED
+  // timeline legs, since plan resolution needs caseType, which doesn't exist
+  // until this case does. See incentiveTimelineService.js's module doc.
+  await evaluateCaseTimelineLegs(req.auth.agencyId, result.case.id).catch((error) => {
+    logger.warn("lead.timeline_bonus_evaluation_failed", { caseId: result.case.id, reason: error.message });
+  });
   res.status(201).json({ data: result });
 }
 

@@ -9,6 +9,7 @@ import {
   createQuickBooksConsultationInvoice,
   createQuickBooksReceivePayment,
   findOrCreateQuickBooksPaymentMethod,
+  findQuickBooksPaymentForInvoice,
   findQuickBooksPaymentIdForInvoice,
   findQuickBooksCustomerByEmail,
   getQuickBooksInvoice,
@@ -1537,6 +1538,16 @@ export async function reconcileActivePaymentHolds() {
 const HOLD_EXPIRY_POLL_MS = 60_000;
 const VOID_RETRY_POLL_MS = 15 * 60_000;
 const MAX_VOID_ATTEMPTS = 5;
+// Deliberately its own constant, not reused from VOID_RETRY_POLL_MS even
+// though both currently land in the same ballpark — that one means "how
+// long to back off after a void attempt fails," this one means "how long
+// to wait after expiry before the FIRST void attempt is even allowed to
+// run." A client whose card is still processing when the hold expires
+// needs this window for reconcilePaymentHold (via retryFailedVoids) to
+// catch a payment that lands late and revive the hold, before the void
+// becomes irreversible. Coupling the two constants would let a future
+// retry-backoff tweak silently change this money-safety window.
+const VOID_GRACE_MS = 10 * 60_000;
 // confirmPaymentHold claims a hold (AwaitingPayment -> Confirming) before
 // doing any real work, and its own catch block reverts that claim on any
 // thrown error — but a hard process crash/restart between the claim and the
@@ -1592,6 +1603,14 @@ async function attemptVoid(hold) {
   try {
     await voidQuickBooksInvoice(hold.agencyId, { id: hold.qbInvoiceId, syncToken: hold.qbSyncToken });
     await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { voidedAt: new Date() } });
+    // Only now is the checkout genuinely, irreversibly dead — this is the
+    // one place the abandoned-booking client email should fire from. The
+    // CRM Lead/follow-up task was already created back when the hold first
+    // expired (see releaseExpiredPaymentHolds); this call reuses the same
+    // idempotent function just to send the email this time.
+    await captureAbandonedPublicBookingLead(hold.agencyId, hold.id).catch((error) => {
+      logger.warn("booking_payment_hold.abandoned_email_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+    });
   } catch (error) {
     logger.warn("booking_payment_hold.void_failed", { agencyId: hold.agencyId, holdId: hold.id, attempt: hold.voidAttempts + 1, reason: error.message });
     await prisma.bookingPaymentHold.update({
@@ -1624,18 +1643,27 @@ export async function releaseExpiredPaymentHolds() {
     }
     const claimed = await prisma.bookingPaymentHold.updateMany({
       where: { id: hold.id, status: "AwaitingPayment", expiresAt: { lte: new Date() } },
-      data: { status: "Expired" },
+      data: { status: "Expired", nextVoidAttemptAt: new Date(Date.now() + VOID_GRACE_MS) },
     });
     if (claimed.count !== 1) continue;
     const updated = await prisma.bookingPaymentHold.findUnique({ where: { id: hold.id } });
-    await attemptVoid(updated);
+    // No immediate void here — see VOID_GRACE_MS. retryFailedVoids picks
+    // this up once nextVoidAttemptAt passes, reconciling with QuickBooks
+    // first so a payment that lands during the grace window (a slow page,
+    // a declined-then-retried card) revives the hold instead of racing an
+    // irreversible void against a client who's still mid-checkout.
     // A declined/abandoned card produces no QuickBooks webhook at all — this
     // expiry sweep is the only place that ever learns a checkout didn't
     // complete, so it's also the only place that can tell staff about it.
     await notifyExpiredHold(updated).catch((error) => {
       logger.warn("booking_payment_hold.expiry_notify_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
     });
-    await captureAbandonedPublicBookingLead(hold.agencyId, hold.id).catch((error) => {
+    // The client-facing "sorry, that didn't go through" email is deferred
+    // until the void actually succeeds (see attemptVoid) — sending it now
+    // would be premature and potentially wrong for the whole grace window.
+    // The CRM Lead/staff follow-up task, though, is safe and useful to
+    // create right away regardless of how this ultimately resolves.
+    await captureAbandonedPublicBookingLead(hold.agencyId, hold.id, { sendEmail: false }).catch((error) => {
       logger.warn("booking_payment_hold.abandoned_lead_capture_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
     });
   }
@@ -1756,6 +1784,96 @@ export async function detectPaidHoldBalanceMismatches() {
   return { checked: holds.length, flagged };
 }
 
+// The residual gap left by the void-grace fix (see VOID_GRACE_MS): a card
+// payment that was already in flight at the exact moment a hold's void
+// call succeeded can still land on QuickBooks' side afterward. Confirmed
+// empirically against real QuickBooks (a disposable "DEMO PAYMENT" test,
+// 2026-08-19): QuickBooks allows BOTH voiding an invoice that already has
+// a payment applied, AND applying a new payment to an already-voided
+// invoice — nothing on QuickBooks' own side prevents this race. This is
+// the backstop, mirroring detectPaidHoldBalanceMismatches above (same
+// "periodically re-check, flag for a human, no auto-remediation"
+// shape) — a one-time check per hold, not a repeat poll: a payment that
+// was genuinely in flight at void time settles within seconds to a few
+// minutes, not hours, so the next sweep tick after voidedAt is set is
+// enough to catch it; if nothing's found, there's nothing more to learn by
+// checking again later.
+const POST_VOID_PAYMENT_CHECK_POLL_MS = 30 * 60_000;
+const POST_VOID_PAYMENT_CHECK_LOOKBACK_DAYS = 2;
+let postVoidPaymentCheckTimer = null;
+
+async function notifyPaidAfterVoid(hold, payment) {
+  const recipientIds = await financialOperationsRecipientIds(hold.agencyId);
+  if (!recipientIds.length) return;
+  const runbook = [
+    "Acknowledge this alert within 10 minutes.",
+    "Confirm the payment in QuickBooks against the voided invoice.",
+    "If the original slot is still available, create the appointment manually.",
+    "If the slot is unavailable, contact the client and offer alternative times.",
+    "If no suitable time is accepted, refund the payment in QuickBooks.",
+    "Record the resolution in CaseDesk and close this alert.",
+  ];
+  await notifyUsers({
+    agencyId: hold.agencyId,
+    recipientIds,
+    type: "booking_payment.paid_after_void",
+    category: "payments",
+    audienceKey: "finance",
+    title: "A voided consultation checkout was paid anyway",
+    body: `${hold.guestName}'s $${Number(hold.amount).toFixed(2)} consultation checkout was voided as abandoned, but QuickBooks shows a payment landed against it anyway. Acknowledge within 10 minutes, confirm the payment in QuickBooks, then arrange a new slot or refund the client.`,
+    severity: "critical",
+    entityType: "bookingPaymentHold",
+    entityId: hold.id,
+    actionUrl: `/app/payments?source=booking_payment&hold=${encodeURIComponent(hold.id)}`,
+    metadata: {
+      holdId: hold.id,
+      amount: Number(hold.amount),
+      guestName: hold.guestName,
+      guestEmail: hold.guestEmail,
+      guestPhone: hold.guestPhone,
+      qbPaymentId: payment.id,
+      responseDeadlineMinutes: 10,
+      runbook,
+    },
+    dedupeKey: `booking_payment_hold:${hold.id}:paid_after_void`,
+    channels: ["in_app"],
+  });
+}
+
+export async function detectPaidAfterVoidHolds() {
+  const holds = await prisma.bookingPaymentHold.findMany({
+    where: {
+      status: "Expired",
+      voidedAt: { not: null, gte: new Date(Date.now() - POST_VOID_PAYMENT_CHECK_LOOKBACK_DAYS * 86_400_000) },
+      qbInvoiceId: { not: null },
+      qbCustomerId: { not: null },
+      postVoidPaymentCheckedAt: null,
+    },
+    take: 100,
+  });
+  let flagged = 0;
+  for (const hold of holds) {
+    let payment;
+    try {
+      payment = await findQuickBooksPaymentForInvoice(hold.agencyId, hold.qbCustomerId, hold.qbInvoiceId);
+    } catch (error) {
+      logger.warn("booking_payment_hold.post_void_payment_check_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+      continue;
+    }
+    // Marked regardless of outcome — a clean invoice doesn't need
+    // rechecking, and a flagged one is now a human's problem, not a
+    // recurring alert.
+    await prisma.bookingPaymentHold.update({ where: { id: hold.id }, data: { postVoidPaymentCheckedAt: new Date() } });
+    if (payment) {
+      await notifyPaidAfterVoid(hold, payment).catch((error) => {
+        logger.warn("booking_payment_hold.paid_after_void_notify_failed", { agencyId: hold.agencyId, holdId: hold.id, reason: error.message });
+      });
+      flagged += 1;
+    }
+  }
+  return { checked: holds.length, flagged };
+}
+
 export function startPaymentHoldExpiryWorker() {
   if (!activeHoldPollTimer) {
     activeHoldPollTimer = setInterval(() => {
@@ -1787,6 +1905,12 @@ export function startPaymentHoldExpiryWorker() {
     }, BALANCE_MISMATCH_POLL_MS);
     if (balanceMismatchTimer.unref) balanceMismatchTimer.unref();
   }
+  if (!postVoidPaymentCheckTimer) {
+    postVoidPaymentCheckTimer = setInterval(() => {
+      detectPaidAfterVoidHolds().catch((error) => logger.warn("booking_payment_hold.post_void_payment_check_pass_failed", { reason: error.message }));
+    }, POST_VOID_PAYMENT_CHECK_POLL_MS);
+    if (postVoidPaymentCheckTimer.unref) postVoidPaymentCheckTimer.unref();
+  }
 }
 
 export function stopPaymentHoldExpiryWorker() {
@@ -1800,4 +1924,6 @@ export function stopPaymentHoldExpiryWorker() {
   confirmingRecoveryTimer = null;
   if (balanceMismatchTimer) clearInterval(balanceMismatchTimer);
   balanceMismatchTimer = null;
+  if (postVoidPaymentCheckTimer) clearInterval(postVoidPaymentCheckTimer);
+  postVoidPaymentCheckTimer = null;
 }

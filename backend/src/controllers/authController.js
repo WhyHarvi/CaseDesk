@@ -16,6 +16,8 @@ function publicIdentity(req) {
       fullName: req.appUser.fullName,
       phone: req.appUser.phone,
       jobTitle: req.appUser.jobTitle,
+      hasAvatar: true,
+      avatarPreset: req.appUser.avatarPreset,
       mustChangePassword: req.appUser.mustChangePassword || req.membership.mustChangePassword,
     },
     agency: {
@@ -23,6 +25,8 @@ function publicIdentity(req) {
       name: req.membership.agency.name,
       onboardingStatus: req.membership.agency.onboardingStatus,
       accessStatus: req.membership.agency.accessStatus,
+      hasAvatar: Boolean(req.membership.agency.avatarStorageKey),
+      avatarUpdatedAt: req.membership.agency.updatedAt,
     },
     membership: {
       id: req.membership.id,

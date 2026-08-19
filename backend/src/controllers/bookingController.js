@@ -297,7 +297,12 @@ export async function updateBookingSettings(req, res) {
     ...(typeof body.publicBookingEnabled === "boolean" ? { publicBookingEnabled: body.publicBookingEnabled } : {}),
     ...(typeof body.consultFeeEnabled === "boolean" ? { consultFeeEnabled: body.consultFeeEnabled } : {}),
     ...(body.consultFeeAmount !== undefined ? { consultFeeAmount: body.consultFeeAmount === null ? null : validFeeAmount(body.consultFeeAmount) } : {}),
-    ...(body.consultFeeHoldMinutes !== undefined ? { consultFeeHoldMinutes: boundedInt(body.consultFeeHoldMinutes, "Payment hold window", 5, 120) } : {}),
+    // Floor is 10, not 5 — real observed slow-but-successful checkouts
+    // (declined-then-retried card, a bank 3DS redirect) run up to ~17
+    // minutes; a 5-minute window left almost no margin and made the
+    // booking-payment race (see VOID_GRACE_MS in
+    // bookingPaymentHoldService.js) easier to hit in the first place.
+    ...(body.consultFeeHoldMinutes !== undefined ? { consultFeeHoldMinutes: boundedInt(body.consultFeeHoldMinutes, "Payment hold window", 10, 120) } : {}),
     ...(body.consultFeeTerms !== undefined ? { consultFeeTerms: optionalPublicCopy(body.consultFeeTerms, "Payment terms", 2000) } : {}),
     ...(body.publicHeadline !== undefined ? { publicHeadline: optionalPublicCopy(body.publicHeadline, "Public headline", 140) } : {}),
     ...(body.publicWelcomeMessage !== undefined ? { publicWelcomeMessage: optionalPublicCopy(body.publicWelcomeMessage, "Welcome message", 2000) } : {}),

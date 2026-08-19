@@ -25,6 +25,33 @@ import { prefetchRoute } from "../../services/routePrefetch";
 import { getPortalAccess } from "../../auth/portalAccess";
 import { useNotifications } from "../notifications/NotificationProvider";
 import api from "../../services/api";
+import StaffAvatar from "../staff/StaffAvatar";
+
+function AdminWorkspaceAvatar({ agency, className = "h-10 w-10" }) {
+  const [url, setUrl] = useState("");
+
+  useEffect(() => {
+    if (agency?.hasAvatar === false) {
+      setUrl("");
+      return undefined;
+    }
+    let active = true;
+    let objectUrl = "";
+    api.get("/settings/agency-profile/avatar", { responseType: "blob", skipCache: true })
+      .then((response) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(response.data);
+        setUrl(objectUrl);
+      })
+      .catch(() => { if (active) setUrl(""); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [agency?.hasAvatar, agency?.avatarUpdatedAt]);
+
+  return <img src={url || logo} alt={`${agency?.name || "Workspace"} profile`} className={`${className} rounded-full border border-slate-200 bg-white object-cover`} />;
+}
 
 const adminNavigation = [
   {
@@ -347,7 +374,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 }
 
 function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
-  const { role, appUser, membership, signOut } = useAuth();
+  const { role, appUser, agency, membership, signOut } = useAuth();
   const access = getPortalAccess(role, membership?.permissions);
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const location = useLocation();
@@ -369,13 +396,6 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
     return () => { active = false; };
   }, [access.pages.leads, location.pathname]);
   const badgeCounts = { ...sidebarCounts, importReview: { total: importReviewCount, actions: importReviewCount } };
-  const initials =
-    appUser?.fullName
-      ?.split(" ")
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "CD";
   return (
     <>
       <div
@@ -440,18 +460,27 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
       >
         <div
           className={[
-            "flex items-center transition-all duration-200",
+            "group/account flex items-center transition-all duration-300 ease-out",
             collapsed
               ? "justify-center border-transparent bg-transparent px-0 py-0"
-              : "gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3",
+              : "gap-3 rounded-[20px] border border-slate-200/80 bg-gradient-to-br from-white to-slate-50/80 px-3 py-3 shadow-sm shadow-slate-200/50 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/60",
           ].join(" ")}
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700">
-            {initials}
+          <div className="relative shrink-0 transition-transform duration-300 group-hover/account:scale-105">
+            {role === "admin" ? (
+              <AdminWorkspaceAvatar agency={agency} className="h-10 w-10 shadow-sm ring-2 ring-white" />
+            ) : (
+              <StaffAvatar
+                user={appUser}
+                alt={`${appUser?.fullName || "Staff"} profile`}
+                className="h-10 w-10 shadow-sm ring-2 ring-white"
+              />
+            )}
+            <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500 shadow-sm" aria-label="Online" />
           </div>
           <div
             className={[
-              "min-w-0 transition-[width,transform,opacity] duration-300 ease-out",
+              "min-w-0 flex-1 transition-[width,transform,opacity] duration-300 ease-out",
               collapsed
                 ? "w-0 -translate-x-3 opacity-0"
                 : "w-full translate-x-0 opacity-100",
@@ -460,7 +489,10 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
             <p className="truncate text-sm font-semibold text-slate-900">
               {appUser?.fullName}
             </p>
-            <p className="truncate text-xs capitalize text-slate-500">{role}</p>
+            <p className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] font-medium capitalize tracking-wide text-slate-500">
+              <span className="h-1 w-1 rounded-full bg-slate-400" />
+              {role}
+            </p>
           </div>
           <button
             type="button"
@@ -468,11 +500,13 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
             className={
               collapsed
                 ? "hidden"
-                : "rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                : "group/logout relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-transparent text-slate-400 transition-all duration-300 ease-out hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 hover:shadow-sm active:scale-90"
             }
             aria-label="Sign out"
+            title="Sign out"
           >
-            <LogOut className="h-4 w-4" />
+            <span className="absolute inset-y-1.5 left-0 w-0.5 -translate-x-full rounded-full bg-rose-500 transition-transform duration-300 group-hover/logout:translate-x-0" />
+            <LogOut className="h-4 w-4 transition-transform duration-300 ease-out group-hover/logout:translate-x-0.5 group-hover/logout:rotate-[-6deg]" />
           </button>
         </div>
       </div>

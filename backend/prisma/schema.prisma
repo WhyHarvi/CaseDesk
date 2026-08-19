@@ -531,195 +531,197 @@ enum LeadDuplicateStatus {
 }
 
 model Agency {
-  id                             String                             @id @default(uuid())
-  name                           String
-  slug                           String?                            @unique
-  status                         AccountStatus                      @default(active)
-  onboardingStatus               AgencyOnboardingStatus             @default(pending_setup) @map("onboarding_status")
-  accessStatus                   AgencyAccessStatus                 @default(active) @map("access_status")
-  phone                          String?
-  email                          String?
-  faxNumber                      String?                            @map("fax_number")
-  address                        String?
+  id                              String                             @id @default(uuid())
+  name                            String
+  slug                            String?                            @unique
+  status                          AccountStatus                      @default(active)
+  onboardingStatus                AgencyOnboardingStatus             @default(pending_setup) @map("onboarding_status")
+  accessStatus                    AgencyAccessStatus                 @default(active) @map("access_status")
+  phone                           String?
+  email                           String?
+  faxNumber                       String?                            @map("fax_number")
+  address                         String?
   // Apt/Unit, kept separate from the street line — government forms like
   // IMM 5476 that split "Apt/Unit" from "Street no./Street name" read this
   // field first; the rest of the mailing address maps to address/city/
   // province/postalCode as-is. This is the single source for the
   // representative's mailing address across every case — edit it once in
   // Workspace Profile settings, not per case.
-  addressUnit                    String?                            @map("address_unit")
-  city                           String?
-  province                       String?
-  country                        String?
-  postalCode                     String?                            @map("postal_code")
-  legalName                      String?                            @map("legal_name")
-  website                        String?
-  logoUrl                        String?                            @map("logo_url")
-  avatarStorageKey               String?                            @map("avatar_storage_key")
-  avatarMimeType                 String?                            @map("avatar_mime_type")
-  businessNumber                 String?                            @map("business_number")
-  taxNumber                      String?                            @map("tax_number")
+  addressUnit                     String?                            @map("address_unit")
+  city                            String?
+  province                        String?
+  country                         String?
+  postalCode                      String?                            @map("postal_code")
+  legalName                       String?                            @map("legal_name")
+  website                         String?
+  logoUrl                         String?                            @map("logo_url")
+  avatarStorageKey                String?                            @map("avatar_storage_key")
+  avatarMimeType                  String?                            @map("avatar_mime_type")
+  businessNumber                  String?                            @map("business_number")
+  taxNumber                       String?                            @map("tax_number")
   // The agency's designated owner/signing authority — a fixed identity for
   // documents like the retainer agreement that should always show the
   // person who runs the agency, independent of which staff member happens
   // to be assigned to a given case. Deliberately plain text rather than a
   // User relation: a small agency's "owner" for signing purposes doesn't
   // have to be a CaseDesk staff account.
-  ownerFullName                  String?                            @map("owner_full_name")
-  ownerLicenseNumber             String?                            @map("owner_license_number")
-  ownerPhone                     String?                            @map("owner_phone")
-  ownerEmail                     String?                            @map("owner_email")
-  defaultCurrency                String                             @default("CAD") @map("default_currency")
-  locale                         String                             @default("en-CA")
-  timezone                       String                             @default("America/Toronto")
-  paymentInstructions            String?                            @map("payment_instructions")
-  createdAt                      DateTime                           @default(now()) @map("created_at")
-  updatedAt                      DateTime                           @updatedAt @map("updated_at")
-  users                          User[]
-  memberships                    AgencyMember[]
-  consultantProfiles             ConsultantProfile[]
-  clientUsers                    ClientUser[]
-  caseAssignments                CaseAssignment[]
-  caseCollaborationRequests      CaseCollaborationRequest[]
-  clients                        Client[]
-  cases                          Case[]
-  documentTemplates              DocumentTemplate[]
-  clientDocuments                ClientDocument[]
-  documentFolders                DocumentFolder[]
-  notes                          Note[]
-  followUps                      FollowUp[]
-  payments                       Payment[]
-  activityLogs                   ActivityLog[]
-  supportTickets                 SupportTicket[]
-  portalActivity                 UserPortalActivity[]
-  workflowTemplates              WorkflowTemplate[]
-  workflowTemplateSteps          WorkflowTemplateStep[]
-  caseWorkflowSteps              CaseWorkflowStep[]
-  caseAssessments                CaseAssessment[]
-  sharedLibraryDocuments         SharedLibraryDocument[]
-  writtenDocuments               WrittenDocument[]
-  writtenDocumentVersions        WrittenDocumentVersion[]
-  caseForms                      CaseForm[]
-  caseFormVersions               CaseFormVersion[]
-  caseFormReviewComments         CaseFormReviewComment[]
-  agencyFormTemplates            AgencyFormTemplate[]
-  agencyFormTemplateVersions     AgencyFormTemplateVersion[]
-  formPermissions                FormPermission[]
-  caseFormAuditEvents            CaseFormAuditEvent[]
-  formTemplateFieldSchemas       FormTemplateFieldSchema[]
-  caseFormFieldValues            CaseFormFieldValue[]
-  caseFormClientRequests         CaseFormClientRequest[]
-  caseFormSignatureRequests      CaseFormSignatureRequest[]
-  correspondenceTemplates        CorrespondenceTemplate[]
-  correspondenceTemplateVersions CorrespondenceTemplateVersion[]
-  appointments                   Appointment[]
-  bookingSettings                BookingSettings?
-  leadSettings                   LeadSettings?
-  zoomConnection                 AgencyZoomConnection?
-  zoomHostMappings               ZoomHostMapping[]
-  appointmentMeetingJobs         AppointmentMeetingJob[]
-  caseInvoices                   CaseInvoice[]
-  caseInvoiceLines               CaseInvoiceLine[]
-  cashTransactions               CashTransaction[]
-  cashAllocations                CashAllocation[]
-  cashReconciliations            CashReconciliation[]
-  invoiceRefunds                 InvoiceRefund[]
-  caseManualLedgerEntries        CaseManualLedgerEntry[]
-  feeCategories                  AgencyFeeCategory[]
-  caseRoles                      AgencyCaseRole[]
-  caseRoleAssignments            CaseRoleAssignment[]
-  teamIncentiveRoleAssignments   TeamIncentiveRoleAssignment[]
-  incentivePlans                 IncentivePlan[]
-  caseInvoiceCreditCursors       CaseInvoiceCreditCursor[]
-  caseInvoiceIncentiveSnapshots  CaseInvoiceIncentiveSnapshot[]
-  incentiveLedgerEntries         IncentiveLedgerEntry[]
-  paymentScheduleTemplates       PaymentScheduleTemplate[]
-  casePaymentSchedules           CasePaymentSchedule[]
-  casePaymentInstallments        CasePaymentInstallment[]
-  paymentNotificationSettings    AgencyPaymentNotificationSettings?
-  bookingSessionTypes            BookingSessionType[]
-  schedulingStaffPreferences     SchedulingStaffPreference[]
-  bookingSessionTypeStaff        BookingSessionTypeStaff[]
-  bookingMessageDeliveries       BookingMessageDelivery[]
-  schedulingBlocks               SchedulingBlock[]
-  bookingWaitlistEntries         BookingWaitlistEntry[]
-  bookingSlotHolds               BookingSlotHold[]
-  bookingVerificationCodes       BookingVerificationCode[]
-  appointmentEvents              AppointmentEvent[]
-  communicationConversations     CommunicationConversation[]
-  communicationMessages          CommunicationMessage[]
-  communicationDeliveryEvents    CommunicationDeliveryEvent[]
-  communicationOutboxJobs        CommunicationOutbox[]
-  communicationPermissions       CommunicationPermission[]
-  communicationConsents          CommunicationConsent[]
-  communicationTemplates         CommunicationTemplate[]
-  communicationUnmatchedItems    UnmatchedCommunication[]
-  communicationAuditEvents       CommunicationAuditEvent[]
-  communicationAttachments       CommunicationAttachment[]
-  communicationRetentionPolicy   CommunicationRetentionPolicy?
-  clientCommunicationPolicy      AgencyClientCommunicationPolicy?
-  communicationPreferences       CommunicationPreference[]
-  communicationAutomationRules   CommunicationAutomationRule[]
-  communicationSlaPolicy         CommunicationSlaPolicy?
-  clientCommunicationAccesses    ClientCommunicationAccess[]
-  immigrationProfiles            ImmigrationProfile[]
-  immigrationProfileCaseAccesses ImmigrationProfileCaseAccess[]
-  mailSettings                   AgencyMailSettings?
-  microsoftMailboxConnection     AgencyMicrosoftMailboxConnection?
-  userMailboxConnections         UserMailboxConnection[]
-  quickBooksSettings             AgencyQuickBooksSettings?
-  billingSettings                AgencyBillingSettings?
-  bookingPaymentHolds            BookingPaymentHold[]
-  paymentApprovals               PaymentApproval[]
-  quickBooksWebhookEvents        QuickBooksWebhookEvent[]
-  oomaSettings                   AgencyOomaSettings?
-  oomaCallSessions               OomaCallSession[]
-  oomaCallEvents                 OomaCallEvent[]
-  accountStatements              AccountStatementGeneration[]
-  leadSequence                   AgencyLeadSequence?
-  clientSequence                 AgencyClientSequence?
-  leadSources                    LeadSource[]
-  leadCampaigns                  LeadCampaign[]
-  leads                          Lead[]
-  leadActivities                 LeadActivity[]
-  leadMessageDeliveries          LeadMessageDelivery[]
-  leadStageHistory               LeadStageHistory[]
-  leadAssignmentHistory          LeadAssignmentHistory[]
-  leadTransferRequests           LeadTransferRequest[]
-  leadRoutingRules               LeadRoutingRule[]
-  leadFollowUps                  LeadFollowUp[]
-  leadLostDetails                LeadLostDetail[]
-  leadConversions                LeadConversion[]
-  leadQualifications             LeadQualification[]
-  leadConsultations              LeadConsultation[]
-  leadIntakeForms                LeadIntakeForm[]
-  leadIncomingEvents             LeadIncomingEvent[]
-  leadImportBatches              LeadImportBatch[]
-  leadImportRows                 LeadImportRow[]
-  leadDuplicateCandidates        LeadDuplicateCandidate[]
-  leadSourceConnections          LeadSourceConnection[]
-  onboardingRequests             OnboardingRequest[]
-  notifications                  Notification[]
-  notificationPreferences        NotificationPreference[]
-  notificationDeliveries         NotificationDelivery[]
-  pushSubscriptions              PushSubscription[]
-  questionnaireAssignments       QuestionnaireAssignment[]
-  clientInformationProfiles      ClientInformationProfile[]
-  caseInformationProfiles        CaseInformationProfile[]
-  caseInformationSectionStates   CaseInformationSectionState[]
-  caseEasyImportContacts         CaseEasyImportContact[]
-  caseEasyImportCases            CaseEasyImportCase[]
-  caseEasyImportReportRows       CaseEasyImportReportRow[]
-  automatedReminderPolicies      AutomatedReminderPolicy[]
-  automatedReminderDeliveries    AutomatedReminderDelivery[]
-  expiringDocumentPolicies       ExpiringDocumentReminderPolicy[]
-  expiringDocumentDeliveries     ExpiringDocumentReminderDelivery[]
-  internalChatThreads            InternalChatThread[]
-  internalChatParticipants       InternalChatParticipant[]
-  internalChatMessages           InternalChatMessage[]
-  internalChatAttachments        InternalChatAttachment[]
-  internalChatMessageReactions   InternalChatMessageReaction[]
-  communicationMessageReactions  CommunicationMessageReaction[]
+  ownerFullName                   String?                            @map("owner_full_name")
+  ownerLicenseNumber              String?                            @map("owner_license_number")
+  ownerPhone                      String?                            @map("owner_phone")
+  ownerEmail                      String?                            @map("owner_email")
+  defaultCurrency                 String                             @default("CAD") @map("default_currency")
+  locale                          String                             @default("en-CA")
+  timezone                        String                             @default("America/Toronto")
+  paymentInstructions             String?                            @map("payment_instructions")
+  createdAt                       DateTime                           @default(now()) @map("created_at")
+  updatedAt                       DateTime                           @updatedAt @map("updated_at")
+  users                           User[]
+  memberships                     AgencyMember[]
+  consultantProfiles              ConsultantProfile[]
+  clientUsers                     ClientUser[]
+  caseAssignments                 CaseAssignment[]
+  caseCollaborationRequests       CaseCollaborationRequest[]
+  clients                         Client[]
+  cases                           Case[]
+  caseStageHistory                CaseStageHistory[]
+  incentiveTimelineLegEvaluations IncentiveTimelineLegEvaluation[]
+  documentTemplates               DocumentTemplate[]
+  clientDocuments                 ClientDocument[]
+  documentFolders                 DocumentFolder[]
+  notes                           Note[]
+  followUps                       FollowUp[]
+  payments                        Payment[]
+  activityLogs                    ActivityLog[]
+  supportTickets                  SupportTicket[]
+  portalActivity                  UserPortalActivity[]
+  workflowTemplates               WorkflowTemplate[]
+  workflowTemplateSteps           WorkflowTemplateStep[]
+  caseWorkflowSteps               CaseWorkflowStep[]
+  caseAssessments                 CaseAssessment[]
+  sharedLibraryDocuments          SharedLibraryDocument[]
+  writtenDocuments                WrittenDocument[]
+  writtenDocumentVersions         WrittenDocumentVersion[]
+  caseForms                       CaseForm[]
+  caseFormVersions                CaseFormVersion[]
+  caseFormReviewComments          CaseFormReviewComment[]
+  agencyFormTemplates             AgencyFormTemplate[]
+  agencyFormTemplateVersions      AgencyFormTemplateVersion[]
+  formPermissions                 FormPermission[]
+  caseFormAuditEvents             CaseFormAuditEvent[]
+  formTemplateFieldSchemas        FormTemplateFieldSchema[]
+  caseFormFieldValues             CaseFormFieldValue[]
+  caseFormClientRequests          CaseFormClientRequest[]
+  caseFormSignatureRequests       CaseFormSignatureRequest[]
+  correspondenceTemplates         CorrespondenceTemplate[]
+  correspondenceTemplateVersions  CorrespondenceTemplateVersion[]
+  appointments                    Appointment[]
+  bookingSettings                 BookingSettings?
+  leadSettings                    LeadSettings?
+  zoomConnection                  AgencyZoomConnection?
+  zoomHostMappings                ZoomHostMapping[]
+  appointmentMeetingJobs          AppointmentMeetingJob[]
+  caseInvoices                    CaseInvoice[]
+  caseInvoiceLines                CaseInvoiceLine[]
+  cashTransactions                CashTransaction[]
+  cashAllocations                 CashAllocation[]
+  cashReconciliations             CashReconciliation[]
+  invoiceRefunds                  InvoiceRefund[]
+  caseManualLedgerEntries         CaseManualLedgerEntry[]
+  feeCategories                   AgencyFeeCategory[]
+  caseRoles                       AgencyCaseRole[]
+  caseRoleAssignments             CaseRoleAssignment[]
+  teamIncentiveRoleAssignments    TeamIncentiveRoleAssignment[]
+  incentivePlans                  IncentivePlan[]
+  caseInvoiceCreditCursors        CaseInvoiceCreditCursor[]
+  caseInvoiceIncentiveSnapshots   CaseInvoiceIncentiveSnapshot[]
+  incentiveLedgerEntries          IncentiveLedgerEntry[]
+  paymentScheduleTemplates        PaymentScheduleTemplate[]
+  casePaymentSchedules            CasePaymentSchedule[]
+  casePaymentInstallments         CasePaymentInstallment[]
+  paymentNotificationSettings     AgencyPaymentNotificationSettings?
+  bookingSessionTypes             BookingSessionType[]
+  schedulingStaffPreferences      SchedulingStaffPreference[]
+  bookingSessionTypeStaff         BookingSessionTypeStaff[]
+  bookingMessageDeliveries        BookingMessageDelivery[]
+  schedulingBlocks                SchedulingBlock[]
+  bookingWaitlistEntries          BookingWaitlistEntry[]
+  bookingSlotHolds                BookingSlotHold[]
+  bookingVerificationCodes        BookingVerificationCode[]
+  appointmentEvents               AppointmentEvent[]
+  communicationConversations      CommunicationConversation[]
+  communicationMessages           CommunicationMessage[]
+  communicationDeliveryEvents     CommunicationDeliveryEvent[]
+  communicationOutboxJobs         CommunicationOutbox[]
+  communicationPermissions        CommunicationPermission[]
+  communicationConsents           CommunicationConsent[]
+  communicationTemplates          CommunicationTemplate[]
+  communicationUnmatchedItems     UnmatchedCommunication[]
+  communicationAuditEvents        CommunicationAuditEvent[]
+  communicationAttachments        CommunicationAttachment[]
+  communicationRetentionPolicy    CommunicationRetentionPolicy?
+  clientCommunicationPolicy       AgencyClientCommunicationPolicy?
+  communicationPreferences        CommunicationPreference[]
+  communicationAutomationRules    CommunicationAutomationRule[]
+  communicationSlaPolicy          CommunicationSlaPolicy?
+  clientCommunicationAccesses     ClientCommunicationAccess[]
+  immigrationProfiles             ImmigrationProfile[]
+  immigrationProfileCaseAccesses  ImmigrationProfileCaseAccess[]
+  mailSettings                    AgencyMailSettings?
+  microsoftMailboxConnection      AgencyMicrosoftMailboxConnection?
+  userMailboxConnections          UserMailboxConnection[]
+  quickBooksSettings              AgencyQuickBooksSettings?
+  billingSettings                 AgencyBillingSettings?
+  bookingPaymentHolds             BookingPaymentHold[]
+  paymentApprovals                PaymentApproval[]
+  quickBooksWebhookEvents         QuickBooksWebhookEvent[]
+  oomaSettings                    AgencyOomaSettings?
+  oomaCallSessions                OomaCallSession[]
+  oomaCallEvents                  OomaCallEvent[]
+  accountStatements               AccountStatementGeneration[]
+  leadSequence                    AgencyLeadSequence?
+  clientSequence                  AgencyClientSequence?
+  leadSources                     LeadSource[]
+  leadCampaigns                   LeadCampaign[]
+  leads                           Lead[]
+  leadActivities                  LeadActivity[]
+  leadMessageDeliveries           LeadMessageDelivery[]
+  leadStageHistory                LeadStageHistory[]
+  leadAssignmentHistory           LeadAssignmentHistory[]
+  leadTransferRequests            LeadTransferRequest[]
+  leadRoutingRules                LeadRoutingRule[]
+  leadFollowUps                   LeadFollowUp[]
+  leadLostDetails                 LeadLostDetail[]
+  leadConversions                 LeadConversion[]
+  leadQualifications              LeadQualification[]
+  leadConsultations               LeadConsultation[]
+  leadIntakeForms                 LeadIntakeForm[]
+  leadIncomingEvents              LeadIncomingEvent[]
+  leadImportBatches               LeadImportBatch[]
+  leadImportRows                  LeadImportRow[]
+  leadDuplicateCandidates         LeadDuplicateCandidate[]
+  leadSourceConnections           LeadSourceConnection[]
+  onboardingRequests              OnboardingRequest[]
+  notifications                   Notification[]
+  notificationPreferences         NotificationPreference[]
+  notificationDeliveries          NotificationDelivery[]
+  pushSubscriptions               PushSubscription[]
+  questionnaireAssignments        QuestionnaireAssignment[]
+  clientInformationProfiles       ClientInformationProfile[]
+  caseInformationProfiles         CaseInformationProfile[]
+  caseInformationSectionStates    CaseInformationSectionState[]
+  caseEasyImportContacts          CaseEasyImportContact[]
+  caseEasyImportCases             CaseEasyImportCase[]
+  caseEasyImportReportRows        CaseEasyImportReportRow[]
+  automatedReminderPolicies       AutomatedReminderPolicy[]
+  automatedReminderDeliveries     AutomatedReminderDelivery[]
+  expiringDocumentPolicies        ExpiringDocumentReminderPolicy[]
+  expiringDocumentDeliveries      ExpiringDocumentReminderDelivery[]
+  internalChatThreads             InternalChatThread[]
+  internalChatParticipants        InternalChatParticipant[]
+  internalChatMessages            InternalChatMessage[]
+  internalChatAttachments         InternalChatAttachment[]
+  internalChatMessageReactions    InternalChatMessageReaction[]
+  communicationMessageReactions   CommunicationMessageReaction[]
 
   @@map("agencies")
 }
@@ -876,7 +878,7 @@ model CaseInvoice {
   refunds                         InvoiceRefund[]
   migratedFromManualLedgerEntries CaseManualLedgerEntry[]       @relation("ManualLedgerMigratedInvoice")
   creditCursor                    CaseInvoiceCreditCursor?
-  incentiveSnapshot                CaseInvoiceIncentiveSnapshot?
+  incentiveSnapshot               CaseInvoiceIncentiveSnapshot?
   incentiveLedgerEntries          IncentiveLedgerEntry[]
 
   @@unique([agencyId, qbInvoiceId])
@@ -1037,21 +1039,21 @@ model CaseInvoiceCreditCursor {
 // Frozen when the invoice is created. Payments against this invoice keep
 // using the people and plan captured here even if the case is transferred.
 model CaseInvoiceIncentiveSnapshot {
-  id               String          @id @default(uuid())
-  agencyId         String          @map("agency_id")
-  caseInvoiceId    String          @unique @map("case_invoice_id")
-  incentivePlanId  String?         @map("incentive_plan_id")
-  planName         String?         @map("plan_name")
-  planVersion      Int?            @map("plan_version")
-  formulaType      String?         @map("formula_type")
-  flatAmount       Decimal?        @map("flat_amount") @db.Decimal(10, 2)
-  percentRate      Decimal?        @map("percent_rate") @db.Decimal(5, 2)
-  tiers            Json
-  recipients       Json
-  createdAt        DateTime        @default(now()) @map("created_at")
-  agency           Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  caseInvoice      CaseInvoice     @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
-  incentivePlan    IncentivePlan?  @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  id              String         @id @default(uuid())
+  agencyId        String         @map("agency_id")
+  caseInvoiceId   String         @unique @map("case_invoice_id")
+  incentivePlanId String?        @map("incentive_plan_id")
+  planName        String?        @map("plan_name")
+  planVersion     Int?           @map("plan_version")
+  formulaType     String?        @map("formula_type")
+  flatAmount      Decimal?       @map("flat_amount") @db.Decimal(10, 2)
+  percentRate     Decimal?       @map("percent_rate") @db.Decimal(5, 2)
+  tiers           Json
+  recipients      Json
+  createdAt       DateTime       @default(now()) @map("created_at")
+  agency          Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  caseInvoice     CaseInvoice    @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+  incentivePlan   IncentivePlan? @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
 
   @@index([agencyId])
   @@map("case_invoice_incentive_snapshots")
@@ -1064,32 +1066,37 @@ model CaseInvoiceIncentiveSnapshot {
 // snapshotted here at credit time rather than derived live from the
 // current plan/role state.
 model IncentiveLedgerEntry {
-  id                    String                 @id @default(uuid())
-  agencyId              String                 @map("agency_id")
-  caseId                String                 @map("case_id")
-  caseInvoiceId         String                 @map("case_invoice_id")
-  incentivePlanId       String                 @map("incentive_plan_id")
-  userId                String                 @map("user_id")
-  attributionKind       String                 @map("attribution_kind")
-  caseRoleId            String?                @map("case_role_id")
-  roleNameSnapshot      String                 @map("role_name_snapshot")
-  sharePercentApplied   Decimal                @map("share_percent_applied") @db.Decimal(5, 2)
-  sourceAmountCollected Decimal                @map("source_amount_collected") @db.Decimal(10, 2)
-  creditedAmount        Decimal                @map("credited_amount") @db.Decimal(10, 2)
-  triggerSource         String                 @map("trigger_source")
-  triggerRef            String?                @map("trigger_ref")
-  entryType             String                 @default("CREDIT") @map("entry_type")
-  reversesEntryId       String?                @map("reverses_entry_id")
-  creditedAt            DateTime               @map("credited_at")
-  createdAt             DateTime               @default(now()) @map("created_at")
-  agency                Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                  Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
-  caseInvoice           CaseInvoice            @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
-  incentivePlan         IncentivePlan          @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
-  user                  User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
-  caseRole              AgencyCaseRole?        @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
-  reversesEntry         IncentiveLedgerEntry?  @relation("IncentiveLedgerReversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
-  reversalEntries       IncentiveLedgerEntry[] @relation("IncentiveLedgerReversal")
+  id                      String                          @id @default(uuid())
+  agencyId                String                          @map("agency_id")
+  caseId                  String                          @map("case_id")
+  // Null for a TIMELINE_BONUS row — a timeline bonus (e.g. "reached
+  // Qualified") has no invoice at all. Every other entryType still requires
+  // one; that's enforced in incentiveCreditingService, not the database.
+  caseInvoiceId           String?                         @map("case_invoice_id")
+  timelineLegEvaluationId String?                         @map("timeline_leg_evaluation_id")
+  incentivePlanId         String                          @map("incentive_plan_id")
+  userId                  String                          @map("user_id")
+  attributionKind         String                          @map("attribution_kind")
+  caseRoleId              String?                         @map("case_role_id")
+  roleNameSnapshot        String                          @map("role_name_snapshot")
+  sharePercentApplied     Decimal                         @map("share_percent_applied") @db.Decimal(5, 2)
+  sourceAmountCollected   Decimal                         @map("source_amount_collected") @db.Decimal(10, 2)
+  creditedAmount          Decimal                         @map("credited_amount") @db.Decimal(10, 2)
+  triggerSource           String                          @map("trigger_source")
+  triggerRef              String?                         @map("trigger_ref")
+  entryType               String                          @default("CREDIT") @map("entry_type")
+  reversesEntryId         String?                         @map("reverses_entry_id")
+  creditedAt              DateTime                        @map("credited_at")
+  createdAt               DateTime                        @default(now()) @map("created_at")
+  agency                  Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case                    Case                            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  caseInvoice             CaseInvoice?                    @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
+  timelineLegEvaluation   IncentiveTimelineLegEvaluation? @relation(fields: [timelineLegEvaluationId], references: [id], onDelete: Restrict)
+  incentivePlan           IncentivePlan                   @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  user                    User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  caseRole                AgencyCaseRole?                 @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
+  reversesEntry           IncentiveLedgerEntry?           @relation("IncentiveLedgerReversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
+  reversalEntries         IncentiveLedgerEntry[]          @relation("IncentiveLedgerReversal")
 
   @@index([agencyId, userId, creditedAt])
   @@index([agencyId, caseId])
@@ -1097,6 +1104,41 @@ model IncentiveLedgerEntry {
   @@index([agencyId, creditedAt])
   @@index([reversesEntryId])
   @@map("incentive_ledger_entries")
+}
+
+// One frozen row per (case, leg) — the leg's own idempotency + audit
+// record. Written whether the leg was actually credited or missed, so
+// "why didn't this pay out" is answerable without reverse-engineering it
+// from an absence of ledger rows. legId/matchedTierId are deliberately
+// plain columns, NOT foreign keys: IncentivePlanTimelineLeg/Tier rows are
+// deleted and recreated whole on every plan save, so a hard FK would break
+// the first plan edit made after any case has ever been evaluated.
+// incentivePlanId IS a real FK — plans themselves are never
+// deleted-and-recreated the way their legs are.
+model IncentiveTimelineLegEvaluation {
+  id                String                 @id @default(uuid())
+  agencyId          String                 @map("agency_id")
+  caseId            String                 @map("case_id")
+  legId             String                 @map("leg_id")
+  legNameSnapshot   String                 @map("leg_name_snapshot")
+  incentivePlanId   String                 @map("incentive_plan_id")
+  fromCheckpointAt  DateTime               @map("from_checkpoint_at")
+  toCheckpointAt    DateTime               @map("to_checkpoint_at")
+  elapsedMinutes    Int                    @map("elapsed_minutes")
+  matchedTierId     String?                @map("matched_tier_id")
+  multiplierPercent Decimal?               @map("multiplier_percent") @db.Decimal(5, 2)
+  baseBonusAmount   Decimal                @map("base_bonus_amount") @db.Decimal(10, 2)
+  creditedTotal     Decimal                @map("credited_total") @db.Decimal(10, 2)
+  outcome           String
+  evaluatedAt       DateTime               @default(now()) @map("evaluated_at")
+  agency            Agency                 @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case              Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  incentivePlan     IncentivePlan          @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  ledgerEntries     IncentiveLedgerEntry[]
+
+  @@unique([caseId, legId])
+  @@index([agencyId, caseId])
+  @@map("incentive_timeline_leg_evaluations")
 }
 
 // A lightweight, QuickBooks-independent record of money owed/received on a
@@ -1327,21 +1369,21 @@ model AgencyFeeCategory {
 // permissions today. Renaming or adding a role here is a settings change,
 // not a migration.
 model AgencyCaseRole {
-  id               String                         @id @default(uuid())
-  agencyId         String                         @map("agency_id")
-  code             String
-  name             String
-  description      String?
-  isActive         Boolean                        @default(true) @map("is_active")
-  isSystem         Boolean                        @default(false) @map("is_system")
-  sortOrder        Int                            @default(0) @map("sort_order")
-  createdAt        DateTime                       @default(now()) @map("created_at")
-  updatedAt        DateTime                       @updatedAt @map("updated_at")
-  agency           Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignments      CaseRoleAssignment[]
-  teamAssignments  TeamIncentiveRoleAssignment[]
-  roleShares       IncentivePlanRoleShare[]
-  ledgerEntries    IncentiveLedgerEntry[]
+  id              String                        @id @default(uuid())
+  agencyId        String                        @map("agency_id")
+  code            String
+  name            String
+  description     String?
+  isActive        Boolean                       @default(true) @map("is_active")
+  isSystem        Boolean                       @default(false) @map("is_system")
+  sortOrder       Int                           @default(0) @map("sort_order")
+  createdAt       DateTime                      @default(now()) @map("created_at")
+  updatedAt       DateTime                      @updatedAt @map("updated_at")
+  agency          Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignments     CaseRoleAssignment[]
+  teamAssignments TeamIncentiveRoleAssignment[]
+  roleShares      IncentivePlanRoleShare[]
+  ledgerEntries   IncentiveLedgerEntry[]
 
   @@unique([agencyId, code])
   @@index([agencyId, isActive, sortOrder])
@@ -1358,26 +1400,28 @@ model AgencyCaseRole {
 // and flipped atomically by the dedicated activate action rather than a
 // plain isActive toggle.
 model IncentivePlan {
-  id                            String                         @id @default(uuid())
-  agencyId                      String                         @map("agency_id")
+  id                            String                           @id @default(uuid())
+  agencyId                      String                           @map("agency_id")
   name                          String
-  caseType                      String?                        @map("case_type")
-  formulaType                   String                         @map("formula_type")
-  flatAmount                    Decimal?                       @map("flat_amount") @db.Decimal(10, 2)
-  percentRate                   Decimal?                       @map("percent_rate") @db.Decimal(5, 2)
-  isActive                      Boolean                        @default(false) @map("is_active")
-  isSystem                      Boolean                        @default(false) @map("is_system")
-  version                       Int                            @default(1)
-  createdById                   String?                        @map("created_by")
-  activatedAt                   DateTime?                      @map("activated_at")
-  deactivatedAt                 DateTime?                      @map("deactivated_at")
-  createdAt                     DateTime                       @default(now()) @map("created_at")
-  updatedAt                     DateTime                       @updatedAt @map("updated_at")
-  agency                        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  createdBy                     User?                          @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  caseType                      String?                          @map("case_type")
+  formulaType                   String                           @map("formula_type")
+  flatAmount                    Decimal?                         @map("flat_amount") @db.Decimal(10, 2)
+  percentRate                   Decimal?                         @map("percent_rate") @db.Decimal(5, 2)
+  isActive                      Boolean                          @default(false) @map("is_active")
+  isSystem                      Boolean                          @default(false) @map("is_system")
+  version                       Int                              @default(1)
+  createdById                   String?                          @map("created_by")
+  activatedAt                   DateTime?                        @map("activated_at")
+  deactivatedAt                 DateTime?                        @map("deactivated_at")
+  createdAt                     DateTime                         @default(now()) @map("created_at")
+  updatedAt                     DateTime                         @updatedAt @map("updated_at")
+  agency                        Agency                           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy                     User?                            @relation("IncentivePlanCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
   tiers                         IncentivePlanTier[]
   roleShares                    IncentivePlanRoleShare[]
+  timelineLegs                  IncentivePlanTimelineLeg[]
   ledgerEntries                 IncentiveLedgerEntry[]
+  timelineLegEvaluations        IncentiveTimelineLegEvaluation[]
   caseInvoiceIncentiveSnapshots CaseInvoiceIncentiveSnapshot[]
 
   @@index([agencyId, caseType, isActive])
@@ -1433,6 +1477,50 @@ model IncentivePlanRoleShare {
   caseRole        AgencyCaseRole? @relation(fields: [caseRoleId], references: [id], onDelete: Restrict)
 
   @@map("incentive_plan_role_shares")
+}
+
+// A milestone-to-milestone "leg" of a plan's timeline (e.g. Lead created ->
+// Lead reaches Qualified). Pays its own flat bonus, split by the plan's
+// existing roleShares, scaled by how fast the leg was actually completed
+// (see tiers below) — independent of the plan's payment-triggered formula
+// above. Deleted and recreated whole on every plan save, same lifecycle as
+// tiers/roleShares — see IncentiveTimelineLegEvaluation for why evaluation
+// history intentionally does NOT hard-FK back to this row.
+model IncentivePlanTimelineLeg {
+  id                  String                         @id @default(uuid())
+  planId              String                         @map("plan_id")
+  name                String
+  sortOrder           Int                            @default(0) @map("sort_order")
+  fromCheckpointType  String                         @map("from_checkpoint_type")
+  fromCheckpointValue String?                        @map("from_checkpoint_value")
+  toCheckpointType    String                         @map("to_checkpoint_type")
+  toCheckpointValue   String?                        @map("to_checkpoint_value")
+  baseBonusAmount     Decimal                        @map("base_bonus_amount") @db.Decimal(10, 2)
+  createdAt           DateTime                       @default(now()) @map("created_at")
+  updatedAt           DateTime                       @updatedAt @map("updated_at")
+  plan                IncentivePlan                  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  tiers               IncentivePlanTimelineLegTier[]
+
+  @@index([planId])
+  @@map("incentive_plan_timeline_legs")
+}
+
+// The days-to-multiplier ladder for one leg — mirrors IncentivePlanTier's
+// shape, just inverted: the SMALLEST thresholdDays that is >= the actual
+// elapsed time wins (the loosest tier the case still qualified for), not the
+// largest threshold cleared. Missing every tier pays nothing for this leg.
+model IncentivePlanTimelineLegTier {
+  id                String                   @id @default(uuid())
+  legId             String                   @map("leg_id")
+  thresholdDays     Decimal                  @map("threshold_days") @db.Decimal(6, 2)
+  multiplierPercent Decimal                  @map("multiplier_percent") @db.Decimal(5, 2)
+  sortOrder         Int                      @default(0) @map("sort_order")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+  leg               IncentivePlanTimelineLeg @relation(fields: [legId], references: [id], onDelete: Cascade)
+
+  @@unique([legId, thresholdDays])
+  @@map("incentive_plan_timeline_leg_tiers")
 }
 
 model AgencyMailSettings {
@@ -1748,6 +1836,7 @@ model User {
   nextActionLeads                      Lead[]                          @relation("LeadNextActionOwnerUser")
   performedLeadActivities              LeadActivity[]                  @relation("LeadActivityPerformerUser")
   changedLeadStages                    LeadStageHistory[]              @relation("LeadStageActorUser")
+  changedCaseStages                    CaseStageHistory[]              @relation("CaseStageActorUser")
   previousLeadAssignments              LeadAssignmentHistory[]         @relation("LeadPreviousOwnerUser")
   newLeadAssignments                   LeadAssignmentHistory[]         @relation("LeadNewOwnerUser")
   assignedLeadChanges                  LeadAssignmentHistory[]         @relation("LeadAssignmentActorUser")
@@ -2081,29 +2170,29 @@ model Client {
 }
 
 model Case {
-  id                           String                         @id @default(uuid())
-  agencyId                     String                         @map("agency_id")
-  clientId                     String                         @map("client_id")
-  assignedUserId               String?                        @map("assigned_user_id")
-  caseType                     String                         @map("case_type")
+  id                           String                           @id @default(uuid())
+  agencyId                     String                           @map("agency_id")
+  clientId                     String                           @map("client_id")
+  assignedUserId               String?                          @map("assigned_user_id")
+  caseType                     String                           @map("case_type")
   stage                        String
   status                       String
-  priority                     String                         @default("Normal")
-  nextAction                   String?                        @map("next_action")
-  submittedAt                  DateTime?                      @map("submitted_at")
-  decisionAt                   DateTime?                      @map("decision_at")
-  studyIntakeMonth             DateTime?                      @map("study_intake_month") @db.Date
-  creationIdempotencyKey       String?                        @map("creation_idempotency_key")
+  priority                     String                           @default("Normal")
+  nextAction                   String?                          @map("next_action")
+  submittedAt                  DateTime?                        @map("submitted_at")
+  decisionAt                   DateTime?                        @map("decision_at")
+  studyIntakeMonth             DateTime?                        @map("study_intake_month") @db.Date
+  creationIdempotencyKey       String?                          @map("creation_idempotency_key")
   // IRCC application number, once known — requested on nearly every
   // government form, not just IMM 5476.
-  applicationNumber            String?                        @map("application_number")
-  archivedAt                   DateTime?                      @map("archived_at")
-  deletedAt                    DateTime?                      @map("deleted_at")
-  createdAt                    DateTime                       @default(now()) @map("created_at")
-  updatedAt                    DateTime                       @updatedAt @map("updated_at")
-  agency                       Agency                         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client                       Client                         @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  assignedUser                 User?                          @relation("AssignedCaseUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  applicationNumber            String?                          @map("application_number")
+  archivedAt                   DateTime?                        @map("archived_at")
+  deletedAt                    DateTime?                        @map("deleted_at")
+  createdAt                    DateTime                         @default(now()) @map("created_at")
+  updatedAt                    DateTime                         @updatedAt @map("updated_at")
+  agency                       Agency                           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                       Client                           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  assignedUser                 User?                            @relation("AssignedCaseUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
   clientDocuments              ClientDocument[]
   documentFolders              DocumentFolder[]
   writtenDocuments             WrittenDocument[]
@@ -2123,8 +2212,10 @@ model Case {
   assignments                  CaseAssignment[]
   roleAssignments              CaseRoleAssignment[]
   incentiveLedgerEntries       IncentiveLedgerEntry[]
-  convertedFromLead            Lead?                          @relation("LeadConvertedCase")
-  earlyForLead                 Lead?                          @relation("LeadEarlyCase")
+  timelineLegEvaluations       IncentiveTimelineLegEvaluation[]
+  stageHistory                 CaseStageHistory[]
+  convertedFromLead            Lead?                            @relation("LeadConvertedCase")
+  earlyForLead                 Lead?                            @relation("LeadEarlyCase")
   leadConversions              LeadConversion[]
   questionnaireAssignments     QuestionnaireAssignment[]
   caseInformationProfiles      CaseInformationProfile[]
@@ -2150,6 +2241,27 @@ model Case {
   @@index([agencyId, archivedAt])
   @@index([agencyId, deletedAt])
   @@map("cases")
+}
+
+// Case-side equivalent of LeadStageHistory. Case.stage is otherwise just
+// overwritten in place with no audit trail — this exists so a case's
+// progress through its stages can be measured after the fact (e.g. for
+// timeline-based incentive bonuses), not just observed as its current value.
+model CaseStageHistory {
+  id            String   @id @default(uuid())
+  agencyId      String   @map("agency_id")
+  caseId        String   @map("case_id")
+  previousStage String?  @map("previous_stage")
+  newStage      String   @map("new_stage")
+  changedById   String?  @map("changed_by")
+  reason        String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  agency        Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  case          Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  changedBy     User?    @relation("CaseStageActorUser", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([agencyId, caseId, createdAt])
+  @@map("case_stage_history")
 }
 
 model ImmigrationProfile {
@@ -2484,59 +2596,67 @@ model BookingSlotHold {
 }
 
 model BookingPaymentHold {
-  id                     String                   @id @default(uuid())
-  agencyId               String                   @map("agency_id")
-  assignedToId           String                   @map("assigned_to_id")
-  sessionTypeId          String?                  @map("session_type_id")
-  startsAt               DateTime                 @map("starts_at")
-  endsAt                 DateTime                 @map("ends_at")
-  claimToken             String                   @unique @default(uuid()) @map("claim_token")
-  idempotencyKey         String?                  @map("idempotency_key")
-  guestName              String                   @map("guest_name")
-  guestEmail             String?                  @map("guest_email")
-  guestEmailNormalized   String?                  @map("guest_email_normalized")
-  guestPhone             String?                  @map("guest_phone")
-  meetingMode            String                   @map("meeting_mode")
-  meetingPhoneNumber     String?                  @map("meeting_phone_number")
-  meetingProvider        String?                  @map("meeting_provider")
-  locationId             String?                  @map("location_id")
-  location               String?
-  locationMapsUrl        String?                  @map("location_maps_url")
-  notes                  String?
-  amount                 Decimal                  @db.Decimal(10, 2)
+  id                       String                   @id @default(uuid())
+  agencyId                 String                   @map("agency_id")
+  assignedToId             String                   @map("assigned_to_id")
+  sessionTypeId            String?                  @map("session_type_id")
+  startsAt                 DateTime                 @map("starts_at")
+  endsAt                   DateTime                 @map("ends_at")
+  claimToken               String                   @unique @default(uuid()) @map("claim_token")
+  idempotencyKey           String?                  @map("idempotency_key")
+  guestName                String                   @map("guest_name")
+  guestEmail               String?                  @map("guest_email")
+  guestEmailNormalized     String?                  @map("guest_email_normalized")
+  guestPhone               String?                  @map("guest_phone")
+  meetingMode              String                   @map("meeting_mode")
+  meetingPhoneNumber       String?                  @map("meeting_phone_number")
+  meetingProvider          String?                  @map("meeting_provider")
+  locationId               String?                  @map("location_id")
+  location                 String?
+  locationMapsUrl          String?                  @map("location_maps_url")
+  notes                    String?
+  amount                   Decimal                  @db.Decimal(10, 2)
   // Nullable: unset for the brief window between the slot lock committing
   // and the QuickBooks customer/invoice calls completing. Deliberately not
   // NOT NULL — Postgres allows multiple NULLs under a unique index, so two
   // concurrent holds mid-creation never collide on qbInvoiceId.
-  qbCustomerId           String?                  @map("qb_customer_id")
-  qbInvoiceId            String?                  @map("qb_invoice_id")
+  qbCustomerId             String?                  @map("qb_customer_id")
+  qbInvoiceId              String?                  @map("qb_invoice_id")
   // Human-facing QuickBooks document number (for example, 1006). The QBO
   // entity id above is an internal identifier and should never be shown to
   // staff as the invoice number.
-  qbInvoiceNumber        String?                  @map("qb_invoice_number")
-  qbInvoiceLink          String?                  @map("qb_invoice_link")
-  qbSyncToken            String?                  @map("qb_sync_token")
-  qbRefundReceiptId      String?                  @map("qb_refund_receipt_id")
-  qbPaymentId            String?                  @map("qb_payment_id")
-  paymentMethod          String?                  @map("payment_method")
-  manualPaymentNote      String?                  @map("manual_payment_note")
-  manualPaymentReference String?                  @map("manual_payment_reference")
-  paymentError           String?                  @map("payment_error")
-  status                 String                   @default("AwaitingPayment")
-  source                 String                   @default("Public")
-  expiresAt              DateTime?                @map("expires_at")
-  paidAt                 DateTime?                @map("paid_at")
-  voidedAt               DateTime?                @map("voided_at")
+  qbInvoiceNumber          String?                  @map("qb_invoice_number")
+  qbInvoiceLink            String?                  @map("qb_invoice_link")
+  qbSyncToken              String?                  @map("qb_sync_token")
+  qbRefundReceiptId        String?                  @map("qb_refund_receipt_id")
+  qbPaymentId              String?                  @map("qb_payment_id")
+  paymentMethod            String?                  @map("payment_method")
+  manualPaymentNote        String?                  @map("manual_payment_note")
+  manualPaymentReference   String?                  @map("manual_payment_reference")
+  paymentError             String?                  @map("payment_error")
+  status                   String                   @default("AwaitingPayment")
+  source                   String                   @default("Public")
+  expiresAt                DateTime?                @map("expires_at")
+  paidAt                   DateTime?                @map("paid_at")
+  voidedAt                 DateTime?                @map("voided_at")
   // Set by the periodic balance-mismatch sweep when a "Paid" hold's real
   // QuickBooks invoice no longer shows a zero balance (or the invoice is
   // gone entirely) — the usual cause is a Payment being deleted in
   // QuickBooks directly rather than properly refunded, which produces no
   // RefundReceipt for the normal refund-matching path to ever see. Cleared
   // automatically if a later sweep finds the balance whole again.
-  balanceMismatchAt      DateTime?                @map("balance_mismatch_at")
-  voidAttempts           Int                      @default(0) @map("void_attempts")
-  nextVoidAttemptAt      DateTime?                @map("next_void_attempt_at")
-  appointmentId          String?                  @unique @map("appointment_id")
+  balanceMismatchAt        DateTime?                @map("balance_mismatch_at")
+  voidAttempts             Int                      @default(0) @map("void_attempts")
+  nextVoidAttemptAt        DateTime?                @map("next_void_attempt_at")
+  // One-time marker: has detectPaidAfterVoidHolds already checked this
+  // voided hold's invoice for a payment that landed anyway? Confirmed
+  // empirically against real QuickBooks that this is reachable — voiding a
+  // paid invoice succeeds, and paying a voided invoice succeeds, so
+  // nothing on QuickBooks' own side prevents this race. Set regardless of
+  // outcome (found or not) so a genuinely-abandoned hold isn't rechecked
+  // forever.
+  postVoidPaymentCheckedAt DateTime?                @map("post_void_payment_checked_at")
+  appointmentId            String?                  @unique @map("appointment_id")
   // Set when this paid booking is fulfilling a waitlist offer — the offer's
   // own BookingSlotHold can't be claimed (and its BookingWaitlistEntry
   // marked "Booked") until payment actually confirms, which happens later
@@ -3307,26 +3427,26 @@ model WorkflowTemplate {
 }
 
 model WorkflowTemplateStep {
-  id                   String               @id @default(uuid())
-  agencyId             String               @map("agency_id")
-  templateId           String               @map("template_id")
-  title                String
-  description          String?
-  sortOrder            Int                  @map("sort_order")
-  priority             WorkflowStepPriority @default(Normal)
-  isRequired           Boolean              @default(true) @map("is_required")
+  id                  String               @id @default(uuid())
+  agencyId            String               @map("agency_id")
+  templateId          String               @map("template_id")
+  title               String
+  description         String?
+  sortOrder           Int                  @map("sort_order")
+  priority            WorkflowStepPriority @default(Normal)
+  isRequired          Boolean              @default(true) @map("is_required")
   // Mirrors PaymentScheduleTemplateInstallment's trigger fields exactly —
   // null means the step stays manual (the default, and the only option
   // today). "Stage" is currently the only supported trigger: the step
   // auto-completes the moment the case's stage reaches autoCompleteStage,
   // evaluated the same way a payment installment fires on a stage change.
-  autoCompleteTrigger  String?              @map("auto_complete_trigger")
-  autoCompleteStage    String?              @map("auto_complete_stage")
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
-  agency               Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  template             WorkflowTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  caseSteps            CaseWorkflowStep[]
+  autoCompleteTrigger String?              @map("auto_complete_trigger")
+  autoCompleteStage   String?              @map("auto_complete_stage")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  agency              Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  template            WorkflowTemplate     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  caseSteps           CaseWorkflowStep[]
 
   @@index([agencyId])
   @@index([templateId])
@@ -4167,26 +4287,26 @@ model ActivityLog {
 // Column list/types must match that migration exactly — no schema change,
 // this is purely giving an existing table a typed model.
 model SupportTicket {
-  id                  String    @id @default(uuid())
-  ticketNumber        String    @unique @map("ticket_number")
-  agencyId            String    @map("agency_id")
-  reportedById        String    @map("reported_by_id")
-  status              String    @default("Submitted")
-  description         String
-  novaSummary         String?   @map("nova_summary")
-  pagePath            String?   @map("page_path")
-  errorCode           String?   @map("error_code")
-  errorMessage        String?   @map("error_message")
-  diagnostics         Json?
-  screenshotStorageKey String?  @map("screenshot_storage_key")
-  screenshotMimeType  String?   @map("screenshot_mime_type")
-  deliveryStatus      String    @default("Pending") @map("delivery_status")
-  deliveryError       String?   @map("delivery_error")
-  deliveredAt         DateTime? @map("delivered_at")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
-  agency              Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  reportedBy          User      @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+  id                   String    @id @default(uuid())
+  ticketNumber         String    @unique @map("ticket_number")
+  agencyId             String    @map("agency_id")
+  reportedById         String    @map("reported_by_id")
+  status               String    @default("Submitted")
+  description          String
+  novaSummary          String?   @map("nova_summary")
+  pagePath             String?   @map("page_path")
+  errorCode            String?   @map("error_code")
+  errorMessage         String?   @map("error_message")
+  diagnostics          Json?
+  screenshotStorageKey String?   @map("screenshot_storage_key")
+  screenshotMimeType   String?   @map("screenshot_mime_type")
+  deliveryStatus       String    @default("Pending") @map("delivery_status")
+  deliveryError        String?   @map("delivery_error")
+  deliveredAt          DateTime? @map("delivered_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  agency               Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  reportedBy           User      @relation(fields: [reportedById], references: [id], onDelete: Restrict)
 
   @@index([agencyId, createdAt])
   @@index([status, createdAt])
@@ -4199,11 +4319,11 @@ model SupportTicket {
 // flag still has a hardcoded default (see featureFlags.js) so a missing
 // row behaves exactly like today's hardcoded const.
 model DeveloperSetting {
-  key           String   @id
-  value         String
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
-  updatedById   String?  @map("updated_by_id")
-  updatedBy     User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  key         String   @id
+  value       String
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id")
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("developer_settings")
 }

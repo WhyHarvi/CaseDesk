@@ -2,6 +2,9 @@ import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { buildInvoiceIncentiveSnapshotForPlan } from "./incentiveCreditingService.js";
+import { CHECKPOINT_TYPES, CHECKPOINT_TYPES_REQUIRING_VALUE } from "./incentiveTimelineCheckpoints.js";
+import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
+import { LEAD_STAGES } from "../modules/leads/lead.constants.js";
 import { logger } from "./logger.js";
 
 export const FORMULA_TYPES = ["FLAT_PER_PAYMENT", "PERCENT_OF_PAYMENT", "TIERED_PERCENT_OF_REVENUE"];
@@ -10,6 +13,7 @@ export const ATTRIBUTION_KINDS = ["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER"];
 const planInclude = {
   tiers: { orderBy: { minCumulativeAmount: "asc" } },
   roleShares: { include: { caseRole: { select: { id: true, code: true, name: true } } } },
+  timelineLegs: { orderBy: { sortOrder: "asc" }, include: { tiers: { orderBy: { thresholdDays: "asc" } } } },
   createdBy: { select: { id: true, fullName: true } },
 };
 
@@ -93,6 +97,79 @@ async function validateRoleShares(agencyId, roleShares) {
   return normalized;
 }
 
+function validateCheckpoint(type, value, caseType, label) {
+  const checkpointType = String(type || "").trim();
+  if (!CHECKPOINT_TYPES.includes(checkpointType)) throw createHttpError(400, `Choose a valid ${label} checkpoint.`, "VALIDATION_ERROR");
+
+  const requiresValue = CHECKPOINT_TYPES_REQUIRING_VALUE.has(checkpointType);
+  const checkpointValue = requiresValue ? String(value || "").trim() : null;
+  if (requiresValue && !checkpointValue) throw createHttpError(400, `Choose a stage for the ${label} checkpoint.`, "VALIDATION_ERROR");
+  if (!requiresValue && value) throw createHttpError(400, `The ${label} checkpoint doesn't take a stage.`, "VALIDATION_ERROR");
+
+  if (checkpointType === "LEAD_STAGE_REACHED" && !LEAD_STAGES.includes(checkpointValue)) {
+    throw createHttpError(400, `"${checkpointValue}" isn't a valid lead stage.`, "VALIDATION_ERROR");
+  }
+  if (checkpointType === "CASE_STAGE_REACHED") {
+    if (!CASE_STAGES.includes(checkpointValue)) throw createHttpError(400, `"${checkpointValue}" isn't a valid case stage.`, "VALIDATION_ERROR");
+    if (caseType && !isCaseStageAllowedForType(caseType, checkpointValue)) {
+      throw createHttpError(400, `"${checkpointValue}" isn't a valid stage for this plan's case type.`, "VALIDATION_ERROR");
+    }
+  }
+  return { checkpointType, checkpointValue };
+}
+
+// Timeline legs are optional — a plan with none behaves exactly as it did
+// before this feature existed. Unlike tiers/roleShares this needs no DB
+// lookup (checkpoint vocabularies are static lists), so it stays sync.
+export function validateTimelineLegs(caseType, timelineLegs) {
+  const supplied = Array.isArray(timelineLegs) ? timelineLegs : [];
+  if (!supplied.length) return [];
+
+  const seenLegKeys = new Set();
+  return supplied.map((leg) => {
+    const name = String(leg?.name || "").trim().slice(0, 100);
+    if (!name) throw createHttpError(400, "Enter a name for each timeline leg.", "VALIDATION_ERROR");
+
+    const from = validateCheckpoint(leg?.fromCheckpointType, leg?.fromCheckpointValue, caseType, "starting");
+    const to = validateCheckpoint(leg?.toCheckpointType, leg?.toCheckpointValue, caseType, "ending");
+    if (from.checkpointType === to.checkpointType && from.checkpointValue === to.checkpointValue) {
+      throw createHttpError(400, `"${name}" needs different starting and ending checkpoints.`, "VALIDATION_ERROR");
+    }
+    const legKey = `${from.checkpointType}:${from.checkpointValue || ""}>${to.checkpointType}:${to.checkpointValue || ""}`;
+    if (seenLegKeys.has(legKey)) throw createHttpError(400, "Two timeline legs can't share the exact same start and end checkpoints.", "VALIDATION_ERROR");
+    seenLegKeys.add(legKey);
+
+    const baseBonusAmount = toDecimalString(leg?.baseBonusAmount);
+    if (baseBonusAmount === null || baseBonusAmount <= 0) throw createHttpError(400, `Enter a base bonus amount greater than zero for "${name}".`, "VALIDATION_ERROR");
+
+    const suppliedTiers = Array.isArray(leg?.tiers) ? leg.tiers : [];
+    if (!suppliedTiers.length) throw createHttpError(400, `Add at least one tier for "${name}".`, "VALIDATION_ERROR");
+    const tiers = suppliedTiers.map((tier) => {
+      const thresholdDays = toDecimalString(tier?.thresholdDays);
+      const multiplierPercent = toDecimalString(tier?.multiplierPercent);
+      if (thresholdDays === null || thresholdDays <= 0) throw createHttpError(400, `Each tier in "${name}" needs a number of days greater than zero.`, "VALIDATION_ERROR");
+      if (multiplierPercent === null || multiplierPercent <= 0 || multiplierPercent > 100) throw createHttpError(400, `Each tier in "${name}" needs a bonus multiplier between 0 and 100.`, "VALIDATION_ERROR");
+      return { thresholdDays, multiplierPercent };
+    });
+    const seenThresholds = new Set();
+    for (const tier of tiers) {
+      if (seenThresholds.has(tier.thresholdDays)) throw createHttpError(400, `Tiers in "${name}" must use different day thresholds.`, "VALIDATION_ERROR");
+      seenThresholds.add(tier.thresholdDays);
+    }
+    tiers.sort((a, b) => a.thresholdDays - b.thresholdDays);
+
+    return {
+      name,
+      fromCheckpointType: from.checkpointType,
+      fromCheckpointValue: from.checkpointValue,
+      toCheckpointType: to.checkpointType,
+      toCheckpointValue: to.checkpointValue,
+      baseBonusAmount,
+      tiers,
+    };
+  });
+}
+
 export async function listIncentivePlans(agencyId, { includeInactive = true } = {}) {
   return prisma.incentivePlan.findMany({
     where: { agencyId, ...(includeInactive ? {} : { isActive: true }) },
@@ -113,6 +190,7 @@ export async function createIncentivePlan(agencyId, userId, values) {
   const caseType = normalizeCaseType(values?.caseType);
   const { data: formula, tiers } = validateFormula(values);
   const roleShares = await validateRoleShares(agencyId, values?.roleShares);
+  const timelineLegs = validateTimelineLegs(caseType, values?.timelineLegs);
 
   return prisma.incentivePlan.create({
     data: {
@@ -124,6 +202,9 @@ export async function createIncentivePlan(agencyId, userId, values) {
       createdById: userId,
       tiers: { create: tiers },
       roleShares: { create: roleShares },
+      timelineLegs: {
+        create: timelineLegs.map((leg, index) => ({ ...leg, sortOrder: index, tiers: { create: leg.tiers } })),
+      },
     },
     include: planInclude,
   });
@@ -155,6 +236,12 @@ export async function updateIncentivePlan(agencyId, id, values) {
     roleShares = await validateRoleShares(agencyId, values.roleShares);
   }
 
+  let timelineLegs = null;
+  if (values?.timelineLegs !== undefined) {
+    const effectiveCaseType = data.caseType !== undefined ? data.caseType : current.caseType;
+    timelineLegs = validateTimelineLegs(effectiveCaseType, values.timelineLegs);
+  }
+
   if (values?.isActive === false && current.isActive) {
     data.isActive = false;
     data.deactivatedAt = new Date();
@@ -170,6 +257,15 @@ export async function updateIncentivePlan(agencyId, id, values) {
     if (roleShares !== null) {
       await tx.incentivePlanRoleShare.deleteMany({ where: { planId: id } });
       if (roleShares.length) await tx.incentivePlanRoleShare.createMany({ data: roleShares.map((share) => ({ ...share, planId: id })) });
+    }
+    if (timelineLegs !== null) {
+      // Deleted and recreated whole, same as tiers/roleShares above — a
+      // nested createMany can't also create each leg's tiers in one call,
+      // so this loops one create() per leg instead.
+      await tx.incentivePlanTimelineLeg.deleteMany({ where: { planId: id } });
+      for (const [index, leg] of timelineLegs.entries()) {
+        await tx.incentivePlanTimelineLeg.create({ data: { ...leg, planId: id, sortOrder: index, tiers: { create: leg.tiers } } });
+      }
     }
     await tx.incentivePlan.update({ where: { id }, data });
     return tx.incentivePlan.findUnique({ where: { id }, include: planInclude });
