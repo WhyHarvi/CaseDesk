@@ -2543,17 +2543,13 @@ model BookingPaymentHold {
   // persisted here rather than handled inline like the free booking path.
   offerHoldId            String?                  @unique @map("offer_hold_id")
   createdById            String?                  @map("created_by_id")
-  // Set only by the staff-initiated card-payment path (an existing client
-  // picked from the front-desk booking form) — the public flow never knows
-  // an internal Client row at hold-creation time, so this stays null there
-  // and the guest* snapshot fields remain the source of truth for contact
-  // info either way. Read by confirmPaymentHold to link the eventual
-  // Appointment to the right client instead of leaving it guest-only.
+  // Set by staff bookings and by verified portal/public bookings that match
+  // an existing client. The guest* fields remain the booking-time snapshot.
+  // Also prevents an expired checkout from becoming a duplicate Lead.
   clientId               String?                  @map("client_id")
-  // Set once an abandoned (Expired/Voided, never-paid) public hold has been
-  // recovered into a Lead so staff can follow up — see
-  // captureAbandonedPublicBookingLead in lead.booking.js. Doubles as the
-  // idempotency marker: a hold with this set is never reprocessed.
+  // Set once an unlinked abandoned (Expired/Voided, never-paid) public hold
+  // has been recovered into a Lead. Linked-client holds use an idempotent
+  // ActivityLog instead and intentionally leave this null.
   leadId                 String?                  @map("lead_id")
   createdAt              DateTime                 @default(now()) @map("created_at")
   updatedAt              DateTime                 @updatedAt @map("updated_at")

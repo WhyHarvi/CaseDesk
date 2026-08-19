@@ -226,6 +226,36 @@ export async function captureAbandonedPublicBookingLead(agencyId, holdId) {
     const phoneNormalized = normalizePhoneSafe(hold.guestPhone);
     const now = new Date();
 
+    // Portal bookings already carry a verified Client link. An expired
+    // checkout from a known client is client activity, not a new sales lead.
+    // Use the hold as the activity entity so retries remain idempotent.
+    if (hold.clientId) {
+      const priorActivity = await tx.activityLog.findFirst({
+        where: {
+          agencyId,
+          clientId: hold.clientId,
+          action: "client.booking_checkout_abandoned",
+          entityType: "bookingPaymentHold",
+          entityId: hold.id,
+        },
+        select: { id: true },
+      });
+      if (!priorActivity) {
+        await tx.activityLog.create({
+          data: {
+            agencyId,
+            clientId: hold.clientId,
+            action: "client.booking_checkout_abandoned",
+            details: `${hold.sessionType?.name || "Consultation"} checkout was started but not completed`,
+            entityType: "bookingPaymentHold",
+            entityId: hold.id,
+            metadata: { holdId: hold.id, status: hold.status },
+          },
+        });
+      }
+      return { leadId: null, created: false, hold: null };
+    }
+
     let existingLead = hold.guestEmailNormalized ? await tx.lead.findFirst({
       where: { agencyId, deletedAt: null, status: "OPEN", emailNormalized: hold.guestEmailNormalized },
       orderBy: { createdAt: "desc" },

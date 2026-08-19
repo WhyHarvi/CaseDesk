@@ -837,6 +837,22 @@ test("free follow-up consultations require a prior settled booking and a 15-minu
   assert.match(calendar, /choose a 15-minute appointment type to apply it/);
 });
 
+test("an abandoned portal checkout stays on the linked client instead of creating a lead", async () => {
+  const bookingLead = await readFile(new URL("../src/modules/leads/lead.booking.js", import.meta.url), "utf8");
+  const linkedClientBranch = bookingLead.slice(
+    bookingLead.indexOf("if (hold.clientId)"),
+    bookingLead.indexOf("let existingLead", bookingLead.indexOf("if (hold.clientId)")),
+  );
+
+  assert.match(linkedClientBranch, /client\.booking_checkout_abandoned/);
+  assert.match(linkedClientBranch, /entityType: "bookingPaymentHold"/);
+  assert.match(linkedClientBranch, /entityId: hold\.id/);
+  assert.match(linkedClientBranch, /priorActivity/);
+  assert.match(linkedClientBranch, /return \{ leadId: null, created: false, hold: null \}/);
+  assert.doesNotMatch(linkedClientBranch, /tx\.lead\.create/);
+  assert.doesNotMatch(linkedClientBranch, /sendAbandonedBookingPaymentEmail/);
+});
+
 test("staff can't pick a free-named session type for a contact who hasn't earned it yet", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
 
