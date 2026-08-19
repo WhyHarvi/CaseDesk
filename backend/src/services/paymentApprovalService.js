@@ -21,6 +21,40 @@ const approvalInclude = {
   reviewedBy: { select: { id: true, fullName: true } },
 };
 
+async function competingAppointmentApproval(row) {
+  if (!row?.appointmentId || row.entryType !== "appointment_payment") return null;
+  return prisma.paymentApproval.findFirst({
+    where: {
+      agencyId: row.agencyId,
+      appointmentId: row.appointmentId,
+      id: { not: row.id },
+      status: { in: [PAYMENT_APPROVAL_STATUSES.pending, PAYMENT_APPROVAL_STATUSES.processing, PAYMENT_APPROVAL_STATUSES.approved] },
+    },
+    select: { id: true, status: true },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+async function withReviewState(row) {
+  if (!row || row.status !== PAYMENT_APPROVAL_STATUSES.failed) return row;
+  const competing = await competingAppointmentApproval(row);
+  if (!competing) return row;
+  return {
+    ...row,
+    reviewBlockedReason: competing.status === PAYMENT_APPROVAL_STATUSES.approved
+      ? "Another payment request for this appointment has already been approved."
+      : "Another payment request for this appointment is already awaiting review.",
+    supersededByApprovalId: competing.id,
+  };
+}
+
+async function assertPaymentApprovalReviewable(row) {
+  const current = await withReviewState(row);
+  if (current?.reviewBlockedReason) {
+    throw createHttpError(409, current.reviewBlockedReason, "PAYMENT_APPROVAL_SUPERSEDED");
+  }
+}
+
 function safeText(value, length) {
   return String(value || "").trim().slice(0, length) || null;
 }
@@ -279,6 +313,9 @@ async function processApprovedPayment(row, actorUserId) {
 }
 
 export async function approvePaymentApproval(agencyId, id, actorUserId) {
+  const existing = await prisma.paymentApproval.findFirst({ where: { id, agencyId } });
+  if (!existing) throw createHttpError(404, "Payment approval was not found.", "NOT_FOUND");
+  await assertPaymentApprovalReviewable(existing);
   const claimed = await prisma.paymentApproval.updateMany({
     where: { id, agencyId, status: { in: [PAYMENT_APPROVAL_STATUSES.pending, PAYMENT_APPROVAL_STATUSES.failed] } },
     data: { status: PAYMENT_APPROVAL_STATUSES.processing, reviewedById: actorUserId, reviewedAt: new Date(), rejectionReason: null, processingError: null },
@@ -349,6 +386,9 @@ export async function approvePaymentApproval(agencyId, id, actorUserId) {
 export async function rejectPaymentApproval(agencyId, id, actorUserId, reason) {
   const rejectionReason = safeText(reason, 500);
   if (!rejectionReason) throw createHttpError(400, "Add a reason so the frontdesk can correct the entry.", "VALIDATION_ERROR");
+  const existing = await prisma.paymentApproval.findFirst({ where: { id, agencyId } });
+  if (!existing) throw createHttpError(404, "Payment approval was not found.", "NOT_FOUND");
+  await assertPaymentApprovalReviewable(existing);
   const changed = await prisma.paymentApproval.updateMany({
     where: { id, agencyId, status: { in: [PAYMENT_APPROVAL_STATUSES.pending, PAYMENT_APPROVAL_STATUSES.failed] } },
     data: { status: PAYMENT_APPROVAL_STATUSES.rejected, reviewedById: actorUserId, reviewedAt: new Date(), rejectionReason, processingError: null },
@@ -387,5 +427,5 @@ export async function getPaymentApproval(agencyId, id) {
     include: approvalInclude,
   });
   if (!row) throw createHttpError(404, "Payment approval request was not found.", "NOT_FOUND");
-  return row;
+  return withReviewState(row);
 }
