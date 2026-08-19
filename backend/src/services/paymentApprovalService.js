@@ -240,7 +240,7 @@ async function processApprovedPayment(row, actorUserId) {
     const matchingPartialSuccess = existingHold?.status === "Paid"
       && existingHold.paymentMethod === row.method
       && Number(existingHold.amount) === Number(row.amount)
-      && String(existingHold.manualPaymentReference || "") === String(row.transactionReference || "")
+      && (row.method === "Cash" || String(existingHold.manualPaymentReference || "") === String(row.transactionReference || ""))
       && existingHold.paidAt?.toISOString().slice(0, 10) === paymentDate;
     if (matchingPartialSuccess) {
       return { qbPaymentId: existingHold.qbPaymentId || null, result: { bookingPaymentHoldId: existingHold.id, appointmentId: row.appointmentId, reconciledPartialApproval: true } };

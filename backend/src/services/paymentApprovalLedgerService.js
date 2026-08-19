@@ -66,7 +66,9 @@ export async function postApprovedCashTransaction({
       appointmentId,
       type,
       amount,
-      reference: String(transactionReference || "").trim().slice(0, 100) || null,
+      // Cash has no bank transaction identifier. Optional receipt text stays
+      // on PaymentApproval; this unique cross-ledger reference must remain null.
+      reference: null,
       occurredAt: normalizePaymentApprovalDate(paymentDate),
       note: String(note || "").trim().slice(0, 500) || null,
       createdById: actorUserId,

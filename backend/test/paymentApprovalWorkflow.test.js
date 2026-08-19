@@ -51,8 +51,9 @@ test("cash ledger dates accept the persisted Date returned by Prisma", () => {
 });
 
 test("only cash needs administrator approval — frontdesk's other consultation payment methods post directly, and cash branches use the CaseDesk Cash ledger", async () => {
-  const [approvalService, bookingService, invoiceService, bookingController, billingController, routes, paymentsPage, migration] = await Promise.all([
+  const [approvalService, ledgerService, bookingService, invoiceService, bookingController, billingController, routes, paymentsPage, migration] = await Promise.all([
     readFile(new URL("../src/services/paymentApprovalService.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/paymentApprovalLedgerService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/services/bookingPaymentHoldService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/services/caseInvoiceService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
@@ -88,6 +89,8 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.match(approvalService, /recipientIds: \[row\.submittedById\]/);
   assert.match(approvalService, /row\.appointmentId \? \{ audienceKey: "scheduling", destinationKey: "calendar" \}/);
   assert.match(approvalService, /matchingPartialSuccess[\s\S]*reconciledPartialApproval: true/);
+  assert.match(approvalService, /row\.method === "Cash" \|\| String\(existingHold\.manualPaymentReference/);
+  assert.match(ledgerService, /reference: null/);
   assert.match(approvalService, /pendingCount[\s\S]*status: "Pending"/);
   assert.doesNotMatch(approvalService, /pendingCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);
   assert.match(bookingService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return hold;/);
