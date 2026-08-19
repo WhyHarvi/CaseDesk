@@ -15,7 +15,9 @@ export function normalizePaymentApprovalKey(value) {
 }
 
 export function normalizePaymentApprovalDate(value) {
-  const text = String(value || new Date().toISOString().slice(0, 10)).trim();
+  const text = value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value || new Date().toISOString().slice(0, 10)).trim();
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) throw createHttpError(400, "Choose a valid payment date.", "VALIDATION_ERROR");
   const [, year, month, day] = match.map(Number);

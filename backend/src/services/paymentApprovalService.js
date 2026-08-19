@@ -176,11 +176,21 @@ async function processApprovedPayment(row, actorUserId) {
     return { qbPaymentId: hold.qbPaymentId || null, result: { bookingPaymentHoldId: hold.id, appointmentId: row.appointmentId } };
   }
   if (row.entryType === "appointment_payment") {
+    const existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId: row.appointmentId } });
+    const paymentDate = row.paymentDate.toISOString().slice(0, 10);
+    const matchingPartialSuccess = existingHold?.status === "Paid"
+      && existingHold.paymentMethod === row.method
+      && Number(existingHold.amount) === Number(row.amount)
+      && String(existingHold.manualPaymentReference || "") === String(row.transactionReference || "")
+      && existingHold.paidAt?.toISOString().slice(0, 10) === paymentDate;
+    if (matchingPartialSuccess) {
+      return { qbPaymentId: existingHold.qbPaymentId || null, result: { bookingPaymentHoldId: existingHold.id, appointmentId: row.appointmentId, reconciledPartialApproval: true } };
+    }
     const hold = await recordWalkInManualPayment(row.agencyId, {
       appointmentId: row.appointmentId,
       method: row.method,
       transactionReference: row.transactionReference,
-      paymentDate: row.paymentDate.toISOString().slice(0, 10),
+      paymentDate,
       note: row.note,
       actorUserId,
       overrideFreeConsultation: row.result?.overrideFreeConsultation === true,

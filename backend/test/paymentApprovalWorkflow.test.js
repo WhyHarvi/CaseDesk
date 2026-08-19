@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   applyLocalCashToInvoice,
+  normalizePaymentApprovalDate,
   validateStaffPayment,
 } from "../src/services/paymentApprovalLedgerService.js";
 
@@ -44,6 +45,11 @@ test("staff payment validation requires an e-transfer reference but permits an o
   assert.equal(validateStaffPayment({ method: "Cash", amount: 100, paymentDate: "2026-08-11" }).numericAmount, 100);
 });
 
+test("cash ledger dates accept the persisted Date returned by Prisma", () => {
+  const persisted = new Date("2026-08-19T00:00:00.000Z");
+  assert.equal(normalizePaymentApprovalDate(persisted).toISOString(), "2026-08-19T12:00:00.000Z");
+});
+
 test("only cash needs administrator approval — frontdesk's other consultation payment methods post directly, and cash branches use the CaseDesk Cash ledger", async () => {
   const [approvalService, bookingService, invoiceService, bookingController, billingController, routes, paymentsPage, migration] = await Promise.all([
     readFile(new URL("../src/services/paymentApprovalService.js", import.meta.url), "utf8"),
@@ -76,6 +82,7 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.doesNotMatch(approvalService, /prisma\.payment\.create/);
   assert.match(approvalService, /accountingProvider: row\.method === "Cash" \? ACCOUNTING_PROVIDERS\.CASH/);
   assert.match(approvalService, /postApprovedCashTransaction/);
+  assert.match(approvalService, /matchingPartialSuccess[\s\S]*reconciledPartialApproval: true/);
   assert.match(approvalService, /pendingCount[\s\S]*status: "Pending"/);
   assert.doesNotMatch(approvalService, /pendingCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);
   assert.match(bookingService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return hold;/);
