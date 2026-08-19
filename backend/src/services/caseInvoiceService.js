@@ -490,7 +490,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   if (numericAmount > effectiveBalance + 0.01) {
     throw createHttpError(400, `That's more than the outstanding balance of $${effectiveBalance.toFixed(2)}.`, "VALIDATION_ERROR");
   }
-  await assertManualPaymentReferenceAvailable(agencyId, paymentReference);
+  if (method !== "Cash") await assertManualPaymentReferenceAvailable(agencyId, paymentReference);
 
   if (method === "Cash") {
     if (row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS) {

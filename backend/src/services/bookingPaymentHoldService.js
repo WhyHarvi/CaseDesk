@@ -937,7 +937,7 @@ export async function recordWalkInManualPayment(agencyId, {
     existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });
     if (existingHold?.status === "Paid") throw createHttpError(409, "QuickBooks already shows this consultation as paid.", "ALREADY_PAID");
   }
-  if (paymentReference) {
+  if (paymentReference && method !== "Cash") {
     // A voided/deleted payment keeps its old reference on record for audit
     // history, but no longer represents a real transaction — the reference
     // must be free to reuse, otherwise correcting a mistaken entry
@@ -1266,7 +1266,7 @@ export async function updatePaidAppointmentPaymentDetails(agencyId, {
     throw createHttpError(409, "Record the appointment payment before adding its transaction details.", "PAYMENT_NOT_RECORDED");
   }
 
-  if (paymentReference) {
+  if (paymentReference && method !== "Cash") {
     const [bookingDuplicate, invoiceDuplicate] = await Promise.all([
       prisma.bookingPaymentHold.findFirst({ where: { agencyId, manualPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] }, id: { not: hold.id } }, select: { id: true } }),
       prisma.caseInvoice.findFirst({ where: { agencyId, lastPaymentReference: paymentReference, status: { notIn: ["Void", "Voided"] } }, select: { id: true } }),

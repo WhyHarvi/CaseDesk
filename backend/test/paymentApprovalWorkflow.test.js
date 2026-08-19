@@ -87,6 +87,9 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.doesNotMatch(approvalService, /pendingCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);
   assert.match(bookingService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return hold;/);
   assert.match(invoiceService, /if \(method === "Cash"\)[\s\S]*quickBooksStored: false[\s\S]*return updated;/);
+  assert.match(bookingService, /if \(paymentReference && method !== "Cash"\)/);
+  assert.match(invoiceService, /if \(method !== "Cash"\) await assertManualPaymentReferenceAvailable/);
+  assert.match(paymentsPage, /timeZone: "UTC"/);
   assert.match(routes, /approvals\/:id\/approve/);
   assert.match(routes, /approvals\/:id\/reject/);
   // A real incident: the same $100 e-transfer for one appointment got

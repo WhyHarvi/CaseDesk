@@ -115,7 +115,7 @@ const ORPHANED_PAYMENT_RUNBOOK = [
 
 function formatDate(value) {
   if (!value) return "—";
-  return new Date(value).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(value).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 function localInputDate(value = new Date()) {
