@@ -108,6 +108,7 @@ export default function ClientPortalAppointments() {
           bookingVerificationToken: session.verificationToken,
           bookingSessionExpiresAt: session.expiresAt,
           portalReturnTo: "/client-portal/appointments",
+          freeFollowUpOffer: freeBookingOffer,
         },
       });
     } catch (reason) {

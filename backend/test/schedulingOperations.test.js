@@ -803,12 +803,14 @@ test("client billing can record agency fee categories and repair paid appointmen
 });
 
 test("free follow-up consultations require a prior settled booking and a 15-minute session", async () => {
-  const [eligibilityService, bookingController, publicController, portalController, portalOffer, calendar] = await Promise.all([
+  const [eligibilityService, bookingController, publicController, portalController, portalOffer, portalAppointments, publicPage, calendar] = await Promise.all([
     readFile(new URL("../src/services/bookingFreeConsultationService.js", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/publicBookingController.js", import.meta.url), "utf8"),
     readFile(new URL("../src/controllers/clientPortalController.js", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/components/client-portal/usePortalFreeAppointmentOffer.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/client-portal/ClientPortalAppointments.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/pages/PublicBookingPage.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
   ]);
 
@@ -823,10 +825,14 @@ test("free follow-up consultations require a prior settled booking and a 15-minu
   assert.match(eligibilityService, /FIFTEEN_MINUTE_SESSION_REQUIRED/);
   assert.match(bookingController, /durationMinutes,/);
   assert.match(publicController, /guestEmailNormalized: verification \? email : null/);
+  assert.match(publicController, /"FREE_CONSULTATION_ELIGIBLE"/);
   assert.match(portalController, /freeFollowUpOffer: freeEligibility\?\.eligible/);
   assert.match(portalController, /durationMinutes: 15/);
   assert.doesNotMatch(portalOffer, /getPublicBookingInfo/);
   assert.match(portalOffer, /booking\.freeFollowUpOffer/);
+  assert.match(portalAppointments, /freeFollowUpOffer: freeBookingOffer/);
+  assert.match(publicPage, /sessionTypeId === portalSessionAtLoad\.freeFollowUpOffer\.sessionTypeId/);
+  assert.match(publicPage, /!selectedFreeFollowUp/);
   assert.match(calendar, /Eligible for a free 15-minute follow-up/);
   assert.match(calendar, /choose a 15-minute appointment type to apply it/);
 });

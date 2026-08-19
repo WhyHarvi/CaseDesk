@@ -907,6 +907,7 @@ export default function PublicBookingPage() {
           verificationToken: routeLocation.state.bookingVerificationToken,
           expiresAt: routeLocation.state.bookingSessionExpiresAt,
           portalReturnTo: routeLocation.state.portalReturnTo,
+          freeFollowUpOffer: routeLocation.state.freeFollowUpOffer || null,
         }
       : readPortalBookingSession(token),
   ).current;
@@ -1018,7 +1019,10 @@ export default function PublicBookingPage() {
           setStep("details");
           return;
         }
-        if (sessionTypes.length === 1)
+        const offeredFreeSessionId = portalSessionAtLoad?.freeFollowUpOffer?.sessionTypeId;
+        if (offeredFreeSessionId && sessionTypes.some((type) => type.id === offeredFreeSessionId))
+          setSessionTypeId(offeredFreeSessionId);
+        else if (sessionTypes.length === 1)
           setSessionTypeId(sessionTypes[0].id);
         if (data.consultants?.length === 1)
           setConsultantId(data.consultants[0].id);
@@ -1284,8 +1288,14 @@ export default function PublicBookingPage() {
     [token, sessionTypeId, consultantId, offerToken, meetingMode, locationId],
   );
 
+  const selectedFreeFollowUp = Boolean(
+    portalSessionAtLoad?.freeFollowUpOffer?.sessionTypeId
+      && sessionTypeId === portalSessionAtLoad.freeFollowUpOffer.sessionTypeId,
+  );
   const requiresPayment = Boolean(
-    info?.consultFeeEnabled && Number(info?.consultFeeAmount) > 0,
+    !selectedFreeFollowUp
+      && info?.consultFeeEnabled
+      && Number(info?.consultFeeAmount) > 0,
   );
 
   async function submit() {

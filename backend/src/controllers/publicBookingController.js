@@ -518,6 +518,14 @@ export async function createPublicBookingPaymentHold(req, res) {
     where: { agencyId: settings.agencyId, email: { equals: email, mode: "insensitive" } },
     select: { id: true, assignedUserId: true },
   }) : null;
+  const freeEligibility = await resolveFreeConsultationEligibility(settings.agencyId, settings, {
+    clientId: existingClient?.id || null,
+    guestEmailNormalized: verification ? email : null,
+    durationMinutes: sessionType.durationMinutes,
+  });
+  if (freeEligibility.eligible) {
+    throw createHttpError(409, "This 15-minute follow-up is free. Refresh the booking page and try again.", "FREE_CONSULTATION_ELIGIBLE");
+  }
 
   // Re-validate that the requested slot really is offered — never trust the widget.
   const dayKey = localDateKey(startsAt, settings.timezone);
