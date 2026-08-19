@@ -701,7 +701,7 @@ function PersonalProfilePanel({ user, agency }) {
                   <div className="border-b border-slate-100 px-6 py-5">
                     <p className="text-sm font-semibold text-slate-800">Professional avatar</p>
                     <div className="mt-3 grid grid-cols-6 gap-2">
-                      {Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`).map((preset) => (
+                      {Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`).map((preset, index) => (
                         <button key={preset} type="button" onClick={() => { setForm((current) => ({ ...current, avatarPreset: preset, removeUploadedAvatar: true })); setAvatarFile(null); setAvatarPreview(`/staff-avatars/${preset}.png`); }} className={`aspect-square overflow-hidden rounded-full border-2 transition ${form.avatarPreset === preset ? "border-sky-600 ring-2 ring-sky-100" : "border-transparent hover:border-slate-300"}`} aria-label={`Choose professional avatar ${index + 1}`}>
                           <img src={`/staff-avatars/${preset}.png`} alt="" className="h-full w-full object-cover" />
                         </button>
