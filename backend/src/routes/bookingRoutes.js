@@ -27,6 +27,7 @@ import {
   recordWalkInManualPayment,
   getFreeConsultationEligibility,
   lookupBookingClients,
+  lookupBookingContacts,
   getBookingPaymentHoldById,
   resendBookingPaymentHoldRequest,
   cancelBookingPaymentHoldRequest,
@@ -46,6 +47,7 @@ router.patch("/staff/:userId", asyncHandler(updateSchedulingStaff));
 router.get("/analytics", asyncHandler(getSchedulingAnalytics));
 router.get("/free-consultation-eligibility", asyncHandler(getFreeConsultationEligibility));
 router.get("/client-lookup", asyncHandler(lookupBookingClients));
+router.get("/contact-lookup", asyncHandler(lookupBookingContacts));
 router.get("/payment-holds/:id", asyncHandler(getBookingPaymentHoldById));
 router.post("/payment-holds/:id/resend", asyncHandler(resendBookingPaymentHoldRequest));
 router.post("/payment-holds/:id/cancel", asyncHandler(cancelBookingPaymentHoldRequest));

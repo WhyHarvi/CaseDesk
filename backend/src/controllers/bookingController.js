@@ -65,6 +65,7 @@ import {
   leadConsultationStatusForAppointment,
   syncLeadConsultationFromAppointment,
 } from "../services/leadConsultationAppointmentService.js";
+import { createOrLinkLeadForConsultation } from "../modules/leads/lead.booking.js";
 import { ensureAppointmentCompletionFollowUp, requireAppointmentProfile } from "../services/appointmentProfileService.js";
 import { resolveNotifications } from "../services/notificationService.js";
 
@@ -685,7 +686,16 @@ export async function createBookingAppointment(req, res) {
     client = await prisma.client.findFirst({ where: { id: body.clientId, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, assignedUserId: true, email: true, phone: true } });
     if (!client) throw createHttpError(400, "Client was not found.", "VALIDATION_ERROR");
   }
-  const guestName = String(body.guestName || "").trim().slice(0, 160) || null;
+  let lead = null;
+  if (!client && body.leadId) {
+    lead = await prisma.lead.findFirst({
+      where: { id: String(body.leadId), agencyId: req.auth.agencyId, convertedClientId: null, status: "OPEN" },
+      select: { id: true, firstName: true, lastName: true, email: true, phone: true, ownerUserId: true },
+    });
+    if (!lead) throw createHttpError(409, "This lead is no longer available. Search for the client before booking.", "LEAD_NOT_AVAILABLE");
+  }
+  const leadName = lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") : "";
+  const guestName = String(body.guestName || leadName).trim().slice(0, 160) || null;
   if (!client && !guestName) throw createHttpError(400, "Pick a client or enter the visitor’s name.", "VALIDATION_ERROR");
   if (!client && !String(body.guestEmail || "").trim() && !String(body.guestPhone || "").trim()) {
     throw createHttpError(400, "Enter the visitor’s email or phone number.", "VALIDATION_ERROR");
@@ -698,7 +708,7 @@ export async function createBookingAppointment(req, res) {
   // never fail the booking itself. Ambiguous (2+) matches are deliberately
   // left unlinked, same as convertAppointmentToClient's own semantics —
   // resolvable later by staff rather than guessed here.
-  if (!client && guestName) {
+  if (!client && !lead && guestName) {
     try {
       const contact = normalizeContact({ phone: body.guestPhone, email: body.guestEmail });
       const contactOr = [
@@ -712,6 +722,14 @@ export async function createBookingAppointment(req, res) {
           take: 2,
         });
         if (matches.length === 1) client = matches[0];
+        if (!client) {
+          const leadMatches = await prisma.lead.findMany({
+            where: { agencyId: req.auth.agencyId, convertedClientId: null, status: "OPEN", OR: contactOr },
+            select: { id: true, firstName: true, lastName: true, email: true, phone: true, ownerUserId: true },
+            take: 2,
+          });
+          if (leadMatches.length === 1) lead = leadMatches[0];
+        }
       }
     } catch (error) {
       logger.warn("booking.guest_duplicate_lookup_skipped", { agencyId: req.auth.agencyId, reason: error.message });
@@ -874,7 +892,7 @@ export async function createBookingAppointment(req, res) {
         startsAt: occurrenceStart,
         endsAt: occurrenceEnd,
         requestedUserId: assignedToId,
-        preferredUserId: client?.assignedUserId,
+        preferredUserId: client?.assignedUserId || lead?.ownerUserId,
         bufferMinutes: settings.bufferMinutes,
         sessionBufferMinutes: sessionType?.bufferMinutes,
         meetingMode: requestedMeetingMode,
@@ -896,6 +914,7 @@ export async function createBookingAppointment(req, res) {
         data: {
         agencyId: req.auth.agencyId,
         clientId: client?.id || null,
+        leadId: lead?.id || null,
         caseId: null,
         sessionTypeId: sessionType?.id || null,
         subject,
@@ -928,6 +947,18 @@ export async function createBookingAppointment(req, res) {
       },
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
       });
+      if (lead) {
+        await createOrLinkLeadForConsultation(tx, {
+          agencyId: req.auth.agencyId,
+          appointment,
+          leadId: lead.id,
+          guestName,
+          guestEmail: String(body.guestEmail || lead.email || "").trim() || null,
+          guestPhone: String(body.guestPhone || lead.phone || "").trim() || null,
+          paymentStatus: "UNPAID",
+          fee: feeApplies ? Number(settings.consultFeeAmount) : null,
+        });
+      }
       await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: requestedSeriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source } });
       if (requestedMeetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, {
@@ -1105,6 +1136,42 @@ export async function lookupBookingClients(req, res) {
     take: search ? 20 : 100,
   });
   res.json({ data: clients });
+}
+
+export async function lookupBookingContacts(req, res) {
+  const search = String(req.query.search || "").trim().slice(0, 200);
+  if (!search) return res.json({ data: [] });
+  const searchDigits = search.replace(/\D/g, "");
+  const clientFields = ["fullName", "email", "emailNormalized", "phone", "clientNumber"].map((field) => ({
+    [field]: { contains: search, mode: "insensitive" },
+  }));
+  const leadFields = ["firstName", "lastName", "email", "emailNormalized", "phone", "leadNumber"].map((field) => ({
+    [field]: { contains: search, mode: "insensitive" },
+  }));
+  if (searchDigits.length >= 7) {
+    clientFields.push({ phoneNormalized: { contains: searchDigits } });
+    leadFields.push({ phoneNormalized: { contains: searchDigits } });
+  }
+  const [clients, leads] = await Promise.all([
+    prisma.client.findMany({
+      where: { agencyId: req.auth.agencyId, archivedAt: null, OR: clientFields },
+      select: { id: true, fullName: true, email: true, phone: true, clientNumber: true },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }),
+    prisma.lead.findMany({
+      where: { agencyId: req.auth.agencyId, convertedClientId: null, status: "OPEN", OR: leadFields },
+      select: { id: true, firstName: true, lastName: true, email: true, phone: true, leadNumber: true, owner: { select: { id: true, fullName: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }),
+  ]);
+  res.json({
+    data: [
+      ...clients.map((item) => ({ ...item, recordType: "client" })),
+      ...leads.map((item) => ({ ...item, recordType: "lead", fullName: [item.firstName, item.lastName].filter(Boolean).join(" ") || "Unnamed lead" })),
+    ],
+  });
 }
 
 // Polled by the new-appointment sheet after a card-payment hold is created,

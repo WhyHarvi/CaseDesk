@@ -48,6 +48,7 @@ export async function createOrLinkLeadForConsultation(tx, {
   paymentStatus = "UNPAID",
   fee = null,
   holdId = null,
+  leadId = null,
 }) {
   const phoneNormalized = normalizePhoneSafe(guestPhone);
   const emailNormalized = guestEmail ? guestEmail.toLowerCase() : null;
@@ -61,11 +62,13 @@ export async function createOrLinkLeadForConsultation(tx, {
   // Email is more specific than phone (families may share a phone number),
   // so only fall back to phone when the exact normalized email has no open
   // lead. This also makes website-lead → booking linkage deterministic.
-  let existingLead = emailNormalized ? await tx.lead.findFirst({
+  let existingLead = leadId ? await tx.lead.findFirst({
+    where: { id: leadId, agencyId, deletedAt: null, status: "OPEN", convertedClientId: null },
+  }) : emailNormalized ? await tx.lead.findFirst({
     where: { agencyId, deletedAt: null, status: "OPEN", emailNormalized },
     orderBy: { createdAt: "desc" },
   }) : null;
-  if (!existingLead && phoneNormalized) {
+  if (!existingLead && !leadId && phoneNormalized) {
     existingLead = await tx.lead.findFirst({
       where: { agencyId, deletedAt: null, status: "OPEN", phoneNormalized },
       orderBy: { createdAt: "desc" },

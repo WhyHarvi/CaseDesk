@@ -41,6 +41,7 @@ import {
   getCalendarAppointments,
   getFreeConsultationEligibility,
   lookupBookingClients,
+  lookupBookingContacts,
   recordWalkInManualPayment,
   resendBookingPaymentHoldRequest,
   rescheduleBookingAppointment,
@@ -1124,7 +1125,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   // `open` might be true, so the reset effect below only skips its normal
   // clear-the-form behavior on that one specific restore.
   const isRestoringDraft = useRef(Boolean(open) && Boolean(readAppointmentDraft()));
-  const [form, setForm] = useState(() => readAppointmentDraft()?.form || { mode: role === "frontdesk" ? "guest" : "client", clientId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
+  const [form, setForm] = useState(() => readAppointmentDraft()?.form || { mode: role === "frontdesk" ? "guest" : "client", clientId: "", leadId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
   const [selectedClient, setSelectedClient] = useState(() => readAppointmentDraft()?.selectedClient || null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -1164,6 +1165,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       idempotencyKey: newBookingOperationKey(),
       mode: initialClient ? "client" : current.mode,
       clientId: initialClient?.id || "",
+      leadId: "",
     }));
     setSelectedClient(initialClient || null);
     setError("");
@@ -1292,13 +1294,15 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   const guestEmailQuery = form.mode === "guest" && /\S+@\S+\.\S+/.test(form.guestEmail.trim()) ? form.guestEmail.trim() : "";
   const guestPhoneDigits = form.guestPhone.replace(/\D/g, "");
   const guestPhoneQuery = form.mode === "guest" && guestPhoneDigits.length >= 7 ? form.guestPhone.trim() : "";
-  const { results: guestEmailMatches } = useClientMatches(Boolean(guestEmailQuery), guestEmailQuery, searchClients);
-  const { results: guestPhoneMatches } = useClientMatches(Boolean(guestPhoneQuery), guestPhoneQuery, searchClients);
+  const searchBookingContacts = useCallback((query) => lookupBookingContacts({ search: query }), []);
+  const { results: guestEmailMatches } = useClientMatches(Boolean(guestEmailQuery), guestEmailQuery, searchBookingContacts);
+  const { results: guestPhoneMatches } = useClientMatches(Boolean(guestPhoneQuery), guestPhoneQuery, searchBookingContacts);
   const guestMatches = useMemo(() => {
     const merged = new Map();
-    [...guestEmailMatches, ...guestPhoneMatches].forEach((client) => merged.set(client.id, client));
+    [...guestEmailMatches, ...guestPhoneMatches].forEach((contact) => merged.set(`${contact.recordType}:${contact.id}`, contact));
     return [...merged.values()];
   }, [guestEmailMatches, guestPhoneMatches]);
+  const selectedGuestLead = useMemo(() => guestMatches.find((contact) => contact.recordType === "lead" && contact.id === form.leadId) || null, [guestMatches, form.leadId]);
 
   const loadSlots = useCallback(async () => {
     const locationChoicePending = form.meetingMode === "InPerson" && locations.length > 1 && !form.locationId;
@@ -1372,6 +1376,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         sessionTypeId: selectedType?.id,
         assignedToId: form.assignedToId || undefined,
         clientId: form.mode === "client" ? form.clientId || undefined : undefined,
+        leadId: form.mode === "guest" ? form.leadId || undefined : undefined,
         guestName: form.mode === "guest" ? form.guestName : undefined,
         guestEmail: form.mode === "guest" ? form.guestEmail : undefined,
         guestPhone: form.mode === "guest" ? form.guestPhone : undefined,
@@ -1485,7 +1490,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               ) : null}
               <div className="flex rounded-full border border-slate-200 bg-slate-50 p-0.5">
                 {[["client", "Existing client"], ["guest", "Walk-in / guest"]].map(([mode, label]) => (
-                  <button key={mode} type="button" onClick={() => setForm((c) => ({ ...c, mode }))} className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${form.mode === mode ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
+                  <button key={mode} type="button" onClick={() => setForm((c) => ({ ...c, mode, ...(mode === "client" ? { leadId: "" } : { clientId: "" }) }))} className={`flex-1 rounded-full px-3 py-2 text-xs font-semibold transition ${form.mode === mode ? "bg-slate-950 text-white shadow" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>
                 ))}
               </div>
 
@@ -1503,34 +1508,40 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
               ) : (
                 <div className="space-y-3">
                   <label className="block text-xs font-medium text-slate-600">Visitor name
-                    <input required value={form.guestName} onChange={(event) => setForm((c) => ({ ...c, guestName: event.target.value }))} className={`mt-1.5 ${input}`} />
+                    <input required value={form.guestName} onChange={(event) => setForm((c) => ({ ...c, guestName: event.target.value, leadId: "" }))} className={`mt-1.5 ${input}`} />
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     <label className="block text-xs font-medium text-slate-600">Email
-                      <input type="email" value={form.guestEmail} onChange={(event) => setForm((c) => ({ ...c, guestEmail: event.target.value }))} className={`mt-1.5 ${input}`} />
+                      <input type="email" value={form.guestEmail} onChange={(event) => setForm((c) => ({ ...c, guestEmail: event.target.value, leadId: "" }))} className={`mt-1.5 ${input}`} />
                     </label>
                     <label className="block text-xs font-medium text-slate-600">Phone
-                      <input value={form.guestPhone} onChange={(event) => setForm((c) => ({ ...c, guestPhone: event.target.value }))} className={`mt-1.5 ${input}`} />
+                      <input value={form.guestPhone} onChange={(event) => setForm((c) => ({ ...c, guestPhone: event.target.value, leadId: "" }))} className={`mt-1.5 ${input}`} />
                     </label>
                   </div>
                   <p className="text-xs text-slate-400">Enter at least one of email or phone.</p>
-                  {guestMatches.length === 1 ? (
+                  {selectedGuestLead ? (
+                    <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold leading-5 text-emerald-800">
+                      Lead selected: {selectedGuestLead.fullName}{selectedGuestLead.owner?.fullName ? ` · ${selectedGuestLead.owner.fullName}` : ""}. This appointment will be added to the lead's activity.
+                    </p>
+                  ) : guestMatches.length === 1 && guestMatches[0].recordType === "client" ? (
                     <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
                       This looks like an existing client — {guestMatches[0].fullName}. It'll be linked automatically when you book.
                     </p>
-                  ) : guestMatches.length > 1 ? (
+                  ) : guestMatches.length ? (
                     <div className="rounded-lg bg-amber-50 p-2.5">
-                      <p className="px-0.5 text-xs font-semibold leading-5 text-amber-800">{guestMatches.length} existing clients match this contact info — pick the right one to avoid creating a duplicate.</p>
+                      <p className="px-0.5 text-xs font-semibold leading-5 text-amber-800">Existing CaseDesk contact found. Select the correct Client or Lead before booking.</p>
                       <div className="mt-1.5 space-y-1">
-                        {guestMatches.map((client) => (
+                        {guestMatches.map((contact) => (
                           <button
-                            key={client.id}
+                            key={`${contact.recordType}:${contact.id}`}
                             type="button"
-                            onClick={() => { setSelectedClient(client); setForm((c) => ({ ...c, mode: "client", clientId: client.id })); }}
+                            onClick={() => contact.recordType === "client"
+                              ? (setSelectedClient(contact), setForm((c) => ({ ...c, mode: "client", clientId: contact.id, leadId: "" })))
+                              : setForm((c) => ({ ...c, mode: "guest", clientId: "", leadId: contact.id, guestName: contact.fullName, guestEmail: contact.email || c.guestEmail, guestPhone: contact.phone || c.guestPhone, assignedToId: contact.owner?.id || c.assignedToId }))}
                             className="flex w-full items-center justify-between rounded-lg bg-white px-2.5 py-1.5 text-left text-xs font-medium text-slate-700 shadow-sm transition hover:bg-amber-100/60"
                           >
-                            <span className="truncate">{client.fullName}</span>
-                            <span className="ml-2 shrink-0 truncate text-slate-400">{client.email || client.phone}</span>
+                            <span className="truncate">{contact.fullName}<span className="ml-1.5 text-[10px] font-bold uppercase text-amber-700">{contact.recordType}</span></span>
+                            <span className="ml-2 shrink-0 truncate text-slate-400">{contact.recordType === "lead" ? contact.owner?.fullName || contact.leadNumber : contact.email || contact.phone}</span>
                           </button>
                         ))}
                       </div>

@@ -46,6 +46,13 @@ export async function lookupBookingClients({ search } = {}) {
   return response.data.data;
 }
 
+export async function lookupBookingContacts({ search } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  const response = await api.get(`/booking/contact-lookup${params.size ? `?${params.toString()}` : ""}`);
+  return response.data.data;
+}
+
 export async function getSchedulingAnalytics(params = {}) {
   const query = new URLSearchParams(params);
   const response = await api.get(`/booking/analytics${query.size ? `?${query.toString()}` : ""}`);
