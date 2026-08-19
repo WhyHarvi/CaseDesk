@@ -70,7 +70,9 @@ export function dashboardScopes(req) {
 
   return {
     agencyWhere,
-    clientWhere: { ...agencyWhere, ...clientAccessWhere(req) },
+    // Match the default Clients directory: archived profiles are available
+    // only through its explicit archived view and must not inflate this card.
+    clientWhere: { ...agencyWhere, ...clientAccessWhere(req), archivedAt: null },
     caseWhere,
     taskWhere: { ...agencyWhere, ...consultantTaskAccess(req), case: activeCaseAccess },
     appointmentWhere: req.auth.role === "admin"

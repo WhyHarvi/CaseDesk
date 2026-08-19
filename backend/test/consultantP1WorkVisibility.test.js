@@ -16,6 +16,8 @@ const request = (role, userId = "consultant-1", agencyId = "agency-1") => ({
 
 test("consultant dashboard queues remain agency and assignment scoped", () => {
   const scopes = dashboardScopes(request("consultant"));
+
+  assert.equal(scopes.clientWhere.archivedAt, null);
   const serialized = JSON.stringify(scopes);
 
   assert.match(serialized, /agency-1/);
@@ -30,6 +32,8 @@ test("consultant dashboard queues remain agency and assignment scoped", () => {
 
 test("admin dashboard queues are still constrained to the active agency", () => {
   const scopes = dashboardScopes(request("admin", "admin-1"));
+
+  assert.equal(scopes.clientWhere.archivedAt, null);
   for (const scope of Object.values(scopes)) assert.equal(scope.agencyId, "agency-1");
 });
 
