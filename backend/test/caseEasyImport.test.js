@@ -160,6 +160,13 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   assert.doesNotMatch(controller, /identificationNumber:\s*(contact\.uci|uci)/);
 });
 
+test("Case Easy conversion notifies each assigned consultant", async () => {
+  const controller = await source("../src/controllers/caseEasyImportController.js");
+  assert.match(controller, /notifyCaseAssignment/);
+  assert.match(controller, /source: "Imported from Case Easy"/);
+  assert.equal((controller.match(/result\.cases\.map\(\(caseItem\) => notifyCaseAssignment/g) || []).length, 2);
+});
+
 test("Case Easy staging UI exposes unresolved cases and all raw source fields", async () => {
   const [page, controller, searchService] = await Promise.all([
     source("../../frontend/src/pages/CaseEasyImport.jsx"),

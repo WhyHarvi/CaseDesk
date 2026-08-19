@@ -8,12 +8,14 @@ import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.
 import { clientRecipientIds, notifyUsers, resolveNotifications } from "../services/notificationService.js";
 import { evaluateStageTriggers, getCasePaymentSummary } from "../services/paymentScheduleService.js";
 import { voidUnpaidCaseInvoice } from "../services/caseInvoiceService.js";
+import { evaluateCaseTimelineLegs } from "../services/incentiveTimelineService.js";
 import { logger } from "../services/logger.js";
 import { processBookingMessageDeliveries, sendBookingMessages } from "../services/bookingNotificationService.js";
 import { enqueueAppointmentMeetingJob } from "../services/appointmentMeetingService.js";
 import { syncLeadConsultationFromAppointment } from "../services/leadConsultationAppointmentService.js";
 import { offerWaitlistOpening } from "../services/bookingWaitlistService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
 import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../utils/studyIntake.js";
 
 const include = {
@@ -387,6 +389,13 @@ export async function createCase(req, res) {
     details: activityDetails,
   });
 
+  await notifyCaseAssignment({
+    agencyId: req.user.agencyId,
+    caseItem: result.data,
+    clientName: result.data.client.fullName,
+    actorUserId: req.auth.userId,
+  });
+
   invalidateDashboardCache(req.user.agencyId);
   res.status(201).json({ data: result.data, reused: false });
 }
@@ -436,6 +445,18 @@ export async function updateCase(req, res) {
       include,
     });
 
+    if (Object.hasOwn(payload, "stage") && payload.stage !== existing.stage) {
+      await tx.caseStageHistory.create({
+        data: {
+          agencyId: req.user.agencyId,
+          caseId: data.id,
+          previousStage: existing.stage,
+          newStage: payload.stage,
+          changedById: req.auth.userId,
+        },
+      });
+    }
+
     const caseTypeChanged = payload.caseType && payload.caseType !== existing.caseType;
     const templateSync = caseTypeChanged
       ? await syncCaseDocumentsFromTemplates(tx, {
@@ -481,12 +502,25 @@ export async function updateCase(req, res) {
     details: activityDetails,
   });
 
+  if (Object.hasOwn(payload, "assignedUserId") && payload.assignedUserId !== existing.assignedUserId) {
+    await notifyCaseAssignment({
+      agencyId: req.user.agencyId,
+      caseItem: result.data,
+      clientName: result.data.client.fullName,
+      actorUserId: req.auth.userId,
+      source: "Reassigned",
+    });
+  }
+
   if (Object.hasOwn(payload, "stage") && payload.stage !== existing.stage) {
     await evaluateStageTriggers(req.auth.agencyId, result.data.id, existing.stage, payload.stage, req.auth.userId).catch((error) => {
       logger.warn("case.payment_trigger_failed", { caseId: result.data.id, reason: error.message });
     });
     await evaluateWorkflowStepStageTriggers(req.auth.agencyId, result.data.id, existing.stage, payload.stage, { actorUserId: req.auth.userId, clientId: existing.client.id }).catch((error) => {
       logger.warn("case.workflow_trigger_failed", { caseId: result.data.id, reason: error.message });
+    });
+    await evaluateCaseTimelineLegs(req.auth.agencyId, result.data.id).catch((error) => {
+      logger.warn("case.timeline_bonus_evaluation_failed", { caseId: result.data.id, reason: error.message });
     });
   }
 

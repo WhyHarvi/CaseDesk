@@ -17,6 +17,7 @@ import {
 } from "../services/caseEasyReportImportService.js";
 import { calculateCrsScore } from "./caseAssessmentController.js";
 import { normalizeMaritalStatus } from "../services/clientProfileSyncService.js";
+import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
 import {
   buildCaseEasyContactSearchWhere,
   cleanCaseEasySearch,
@@ -764,6 +765,14 @@ export async function convertCaseEasyImportContact(req, res) {
         : `${result.client.fullName} converted from Case Easy import data (${result.cases.length} case${result.cases.length === 1 ? "" : "s"})`,
     });
 
+    await Promise.all(result.cases.map((caseItem) => notifyCaseAssignment({
+      agencyId,
+      caseItem,
+      clientName: result.client.fullName,
+      actorUserId: req.auth.userId,
+      source: "Imported from Case Easy",
+    })));
+
     res.status(201).json({ data: result });
   } catch (error) {
     if (error.code === "P2002") throw createHttpError(409, "A client with this phone or email already exists in CaseDesk.", "DUPLICATE_CONTACT");
@@ -914,6 +923,14 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
         action: "case_easy_import.converted",
         details: `${result.client.fullName} converted from Case Easy import data (bulk, ${result.cases.length} case${result.cases.length === 1 ? "" : "s"})`,
       });
+
+      await Promise.all(result.cases.map((caseItem) => notifyCaseAssignment({
+        agencyId,
+        caseItem,
+        clientName: result.client.fullName,
+        actorUserId: req.auth.userId,
+        source: "Imported from Case Easy",
+      })));
 
       results.push({
         contactId: contact.id,
