@@ -44,6 +44,7 @@ async function notifyPaymentSubmitter(row, { type, title, body, severity = "info
     entityType: "paymentApproval",
     entityId: row.id,
     actionUrl,
+    ...(row.appointmentId ? { audienceKey: "scheduling", destinationKey: "calendar" } : {}),
     dedupeKey: `payment-approval:${row.id}:${type}`,
     channels: ["in_app"],
   }).catch(() => {});

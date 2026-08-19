@@ -86,6 +86,7 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.match(approvalService, /type: "payment\.approval_rejected"/);
   assert.match(approvalService, /type: "payment\.approval_failed"/);
   assert.match(approvalService, /recipientIds: \[row\.submittedById\]/);
+  assert.match(approvalService, /row\.appointmentId \? \{ audienceKey: "scheduling", destinationKey: "calendar" \}/);
   assert.match(approvalService, /matchingPartialSuccess[\s\S]*reconciledPartialApproval: true/);
   assert.match(approvalService, /pendingCount[\s\S]*status: "Pending"/);
   assert.doesNotMatch(approvalService, /pendingCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);
