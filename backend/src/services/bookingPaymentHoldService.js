@@ -865,7 +865,7 @@ export async function createPendingWalkInETransfer(agencyId, { appointmentId, ac
 // start a consultation payment calls this first, so a second submission for
 // the same appointment is blocked with a clear reason no matter which
 // screen it comes from.
-export async function assertNoLivePaymentApproval(agencyId, appointmentId) {
+export async function assertNoLivePaymentApproval(agencyId, appointmentId, excludeApprovalId = null) {
   if (!appointmentId) return;
   const liveApproval = await prisma.paymentApproval.findFirst({
     where: {
@@ -873,6 +873,7 @@ export async function assertNoLivePaymentApproval(agencyId, appointmentId) {
       appointmentId,
       entryType: { in: ["appointment_payment", "appointment_payment_details"] },
       status: { in: ["Pending", "Processing"] },
+      ...(excludeApprovalId ? { id: { not: excludeApprovalId } } : {}),
     },
     select: { id: true },
   });
@@ -930,7 +931,7 @@ export async function recordWalkInManualPayment(agencyId, {
   if (existingHold?.status === "RecordingPayment") {
     throw createHttpError(409, "A payment is already being recorded for this appointment. Wait a moment and refresh before trying again.", "PAYMENT_IN_PROGRESS");
   }
-  await assertNoLivePaymentApproval(agencyId, appointmentId);
+  await assertNoLivePaymentApproval(agencyId, appointmentId, approvalId);
   if (existingHold?.status === "AwaitingPayment" && existingHold.qbInvoiceId) {
     await reconcilePaymentHold(agencyId, existingHold.id).catch(() => null);
     existingHold = await prisma.bookingPaymentHold.findUnique({ where: { appointmentId } });

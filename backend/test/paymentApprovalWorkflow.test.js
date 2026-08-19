@@ -89,9 +89,10 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   // payment attempt — confirmed live (disposable Pending row against a
   // real appointment, guard threw, row deleted) that it actually blocks a
   // second submission while the first is still Pending or Processing.
-  assert.match(bookingService, /export async function assertNoLivePaymentApproval\(agencyId, appointmentId\)/);
+  assert.match(bookingService, /export async function assertNoLivePaymentApproval\(agencyId, appointmentId, excludeApprovalId = null\)/);
   assert.match(bookingService, /status: \{ in: \["Pending", "Processing"\] \}/);
-  assert.match(bookingService, /await assertNoLivePaymentApproval\(agencyId, appointmentId\);/);
+  assert.match(bookingService, /excludeApprovalId \? \{ id: \{ not: excludeApprovalId \} \} : \{\}/);
+  assert.match(bookingService, /await assertNoLivePaymentApproval\(agencyId, appointmentId, approvalId\);/);
   assert.match(approvalService, /import \{ assertNoLivePaymentApproval,.*\} from "\.\/bookingPaymentHoldService\.js";/);
   assert.match(approvalService, /if \(values\.entryType === "appointment_payment"\) \{\s*\n\s*await assertNoLivePaymentApproval\(agencyId, appointment\.id\);/);
   assert.match(paymentsPage, /function PaymentApprovalsSection/);
