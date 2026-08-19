@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CreditCard,
   FileCheck2,
+  HandCoins,
   LayoutDashboard,
   Settings,
   Users,
@@ -139,6 +140,13 @@ const adminNavigation = [
     badgeKey: "payments",
   },
   {
+    label: "Incentives",
+    to: "/app/incentives",
+    icon: HandCoins,
+    description: "Everyone's earnings and pipeline",
+    disabled: false,
+  },
+  {
     label: "Case Easy Import",
     to: "/app/case-easy-import",
     icon: DatabaseZap,
@@ -209,6 +217,12 @@ const memberNavigation = [
     icon: CreditCard,
     accessKey: "payments",
     badgeKey: "payments",
+  },
+  {
+    label: "Incentives",
+    to: "/app/incentives",
+    icon: HandCoins,
+    accessKey: "incentives",
   },
   {
     label: "Case Easy Import",

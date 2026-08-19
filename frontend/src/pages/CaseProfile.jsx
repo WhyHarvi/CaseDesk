@@ -22,6 +22,7 @@ import CommunicationSetupOverlay from "../components/case-profile/communication/
 import CaseActionDialog from "../components/case-profile/CaseActionDialog";
 import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
 import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOverlay";
+import CaseRolesOverlay from "../components/case-profile/CaseRolesOverlay";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import { useAuth } from "../auth/AuthContext";
 import { canAccessCaseTab, hasCapability } from "../auth/portalAccess";
@@ -106,6 +107,7 @@ export default function CaseProfile() {
   const [archiveCaseDialogOpen, setArchiveCaseDialogOpen] = useState(false);
   const [eSignCenterOpen, setESignCenterOpen] = useState(false);
   const [permissionsOverlayOpen, setPermissionsOverlayOpen] = useState(false);
+  const [caseRolesOverlayOpen, setCaseRolesOverlayOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
@@ -1716,6 +1718,13 @@ export default function CaseProfile() {
         />
       ) : null}
 
+      {caseRolesOverlayOpen ? (
+        <CaseRolesOverlay
+          caseItem={caseItem}
+          onClose={() => setCaseRolesOverlayOpen(false)}
+        />
+      ) : null}
+
       {editingClient ? (
         <ClientEditDrawer
           client={caseItem.client}
@@ -1833,6 +1842,10 @@ export default function CaseProfile() {
           onOpenApplicants={() => {
             setActiveToolbarTray("");
             setApplicantsOverlayOpen(true);
+          }}
+          onOpenCaseRoles={() => {
+            setActiveToolbarTray("");
+            setCaseRolesOverlayOpen(true);
           }}
           onOpenPermissions={() => {
             setActiveToolbarTray("");

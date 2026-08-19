@@ -1,9 +1,10 @@
-import { Check, Copy, KeyRound, Plus, ShieldOff, UserRound, X } from "lucide-react";
+import { Award, Check, Copy, KeyRound, Plus, ShieldOff, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../services/api";
 import { fieldClass, FormField, FormMessage } from "../components/auth/AuthShell";
 import Select from "../components/ui/Select";
+import { getCaseRoles } from "../api/caseRoleApi";
 
 const ROLE_OPTIONS = [
   { value: "consultant", label: "Consultant" },
@@ -56,6 +57,7 @@ const emptyForm = {
   representativeType: "Paid",
   membershipBody: "College of Immigration and Citizenship Consultants (CICC)",
   membershipProvince: "",
+  incentiveRoleIds: [],
 };
 
 function formFromMember(member) {
@@ -74,6 +76,7 @@ function formFromMember(member) {
     representativeType: member.representativeType || "Paid",
     membershipBody: member.membershipBody || "College of Immigration and Citizenship Consultants (CICC)",
     membershipProvince: member.membershipProvince || "",
+    incentiveRoleIds: (member.incentiveRoleAssignments || []).map((assignment) => assignment.caseRoleId),
   };
 }
 
@@ -84,6 +87,7 @@ function memberPayload(form, { creating = false } = {}) {
     ...(creating ? { email: form.email } : {}),
     phone: form.phone,
     jobTitle: form.jobTitle,
+    incentiveRoleIds: form.incentiveRoleIds,
     ...(form.role === "consultant"
       ? {
           employeeId: form.employeeId,
@@ -99,7 +103,7 @@ function memberPayload(form, { creating = false } = {}) {
   };
 }
 
-function MemberFormFields({ form, update, creating }) {
+function MemberFormFields({ form, update, creating, incentiveRoles, onToggleIncentiveRole }) {
   return (
     <>
       <div className="sm:col-span-2">
@@ -162,6 +166,22 @@ function MemberFormFields({ form, update, creating }) {
           </FormField>
         </>
       ) : null}
+      <div className="sm:col-span-2">
+        <p className="text-sm font-semibold text-slate-800">Incentive roles</p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">Assign once here. When this member owns or collaborates on a case, matching incentive plans credit them automatically. This does not change access permissions.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {incentiveRoles.map((role) => {
+            const selected = form.incentiveRoleIds.includes(role.id);
+            return (
+              <button key={role.id} type="button" onClick={() => onToggleIncentiveRole(role.id)} className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition ${selected ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${selected ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-300"}`}>{selected ? <Check className="h-3.5 w-3.5" /> : null}</span>
+                <span className="text-sm font-semibold">{role.name}</span>
+              </button>
+            );
+          })}
+        </div>
+        {!incentiveRoles.length ? <p className="mt-3 text-xs text-amber-700">No incentive roles are configured yet. Add them in Settings → Case Roles.</p> : null}
+      </div>
     </>
   );
 }
@@ -172,6 +192,7 @@ export default function TeamMembers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [incentiveRoles, setIncentiveRoles] = useState([]);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState(emptyForm);
@@ -192,10 +213,17 @@ export default function TeamMembers() {
       .finally(() => setLoading(false));
   }, [roleFilter]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { getCaseRoles().then(setIncentiveRoles).catch(() => setIncentiveRoles([])); }, []);
 
   const updateForm = (setter) => (field) => (event) => setter((current) => ({ ...current, [field]: event.target.value }));
   const updateInvite = updateForm(setInviteForm);
   const updateEdit = updateForm(setEditForm);
+  const toggleIncentiveRole = (setter) => (roleId) => setter((current) => ({
+    ...current,
+    incentiveRoleIds: current.incentiveRoleIds.includes(roleId)
+      ? current.incentiveRoleIds.filter((id) => id !== roleId)
+      : [...current.incentiveRoleIds, roleId],
+  }));
 
   function openInvite() {
     setInviteForm(emptyForm);
@@ -327,6 +355,12 @@ export default function TeamMembers() {
             ) : (
               <p className="mt-2 text-sm text-slate-500">Handles reception, lead intake, and scheduling.</p>
             )}
+            <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-4">
+              <Award className="mr-0.5 h-3.5 w-3.5 text-emerald-600" />
+              {item.incentiveRoleAssignments?.length
+                ? item.incentiveRoleAssignments.map((assignment) => <span key={assignment.id} className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">{assignment.caseRole.name}</span>)
+                : <span className="text-xs text-slate-400">No incentive role</span>}
+            </div>
           </button>
         );
       })}
@@ -359,7 +393,7 @@ export default function TeamMembers() {
             </div>
           ) : (
             <form onSubmit={invite} className="mt-7 grid gap-5 sm:grid-cols-2">
-              <MemberFormFields form={inviteForm} update={updateInvite} creating />
+              <MemberFormFields form={inviteForm} update={updateInvite} creating incentiveRoles={incentiveRoles} onToggleIncentiveRole={toggleIncentiveRole(setInviteForm)} />
               {modalError ? <div className="sm:col-span-2"><FormMessage error>{modalError}</FormMessage></div> : null}
               <button type="button" onClick={() => setInviteOpen(false)} className="rounded-2xl px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
               <button disabled={saving} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{saving ? "Sending…" : "Send invitation"}</button>
@@ -381,7 +415,7 @@ export default function TeamMembers() {
             <button onClick={() => setEditing(null)} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
           </div>
           <form onSubmit={saveEdit} className="mt-7 grid gap-5 sm:grid-cols-2">
-            <MemberFormFields form={editForm} update={updateEdit} creating={false} />
+            <MemberFormFields form={editForm} update={updateEdit} creating={false} incentiveRoles={incentiveRoles} onToggleIncentiveRole={toggleIncentiveRole(setEditForm)} />
             {modalError ? <div className="sm:col-span-2"><FormMessage error>{modalError}</FormMessage></div> : null}
             <button type="button" onClick={() => setEditing(null)} className="rounded-2xl px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
             <button disabled={saving} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{saving ? "Saving…" : "Save changes"}</button>

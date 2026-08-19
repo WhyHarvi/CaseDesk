@@ -52,6 +52,7 @@ const FollowUps = lazyWithRetry(
   "follow-ups",
 );
 const Payments = lazyWithRetry(() => import("../pages/Payments"), "payments");
+const Incentives = lazyWithRetry(() => import("../pages/Incentives"), "incentives");
 const Settings = lazyWithRetry(() => import("../pages/Settings"), "settings");
 const ClientPortalHome = lazyWithRetry(
   () => import("../pages/client-portal/ClientPortalHome"),
@@ -512,6 +513,14 @@ export default function AppRoutes() {
           element={
             <Access page="payments">
               <Payments />
+            </Access>
+          }
+        />
+        <Route
+          path="/app/incentives"
+          element={
+            <Access page="incentives">
+              <Incentives />
             </Access>
           }
         />

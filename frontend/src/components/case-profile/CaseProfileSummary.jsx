@@ -130,7 +130,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, canManageCase = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, canManageCase = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenCaseRoles, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -138,7 +138,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems.filter((item) => (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Archive", "Delete", "Close"].includes(item)))}
+            items={caseOptionItems.filter((item) => (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Incentive Roles", "Archive", "Delete", "Close"].includes(item)))}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
@@ -146,6 +146,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
             onSelect={(item) => {
               if (item === "Download application") onDownloadApplication?.();
               if (item === "Applicants") onOpenApplicants();
+              if (item === "Incentive Roles") onOpenCaseRoles?.();
               if (item === "E-Sign") onOpenESign?.();
               if (item === "Archive") onArchiveCase?.();
               if (item === "Close") onCloseCase?.();

@@ -32,7 +32,7 @@ import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
 import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
-import CompleteConsultationSheet from "./CompleteConsultationSheet";
+import CompleteConsultationSheet, { getDraftConsultationId } from "./CompleteConsultationSheet";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
@@ -133,10 +133,22 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   }, [initialLead]);
 
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && onClose();
+    // Reopens the Complete Consultation sheet on a reload if it was left
+    // open mid-edit: the sheet's own draft survives in sessionStorage, but
+    // this component's completingConsultation state doesn't, so without this
+    // the draft would have nothing to reattach to once the lead reloads.
+    if (completingConsultation) return;
+    const draftConsultationId = getDraftConsultationId();
+    if (!draftConsultationId) return;
+    const match = consultations.find((item) => item.id === draftConsultationId);
+    if (match) setCompletingConsultation(match);
+  }, [consultations, completingConsultation]);
+
+  useEffect(() => {
+    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, onClose]);
+  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, completingConsultation, onClose]);
 
   useEffect(() => {
     if (tab !== "messages") return;

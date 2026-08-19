@@ -47,6 +47,11 @@ import {
 } from "../controllers/caseApplicantController.js";
 import { requireCaseAccess, requireRole } from "../middleware/authorization.js";
 import {
+  listCaseRoleAssignments,
+  removeCaseRoleAssignment,
+  replaceCaseRoleAssignments,
+} from "../controllers/caseRoleAssignmentController.js";
+import {
   createCashPayment,
   createInvoice,
   createManualPayment,
@@ -93,6 +98,9 @@ router.put(
   requireRole("admin"),
   asyncHandler(updateCasePermissions),
 );
+router.get("/:id/roles", asyncHandler(listCaseRoleAssignments));
+router.put("/:id/roles", asyncHandler(replaceCaseRoleAssignments));
+router.delete("/:id/roles/:assignmentId", asyncHandler(removeCaseRoleAssignment));
 router.get(
   "/:id/assessment",
   requirePortalCaseTab("profile"),

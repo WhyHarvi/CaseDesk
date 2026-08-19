@@ -43,6 +43,14 @@ const teamMemberSelect = {
       maximumActiveCases: true,
     },
   },
+  incentiveRoleAssignments: {
+    select: {
+      id: true,
+      caseRoleId: true,
+      caseRole: { select: { id: true, code: true, name: true } },
+    },
+    orderBy: { caseRole: { sortOrder: "asc" } },
+  },
   memberships: {
     select: {
       id: true,
@@ -121,7 +129,22 @@ function memberPayload(body, { creating = false } = {}) {
             maximumActiveCases,
           }
         : null,
+    incentiveRoleIds: body.incentiveRoleIds === undefined
+      ? undefined
+      : Array.isArray(body.incentiveRoleIds)
+        ? [...new Set(body.incentiveRoleIds.map((id) => String(id || "").trim()).filter(Boolean))]
+        : [],
   };
+}
+
+async function validateIncentiveRoleIds(agencyId, ids) {
+  if (!ids.length) return [];
+  const roles = await prisma.agencyCaseRole.findMany({
+    where: { agencyId, id: { in: ids }, isActive: true },
+    select: { id: true },
+  });
+  if (roles.length !== ids.length) throw createHttpError(400, "Choose valid active incentive roles.", "VALIDATION_ERROR");
+  return ids;
 }
 
 function defaultPermissions(role) {
@@ -183,6 +206,7 @@ async function teamMemberRecord(req) {
 
 export async function createTeamMember(req, res) {
   const input = memberPayload(req.body || {}, { creating: true });
+  input.incentiveRoleIds = await validateIncentiveRoleIds(req.auth.agencyId, input.incentiveRoleIds || []);
   if (
     await prisma.user.findUnique({
       where: { email: input.email },
@@ -276,6 +300,13 @@ export async function createTeamMember(req, res) {
                   agencyId: req.auth.agencyId,
                   ...input.consultantProfile,
                 },
+              },
+            }
+          : {}),
+        ...(input.incentiveRoleIds.length
+          ? {
+              incentiveRoleAssignments: {
+                create: input.incentiveRoleIds.map((caseRoleId) => ({ agencyId: req.auth.agencyId, caseRoleId })),
               },
             }
           : {}),
@@ -456,37 +487,48 @@ export async function updateTeamMember(req, res) {
       "Role changes require a dedicated role-transition workflow.",
       "ROLE_CHANGE_NOT_ALLOWED",
     );
-  const data = await prisma.user.update({
-    where: { id: existing.id },
-    data: {
-      fullName: input.fullName,
-      phone: input.phone,
-      jobTitle: input.jobTitle,
-      licenseNumber: input.licenseNumber,
-      representativeType: input.representativeType,
-      membershipBody: input.membershipBody,
-      membershipProvince: input.membershipProvince,
-      ...(input.consultantProfile
-        ? {
-            consultantProfiles: {
-              upsert: {
-                where: {
-                  agencyId_userId: {
-                    agencyId: req.auth.agencyId,
-                    userId: existing.id,
+  if (input.incentiveRoleIds !== undefined) await validateIncentiveRoleIds(req.auth.agencyId, input.incentiveRoleIds);
+  const data = await prisma.$transaction(async (tx) => {
+    if (input.incentiveRoleIds !== undefined) {
+      await tx.teamIncentiveRoleAssignment.deleteMany({ where: { agencyId: req.auth.agencyId, userId: existing.id } });
+      if (input.incentiveRoleIds.length) {
+        await tx.teamIncentiveRoleAssignment.createMany({
+          data: input.incentiveRoleIds.map((caseRoleId) => ({ agencyId: req.auth.agencyId, userId: existing.id, caseRoleId })),
+        });
+      }
+    }
+    return tx.user.update({
+      where: { id: existing.id },
+      data: {
+        fullName: input.fullName,
+        phone: input.phone,
+        jobTitle: input.jobTitle,
+        licenseNumber: input.licenseNumber,
+        representativeType: input.representativeType,
+        membershipBody: input.membershipBody,
+        membershipProvince: input.membershipProvince,
+        ...(input.consultantProfile
+          ? {
+              consultantProfiles: {
+                upsert: {
+                  where: {
+                    agencyId_userId: {
+                      agencyId: req.auth.agencyId,
+                      userId: existing.id,
+                    },
                   },
+                  create: {
+                    agencyId: req.auth.agencyId,
+                    ...input.consultantProfile,
+                  },
+                  update: input.consultantProfile,
                 },
-                create: {
-                  agencyId: req.auth.agencyId,
-                  ...input.consultantProfile,
-                },
-                update: input.consultantProfile,
               },
-            },
-          }
-        : {}),
-    },
-    select: teamMemberSelect,
+            }
+          : {}),
+      },
+      select: teamMemberSelect,
+    });
   });
   if (existing.authUserId)
     await updateAuthUser(existing.authUserId, {

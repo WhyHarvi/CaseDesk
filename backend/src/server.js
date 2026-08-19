@@ -40,6 +40,9 @@ import quickbooksWebhookRoutes from "./routes/quickbooksWebhookRoutes.js";
 import zoomRoutes from "./routes/zoomRoutes.js";
 import paymentScheduleRoutes from "./routes/paymentScheduleRoutes.js";
 import feeCategoryRoutes from "./routes/feeCategoryRoutes.js";
+import caseRoleRoutes from "./routes/caseRoleRoutes.js";
+import incentivePlanRoutes from "./routes/incentivePlanRoutes.js";
+import incentiveRoutes from "./routes/incentiveRoutes.js";
 import caseBillingRetainerRoutes from "./routes/caseBillingRetainerRoutes.js";
 import agencyBillingSettingsRoutes from "./routes/agencyBillingSettingsRoutes.js";
 import caseEasyImportRoutes from "./routes/caseEasyImportRoutes.js";
@@ -151,6 +154,7 @@ import {
   stopZoomConnectionMaintenance,
   zoomConfigured,
 } from "./services/zoomService.js";
+import { startIncentiveRetryWorker, stopIncentiveRetryWorker } from "./services/incentiveCreditingService.js";
 
 dotenv.config();
 
@@ -268,6 +272,32 @@ app.use(
   staffUser,
   requirePortalPage("cases"),
   caseRoutes,
+);
+app.use(
+  "/api/case-roles",
+  requireAuth,
+  staffUser,
+  requirePortalPage("cases"),
+  caseRoleRoutes,
+);
+app.use(
+  "/api/incentive-plans",
+  requireAuth,
+  staffUser,
+  // Admin-only regardless (enforced inside incentivePlanRoutes) — gated on
+  // "incentives" for the same reason the read APIs below are, now that page
+  // exists.
+  requirePortalPage("incentives"),
+  incentivePlanRoutes,
+);
+app.use(
+  "/api/incentives",
+  requireAuth,
+  staffUser,
+  // Lets admins control per-person visibility the same way every other
+  // page does, via PortalAccessSettingsPanel.
+  requirePortalPage("incentives"),
+  incentiveRoutes,
 );
 app.use(
   "/api/payment-schedules",
@@ -482,6 +512,7 @@ function onListening() {
   startAutomatedReminderWorker();
   startCaseInformationDriftDetector();
   startAppointmentNoShowWorker();
+  startIncentiveRetryWorker();
 }
 
 // On a nodemon restart the outgoing process's listening socket can still be
@@ -530,6 +561,7 @@ async function shutdown(signal) {
   stopAutomatedReminderWorker();
   stopCaseInformationDriftDetector();
   stopAppointmentNoShowWorker();
+  stopIncentiveRetryWorker();
   (server || { close: (cb) => cb() }).close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);

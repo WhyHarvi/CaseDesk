@@ -19,6 +19,7 @@ import { generateCaseInvoicePdf } from "./caseInvoicePdfService.js";
 import { syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 import { applyLocalCashToInvoice, createApprovedCashLedgerRecord, postApprovedCashTransaction } from "./paymentApprovalLedgerService.js";
+import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 export const ACCOUNTING_PROVIDERS = Object.freeze({ QUICKBOOKS: "QuickBooks", CASH: "CaseDeskCash" });
@@ -121,15 +122,17 @@ export async function createInvoiceRecord(agencyId, {
     if (existing) return existing;
   }
   const category = await requireFeeCategory(agencyId, paymentType, { requireMapping: accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS });
-  const [agency, clientRecord, billing, quickBooksSettings] = await Promise.all([
+  const [agency, clientRecord, billing, quickBooksSettings, caseItem] = await Promise.all([
     prisma.agency.findUnique({ where: { id: agencyId } }),
     prisma.client.findFirst({ where: { id: clientId, agencyId } }),
     prisma.agencyBillingSettings.findUnique({ where: { agencyId } }),
     accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS
       ? prisma.agencyQuickBooksSettings.findUnique({ where: { agencyId } })
       : Promise.resolve(null),
+    prisma.case.findFirst({ where: { id: caseId, agencyId }, select: { caseType: true } }),
   ]);
   if (!agency || !clientRecord) throw createHttpError(404, "Agency or client not found.", "NOT_FOUND");
+  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
   const subtotal = money(amount);
   const discount = money(discountAmount);
   const taxable = TAXABLE_FEE_KINDS.has(category.kind);
@@ -137,6 +140,9 @@ export async function createInvoiceRecord(agencyId, {
   const taxAmount = taxable ? money(subtotal * taxRatePercent / 100) : 0;
   const total = money(subtotal + taxAmount);
   const invoiceNumber = newInvoiceNumber(accountingProvider);
+  // Freeze the people and formula before the invoice exists, so a later
+  // case transfer or plan edit only ever applies to later invoices.
+  const incentiveSnapshot = await buildInvoiceIncentiveSnapshot(agencyId, caseId, caseItem.caseType);
 
   if (accountingProvider === ACCOUNTING_PROVIDERS.CASH) {
     return prisma.caseInvoice.create({
@@ -164,6 +170,8 @@ export async function createInvoiceRecord(agencyId, {
         lines: {
           create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
         },
+        creditCursor: { create: { agencyId, lastCreditedBalance: total } },
+        incentiveSnapshot: { create: incentiveSnapshot },
       },
       include: { lines: true },
     });
@@ -228,7 +236,7 @@ export async function createInvoiceRecord(agencyId, {
   }
 
   try {
-    return await prisma.caseInvoice.create({
+    return await prisma.$transaction(async (tx) => tx.caseInvoice.create({
       data: {
         agencyId,
         caseId,
@@ -258,9 +266,11 @@ export async function createInvoiceRecord(agencyId, {
         lines: {
           create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
         },
+        creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },
+        incentiveSnapshot: { create: incentiveSnapshot },
       },
       include: { lines: true },
-    });
+    }));
   } catch (error) {
     if (error?.code !== "P2002") throw error;
     const existing = await prisma.caseInvoice.findFirst({
@@ -353,10 +363,24 @@ async function refreshInvoiceRows(agencyId, rows) {
       const status = fresh.isVoided
         ? "Void"
         : deriveCaseInvoiceStatus({ balance: fresh.balance, amount: row.amount, dueDate: fresh.dueDate, refunds: row.refunds });
-      if (Number(fresh.balance) === Number(row.balance) && status === row.status) return row;
-      const updated = await prisma.caseInvoice.update({
-        where: { id: row.id },
-        data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
+      const changed = Number(fresh.balance) !== Number(row.balance) || status !== row.status;
+      const updated = changed
+        ? await prisma.caseInvoice.update({
+            where: { id: row.id },
+            data: { balance: fresh.balance, status, qbSyncToken: fresh.syncToken, qbInvoiceNumber: fresh.docNumber, lastSyncedAt: new Date() },
+          })
+        : row;
+      // A staff member opening the billing tab (or a client opening the
+      // portal) is one of the ways a balance drop from a QuickBooks-side
+      // payment first gets observed here — this read path has to credit
+      // incentives too, not just the two write endpoints, or a payment
+      // made directly in QuickBooks could go uncredited until something
+      // else happens to resync it.
+      const processBalance = fresh.isVoided
+        ? resetCreditCursor(agencyId, updated.id, updated.balance)
+        : creditCaseInvoiceCollection(agencyId, { caseId: updated.caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "LAZY_RESYNC" });
+      await processBalance.catch((error) => {
+        logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "LAZY_RESYNC", reason: error.message });
       });
       return { ...row, ...updated };
     }),
@@ -582,6 +606,13 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     metadata: { method, transactionReference: paymentReference, paymentDate: transactionDate?.qboDate || null, qboPaymentId: payment.id, note: note || null },
   });
   await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: row.clientId, caseId }).catch(() => {});
+
+  // Best-effort, same as the notification above — the payment already
+  // succeeded in QuickBooks by this point, so a crediting failure must
+  // never surface as a failure to record the payment itself.
+  await creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "MANUAL_PAYMENT" }).catch((error) => {
+    logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "MANUAL_PAYMENT", reason: error.message });
+  });
 
   return updated;
 }

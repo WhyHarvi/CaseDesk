@@ -107,5 +107,5 @@ test("Cases.jsx and CaseProfile.jsx hide edit/lifecycle actions from view-only v
   assert.match(profilePage, /const canManageCase = \["admin", "consultant"\]\.includes\(role\);/);
   assert.match(profilePage, /canManageCase=\{canManageCase\}/);
   assert.match(profilePage, /showEditClient=\{canManageCase\}/);
-  assert.match(summary, /canManageCase \|\| !\["Applicants", "Archive", "Delete", "Close"\]\.includes\(item\)/);
+  assert.match(summary, /canManageCase \|\| !\["Applicants", "Incentive Roles", "Archive", "Delete", "Close"\]\.includes\(item\)/);
 });

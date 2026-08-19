@@ -13,7 +13,9 @@ import {
   PhoneCall,
   ShieldCheck,
   UserRound,
+  UserSquare2,
   Users,
+  Wallet2,
   Waypoints,
   Workflow,
 } from "lucide-react";
@@ -40,6 +42,8 @@ import SecuritySettingsPanel from "../components/settings/SecuritySettingsPanel"
 import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettingsPanel";
 import PortalAccessSettingsPanel from "../components/settings/PortalAccessSettingsPanel";
 import GovernmentFormSignaturePanel from "../components/settings/GovernmentFormSignaturePanel";
+import CaseRolesSettingsPanel from "../components/settings/CaseRolesSettingsPanel";
+import IncentivePlansSettingsPanel from "../components/settings/IncentivePlansSettingsPanel";
 
 const LeadIntakeSettingsPanel = lazy(
   () => import("../modules/leads/pages/LeadIntakePage"),
@@ -131,6 +135,22 @@ const adminSettingsItems = [
     title: "Document Templates",
     subtitle:
       "Organize reusable templates for case documents and workspace forms.",
+  },
+  {
+    id: "case-roles",
+    label: "Case Roles",
+    icon: UserSquare2,
+    title: "Case Roles",
+    subtitle:
+      "Manage who can be credited on a case — e.g. RCIC, Case Worker, Reviewer.",
+  },
+  {
+    id: "incentive-plans",
+    label: "Incentive Plans",
+    icon: Wallet2,
+    title: "Incentive Plans",
+    subtitle:
+      "Configure the formulas that turn collected payments into incentive credit.",
   },
   {
     id: "payments-fees",
@@ -1014,6 +1034,10 @@ export default function Settings() {
                     <CaseWorkflowSettingsPanel />
                   ) : isAdmin && activeSection === "document-templates" ? (
                     <DocumentTemplatesSettingsPanel />
+                  ) : isAdmin && activeSection === "case-roles" ? (
+                    <CaseRolesSettingsPanel />
+                  ) : isAdmin && activeSection === "incentive-plans" ? (
+                    <IncentivePlansSettingsPanel />
                   ) : (
                     <PlaceholderPanel item={activeItem} />
                   )}

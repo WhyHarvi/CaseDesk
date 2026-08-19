@@ -38,7 +38,7 @@ import {
 } from "../../api/bookingApi";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
 import { hasCapability } from "../../auth/portalAccess";
-import CompleteConsultationSheet from "../../modules/leads/components/CompleteConsultationSheet";
+import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 
 const tabs = [
@@ -148,10 +148,18 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     }
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !saving && onClose();
+    // Reopens the Complete Consultation sheet on a reload if it was left
+    // open mid-edit: the sheet's own draft survives in sessionStorage, but
+    // this component's completingConsultation flag doesn't, so without this
+    // the draft would have nothing to reattach to once the appointment reloads.
+    if (completingConsultation || !appointment?.leadConsultation) return;
+    if (getDraftConsultationId() === appointment.leadConsultation.id) setCompletingConsultation(true);
+  }, [appointment, completingConsultation]);
+  useEffect(() => {
+    const close = (event) => event.key === "Escape" && !saving && !completingConsultation && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [onClose, saving]);
+  }, [onClose, saving, completingConsultation]);
 
   const person = useMemo(() => personFor(appointment), [appointment]);
   const clientNotes = appointment?.clientNotes ?? appointment?.notes ?? [];
