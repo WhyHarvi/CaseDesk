@@ -16,6 +16,7 @@ import {
   Pencil,
   Phone,
   PhoneIncoming,
+  StickyNote,
   UserRound,
   Video,
   WalletCards,
@@ -113,12 +114,19 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [ownerSaving, setOwnerSaving] = useState(false);
   const [workflowError, setWorkflowError] = useState("");
   const [workflowNotice, setWorkflowNotice] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
     setTab("overview");
     setLoading(true);
     setError("");
+    setNoteOpen(false);
+    setNote("");
+    setNoteError("");
     api.getFresh(`/leads/${initialLead.id}`)
       .then((response) => setLead(response.data.data))
       .catch((requestError) => setError(requestError.response?.data?.message || "Complete lead details could not be loaded."))
@@ -301,11 +309,38 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       setCreatingClientForPayment(false);
     }
   }
+
+  async function saveNote(event) {
+    event.preventDefault();
+    const description = note.trim();
+    if (!description) {
+      setNoteError("Enter a note before saving.");
+      return;
+    }
+    setNoteSaving(true);
+    setNoteError("");
+    try {
+      await api.post(`/leads/${lead.id}/activities`, {
+        activityType: "INTERNAL_NOTE",
+        direction: "INTERNAL",
+        channel: "SYSTEM",
+        title: "Lead note",
+        description,
+      });
+      setNote("");
+      setNoteOpen(false);
+      await refreshLead();
+    } catch (reason) {
+      setNoteError(reason.response?.data?.message || "The note could not be saved.");
+    } finally {
+      setNoteSaving(false);
+    }
+  }
   // The consultation fee (paid at booking time) is a separate amount from
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
   const paidConsultationFee = consultations.find((item) => item.paymentStatus === "PAID" && item.fee != null);
-  const workActions = isWorkable
+  const workflowActions = isWorkable
     ? [
         { id: "activity", label: "Log activity", icon: PhoneIncoming, show: true },
         { id: "follow-up", label: "Add follow-up", icon: CheckCircle2, show: true },
@@ -315,6 +350,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     : lead.status === "LOST" && lead.lostDetail?.reactivationAllowed
       ? [{ id: "reactivate", label: "Reactivate", icon: HeartHandshake, show: true }]
       : [];
+  const workActions = [
+    ...(lead.status !== "CONVERTED" && lead.status !== "ARCHIVED" ? [{ id: "note", label: "Notes", icon: StickyNote, show: true }] : []),
+    ...workflowActions,
+  ];
 
   return (
     <div className="fixed inset-0 z-[120] flex justify-end bg-slate-950/20 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
@@ -546,7 +585,15 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                           <button
                             key={action.id}
                             type="button"
-                            onClick={() => setActiveAction(action.id)}
+                            onClick={() => {
+                              if (action.id === "note") {
+                                setNoteOpen((current) => !current);
+                                setNoteError("");
+                                return;
+                              }
+                              setActiveAction(action.id);
+                            }}
+                            aria-expanded={action.id === "note" ? noteOpen : undefined}
                             className={[
                               "inline-flex h-10 items-center gap-2 rounded-full border px-4 text-xs font-semibold transition",
                               action.destructive
@@ -560,6 +607,29 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         );
                       })}
                     </section>
+                  ) : null}
+                  {noteOpen ? (
+                    <form onSubmit={saveNote} className="border-y border-slate-200 bg-white px-5 py-4">
+                      <label htmlFor="lead-note" className="text-sm font-semibold text-slate-900">Add a note</label>
+                      <textarea
+                        id="lead-note"
+                        autoFocus
+                        rows={4}
+                        maxLength={5000}
+                        value={note}
+                        onChange={(event) => {
+                          setNote(event.target.value);
+                          if (noteError) setNoteError("");
+                        }}
+                        placeholder="Write an internal note about this lead"
+                        className="mt-3 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                      />
+                      {noteError ? <p className="mt-2 text-xs font-medium text-rose-600">{noteError}</p> : null}
+                      <div className="mt-3 flex items-center justify-end gap-2">
+                        <button type="button" disabled={noteSaving} onClick={() => { setNoteOpen(false); setNote(""); setNoteError(""); }} className="h-9 rounded-lg px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+                        <button type="submit" disabled={noteSaving || !note.trim()} className="h-9 rounded-lg bg-brand-600 px-4 text-xs font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300">{noteSaving ? "Saving..." : "Save note"}</button>
+                      </div>
+                    </form>
                   ) : null}
                   <section className="rounded-2xl border border-brand-200 bg-brand-50 p-5">
                     <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.1em] text-brand-600">Current next action</p><h3 className="mt-2 text-lg font-semibold text-brand-950">{lead.nextActionDescription || "No next action"}</h3><p className="mt-1 text-sm text-brand-700">{humanize(lead.nextActionType)}</p></div><span className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${due.overdue && lead.status === "OPEN" ? "bg-rose-100 text-rose-700" : "bg-white text-brand-700"}`}>{due.overdue && lead.status === "OPEN" ? "Overdue · " : ""}{due.label}</span></div>
@@ -585,7 +655,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
               {tab === "history" ? (
                 <section>
                   <div className="mb-4"><h3 className="text-sm font-semibold text-slate-900">Activity timeline</h3><p className="mt-1 text-xs text-slate-500">A chronological record of work completed on this lead.</p></div>
-                  <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{activities.length ? activities.map((item, index) => <div key={item.id} className={`flex gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"><Activity className="h-3.5 w-3.5" /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-xs text-slate-500">{humanize(item.activityType)}{item.outcome ? ` · ${humanize(item.outcome)}` : ""}</p></div><time className="shrink-0 text-xs text-slate-400">{new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.occurredAt))}</time></div>{item.description ? <p className="mt-2 text-sm leading-6 text-slate-600">{item.description}</p> : null}</div></div>) : <EmptyState>No activity recorded.</EmptyState>}</div>
+                  <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{activities.length ? activities.map((item, index) => <div key={item.id} className={`flex gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"><Activity className="h-3.5 w-3.5" /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-xs text-slate-500">{humanize(item.activityType)}{item.outcome ? ` · ${humanize(item.outcome)}` : ""}{item.performedBy?.fullName ? ` · ${item.performedBy.fullName}` : ""}</p></div><time className="shrink-0 text-xs text-slate-400">{new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.occurredAt))}</time></div>{item.description ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.description}</p> : null}</div></div>) : <EmptyState>No activity recorded.</EmptyState>}</div>
                 </section>
               ) : null}
 

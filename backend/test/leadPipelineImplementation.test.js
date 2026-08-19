@@ -111,6 +111,31 @@ test("a connected activity records the first connection once and advances the le
   assert.equal(second.firstConnectedAt, original);
 });
 
+test("an internal lead note is audited without changing contact history or stage", async () => {
+  let leadUpdate;
+  let audit;
+  const occurredAt = new Date("2026-08-19T16:00:00.000Z");
+  const tx = {
+    lead: {
+      findFirst: async () => ({ id: "lead-1", leadNumber: "LD-1", status: "LOST", stage: "QUALIFIED", firstContactAt: null, firstConnectedAt: null }),
+      update: async ({ data }) => { leadUpdate = data; },
+    },
+    leadActivity: { create: async ({ data }) => ({ id: "activity-1", ...data }) },
+    leadStageHistory: { create: async () => assert.fail("A note must not create stage history") },
+    activityLog: { create: async ({ data }) => { audit = data; } },
+  };
+
+  await recordLeadActivity({
+    auth: { agencyId: "agency-1", userId: "consultant-1", role: "consultant" },
+    params: { id: "lead-1" },
+    body: { activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Lead note", description: "Client will call next week.", occurredAt },
+  }, { $transaction: async (operation) => operation(tx) });
+
+  assert.deepEqual(leadUpdate, { version: { increment: 1 } });
+  assert.equal(audit.action, "lead.note_added");
+  assert.equal(audit.metadata.activityType, "INTERNAL_NOTE");
+});
+
 test("due nurture leads automatically reopen and close their reactivation work", async () => {
   const calls = [];
   const now = new Date("2026-08-06T16:00:00.000Z");

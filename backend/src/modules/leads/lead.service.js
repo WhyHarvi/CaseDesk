@@ -498,7 +498,7 @@ export async function recordLeadActivity(req, db = prisma) {
         : lead.stage;
     await tx.lead.update({ where: { id: lead.id }, data: { ...(contactActivity ? { firstContactAt: lead.firstContactAt || values.occurredAt, lastContactAt: values.occurredAt } : {}), ...(isConnection ? { firstConnectedAt: lead.firstConnectedAt || values.occurredAt } : {}), ...(nextStage !== lead.stage ? { stage: nextStage } : {}), version: { increment: 1 } } });
     if (nextStage !== lead.stage) await tx.leadStageHistory.create({ data: { agencyId, leadId: lead.id, previousStage: lead.stage, newStage: nextStage, changedById: actorId, reason: "Contact activity recorded" } });
-    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.contact_recorded", details: `${lead.leadNumber}: ${values.title}`, entityType: "lead", entityId: lead.id, metadata: { activityId: activity.id, activityType: values.activityType } } });
+    await tx.activityLog.create({ data: { agencyId, userId: actorId, action: contactActivity ? "lead.contact_recorded" : "lead.note_added", details: `${lead.leadNumber}: ${values.title}`, entityType: "lead", entityId: lead.id, metadata: { activityId: activity.id, activityType: values.activityType } } });
     return activity;
   }, leadTransactionOptions);
 }
