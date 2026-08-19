@@ -10,7 +10,7 @@ import {
   listQuickBooksSyncFailures,
 } from "../services/paymentsOverviewService.js";
 import { createHttpError } from "../utils/http.js";
-import { approvePaymentApproval, listPaymentApprovals, rejectPaymentApproval } from "../services/paymentApprovalService.js";
+import { approvePaymentApproval, getPaymentApproval, listPaymentApprovals, rejectPaymentApproval } from "../services/paymentApprovalService.js";
 import { markInvoiceRefundFailed } from "../services/caseInvoiceService.js";
 
 function requireAdmin(req) {
@@ -78,6 +78,11 @@ export async function getPaymentApprovals(req, res) {
   requireAdmin(req);
   const data = await listPaymentApprovals(req.auth.agencyId, req.query);
   res.json({ data });
+}
+
+export async function getPaymentApprovalDetail(req, res) {
+  requireAdmin(req);
+  res.json({ data: await getPaymentApproval(req.auth.agencyId, req.params.id) });
 }
 
 export async function approvePayment(req, res) {

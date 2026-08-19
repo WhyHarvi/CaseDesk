@@ -29,6 +29,7 @@ import {
   getPaymentsOverview,
   getPaymentsOverviewSummary,
   getPaymentApprovals,
+  getPaymentApproval,
   approvePaymentApproval,
   rejectPaymentApproval,
   getCashClosing,
@@ -1220,6 +1221,7 @@ function PaymentApprovalDrawer({ item, busy, error, onClose, onApprove, onReject
           <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs text-slate-400">Submitted by</p><p className="mt-1 text-sm font-semibold text-slate-800">{item.submittedBy?.fullName || "Staff member"} · {item.sourceRole}</p><p className="mt-1 text-xs text-slate-400">{new Date(item.createdAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}</p>{item.processingError ? <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-xs leading-5 text-rose-700">{item.processingError}</p> : null}{item.rejectionReason ? <p className="mt-3 rounded-2xl bg-rose-50 p-3 text-xs leading-5 text-rose-700"><strong>Rejected:</strong> {item.rejectionReason}</p> : null}</section>
           {rejecting && canReview ? <section className="rounded-[1.5rem] border border-rose-200 bg-rose-50 p-4"><label className="text-xs font-semibold text-rose-900">Why is this being returned?<textarea autoFocus value={reason} onChange={(event) => setReason(event.target.value)} rows="4" maxLength="500" className="mt-2 w-full resize-none rounded-2xl border border-rose-200 bg-white px-3.5 py-3 text-sm text-slate-800 outline-none focus:ring-4 focus:ring-rose-100" placeholder="Explain what the frontdesk should correct" /></label><div className="mt-3 flex gap-2"><button type="button" onClick={() => setRejecting(false)} className="h-10 flex-1 rounded-full bg-white text-xs font-semibold text-slate-600">Keep reviewing</button><button type="button" disabled={busy || !reason.trim()} onClick={() => onReject(reason)} className="h-10 flex-1 rounded-full bg-rose-600 text-xs font-semibold text-white disabled:opacity-40">Reject payment</button></div></section> : null}
           {error ? <p className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700">{error}</p> : null}
+          {!canReview ? <p className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold leading-5 text-emerald-700">This payment request has already been {item.status.toLowerCase()}. No further review is required.</p> : null}
         </div>
         {canReview && !rejecting ? <footer className="grid grid-cols-2 gap-2 border-t border-white bg-white/85 p-4"><button type="button" disabled={busy} onClick={() => setRejecting(true)} className="h-12 rounded-full border border-rose-200 bg-white text-sm font-semibold text-rose-700 disabled:opacity-40">Reject</button><button type="button" disabled={busy} onClick={onApprove} className="flex h-12 items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}Approve</button></footer> : null}
       </motion.aside>
@@ -1294,21 +1296,19 @@ function PaymentApprovalsSection({ selectedId, onSelected, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null);
   const load = async () => {
     setLoading(true);
     setError("");
+    setSelected(null);
     try {
       const result = await getPaymentApprovals({ status, pageSize: 100 });
-      if (selectedId && !result.rows.some((item) => item.id === selectedId)) {
-        const all = await getPaymentApprovals({ status: "all", pageSize: 100 });
-        const selected = all.rows.find((item) => item.id === selectedId);
-        setData(selected ? { ...result, rows: [selected, ...result.rows] } : result);
-      } else setData(result);
+      setData(result);
+      setSelected(selectedId ? await getPaymentApproval(selectedId) : null);
     } catch (reason) { setError(reason.response?.data?.message || "Payment approvals could not be loaded."); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [status, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const selected = data.rows.find((item) => item.id === selectedId) || null;
   async function act(kind, reason) {
     setBusy(true); setError("");
     try { kind === "approve" ? await approvePaymentApproval(selected.id) : await rejectPaymentApproval(selected.id, reason); onSelected(""); await load(); onChanged?.(); }
@@ -1322,7 +1322,7 @@ function PaymentApprovalsSection({ selectedId, onSelected, onChanged }) {
         {loading ? <div className="flex h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div> : error && !data.rows.length ? <p className="p-8 text-center text-sm text-rose-600">{error}</p> : data.rows.length ? <div className="divide-y divide-slate-100">{data.rows.map((item) => <button key={item.id} type="button" onClick={() => onSelected(item.id)} className="grid w-full gap-3 px-4 py-4 text-left transition hover:bg-sky-50/50 sm:grid-cols-[1.1fr_1.4fr_auto_auto] sm:items-center"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.client?.fullName || item.appointment?.guestName || "Unlinked client"}</p><p className="mt-0.5 truncate text-xs text-slate-400">{item.submittedBy?.fullName || "Frontdesk"}</p></div><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{approvalTarget(item)}</p><p className="mt-0.5 text-xs text-slate-400">{formatDate(item.paymentDate)}</p></div><div><p className="text-sm font-semibold tabular-nums text-slate-950">{money.format(Number(item.amount))}</p><p className={`mt-0.5 text-[10px] font-semibold ${item.method === "Cash" ? "text-violet-600" : "text-sky-600"}`}>{item.method === "Cash" ? "Cash · CaseDesk only" : `${approvalMethodLabel(item.method)} · QuickBooks`}</p></div><span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold ${item.status === "Approved" ? "bg-emerald-50 text-emerald-700" : item.status === "Rejected" || item.status === "Failed" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{item.status}</span></button>)}</div> : <div className="px-6 py-14 text-center"><ClipboardCheck className="mx-auto h-6 w-6 text-slate-300" /><p className="mt-3 text-sm font-semibold text-slate-700">No {status.toLowerCase()} payments</p><p className="mt-1 text-xs text-slate-400">Frontdesk submissions will appear here.</p></div>}
       </div>
     </motion.section>
-    <AnimatePresence>{selected ? <PaymentApprovalDrawer item={selected} busy={busy} error={error} onClose={() => onSelected("")} onApprove={() => act("approve")} onReject={(reason) => act("reject", reason)} /> : null}</AnimatePresence>
+    <AnimatePresence>{selectedId && selected ? <PaymentApprovalDrawer item={selected} busy={busy} error={error} onClose={() => onSelected("")} onApprove={() => act("approve")} onReject={(reason) => act("reject", reason)} /> : null}</AnimatePresence>
   </>;
 }
 

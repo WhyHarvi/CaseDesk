@@ -4,6 +4,7 @@ import {
   getRefundReview,
   getPaymentsSummaryOverview,
   getPaymentApprovals,
+  getPaymentApprovalDetail,
   approvePayment,
   rejectPayment,
   getCashClosing,
@@ -23,6 +24,7 @@ router.get("/cash-closing", asyncHandler(getCashClosing));
 router.post("/cash-closing", asyncHandler(closeCash));
 router.post("/cash-withdrawals", asyncHandler(postCashWithdrawal));
 router.get("/approvals", asyncHandler(getPaymentApprovals));
+router.get("/approvals/:id", asyncHandler(getPaymentApprovalDetail));
 router.post("/approvals/:id/approve", asyncHandler(approvePayment));
 router.post("/approvals/:id/reject", asyncHandler(rejectPayment));
 router.get("/refunds/:id", asyncHandler(getRefundReview));

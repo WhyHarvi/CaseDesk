@@ -380,3 +380,12 @@ export async function listPaymentApprovals(agencyId, { status = "Pending", page 
   ]);
   return { rows, total, pendingCount, page: Math.max(Number(page) || 1, 1), pageSize: take };
 }
+
+export async function getPaymentApproval(agencyId, id) {
+  const row = await prisma.paymentApproval.findFirst({
+    where: { id, agencyId },
+    include: approvalInclude,
+  });
+  if (!row) throw createHttpError(404, "Payment approval request was not found.", "NOT_FOUND");
+  return row;
+}

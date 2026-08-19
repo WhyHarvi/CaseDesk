@@ -25,6 +25,11 @@ export async function getPaymentApprovals(params = {}) {
   return response.data.data;
 }
 
+export async function getPaymentApproval(id) {
+  const response = await api.get(`/payments-overview/approvals/${encodeURIComponent(id)}`, { cache: false });
+  return response.data.data;
+}
+
 export async function approvePaymentApproval(id) {
   const response = await api.post(`/payments-overview/approvals/${encodeURIComponent(id)}/approve`);
   return response.data.data;

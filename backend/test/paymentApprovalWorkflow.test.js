@@ -97,6 +97,9 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.match(paymentsPage, /timeZone: "UTC"/);
   assert.match(routes, /approvals\/:id\/approve/);
   assert.match(routes, /approvals\/:id\/reject/);
+  assert.match(routes, /router\.get\("\/approvals\/:id"/);
+  assert.match(paymentsPage, /await getPaymentApproval\(selectedId\)/);
+  assert.match(paymentsPage, /!canReview[\s\S]*No further review is required/);
   // A real incident: the same $100 e-transfer for one appointment got
   // submitted three times across different screens before any of them
   // failed or was reviewed. assertNoLivePaymentApproval is the shared
