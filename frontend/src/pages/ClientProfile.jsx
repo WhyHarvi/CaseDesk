@@ -136,9 +136,16 @@ function EmptyState({ message }) {
   );
 }
 
-function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false }) {
+const QUICK_ACTION_TONES = {
+  email: "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-900",
+  phone: "border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:bg-violet-100 hover:text-violet-900",
+  whatsapp: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-900",
+  chat: "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900",
+};
+
+function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false, tone = "email" }) {
   const sharedClassName =
-    "inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition";
+    `inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition ${QUICK_ACTION_TONES[tone] || QUICK_ACTION_TONES.email}`;
 
   if (disabled) {
     return (
@@ -791,20 +798,23 @@ export default function ClientProfile() {
                     icon={Mail}
                     label={client.email || "No email on file"}
                     disabled={!client.email}
+                    tone="email"
                   />
                   <QuickActionLink
                     href={client.phone ? `tel:${client.phone}` : "#"}
                     icon={Phone}
                     label={client.phone || "No mobile on file"}
                     disabled={!client.phone}
+                    tone="phone"
                   />
                   <QuickActionLink
                     href={client.phone ? `https://wa.me/${client.phone.replace(/[^\d]/g, "")}` : "#"}
                     icon={Smartphone}
                     label="WhatsApp"
                     disabled={!client.phone}
+                    tone="whatsapp"
                   />
-                  <QuickActionLink onClick={() => setChatOpen(true)} icon={MessageSquareText} label="Portal chat" />
+                  <QuickActionLink onClick={() => setChatOpen(true)} icon={MessageSquareText} label="Portal chat" tone="chat" />
                 </div>
               </div>
             </div>

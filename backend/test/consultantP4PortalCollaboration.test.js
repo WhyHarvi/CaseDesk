@@ -64,6 +64,9 @@ test("staff can answer portal chats from the client-profile side curtain", async
     source("../../frontend/src/components/clients/PortalAccessCard.jsx"),
   ]);
   assert.match(profile, /label="Portal chat"/);
+  assert.match(profile, /QUICK_ACTION_TONES/);
+  assert.match(profile, /tone="whatsapp"/);
+  assert.match(profile, /tone="chat"/);
   assert.match(profile, /setChatOpen\(true\)/);
   assert.match(profile, /initialConversationId=\{initialChatConversationId\}/);
   assert.match(drawer, /fixed inset-0[\s\S]*justify-end/);
