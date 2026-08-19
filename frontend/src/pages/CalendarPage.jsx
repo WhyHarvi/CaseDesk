@@ -1303,6 +1303,8 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     return [...merged.values()];
   }, [guestEmailMatches, guestPhoneMatches]);
   const selectedGuestLead = useMemo(() => guestMatches.find((contact) => contact.recordType === "lead" && contact.id === form.leadId) || null, [guestMatches, form.leadId]);
+  const phoneBookingNumber = form.mode === "client" ? selectedClient?.phone || "" : form.guestPhone || "";
+  const hasValidPhoneBookingNumber = phoneBookingNumber.replace(/\D/g, "").length >= 10;
 
   const loadSlots = useCallback(async () => {
     const locationChoicePending = form.meetingMode === "InPerson" && locations.length > 1 && !form.locationId;
@@ -1686,7 +1688,14 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                   </div>
                 ) : null}
               </div>
-              {form.meetingMode === "Phone" ? <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {form.mode === "client" ? selectedClient?.phone || "the client’s saved number" : form.guestPhone || "the visitor’s number"}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}. A valid client phone number is required.</p> : null}
+              {form.meetingMode === "Phone" ? hasValidPhoneBookingNumber ? (
+                <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {phoneBookingNumber}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}.</p>
+              ) : (
+                <p className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-semibold leading-5 text-rose-700" role="alert">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{form.mode === "client" ? `${selectedClient?.fullName || "This client"} does not have a valid phone number saved. Update the client profile before booking a phone appointment.` : "Enter a valid phone number before booking a phone appointment."}</span>
+                </p>
+              ) : null}
 
               <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
                 <label className="block text-xs font-medium text-slate-600">Repeat
@@ -1700,7 +1709,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
             )}
             {!pendingHold && !bookedWarning ? (
             <footer className="border-t border-slate-100 p-4">
-              <button type="button" onClick={submit} disabled={saving || !form.startsAt || !form.subject.trim() || subjectWordCount(form.subject) > APPOINTMENT_SUBJECT_MAX_WORDS || (form.mode === "guest" && !form.guestEmail.trim() && !form.guestPhone.trim()) || (form.meetingMode === "Phone" && !(form.mode === "client" ? selectedClient?.phone : form.guestPhone))} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
+              <button type="button" onClick={submit} disabled={saving || !form.startsAt || !form.subject.trim() || subjectWordCount(form.subject) > APPOINTMENT_SUBJECT_MAX_WORDS || (form.mode === "guest" && !form.guestEmail.trim() && !form.guestPhone.trim()) || (form.meetingMode === "Phone" && !hasValidPhoneBookingNumber)} className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {saving ? "Booking…" : form.paymentMethod === "Card" ? "Reserve & send payment link" : "Book appointment"}
               </button>
             </footer>

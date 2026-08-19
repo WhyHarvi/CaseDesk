@@ -20,4 +20,6 @@ test("calendar contact lookup can select and link an existing open lead", async 
   assert.match(api, /lookupBookingContacts/);
   assert.match(page, /Lead selected:/);
   assert.match(page, /leadId: form\.mode === "guest"/);
+  assert.match(page, /does not have a valid phone number saved/);
+  assert.match(page, /form\.meetingMode === "Phone" && !hasValidPhoneBookingNumber/);
 });
