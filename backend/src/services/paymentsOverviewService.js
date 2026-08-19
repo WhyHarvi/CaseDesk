@@ -1047,7 +1047,7 @@ export async function getPaymentsSummary(agencyId, { month, reconcile = true } =
     fetchLegacyPaymentRows(agencyId, {}),
     fetchLegacyManualLedgerRows(agencyId),
     getCashOnHand(agencyId),
-    prisma.paymentApproval.count({ where: { agencyId, status: { in: ["Pending", "Failed"] } } }),
+    prisma.paymentApproval.count({ where: { agencyId, status: "Pending" } }),
     prisma.quickBooksWebhookEvent.count({ where: { agencyId, status: "FAILED" } }),
   ]);
   const all = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments, ...legacyManualRows];

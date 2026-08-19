@@ -68,6 +68,8 @@ test("Payments exposes combined ledgers, approvals, historical review and cash c
   ]);
   assert.match(service, /"casedesk_cash"/);
   assert.match(service, /"quickbooks"/);
+  assert.match(service, /pendingApprovalCount[\s\S]*status: "Pending"/);
+  assert.doesNotMatch(service, /pendingApprovalCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);
   assert.match(routes, /\/cash-closing/);
   assert.match(page, /Payment approvals/);
   assert.match(page, /Historical ledger review/);

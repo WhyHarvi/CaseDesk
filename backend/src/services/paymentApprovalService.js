@@ -322,7 +322,7 @@ export async function listPaymentApprovals(agencyId, { status = "Pending", page 
   const [rows, total, pendingCount] = await Promise.all([
     prisma.paymentApproval.findMany({ where, include: approvalInclude, orderBy: { createdAt: "desc" }, skip, take }),
     prisma.paymentApproval.count({ where }),
-    prisma.paymentApproval.count({ where: { agencyId, status: { in: ["Pending", "Failed"] } } }),
+    prisma.paymentApproval.count({ where: { agencyId, status: "Pending" } }),
   ]);
   return { rows, total, pendingCount, page: Math.max(Number(page) || 1, 1), pageSize: take };
 }
