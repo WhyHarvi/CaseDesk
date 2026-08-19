@@ -17,4 +17,7 @@ test("add-client DOB UI preserves bad input and highlights the field inline", as
   assert.match(clientsPage, /aria-invalid=\{Boolean\(dobError\)\}/);
   assert.match(clientsPage, /Correct the highlighted date of birth before saving/);
   assert.match(clientsPage, /Date of birth cannot be in the future/);
+  assert.match(clientsPage, /formatDateOfBirthInput/);
+  assert.match(clientsPage, /digits\.length === 4/);
+  assert.match(clientsPage, /digits\.length === 6/);
 });

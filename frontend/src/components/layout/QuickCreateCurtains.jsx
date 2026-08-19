@@ -5,6 +5,7 @@ import api from "../../services/api";
 import {
   ClientDrawer,
   dateOfBirthError,
+  formatDateOfBirthInput,
   defaultClientFormState,
   newClientOperationKey,
 } from "../../pages/Clients";
@@ -126,8 +127,9 @@ export default function QuickCreateCurtains({ kind, onClose }) {
 
   function handleClientChange(event) {
     const { name, value } = event.target;
-    setClientForm((current) => ({ ...current, [name]: value }));
-    if (name === "dateOfBirth" && dobError) setDobError(dateOfBirthError(value));
+    const nextValue = name === "dateOfBirth" ? formatDateOfBirthInput(value, event.nativeEvent?.inputType) : value;
+    setClientForm((current) => ({ ...current, [name]: nextValue }));
+    if (name === "dateOfBirth" && dobError) setDobError(dateOfBirthError(nextValue));
   }
 
   async function submitClient(event) {

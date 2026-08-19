@@ -69,6 +69,17 @@ export function dateOfBirthError(value) {
   return "";
 }
 
+export function formatDateOfBirthInput(value, inputType = "") {
+  const raw = String(value || "");
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (inputType.startsWith("delete") && (raw.length === 4 || raw.length === 7)) return raw;
+  if (digits.length < 4) return digits;
+  if (digits.length === 4) return `${digits}-`;
+  if (digits.length < 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  if (digits.length === 6) return `${digits.slice(0, 4)}-${digits.slice(4)}-`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+}
+
 function readClientDraft() {
   try {
     const raw = window.sessionStorage.getItem(CLIENT_DRAFT_STORAGE_KEY);
@@ -1192,10 +1203,11 @@ export default function Clients() {
 
   function handleInputChange(event) {
     const { name, value } = event.target;
-    if (name === "dateOfBirth" && dobError) setDobError(dateOfBirthError(value));
+    const nextValue = name === "dateOfBirth" ? formatDateOfBirthInput(value, event.nativeEvent?.inputType) : value;
+    if (name === "dateOfBirth" && dobError) setDobError(dateOfBirthError(nextValue));
     setFormState((current) => ({
       ...current,
-      [name]: value,
+      [name]: nextValue,
     }));
   }
 
