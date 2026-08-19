@@ -82,6 +82,10 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.doesNotMatch(approvalService, /prisma\.payment\.create/);
   assert.match(approvalService, /accountingProvider: row\.method === "Cash" \? ACCOUNTING_PROVIDERS\.CASH/);
   assert.match(approvalService, /postApprovedCashTransaction/);
+  assert.match(approvalService, /type: "payment\.approval_approved"/);
+  assert.match(approvalService, /type: "payment\.approval_rejected"/);
+  assert.match(approvalService, /type: "payment\.approval_failed"/);
+  assert.match(approvalService, /recipientIds: \[row\.submittedById\]/);
   assert.match(approvalService, /matchingPartialSuccess[\s\S]*reconciledPartialApproval: true/);
   assert.match(approvalService, /pendingCount[\s\S]*status: "Pending"/);
   assert.doesNotMatch(approvalService, /pendingCount[\s\S]*status: \{ in: \["Pending", "Failed"\] \}/);

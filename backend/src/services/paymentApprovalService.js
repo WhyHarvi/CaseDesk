@@ -25,6 +25,30 @@ function safeText(value, length) {
   return String(value || "").trim().slice(0, length) || null;
 }
 
+async function notifyPaymentSubmitter(row, { type, title, body, severity = "info", attentionLevel = "update" }) {
+  if (!row?.submittedById) return;
+  const actionUrl = row.appointmentId
+    ? `/app/calendar?appointment=${encodeURIComponent(row.appointmentId)}`
+    : row.caseId
+      ? `/app/cases/${encodeURIComponent(row.caseId)}?tab=billing`
+      : "/app/payments";
+  await notifyUsers({
+    agencyId: row.agencyId,
+    recipientIds: [row.submittedById],
+    type,
+    category: "payments",
+    title,
+    body,
+    severity,
+    attentionLevel,
+    entityType: "paymentApproval",
+    entityId: row.id,
+    actionUrl,
+    dedupeKey: `payment-approval:${row.id}:${type}`,
+    channels: ["in_app"],
+  }).catch(() => {});
+}
+
 async function targetContext(agencyId, values) {
   if (["appointment_payment", "appointment_payment_details"].includes(values.entryType)) {
     const appointment = await prisma.appointment.findFirst({
@@ -300,11 +324,23 @@ export async function approvePaymentApproval(agencyId, id, actorUserId) {
       });
     }
     await resolveNotifications({ agencyId, entityType: "paymentApproval", entityId: id, types: ["payment.approval_required"] }).catch(() => {});
+    await notifyPaymentSubmitter(updated, {
+      type: "payment.approval_approved",
+      title: "Payment approved",
+      body: `${updated.method} payment of $${Number(updated.amount).toFixed(2)} was approved and recorded. No further submission is needed.`,
+    });
     await recordActivity({ agencyId, userId: actorUserId, clientId: updated.clientId, caseId: updated.caseId, action: "payment.approved", details: `${updated.method} payment of $${Number(updated.amount).toFixed(2)} approved`, entityType: "paymentApproval", entityId: id }).catch(() => {});
     invalidateDashboardCache(agencyId);
     return updated;
   } catch (error) {
-    await prisma.paymentApproval.update({ where: { id }, data: { status: PAYMENT_APPROVAL_STATUSES.failed, processingError: String(error.message || "Payment processing failed.").slice(0, 1000) } });
+    const failed = await prisma.paymentApproval.update({ where: { id }, data: { status: PAYMENT_APPROVAL_STATUSES.failed, processingError: String(error.message || "Payment processing failed.").slice(0, 1000) } });
+    await notifyPaymentSubmitter(failed, {
+      type: "payment.approval_failed",
+      title: "Payment approval needs attention",
+      body: `The $${Number(failed.amount).toFixed(2)} ${failed.method.toLowerCase()} payment could not be completed. An administrator is reviewing it; do not submit it again.`,
+      severity: "warning",
+      attentionLevel: "action_required",
+    });
     throw error;
   }
 }
@@ -319,6 +355,13 @@ export async function rejectPaymentApproval(agencyId, id, actorUserId, reason) {
   if (!changed.count) throw createHttpError(409, "This payment has already been reviewed or is being processed.", "INVALID_STATE");
   const updated = await prisma.paymentApproval.findUnique({ where: { id }, include: approvalInclude });
   await resolveNotifications({ agencyId, entityType: "paymentApproval", entityId: id, types: ["payment.approval_required"] }).catch(() => {});
+  await notifyPaymentSubmitter(updated, {
+    type: "payment.approval_rejected",
+    title: "Payment request rejected",
+    body: `The $${Number(updated.amount).toFixed(2)} ${updated.method.toLowerCase()} payment was rejected: ${rejectionReason}`,
+    severity: "warning",
+    attentionLevel: "action_required",
+  });
   await recordActivity({ agencyId, userId: actorUserId, clientId: updated.clientId, caseId: updated.caseId, action: "payment.rejected", details: `${updated.method} payment rejected — ${rejectionReason}`, entityType: "paymentApproval", entityId: id }).catch(() => {});
   invalidateDashboardCache(agencyId);
   return updated;

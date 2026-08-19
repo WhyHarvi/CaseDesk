@@ -915,7 +915,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
             ) : payNow.status === "RecordingPayment" ? (
               <p className="flex items-center gap-2 text-sm font-semibold text-sky-700"><Loader2 className="h-4 w-4 animate-spin" /> Recording payment…</p>
             ) : payNow.status === "PendingApproval" ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><ClipboardCheck className="h-3.5 w-3.5" /> Waiting for administrator approval</p><p className="mt-1 text-xs leading-5 text-amber-700">The frontdesk entry has not been marked paid or sent to QuickBooks.</p></div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5"><p className="flex items-center gap-1.5 text-xs font-semibold text-amber-800"><ClipboardCheck className="h-3.5 w-3.5" /> Payment request sent</p><p className="mt-1 text-xs leading-5 text-amber-700">Waiting for administrator approval. This request was submitted successfully; do not enter the payment again. You will receive a notification when it is approved or rejected.</p></div>
             ) : payNow.status === "ApprovalFailed" ? (
               <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5"><p className="text-xs font-semibold text-rose-700">Administrator review needs attention</p><p className="mt-1 text-xs leading-5 text-rose-600">{payNow.paymentError || "The approved payment could not be processed. An administrator can retry it from Payment approvals."}</p></div>
             ) : payNow.status === "PaymentFailed" ? (

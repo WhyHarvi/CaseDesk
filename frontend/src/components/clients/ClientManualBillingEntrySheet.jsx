@@ -152,7 +152,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
       await onSaved?.(result);
       if (result.approvalRequired) {
         setSubmittedApproval(result.approval);
-        setWarning(result.message || "Payment submitted for administrator approval. It has not been marked paid yet.");
+        setWarning(result.message || "Request sent successfully. Do not submit this payment again. You will receive a notification when an administrator approves or rejects it.");
       } else if (result.paymentRecorded && !repairingAppointment) {
         const methodLabel = form.method === "ETransfer" ? "e-transfer" : form.method.toLowerCase();
         setRecordedConfirmation({ amount: money(Number(form.amount) || 0), method: methodLabel });
