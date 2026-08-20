@@ -8,6 +8,7 @@ import faviconPng from "./assets/favicon_logo.png";
 import { AuthProvider } from "./auth/AuthContext";
 import { NotificationProvider } from "./components/notifications/NotificationProvider";
 import NotificationPanel from "./components/notifications/NotificationPanel";
+import CaseLifecycleModal from "./components/cases/CaseLifecycleModal";
 import { queryClient } from "./services/queryClient";
 import RouteRecoveryBoundary from "./components/routing/RouteRecoveryBoundary";
 import { captureSupportFailure } from "./services/supportCapture";
@@ -81,6 +82,7 @@ function AppShell() {
           <NotificationProvider>
             <RoutedApplication />
             <NotificationPanel />
+            <CaseLifecycleModal />
           </NotificationProvider>
         </AuthProvider>
       </QueryClientProvider>
