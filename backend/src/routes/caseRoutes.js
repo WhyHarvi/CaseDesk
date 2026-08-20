@@ -4,7 +4,6 @@ import {
   closeCase,
   createCaseDocumentChecklist,
   getCaseById,
-  getCasePermissions,
   listCases,
   listCaseTypes,
   listStudyIntakes,
@@ -12,14 +11,13 @@ import {
   softDeleteCase,
   unarchiveCase,
   updateCaseDocumentAssignment,
-  updateCase,
-  updateCasePermissions,
 } from "../controllers/caseController.js";
 import {
   createCaseWithRequiredCollaboration,
   getCaseCollaboration,
   getNewCaseCollaborationOptions,
   updateCaseCollaboration,
+  updateCaseWithRequiredCollaboration,
 } from "../controllers/caseTeamController.js";
 import {
   getCaseLifecycle,
@@ -146,12 +144,6 @@ router.post(
   rateLimit({ windowMs: 60_000, max: 30 }),
   asyncHandler(reviewQuestionnaireAssignment),
 );
-// Frontdesk's data scope now covers every case for lookup/view purposes
-// (see portalAccessService.js), which is why every mutation below —
-// applicants, assessment, workflow, ledger, and the case record itself —
-// is explicitly restricted to admin/consultant. None of these previously
-// needed a role guard because frontdesk had no case data access at all to
-// reach them with.
 router.get("/:id/applicants", asyncHandler(listCaseApplicants));
 router.post("/:id/applicants", requireRole("admin", "consultant"), asyncHandler(createCaseApplicant));
 router.patch("/:id/applicants/:applicantId", requireRole("admin", "consultant"), asyncHandler(updateCaseApplicant));
@@ -200,7 +192,7 @@ router.post("/:id/ledger", requireRole("admin", "consultant"), asyncHandler(crea
 router.patch("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(updateLedgerEntry));
 router.delete("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(deleteLedgerEntry));
 router.get("/:id", asyncHandler(getCaseById));
-router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateCase));
+router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateCaseWithRequiredCollaboration));
 router.patch("/:id/close", requireRole("admin", "consultant"), asyncHandler(closeCase));
 router.patch("/:id/archive", requireRole("admin", "consultant"), asyncHandler(archiveCase));
 router.patch("/:id/unarchive", requireRole("admin", "consultant"), asyncHandler(unarchiveCase));
