@@ -37,6 +37,7 @@ import {
   updateBookingAppointmentStatus,
 } from "../../api/bookingApi";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
+import PreConsultationSummaryCard from "./PreConsultationSummaryCard";
 import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
@@ -148,10 +149,6 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     }
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
-    // Reopens the Complete Consultation sheet on a reload if it was left
-    // open mid-edit: the sheet's own draft survives in sessionStorage, but
-    // this component's completingConsultation flag doesn't, so without this
-    // the draft would have nothing to reattach to once the appointment reloads.
     if (completingConsultation || !appointment?.leadConsultation) return;
     if (getDraftConsultationId() === appointment.leadConsultation.id) setCompletingConsultation(true);
   }, [appointment, completingConsultation]);
@@ -465,6 +462,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2"><Link to={calendarUrl} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700"><CalendarDays className="h-3.5 w-3.5" />Open in calendar</Link>{appointment.meetingUrl ? <a href={appointment.meetingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white"><Video className="h-3.5 w-3.5" />Join meeting</a> : null}{appointment.location ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs text-slate-600"><MapPin className="h-3.5 w-3.5" />{appointment.location}</span> : null}</div>
               </section>
+              <PreConsultationSummaryCard intake={appointment.preConsultationIntake} />
               {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => appointment.lead?.id && appointment.leadConsultation?.id ? setCompletingConsultation(true) : setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
               {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
             </div> : null}
