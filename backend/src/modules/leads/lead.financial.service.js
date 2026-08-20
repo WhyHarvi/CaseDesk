@@ -1,4 +1,6 @@
 import prisma from "../../services/prisma/client.js";
+import { logger } from "../../services/logger.js";
+import { convertLeadCore } from "./lead.service.js";
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100;
@@ -18,7 +20,7 @@ export async function syncLeadInitialPaymentFromEvidence(agencyId, { clientId = 
         ...(caseId ? [{ earlyCaseId: caseId }, { convertedCaseId: caseId }] : []),
       ],
     },
-    select: { id: true, leadNumber: true, retainerStatus: true, initialPaymentStatus: true, stage: true, ownerUserId: true, earlyCaseId: true, convertedCaseId: true },
+    select: { id: true, leadNumber: true, retainerStatus: true, initialPaymentStatus: true, stage: true, ownerUserId: true, earlyClientId: true, earlyCaseId: true, convertedCaseId: true },
   });
   const updates = [];
   for (const lead of leads) {
@@ -67,6 +69,19 @@ export async function syncLeadInitialPaymentFromEvidence(agencyId, { clientId = 
       return row;
     });
     updates.push(updated);
+
+    // An early client/case already exists to hold this lead's retainer —
+    // once the retainer AND the initial payment are both genuinely ready,
+    // there's nothing left for a human to decide that convertLeadCore
+    // can't derive on its own (see its own defaults, mirroring
+    // ConvertLeadSheet.jsx). Best-effort and outside this transaction on
+    // purpose: the payment-status update above is the safety-critical
+    // fact and must land regardless of whether auto-conversion succeeds.
+    if (ready && lead.earlyClientId && lead.earlyCaseId) {
+      await convertLeadCore(agencyId, lead.id, { actorId: lead.ownerUserId }).catch((error) => {
+        logger.warn("lead.auto_conversion_failed", { agencyId, leadId: lead.id, reason: error.message });
+      });
+    }
   }
   return updates;
 }

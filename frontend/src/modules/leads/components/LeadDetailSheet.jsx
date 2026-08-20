@@ -288,9 +288,9 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const readyToConvert = stageReady && retainerReady && paymentReady;
   const canConvertLead = role === "admin" || (role === "consultant" && ownsLead);
   const conversionBlockers = [
-    !stageReady ? `Move the lead from ${humanize(lead.stage)} to Ready to Convert` : null,
-    !retainerReady ? "Set the retainer to Signed or Not Required" : null,
-    !paymentReady ? "Record the initial payment or mark it Waived" : null,
+    !stageReady ? "Reach the Ready to Convert stage" : null,
+    !retainerReady ? "Confirm the retainer is signed (or mark it not required)" : null,
+    !paymentReady ? "Record the initial payment (or mark it waived)" : null,
   ].filter(Boolean);
 
   // Retainer can be marked Signed by hand (a wet-signed paper copy, or
@@ -505,7 +505,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
                   {!isFrontdesk ? <section className="rounded-2xl border border-slate-200/70 bg-white p-5">
                     <div className="flex items-center justify-between gap-4">
-                      <div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Landmark className="h-4 w-4 text-slate-400" />Path to conversion</h3><p className="mt-1 text-xs text-slate-500">{[stageReady, retainerReady, paymentReady].filter(Boolean).length} of 3 requirements met</p></div>
+                      <div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Landmark className="h-4 w-4 text-slate-400" />Path to conversion</h3><p className="mt-1 text-xs text-slate-500">{[stageReady, retainerReady, paymentReady].filter(Boolean).length} of 3 steps done</p></div>
                     </div>
 
                     <div className="mt-4 space-y-2">
@@ -554,7 +554,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                     ) : null}
                     {lead.status === "OPEN" && lead.earlyClientId ? (
                       <div className="mt-3 rounded-xl bg-sky-50 px-4 py-3">
-                        <p className="text-xs leading-5 text-sky-800">A client and case were created automatically to hold the retainer sent for this lead's confirmed consultation — this lead is still open and working its own pipeline. Record the initial payment there to satisfy the requirement below.</p>
+                        <p className="text-xs leading-5 text-sky-800">A client and case already exist to hold this lead's retainer — the lead itself is still open, not yet converted. Record the initial payment there and this lead converts automatically.</p>
                         <Link to={`/app/clients/${lead.earlyClientId}?focus=billing`} className="mt-2.5 inline-flex h-8 items-center gap-1.5 rounded-full bg-sky-700 px-3 text-xs font-semibold text-white transition hover:bg-sky-800">
                           <WalletCards className="h-3.5 w-3.5" />
                           Go to client billing
@@ -577,7 +577,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
                       >
                         <CheckCircle2 className="h-4 w-4" />
-                        {readyToConvert ? "Convert to client" : `Convert to client · ${conversionBlockers.length} ${conversionBlockers.length === 1 ? "requirement" : "requirements"} remaining`}
+                        {readyToConvert ? "Convert to client" : `Convert to client (${conversionBlockers.length} step${conversionBlockers.length === 1 ? "" : "s"} left)`}
                       </button>
                     ) : null}
                     {lead.status === "OPEN" && !canConvertLead ? <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Only an administrator or this lead's assigned consultant can convert it to a client.</p> : null}

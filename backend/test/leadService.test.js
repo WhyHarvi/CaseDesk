@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, createConsultation, createLead, listLeadSources, qualifyLead, requestLeadTransfer, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
+import { readFile } from "node:fs/promises";
+import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, changeLeadPriority, changeLeadStage, convertLead, convertLeadCore, createConsultation, createLead, listLeadSources, qualifyLead, requestLeadTransfer, updateCommercialStatus, visibleLeadActivities } from "../src/modules/leads/lead.service.js";
 import { createOrLinkLeadForConsultation } from "../src/modules/leads/lead.booking.js";
 
 test("lead timelines hide superseded spreadsheet imports while retaining their reconciliation audit", () => {
@@ -565,7 +566,10 @@ test("conversion creates and links the client and case atomically", async () => 
     activityLog: { create: async ({ data }) => calls.push(["audit", data]) },
   };
   let transactionCount = 0;
-  const db = { $transaction: async (operation) => { transactionCount += 1; return operation(tx); } };
+  const db = {
+    lead: { findFirst: async () => convertibleLead },
+    $transaction: async (operation) => { transactionCount += 1; return operation(tx); },
+  };
   const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect identity documents", actualValue: 3500 } };
 
   const result = await convertLead(req, db);
@@ -612,7 +616,10 @@ test("conversion reuses an already-created retainer client/case instead of creat
     leadActivity: { create: async () => {} },
     activityLog: { create: async () => {} },
   };
-  const db = { $transaction: async (operation) => operation(tx) };
+  const db = {
+    lead: { findFirst: async () => convertibleLead },
+    $transaction: async (operation) => operation(tx),
+  };
   const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { fullName: "Avery Singh", caseType: "Work Permit", caseStage: "Documents Pending", caseNextAction: "Collect identity documents", actualValue: 3500 } };
 
   const result = await convertLead(req, db);
@@ -625,19 +632,27 @@ test("conversion reuses an already-created retainer client/case instead of creat
 });
 
 test("conversion rejects leads that have not completed commercial requirements", async () => {
-  const tx = { lead: { findFirst: async () => ({ id: "lead-1", ownerUserId: "user-1", status: "OPEN", stage: "PAYMENT_PENDING", retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED" }) } };
-  const db = { $transaction: async (operation) => operation(tx) };
+  const notReadyLead = { id: "lead-1", leadNumber: "LD-2026-000001", ownerUserId: "user-1", status: "OPEN", stage: "PAYMENT_PENDING", retainerStatus: "SIGNED", initialPaymentStatus: "REQUESTED" };
+  const tx = { lead: { findFirst: async () => notReadyLead } };
+  const db = {
+    lead: { findFirst: async () => notReadyLead },
+    $transaction: async (operation) => operation(tx),
+  };
   const req = { auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" }, params: { id: "lead-1" }, body: { fullName: "Avery Singh", caseType: "Work Permit", caseNextAction: "Collect documents" } };
   await assert.rejects(() => convertLead(req, db), (error) => error.code === "LEAD_NOT_READY_TO_CONVERT");
 });
 
 test("conversion rejects a consultant who can see but does not own the lead", async () => {
+  const wrongOwnerLead = { id: "lead-1", leadNumber: "LD-2026-000001", ownerUserId: "other-consultant", status: "OPEN", stage: "READY_TO_CONVERT", retainerStatus: "SIGNED", initialPaymentStatus: "PAID" };
   const tx = {
     lead: {
-      findFirst: async () => ({ id: "lead-1", ownerUserId: "other-consultant", status: "OPEN", stage: "READY_TO_CONVERT", retainerStatus: "SIGNED", initialPaymentStatus: "PAID" }),
+      findFirst: async () => wrongOwnerLead,
     },
   };
-  const db = { $transaction: async (operation) => operation(tx) };
+  const db = {
+    lead: { findFirst: async () => wrongOwnerLead },
+    $transaction: async (operation) => operation(tx),
+  };
   const req = {
     auth: { role: "consultant", agencyId: "agency-1", userId: "user-1" },
     params: { id: "lead-1" },
@@ -648,4 +663,107 @@ test("conversion rejects a consultant who can see but does not own the lead", as
     () => convertLead(req, db),
     /Only an admin or this lead's assigned consultant/,
   );
+});
+
+const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
+
+// Regression coverage for a real bug: an early client (retainer signed
+// before formal lead conversion) never got convertedClientId set unless a
+// human separately opened the Convert form and submitted it. Once the
+// retainer AND initial payment were both genuinely ready, nothing was left
+// to decide — so this closes it automatically, deriving the same defaults
+// ConvertLeadSheet.jsx pre-fills for a human.
+test("an unattended conversion (no values passed) derives the same defaults the manual conversion form pre-fills", async () => {
+  const calls = [];
+  const readyEarlyClientLead = {
+    id: "lead-1", leadNumber: "LD-2026-000305", status: "OPEN", stage: "READY_TO_CONVERT",
+    ownerUserId: "owner-1", firstName: "Lovedeep", lastName: "Singh",
+    retainerStatus: "SIGNED", initialPaymentStatus: "PAID",
+    immigrationInterest: "Study Permit", estimatedValue: 4000,
+    earlyClientId: "client-early", earlyCaseId: "case-early",
+    originalSourceId: "source-1", campaignId: null,
+  };
+  const tx = {
+    lead: {
+      findFirst: async () => readyEarlyClientLead,
+      update: async ({ data }) => calls.push(["lead", data]),
+    },
+    leadConversion: {
+      findUnique: async () => null,
+      create: async ({ data }) => { calls.push(["conversion", data]); return { id: "conversion-1", ...data }; },
+    },
+    leadQualification: { findUnique: async () => null },
+    case: {
+      findUnique: async () => ({ caseType: "Study Permit" }), // the fallback lookup — unused here since immigrationInterest is set
+      update: async ({ data }) => { calls.push(["case", data]); return { id: "case-early", ...data }; },
+    },
+    client: { update: async ({ data }) => { calls.push(["client", data]); return { id: "client-early", ...data }; } },
+    appointment: { findMany: async () => [], updateMany: async () => {} },
+    note: { updateMany: async () => {} },
+    followUp: { create: async ({ data }) => calls.push(["clientFollowUp", data]), updateMany: async () => {} },
+    leadFollowUp: { updateMany: async () => {} },
+    caseManualLedgerEntry: { updateMany: async () => {} },
+    leadActivity: { create: async () => {} },
+    activityLog: { create: async () => {} },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+
+  const result = await convertLeadCore("agency-1", "lead-1", { actorId: "owner-1" }, db);
+
+  assert.equal(result.client.id, "client-early");
+  assert.equal(result.case.id, "case-early");
+  assert.equal(calls.find(([kind]) => kind === "case")[1].caseType, "Study Permit");
+  assert.equal(calls.find(([kind]) => kind === "case")[1].stage, "Documents Pending");
+  assert.equal(calls.find(([kind]) => kind === "case")[1].nextAction, "Complete client intake and collect initial documents");
+  assert.equal(calls.find(([kind]) => kind === "conversion")[1].convertedById, "owner-1");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].convertedClientId, "client-early");
+  assert.equal(calls.find(([kind]) => kind === "lead")[1].convertedCaseId, "case-early");
+});
+
+test("an unattended conversion falls back to the early case's own case type when the lead has no immigration interest on file", async () => {
+  const calls = [];
+  const leadWithNoInterest = {
+    id: "lead-1", leadNumber: "LD-2026-000306", status: "OPEN", stage: "READY_TO_CONVERT",
+    ownerUserId: "owner-1", firstName: "No", lastName: "Interest",
+    retainerStatus: "SIGNED", initialPaymentStatus: "PAID",
+    immigrationInterest: null, estimatedValue: null,
+    earlyClientId: "client-early", earlyCaseId: "case-early",
+    originalSourceId: "source-1", campaignId: null,
+  };
+  const tx = {
+    lead: { findFirst: async () => leadWithNoInterest, update: async ({ data }) => calls.push(["lead", data]) },
+    leadConversion: { findUnique: async () => null, create: async ({ data }) => { calls.push(["conversion", data]); return { id: "conversion-1", ...data }; } },
+    leadQualification: { findUnique: async () => null },
+    case: {
+      findUnique: async () => ({ caseType: "Work Permit" }),
+      update: async ({ data }) => { calls.push(["case", data]); return { id: "case-early", ...data }; },
+    },
+    client: { update: async ({ data }) => ({ id: "client-early", ...data }) },
+    appointment: { findMany: async () => [], updateMany: async () => {} },
+    note: { updateMany: async () => {} },
+    followUp: { create: async () => {}, updateMany: async () => {} },
+    leadFollowUp: { updateMany: async () => {} },
+    caseManualLedgerEntry: { updateMany: async () => {} },
+    leadActivity: { create: async () => {} },
+    activityLog: { create: async () => {} },
+  };
+  const db = { $transaction: async (operation) => operation(tx) };
+
+  await convertLeadCore("agency-1", "lead-1", { actorId: "owner-1" }, db);
+
+  assert.equal(calls.find(([kind]) => kind === "case")[1].caseType, "Work Permit");
+});
+
+test("financial evidence auto-converts an early client's lead only once retainer and payment are both ready — best-effort, outside the payment-status transaction", async () => {
+  const financialService = await source("../src/modules/leads/lead.financial.service.js");
+  assert.match(financialService, /import \{ convertLeadCore \} from "\.\/lead\.service\.js";/);
+  const fnStart = financialService.indexOf("export async function syncLeadInitialPaymentFromEvidence(");
+  const fnBody = financialService.slice(fnStart, financialService.indexOf("\nexport ", fnStart + 1));
+  assert.match(fnBody, /if \(ready && lead\.earlyClientId && lead\.earlyCaseId\) \{/);
+  assert.match(fnBody, /convertLeadCore\(agencyId, lead\.id, \{ actorId: lead\.ownerUserId \}\)\.catch/);
+  // Fired after updates.push(updated) — i.e. after the payment-status
+  // transaction above it has already committed, not nested inside it.
+  const triggerIndex = fnBody.indexOf("if (ready && lead.earlyClientId");
+  const pushIndex = fnBody.indexOf("updates.push(updated);");
+  assert.ok(pushIndex !== -1 && triggerIndex > pushIndex, "auto-conversion must fire after the payment-status transaction commits, not inside it");
 });

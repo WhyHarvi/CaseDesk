@@ -31,7 +31,7 @@ import { assertZoomOperational } from "../../services/zoomService.js";
 import { recordAppointmentEvent } from "../../services/appointmentOperationsService.js";
 import { triggerRetainerFlow } from "./lead.retainer.service.js";
 import { isGlobalCaseType, listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
-import { normalizeCaseType } from "../../services/workflowService.js";
+import { canonicalCaseType, normalizeCaseType } from "../../services/workflowService.js";
 import { staleLeadOutreachOverview } from "./lead.staleOutreach.service.js";
 
 const leadInclude = {
@@ -1349,28 +1349,29 @@ function qualificationSummary(qualification) {
   ].filter(Boolean).join("\n");
 }
 
-export async function convertLead(req, db = prisma) {
-  const values = parseLeadConversion(req.body);
-  const agencyId = req.auth.agencyId;
-  const actorId = req.auth.userId;
+// Same defaults ConvertLeadSheet.jsx pre-fills the manual conversion form
+// with — reused so an automatic conversion (convertLeadCore called with no
+// values, see lead.financial.service.js's syncLeadInitialPaymentFromEvidence)
+// behaves exactly like a human opening that form and submitting it
+// unedited, not like a different, invented flow.
+const AUTO_CONVERSION_DEFAULT_CASE_STAGE = "Documents Pending";
+const AUTO_CONVERSION_DEFAULT_NEXT_ACTION = "Complete client intake and collect initial documents";
 
-  if (req.auth.role === "consultant" && !isGlobalCaseType(values.caseType)) {
-    const caseTypes = await listAgencyCaseTypeOptions(agencyId, db);
-    if (!caseTypes.some((caseType) => normalizeCaseType(caseType) === normalizeCaseType(values.caseType))) {
-      throw createHttpError(400, "Choose a case type from the global or agency list. Ask an administrator to configure a genuinely new service in Settings.", "CASE_TYPE_NOT_CONFIGURED");
-    }
-  }
-
+// The shared transaction body behind both the human-initiated HTTP
+// endpoint (convertLead below) and the automatic conversion triggered by
+// syncLeadInitialPaymentFromEvidence when an early client's initial
+// payment clears. Re-validates everything itself (not just relying on a
+// caller's earlier check) since it has to be safe to call from a
+// background job with no request/session backing it. `values` is the
+// human-submitted form payload for the HTTP path; omit it (or pass null)
+// to have this derive the same values ConvertLeadSheet.jsx would default
+// to, for an unattended conversion.
+export async function convertLeadCore(agencyId, leadId, { actorId, values = null }, db = prisma) {
   return db.$transaction(async (tx) => {
-    const lead = await requireLead(tx, req, req.params.id);
+    const lead = await tx.lead.findFirst({ where: { id: leadId, agencyId } });
+    if (!lead) throw createHttpError(404, "Lead not found.", "NOT_FOUND");
     if (lead.status === "CONVERTED" || lead.convertedClientId) throw createHttpError(409, "This lead has already been converted.", "LEAD_ALREADY_CONVERTED");
     if (lead.status !== "OPEN") throw createHttpError(409, "Only open leads can be converted.", "LEAD_NOT_OPEN");
-    // Converting creates both a client and a case assigned to this lead's
-    // owner. Keep that consequential write limited to the administrator or
-    // the consultant who actually owns the lead, even when a consultant has
-    // workspace-wide Lead visibility or can see the lead through an assigned
-    // follow-up.
-    assertLeadWorkflowEditable(req, lead);
     const retainerReady = ["SIGNED", "NOT_REQUIRED"].includes(lead.retainerStatus);
     const paymentReady = ["PAID", "WAIVED"].includes(lead.initialPaymentStatus);
     if (lead.stage !== "READY_TO_CONVERT" || !retainerReady || !paymentReady) {
@@ -1379,6 +1380,30 @@ export async function convertLead(req, db = prisma) {
 
     const existingConversion = await tx.leadConversion.findUnique({ where: { leadId: lead.id }, select: { id: true } });
     if (existingConversion) throw createHttpError(409, "This lead has already been converted.", "LEAD_ALREADY_CONVERTED");
+
+    if (!values) {
+      // Automatic path — nobody typed this in. Case.caseType can never be
+      // blank, so if the lead's own immigrationInterest is unusable, fall
+      // back to whatever the existing early case is already using rather
+      // than fail a conversion that financial evidence says is genuinely
+      // ready.
+      const fallbackCaseType = lead.earlyCaseId
+        ? (await tx.case.findUnique({ where: { id: lead.earlyCaseId }, select: { caseType: true } }))?.caseType
+        : null;
+      const derivedCaseType = canonicalCaseType(lead.immigrationInterest) || fallbackCaseType;
+      if (!derivedCaseType) throw createHttpError(409, "This lead has no case type to convert into — set an immigration interest, or convert manually.", "LEAD_CASE_TYPE_UNKNOWN");
+      values = {
+        givenNames: lead.firstName || "",
+        familyName: lead.lastName || "",
+        fullName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.leadNumber,
+        caseType: derivedCaseType,
+        caseStage: AUTO_CONVERSION_DEFAULT_CASE_STAGE,
+        caseNextAction: AUTO_CONVERSION_DEFAULT_NEXT_ACTION,
+        studyIntakeMonth: null,
+        actualValue: lead.estimatedValue ? Number(lead.estimatedValue) : null,
+        notes: null,
+      };
+    }
 
     const qualification = await tx.leadQualification.findUnique({ where: { leadId: lead.id } });
 
@@ -1444,4 +1469,25 @@ export async function convertLead(req, db = prisma) {
 
     return { ...conversion, client, case: caseItem };
   }, leadTransactionOptions);
+}
+
+export async function convertLead(req, db = prisma) {
+  const values = parseLeadConversion(req.body);
+  const agencyId = req.auth.agencyId;
+
+  if (req.auth.role === "consultant" && !isGlobalCaseType(values.caseType)) {
+    const caseTypes = await listAgencyCaseTypeOptions(agencyId, db);
+    if (!caseTypes.some((caseType) => normalizeCaseType(caseType) === normalizeCaseType(values.caseType))) {
+      throw createHttpError(400, "Choose a case type from the global or agency list. Ask an administrator to configure a genuinely new service in Settings.", "CASE_TYPE_NOT_CONFIGURED");
+    }
+  }
+
+  // Converting creates both a client and a case assigned to this lead's
+  // owner. Keep that consequential write limited to the administrator or
+  // the consultant who actually owns the lead, even when a consultant has
+  // workspace-wide Lead visibility or can see the lead through an assigned
+  // follow-up. convertLeadCore re-validates everything else itself.
+  const lead = await requireLead(db, req, req.params.id);
+  assertLeadWorkflowEditable(req, lead);
+  return convertLeadCore(agencyId, lead.id, { actorId: req.auth.userId, values }, db);
 }

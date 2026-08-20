@@ -219,6 +219,6 @@ test("the lead UI exposes completion, conversion blockers, duplicate resolution,
   assert.match(duplicateSheet, /Link to this lead/);
   assert.match(duplicateSheet, /Create as a new lead anyway/);
   assert.match(detailSheet, /Before this lead can be converted:/);
-  assert.match(detailSheet, /Convert to client.*requirements.*remaining/);
+  assert.match(detailSheet, /Convert to client \(.*step.*left\)/);
   assert.match(detailSheet, /disabled=\{!readyToConvert\}/);
 });
