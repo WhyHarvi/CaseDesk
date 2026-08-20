@@ -35,6 +35,11 @@ import {
   updatePaidAppointmentPaymentDetails,
   shortenAppointmentSubject,
 } from "../controllers/bookingController.js";
+import {
+  getStaffPreConsultationIntake,
+  saveStaffPreConsultationIntake,
+  sendStaffPreConsultationIntake,
+} from "../controllers/preConsultationStaffController.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -53,6 +58,9 @@ router.post("/payment-holds/:id/resend", asyncHandler(resendBookingPaymentHoldRe
 router.post("/payment-holds/:id/cancel", asyncHandler(cancelBookingPaymentHoldRequest));
 router.get("/appointments/registry", asyncHandler(listAppointmentRegistry));
 router.get("/appointments/:id/detail", asyncHandler(getAppointmentRegistryDetail));
+router.get("/appointments/:id/pre-consultation", asyncHandler(getStaffPreConsultationIntake));
+router.post("/appointments/:id/pre-consultation/send", asyncHandler(sendStaffPreConsultationIntake));
+router.post("/appointments/:id/pre-consultation/manual", asyncHandler(saveStaffPreConsultationIntake));
 router.get("/appointments/:id/refund-estimate", asyncHandler(getAppointmentRefundEstimate));
 router.get("/blocks", asyncHandler(listSchedulingBlocks));
 router.post("/blocks", asyncHandler(createSchedulingBlock));
