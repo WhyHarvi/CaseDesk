@@ -166,7 +166,9 @@ export async function createCaseWithRequiredCollaboration(req, res) {
   const agencyId = req.auth.agencyId;
   const required = await validateRequiredCaseTeam(agencyId, req.body || {});
 
-  req.body.assignedUserId = required.caseWorkerUserId;
+  // RCIC is the primary case owner; see applyRequiredCaseTeam below for the
+  // same rule applied to the Case Worker as a supporting collaborator.
+  req.body.assignedUserId = required.rcicUserId;
 
   const captured = captureResponse();
   await createCase(req, captured);
@@ -223,7 +225,7 @@ export async function updateCaseWithRequiredCollaboration(req, res) {
     );
   }
 
-  // Case.assignedUserId is the Case Worker. Prevent the legacy generic
+  // Case.assignedUserId is the RCIC. Prevent the legacy generic
   // "Assigned staff" field from changing ownership independently of the
   // required role assignment. Team changes belong in Collaboration.
   if (req.body && Object.prototype.hasOwnProperty.call(req.body, "assignedUserId")) {

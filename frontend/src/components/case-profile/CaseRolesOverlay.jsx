@@ -193,7 +193,7 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-violet-600 ring-1 ring-violet-100"><ShieldCheck className="h-5 w-5" /></span>
                     <div>
                       <div className="flex items-center gap-2"><h3 className="font-semibold text-violet-950">RCIC</h3><span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">Required</span></div>
-                      <p className="mt-1 text-sm leading-5 text-violet-800">Regulated representative responsible for the immigration file. Automatically receives collaboration access.</p>
+                      <p className="mt-1 text-sm leading-5 text-violet-800">Regulated representative responsible for the immigration file. Becomes the primary case owner throughout CaseDesk.</p>
                     </div>
                   </div>
                   {canManage ? (
@@ -201,8 +201,8 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                       <option value="">Choose RCIC</option>
                       {(permissions.requiredTeam?.rcicUsers || []).map((person) => <option key={person.id} value={person.id}>{person.fullName}{person.licenseNumber ? ` · ${person.licenseNumber}` : ""}</option>)}
                     </select>
-                  ) : <PersonLine person={selectedRcic} detail={selectedRcic?.licenseNumber ? `RCIC · ${selectedRcic.licenseNumber}` : "RCIC"} />}
-                  {canManage && selectedRcic ? <PersonLine person={selectedRcic} detail={selectedRcic.licenseNumber ? `RCIC · ${selectedRcic.licenseNumber}` : "RCIC"} /> : null}
+                  ) : <PersonLine person={selectedRcic} detail={selectedRcic?.licenseNumber ? `RCIC · ${selectedRcic.licenseNumber} · Primary owner` : "RCIC · Primary owner"} />}
+                  {canManage && selectedRcic ? <PersonLine person={selectedRcic} detail={selectedRcic.licenseNumber ? `RCIC · ${selectedRcic.licenseNumber} · Primary owner` : "RCIC · Primary owner"} /> : null}
                 </article>
 
                 <article className="rounded-[1.6rem] border border-sky-100 bg-sky-50/70 p-5 shadow-sm">
@@ -210,7 +210,7 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-sky-600 ring-1 ring-sky-100"><UserRoundCheck className="h-5 w-5" /></span>
                     <div>
                       <div className="flex items-center gap-2"><h3 className="font-semibold text-sky-950">Case Worker</h3><span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">Required</span></div>
-                      <p className="mt-1 text-sm leading-5 text-sky-800">Owns the day-to-day file and becomes the primary case owner throughout CaseDesk.</p>
+                      <p className="mt-1 text-sm leading-5 text-sky-800">Owns the day-to-day file. Automatically receives collaboration access.</p>
                     </div>
                   </div>
                   {canManage ? (
@@ -218,8 +218,8 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                       <option value="">Choose Case Worker</option>
                       {(permissions.requiredTeam?.caseWorkerUsers || []).map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
                     </select>
-                  ) : <PersonLine person={selectedCaseWorker} detail="Case Worker · Primary owner" />}
-                  {canManage && selectedCaseWorker ? <PersonLine person={selectedCaseWorker} detail="Case Worker · Primary owner" /> : null}
+                  ) : <PersonLine person={selectedCaseWorker} detail="Case Worker" />}
+                  {canManage && selectedCaseWorker ? <PersonLine person={selectedCaseWorker} detail="Case Worker" /> : null}
                 </article>
               </section>
 
@@ -227,7 +227,7 @@ export default function CaseRolesOverlay({ caseItem, onClose, onSaved }) {
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><UsersRound className="h-5 w-5" /></span>
-                    <div><h3 className="font-semibold text-slate-950">Additional collaborators</h3><p className="mt-1 text-sm text-slate-500">Extra staff who can open and work on this case. RCIC access is automatic and the Case Worker already owns the case.</p></div>
+                    <div><h3 className="font-semibold text-slate-950">Additional collaborators</h3><p className="mt-1 text-sm text-slate-500">Extra staff who can open and work on this case. Case Worker access is automatic and the RCIC already owns the case.</p></div>
                   </div>
                   <label className="relative block w-full sm:w-72"><Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search staff" className="h-10 w-full rounded-full border border-slate-200 pl-10 pr-4 text-sm outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" /></label>
                 </div>

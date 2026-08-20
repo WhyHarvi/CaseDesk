@@ -18,10 +18,10 @@ export default function RequiredCaseTeamModal() {
   useEffect(() => registerRequiredCaseTeamPrompt((request) => new Promise((resolve, reject) => {
     const options = request.options || {};
     const existingOwner = String(request.payload?.assignedUserId || "");
-    const ownerIsCaseWorker = (options.caseWorkerUsers || []).some((user) => user.id === existingOwner);
+    const ownerIsRcic = (options.rcicUsers || []).some((user) => user.id === existingOwner);
     setPending({ request, resolve, reject });
-    setRcicUserId((options.rcicUsers || []).length === 1 ? options.rcicUsers[0].id : "");
-    setCaseWorkerUserId(ownerIsCaseWorker ? existingOwner : (options.caseWorkerUsers || []).length === 1 ? options.caseWorkerUsers[0].id : "");
+    setRcicUserId(ownerIsRcic ? existingOwner : (options.rcicUsers || []).length === 1 ? options.rcicUsers[0].id : "");
+    setCaseWorkerUserId((options.caseWorkerUsers || []).length === 1 ? options.caseWorkerUsers[0].id : "");
     setError("");
   })), []);
 
@@ -93,7 +93,7 @@ export default function RequiredCaseTeamModal() {
             <span className="flex items-center gap-2 text-sm font-semibold text-violet-950">
               <ShieldCheck className="h-4 w-4 text-violet-600" /> RCIC <span className="text-rose-500">*</span>
             </span>
-            <span className="mt-1 block text-xs leading-5 text-violet-700">The regulated representative responsible for the immigration file. They receive case collaboration access automatically.</span>
+            <span className="mt-1 block text-xs leading-5 text-violet-700">The regulated representative responsible for the immigration file. This person becomes the primary case owner in CaseDesk.</span>
             <select
               value={rcicUserId}
               onChange={(event) => { setRcicUserId(event.target.value); setError(""); }}
@@ -110,7 +110,7 @@ export default function RequiredCaseTeamModal() {
             <span className="flex items-center gap-2 text-sm font-semibold text-sky-950">
               <UserRoundCheck className="h-4 w-4 text-sky-600" /> Case Worker <span className="text-rose-500">*</span>
             </span>
-            <span className="mt-1 block text-xs leading-5 text-sky-700">The person doing the day-to-day file work. This person becomes the primary case owner in CaseDesk.</span>
+            <span className="mt-1 block text-xs leading-5 text-sky-700">The person doing the day-to-day file work. They receive case collaboration access automatically.</span>
             <select
               value={caseWorkerUserId}
               onChange={(event) => { setCaseWorkerUserId(event.target.value); setError(""); }}

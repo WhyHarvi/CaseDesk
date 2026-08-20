@@ -51,7 +51,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                   </span>
                   <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-sky-50 px-2.5 py-1 font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
                     <UserRound className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-[11px] font-semibold uppercase text-sky-600">Case Worker</span>
+                    <span className="text-[11px] font-semibold uppercase text-sky-600">RCIC</span>
                     <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
                   </span>
                 </div>

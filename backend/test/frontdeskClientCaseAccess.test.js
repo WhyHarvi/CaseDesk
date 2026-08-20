@@ -49,7 +49,9 @@ test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are adm
 
   // The front-desk "professional payment" flow (Cases.jsx, after client
   // creation) posts here directly — this must never gain a role guard.
-  assert.match(routes, /router\.post\("\/", asyncHandler\(createCase\)\);/);
+  // createCaseWithRequiredCollaboration wraps createCase to also confirm
+  // the required RCIC/Case Worker team, but adds no role restriction.
+  assert.match(routes, /router\.post\("\/", asyncHandler\(createCaseWithRequiredCollaboration\)\);/);
 
   for (const pattern of [
     /router\.post\("\/:id\/applicants", requireRole\("admin", "consultant"\), asyncHandler\(createCaseApplicant\)\);/,
@@ -62,8 +64,12 @@ test("case write endpoints (update/lifecycle/applicants/workflow/ledger) are adm
     /router\.post\("\/:id\/ledger", requireRole\("admin", "consultant"\), asyncHandler\(createCaseLedgerEntry\)\);/,
     /router\.patch\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant"\), asyncHandler\(updateLedgerEntry\)\);/,
     /router\.delete\("\/:id\/ledger\/:entryId", requireRole\("admin", "consultant"\), asyncHandler\(deleteLedgerEntry\)\);/,
-    /router\.patch\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(updateCase\)\);/,
-    /router\.patch\("\/:id\/close", requireRole\("admin", "consultant"\), asyncHandler\(closeCase\)\);/,
+    // updateCase/closeCase are now wrapped: updateCaseWithRequiredCollaboration
+    // reuses updateCase's own logic, and both /lifecycle and /close additionally
+    // gate on requireCompleteCaseTeam — an existing case can't move through its
+    // lifecycle without a confirmed RCIC and Case Worker.
+    /router\.patch\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(updateCaseWithRequiredCollaboration\)\);/,
+    /router\.patch\(\n {2}"\/:id\/close",\n {2}requireRole\("admin", "consultant"\),\n {2}asyncHandler\(requireCompleteCaseTeam\),\n {2}asyncHandler\(closeCase\),\n\);/,
     /router\.patch\("\/:id\/archive", requireRole\("admin", "consultant"\), asyncHandler\(archiveCase\)\);/,
     /router\.patch\("\/:id\/unarchive", requireRole\("admin", "consultant"\), asyncHandler\(unarchiveCase\)\);/,
     /router\.delete\("\/:id", requireRole\("admin", "consultant"\), asyncHandler\(softDeleteCase\)\);/,
@@ -107,5 +113,5 @@ test("Cases.jsx and CaseProfile.jsx hide edit/lifecycle actions from view-only v
   assert.match(profilePage, /const canManageCase = \["admin", "consultant"\]\.includes\(role\);/);
   assert.match(profilePage, /canManageCase=\{canManageCase\}/);
   assert.match(profilePage, /showEditClient=\{canManageCase\}/);
-  assert.match(summary, /canManageCase \|\| !\["Applicants", "Incentive Roles", "Archive", "Delete", "Close"\]\.includes\(item\)/);
+  assert.match(summary, /canManageCase \|\| !\["Applicants", "Archive", "Delete", "Close"\]\.includes\(item\)/);
 });

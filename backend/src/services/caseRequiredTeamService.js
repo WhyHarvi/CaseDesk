@@ -158,13 +158,15 @@ export async function applyRequiredCaseTeam(tx, {
     }
   }
 
+  // RCIC is the primary case owner (Case.assignedUserId); the Case Worker
+  // is a mandatory supporting collaborator underneath them.
   const collaborationIds = new Set(requestedCollaboratorIds);
-  if (rcicUserId !== caseWorkerUserId) collaborationIds.add(rcicUserId);
-  collaborationIds.delete(caseWorkerUserId);
+  if (rcicUserId !== caseWorkerUserId) collaborationIds.add(caseWorkerUserId);
+  collaborationIds.delete(rcicUserId);
 
   await tx.case.update({
     where: { id: caseId },
-    data: { assignedUserId: caseWorkerUserId },
+    data: { assignedUserId: rcicUserId },
   });
 
   const activeSupporting = await tx.caseAssignment.findMany({

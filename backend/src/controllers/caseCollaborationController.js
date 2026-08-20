@@ -25,7 +25,7 @@ export async function createCollaborationRequest(req, res) {
   if (requestedRole === "primary") {
     throw createHttpError(
       409,
-      "Primary case ownership is controlled by the required Case Worker assignment. Use the case Collaboration panel to change the Case Worker.",
+      "Primary case ownership is controlled by the required RCIC assignment. Use the case Collaboration panel to change the RCIC.",
       "CASE_WORKER_CONTROLS_OWNERSHIP",
     );
   }

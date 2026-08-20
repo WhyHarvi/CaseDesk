@@ -18,10 +18,11 @@ test("case-role settings CRUD mirrors the fee-category admin-list pattern", asyn
   assert.match(routes, /router\.patch\("\/:id", requireRole\("admin"\)/);
   assert.match(routes, /router\.delete\("\/:id", requireRole\("admin"\)/);
 
-  // Built-in roles can be hidden but never hard-deleted, and a role already
-  // assigned on a case can't be deleted out from under that history either —
-  // both guards mirror deleteFeeCategory's shape.
-  assert.match(service, /if \(current\.isSystem\) throw createHttpError\(409, "Built-in case roles can be hidden but not deleted\."/);
+  // Built-in roles (including the mandatory RCIC/Case Worker system roles)
+  // can never be hard-deleted, and a role already assigned on a case can't
+  // be deleted out from under that history either — both guards mirror
+  // deleteFeeCategory's shape.
+  assert.match(service, /if \(current\.isSystem \|\| REQUIRED_CASE_ROLE_CODES\.has\(current\.code\)\) throw createHttpError\(409, "Built-in case roles cannot be deleted\."/);
   assert.match(service, /prisma\.caseRoleAssignment\.count\(\{ where: \{ agencyId, caseRoleId: id \} \}\)/);
   assert.match(service, /prisma\.teamIncentiveRoleAssignment\.count\(\{ where: \{ agencyId, caseRoleId: id \} \}\)/);
   assert.match(service, /throw createHttpError\(409, "This role is already assigned to cases or team members\. Hide it instead/);
@@ -50,7 +51,7 @@ test("per-case incentive role assignments are scoped, validated, and wired under
   assert.match(caseRoutes, /router\.use\("\/:id", requireCaseAccess\(\)\)/);
 
   // A restored/active, non-archived case is required before roles can change.
-  assert.match(controller, /if \(caseItem\.archivedAt\) throw createHttpError\(409, "Restore this case before changing its incentive roles\."/);
+  assert.match(controller, /if \(caseItem\.archivedAt\) throw createHttpError\(409, "Restore this case before changing its case roles\."/);
 
   // The PUT is replace-style: dedupes (caseRoleId, userId) pairs, validates
   // every referenced role/user belongs to this agency and is active, then
