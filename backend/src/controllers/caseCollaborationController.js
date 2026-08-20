@@ -22,6 +22,13 @@ export async function createCollaborationRequest(req, res) {
   const caseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
   if (!caseId) throw createHttpError(400, "Choose a case to request.", "VALIDATION_ERROR");
   const requestedRole = typeof req.body?.requestedRole === "string" ? req.body.requestedRole.trim() : "supporting";
+  if (requestedRole === "primary") {
+    throw createHttpError(
+      409,
+      "Primary case ownership is controlled by the required Case Worker assignment. Use the case Collaboration panel to change the Case Worker.",
+      "CASE_WORKER_CONTROLS_OWNERSHIP",
+    );
+  }
   const note = typeof req.body?.note === "string" ? req.body.note : "";
   const data = await submitCollaborationRequest(req.auth.agencyId, req.auth.userId, { caseId, requestedRole, note });
   res.status(201).json({ data, message: "Request sent to your admin team." });

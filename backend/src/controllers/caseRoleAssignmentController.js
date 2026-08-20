@@ -1,6 +1,11 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { ensureRequiredCaseRoles, REQUIRED_CASE_ROLE_CODES } from "../services/caseRoleService.js";
+import {
+  requiredCaseTeamOptions,
+  userCanManageCaseCollaboration,
+} from "../services/caseRequiredTeamService.js";
 
 const userSelect = { id: true, fullName: true, email: true };
 
@@ -10,12 +15,25 @@ async function scopedCase(req) {
     select: { id: true, clientId: true, archivedAt: true },
   });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
-  if (caseItem.archivedAt) throw createHttpError(409, "Restore this case before changing its incentive roles.", "CASE_ARCHIVED");
+  if (caseItem.archivedAt) throw createHttpError(409, "Restore this case before changing its case roles.", "CASE_ARCHIVED");
   return caseItem;
+}
+
+async function requireRoleManager(req, caseId) {
+  const canManage = await userCanManageCaseCollaboration({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    role: req.auth.role,
+    caseId,
+  });
+  if (!canManage) {
+    throw createHttpError(403, "Only an administrator or an RCIC can change case roles.", "FORBIDDEN");
+  }
 }
 
 export async function listCaseRoleAssignments(req, res) {
   await scopedCase(req);
+  await ensureRequiredCaseRoles(req.auth.agencyId);
   const data = await prisma.caseRoleAssignment.findMany({
     where: { agencyId: req.auth.agencyId, caseId: req.params.id, status: "active" },
     select: { id: true, caseRoleId: true, assignedAt: true, caseRole: { select: { id: true, code: true, name: true } }, user: { select: userSelect } },
@@ -26,6 +44,7 @@ export async function listCaseRoleAssignments(req, res) {
 
 export async function replaceCaseRoleAssignments(req, res) {
   const caseItem = await scopedCase(req);
+  await requireRoleManager(req, caseItem.id);
   const supplied = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
   if (supplied.length > 100) throw createHttpError(400, "Too many role assignments.", "VALIDATION_ERROR");
   const pairs = supplied
@@ -39,14 +58,34 @@ export async function replaceCaseRoleAssignments(req, res) {
     return true;
   });
 
-  const [validRoles, validUsers] = await Promise.all([
+  const requiredRoles = await ensureRequiredCaseRoles(req.auth.agencyId);
+  const requiredByCode = new Map(requiredRoles.map((role) => [role.code, role]));
+  const rcicRole = requiredByCode.get("rcic");
+  const caseWorkerRole = requiredByCode.get("case-worker");
+  const rcicPairs = deduped.filter((pair) => pair.caseRoleId === rcicRole.id);
+  const caseWorkerPairs = deduped.filter((pair) => pair.caseRoleId === caseWorkerRole.id);
+  if (rcicPairs.length !== 1) {
+    throw createHttpError(400, "Every case must have exactly one RCIC.", "RCIC_REQUIRED");
+  }
+  if (caseWorkerPairs.length !== 1) {
+    throw createHttpError(400, "Every case must have exactly one Case Worker.", "CASE_WORKER_REQUIRED");
+  }
+
+  const [validRoles, validUsers, requiredOptions] = await Promise.all([
     prisma.agencyCaseRole.findMany({ where: { agencyId: req.auth.agencyId, id: { in: deduped.map((pair) => pair.caseRoleId) }, isActive: true }, select: { id: true } }),
     prisma.user.findMany({ where: { agencyId: req.auth.agencyId, id: { in: deduped.map((pair) => pair.userId) }, status: "active" }, select: { id: true } }),
+    requiredCaseTeamOptions(req.auth.agencyId),
   ]);
   const validRoleIds = new Set(validRoles.map((role) => role.id));
   const validUserIds = new Set(validUsers.map((user) => user.id));
   if (deduped.some((pair) => !validRoleIds.has(pair.caseRoleId) || !validUserIds.has(pair.userId))) {
     throw createHttpError(400, "One or more selected roles or staff members are invalid.", "VALIDATION_ERROR");
+  }
+  if (!requiredOptions.rcicUsers.some((user) => user.id === rcicPairs[0].userId)) {
+    throw createHttpError(400, "The selected RCIC does not have the RCIC team role.", "INVALID_RCIC");
+  }
+  if (!requiredOptions.caseWorkerUsers.some((user) => user.id === caseWorkerPairs[0].userId)) {
+    throw createHttpError(400, "The selected Case Worker does not have the Case Worker team role.", "INVALID_CASE_WORKER");
   }
 
   await prisma.$transaction(async (tx) => {
@@ -71,8 +110,8 @@ export async function replaceCaseRoleAssignments(req, res) {
     userId: req.auth.userId,
     clientId: caseItem.clientId,
     caseId: caseItem.id,
-    action: "case.incentive_roles_updated",
-    details: `Incentive roles updated: ${deduped.length} assignment${deduped.length === 1 ? "" : "s"}`,
+    action: "case.roles_updated",
+    details: `Case roles updated: RCIC and Case Worker confirmed with ${Math.max(deduped.length - 2, 0)} additional role assignment${Math.max(deduped.length - 2, 0) === 1 ? "" : "s"}`,
   });
 
   const data = await prisma.caseRoleAssignment.findMany({
@@ -85,16 +124,23 @@ export async function replaceCaseRoleAssignments(req, res) {
 
 export async function removeCaseRoleAssignment(req, res) {
   const caseItem = await scopedCase(req);
-  const existing = await prisma.caseRoleAssignment.findFirst({ where: { id: req.params.assignmentId, agencyId: req.auth.agencyId, caseId: caseItem.id } });
+  await requireRoleManager(req, caseItem.id);
+  const existing = await prisma.caseRoleAssignment.findFirst({
+    where: { id: req.params.assignmentId, agencyId: req.auth.agencyId, caseId: caseItem.id },
+    include: { caseRole: { select: { code: true, name: true } } },
+  });
   if (!existing) throw createHttpError(404, "Role assignment not found.", "NOT_FOUND");
+  if (REQUIRED_CASE_ROLE_CODES.has(existing.caseRole.code)) {
+    throw createHttpError(409, `${existing.caseRole.name} is mandatory. Assign a replacement instead of removing it.`, "REQUIRED_CASE_ROLE");
+  }
   await prisma.caseRoleAssignment.delete({ where: { id: existing.id } });
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
     clientId: caseItem.clientId,
     caseId: caseItem.id,
-    action: "case.incentive_role_removed",
-    details: "An incentive role assignment was removed.",
+    action: "case.role_removed",
+    details: `${existing.caseRole.name} assignment removed.`,
   });
   res.status(204).end();
 }

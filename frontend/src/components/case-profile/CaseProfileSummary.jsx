@@ -51,7 +51,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                   </span>
                   <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-sky-50 px-2.5 py-1 font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
                     <UserRound className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-[11px] font-semibold uppercase text-sky-600">Consultant</span>
+                    <span className="text-[11px] font-semibold uppercase text-sky-600">Case Worker</span>
                     <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
                   </span>
                 </div>
@@ -130,7 +130,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
   );
 }
 
-export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canManagePermissions = false, canDownloadApplication = true, canManageCase = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenPermissions, onOpenCaseRoles, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
+export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, canDownloadApplication = true, canManageCase = true, onOpenWorkflow, onDownloadApplication, onOpenApplicants, onOpenCaseRoles, onOpenNotes, onOpenActivities, onOpenStatement, onOpenESign, onArchiveCase, onCloseCase, onDeleteCase }) {
   return (
     <section className="overflow-visible">
       <div className="overflow-x-auto overflow-y-visible pb-3">
@@ -138,7 +138,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <ExpandingPillMenu
             icon={BriefcaseBusiness}
             label="Case options"
-            items={caseOptionItems.filter((item) => (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Incentive Roles", "Archive", "Delete", "Close"].includes(item)))}
+            items={caseOptionItems.filter((item) => (item !== "Download application" || canDownloadApplication) && (canManageCase || !["Applicants", "Archive", "Delete", "Close"].includes(item)))}
             isOpen={activeToolbarTray === "case-options"}
             onOpen={() => setActiveToolbarTray("case-options")}
             onClose={() => setActiveToolbarTray("")}
@@ -146,7 +146,6 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
             onSelect={(item) => {
               if (item === "Download application") onDownloadApplication?.();
               if (item === "Applicants") onOpenApplicants();
-              if (item === "Incentive Roles") onOpenCaseRoles?.();
               if (item === "E-Sign") onOpenESign?.();
               if (item === "Archive") onArchiveCase?.();
               if (item === "Close") onCloseCase?.();
@@ -158,7 +157,7 @@ export function CaseProfileToolbar({ activeToolbarTray, setActiveToolbarTray, ca
           <SimpleActionPill icon={History} label="Activities" onClick={onOpenActivities} />
           {onOpenStatement ? <SimpleActionPill icon={Wallet} label="Statement of account" onClick={onOpenStatement} /> : null}
           <SimpleActionPill icon={Clock3} label="Time entries" />
-          {canManagePermissions ? <SimpleActionPill icon={Handshake} label="Collaboration" onClick={onOpenPermissions} /> : null}
+          {canManageCase && onOpenCaseRoles ? <SimpleActionPill icon={Handshake} label="Collaboration" onClick={onOpenCaseRoles} /> : null}
           <SimpleActionPill icon={BriefcaseBusiness} label="Workflow" onClick={onOpenWorkflow} />
         </div>
       </div>
