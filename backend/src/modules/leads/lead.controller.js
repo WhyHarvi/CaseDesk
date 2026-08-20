@@ -1,4 +1,5 @@
 import * as service from "./lead.service.js";
+import { listPermitExpiryLeads } from "./lead.permitExpiry.service.js";
 import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
 import { evaluateCaseTimelineLegs } from "../../services/incentiveTimelineService.js";
 import { logger } from "../../services/logger.js";
@@ -51,6 +52,10 @@ export async function createLead(req, res) {
 }
 
 export async function listLeads(req, res) {
+  if (String(req.query.permitExpiry || "").toLowerCase() === "true") {
+    res.json(await listPermitExpiryLeads(req));
+    return;
+  }
   res.json(await service.listLeads(req));
 }
 
