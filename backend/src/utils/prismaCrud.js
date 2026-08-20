@@ -132,16 +132,30 @@ export async function recordActivity({
   metadata = {},
 }) {
   try {
+    let resolvedClientId = clientId;
+
+    // Many case-level actions only know the case id. Resolve its client here
+    // so the same audit row is visible both on the case and on the client's
+    // complete activity timeline. This also keeps future activity consistent
+    // without every controller having to remember to pass clientId manually.
+    if (!resolvedClientId && caseId) {
+      const caseRecord = await prisma.case.findFirst({
+        where: { id: caseId, agencyId },
+        select: { clientId: true },
+      });
+      resolvedClientId = caseRecord?.clientId || null;
+    }
+
     const activity = await prisma.activityLog.create({
       data: {
         agencyId,
         userId,
-        clientId,
+        clientId: resolvedClientId,
         caseId,
         action,
         details,
-        entityType: entityType || (caseId ? "case" : clientId ? "client" : "user"),
-        entityId: entityId || caseId || clientId || userId,
+        entityType: entityType || (caseId ? "case" : resolvedClientId ? "client" : "user"),
+        entityId: entityId || caseId || resolvedClientId || userId,
         metadata,
       },
     });
