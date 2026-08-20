@@ -2,10 +2,17 @@ import { ArrowRight, CheckCircle2, LoaderCircle, LockKeyhole } from "lucide-reac
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../../services/api";
+import PublicConsultationIntakePage from "../../../pages/PublicConsultationIntakePage";
 
 const inputClass = "h-12 w-full rounded-2xl border border-slate-200 bg-white/90 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100";
 
 export default function PublicLeadIntakePage() {
+  const consultationMode = new URLSearchParams(window.location.search).get("type") === "consultation";
+  if (consultationMode) return <PublicConsultationIntakePage />;
+  return <LeadIntakeForm />;
+}
+
+function LeadIntakeForm() {
   const { publicToken } = useParams();
   const [form, setForm] = useState(null), [loading, setLoading] = useState(true), [sending, setSending] = useState(false), [error, setError] = useState(""), [sent, setSent] = useState(false);
   const key = useRef(crypto.randomUUID());
