@@ -4,7 +4,6 @@ import { requireAppointmentProfile } from "../services/appointmentProfileService
 import {
   deliverPreConsultationIntake,
   preConsultationAppointmentInclude,
-  PRE_CONSULTATION_EVENT,
 } from "../services/preConsultationIntakeService.js";
 import { savePreConsultationSubmission } from "../services/preConsultationSubmissionService.js";
 
@@ -32,6 +31,8 @@ export async function getStaffPreConsultationIntake(req, res) {
   const contact = contactFor(appointment);
   res.json({
     data: {
+      ...(profile.preConsultationIntake || {}),
+      appointmentId: appointment.id,
       agency: {
         name: appointment.agency.legalName || appointment.agency.name,
         logoUrl: appointment.agency.logoUrl || null,
@@ -45,11 +46,6 @@ export async function getStaffPreConsultationIntake(req, res) {
         sessionType: appointment.sessionType?.name || null,
       },
       contact,
-      status: profile.preConsultationIntake?.status || "NotSent",
-      submittedAt: profile.preConsultationIntake?.submittedAt || null,
-      answers: profile.preConsultationIntake?.answers || null,
-      flags: profile.preConsultationIntake?.flags || [],
-      questionnaireVersion: profile.preConsultationIntake?.questionnaireVersion || 1,
       staffMode: true,
     },
   });
