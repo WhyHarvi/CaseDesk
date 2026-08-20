@@ -9,6 +9,7 @@ import {
   staleTimeFor,
 } from "./queryClient";
 import { captureSupportFailure } from "./supportCapture";
+import { requestCaseLifecycleInput } from "./caseLifecycleGate";
 
 const transport = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:5001/api",
@@ -62,11 +63,103 @@ async function freshGet(url, config = {}) {
   });
 }
 
+function caseLifecycleTarget(method, url, data) {
+  if (method !== "patch" || !data || !["Submitted", "Decision Received"].includes(data.stage)) return null;
+  const match = /^\/cases\/([^/?#]+)$/.exec(String(url || ""));
+  if (!match) return null;
+  return { caseId: decodeURIComponent(match[1]), stage: data.stage };
+}
+
+function apiDate(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 10) : parsed.toISOString().slice(0, 10);
+}
+
+function lifecycleChanged(current, data, stage) {
+  if (current?.stage !== stage) return true;
+  if (!current?.submittedAt) return true;
+  if (data.submittedAt && apiDate(data.submittedAt) !== apiDate(current.submittedAt)) return true;
+  if (stage === "Decision Received") {
+    if (!current?.decision) return true;
+    if (data.decisionAt && apiDate(data.decisionAt) !== apiDate(current.decisionAt)) return true;
+  }
+  return false;
+}
+
+async function mutateCaseLifecycle(url, data, config, target) {
+  const [currentResponse, caseTypesResponse] = await Promise.all([
+    transport.get(`${url}/lifecycle`),
+    transport.get("/cases/case-types"),
+  ]);
+  const current = currentResponse.data?.data || null;
+
+  // Saving an already-valid Submitted/Decision Received case without changing
+  // lifecycle facts is a normal edit (priority, owner, next action, etc.).
+  // Only open the lifecycle modal for a real transition/date correction or a
+  // legacy Decision Received row that has no canonical decision record yet.
+  if (!lifecycleChanged(current, data, target.stage)) {
+    return transport.patch(url, data, config);
+  }
+
+  const lifecycleInput = await requestCaseLifecycleInput({
+    caseId: target.caseId,
+    stage: target.stage,
+    current,
+    payload: data,
+    caseTypes: caseTypesResponse.data?.data || [],
+  });
+
+  // Keep ordinary case edits on the existing endpoint, but do not let that
+  // endpoint perform the guarded lifecycle transition. The dedicated
+  // lifecycle endpoint records dates/outcome atomically and writes the audit.
+  const regularData = { ...data };
+  delete regularData.stage;
+  delete regularData.submittedAt;
+  delete regularData.decisionAt;
+  delete regularData.decisionOutcome;
+  delete regularData.permitExpiryAt;
+  delete regularData.refusalResolution;
+  delete regularData.newCaseType;
+  delete regularData.nextAction;
+
+  if (Object.keys(regularData).length) {
+    await transport.patch(url, regularData, config);
+  }
+
+  const lifecycleResponse = await transport.patch(`${url}/lifecycle`, {
+    stage: target.stage,
+    nextAction: data.nextAction,
+    ...lifecycleInput,
+  }, config);
+
+  if (lifecycleResponse.data?.lifecycle?.requiresClose) {
+    const successor = lifecycleResponse.data.lifecycle.successorCase || null;
+    const reason = successor
+      ? `Application refused; original file closed after successor ${successor.caseType} case was created.`
+      : "Application refused; file permanently closed after decision review.";
+    const closeResponse = await transport.patch(`${url}/close`, {
+      billingDisposition: "keep_outstanding",
+      billingReason: reason,
+    }, config);
+    closeResponse.data = {
+      ...closeResponse.data,
+      lifecycle: lifecycleResponse.data.lifecycle,
+    };
+    return closeResponse;
+  }
+
+  return lifecycleResponse;
+}
+
 async function mutate(method, url, data, config) {
   const scope = getApiCacheScope();
-  const response = method === "delete"
-    ? await transport.delete(url, config)
-    : await transport[method](url, data, config);
+  const lifecycleTarget = caseLifecycleTarget(method, url, data);
+  const response = lifecycleTarget
+    ? await mutateCaseLifecycle(url, data, config, lifecycleTarget)
+    : method === "delete"
+      ? await transport.delete(url, config)
+      : await transport[method](url, data, config);
   invalidateApiCache(url, scope);
   return response;
 }
