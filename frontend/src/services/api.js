@@ -10,6 +10,7 @@ import {
 } from "./queryClient";
 import { captureSupportFailure } from "./supportCapture";
 import { requestCaseLifecycleInput } from "./caseLifecycleGate";
+import { requestRequiredCaseTeam } from "./caseRequiredTeamGate";
 
 const transport = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:5001/api",
@@ -94,10 +95,6 @@ async function mutateCaseLifecycle(url, data, config, target) {
   ]);
   const current = currentResponse.data?.data || null;
 
-  // Saving an already-valid Submitted/Decision Received case without changing
-  // lifecycle facts is a normal edit (priority, owner, next action, etc.).
-  // Only open the lifecycle modal for a real transition/date correction or a
-  // legacy Decision Received row that has no canonical decision record yet.
   if (!lifecycleChanged(current, data, target.stage)) {
     return transport.patch(url, data, config);
   }
@@ -110,9 +107,6 @@ async function mutateCaseLifecycle(url, data, config, target) {
     caseTypes: caseTypesResponse.data?.data || [],
   });
 
-  // Keep ordinary case edits on the existing endpoint, but do not let that
-  // endpoint perform the guarded lifecycle transition. The dedicated
-  // lifecycle endpoint records dates/outcome atomically and writes the audit.
   const regularData = { ...data };
   delete regularData.stage;
   delete regularData.submittedAt;
@@ -152,14 +146,43 @@ async function mutateCaseLifecycle(url, data, config, target) {
   return lifecycleResponse;
 }
 
+async function mutateCaseCreate(url, data, config) {
+  if (data?.rcicUserId && data?.caseWorkerUserId) {
+    return transport.post(url, data, config);
+  }
+
+  const requests = [transport.get("/cases/collaboration-options")];
+  if (data?.clientId) {
+    requests.push(transport.get(`/clients/${encodeURIComponent(data.clientId)}`).catch(() => null));
+  }
+  const [optionsResponse, clientResponse] = await Promise.all(requests);
+  const options = optionsResponse.data?.data || {};
+  const clientData = clientResponse?.data?.data;
+  const clientName = clientData?.client?.fullName || clientData?.fullName || "Client";
+  const team = await requestRequiredCaseTeam({
+    options,
+    payload: data,
+    clientName,
+  });
+
+  return transport.post(url, {
+    ...data,
+    ...team,
+    assignedUserId: team.caseWorkerUserId,
+  }, config);
+}
+
 async function mutate(method, url, data, config) {
   const scope = getApiCacheScope();
   const lifecycleTarget = caseLifecycleTarget(method, url, data);
+  const isCaseCreate = method === "post" && String(url || "") === "/cases";
   const response = lifecycleTarget
     ? await mutateCaseLifecycle(url, data, config, lifecycleTarget)
-    : method === "delete"
-      ? await transport.delete(url, config)
-      : await transport[method](url, data, config);
+    : isCaseCreate
+      ? await mutateCaseCreate(url, data, config)
+      : method === "delete"
+        ? await transport.delete(url, config)
+        : await transport[method](url, data, config);
   invalidateApiCache(url, scope);
   return response;
 }
