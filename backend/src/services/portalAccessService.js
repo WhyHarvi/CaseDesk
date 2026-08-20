@@ -70,7 +70,11 @@ export function defaultPortalAccess(role) {
         cases: true,
         calendar: true,
         caseEasyImport: true,
-        incentives: true,
+        // Off by default while the incentive-timeline feature is still
+        // being validated against real staff activity — turn it back on
+        // per-person from Settings > Team Members > Portal Access once
+        // it's ready to roll out generally.
+        incentives: false,
       },
       caseTabs: {
         ...allFalse(portalCaseTabKeys),
@@ -94,7 +98,8 @@ export function defaultPortalAccess(role) {
       documents: true,
       workload: true,
       caseEasyImport: true,
-      incentives: true,
+      // Same reasoning as the frontdesk default above.
+      incentives: false,
     },
     caseTabs: allTrue(portalCaseTabKeys),
     data: { leads: "assigned", clients: "assigned", cases: "assigned" },

@@ -4,17 +4,20 @@ import test from "node:test";
 
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
-test("the incentives portal page exists on both the backend and frontend allowlists, and defaults on for consultant/frontdesk", async () => {
+test("the incentives portal page exists on both the backend and frontend allowlists, and defaults off for consultant/frontdesk while the feature is still being validated", async () => {
   const [backendAccess, frontendAccess] = await Promise.all([
     source("../src/services/portalAccessService.js"),
     source("../../frontend/src/auth/portalAccess.js"),
   ]);
   for (const [name, src] of [["backend", backendAccess], ["frontend", frontendAccess]]) {
     assert.match(src, /"caseEasyImport",\s*\n\s*"incentives",/, `${name} portalPageKeys must list "incentives"`);
-    assert.match(src, /caseEasyImport: true,\s*\n\s*incentives: true,/, `${name} frontdesk default must include incentives: true`);
+    assert.match(src, /caseEasyImport: true,\s*\n(?:\s*\/\/.*\n)*\s*incentives: false,/, `${name} frontdesk default must default incentives off`);
   }
   // Admins get every page key automatically via allTrue/all(portalPageKeys, true)
-  // — no per-key admin default needed, unlike frontdesk/consultant.
+  // — no per-key admin default needed, unlike frontdesk/consultant. A
+  // specific staff tester can still be granted access individually from
+  // Settings > Team Members > Portal Access — this default only controls
+  // what a never-customized member sees.
 });
 
 test("the two incentive-admin routers (case roles picker aside, plans + read APIs) require the incentives page, and incentive-plans stays admin-only underneath it", async () => {

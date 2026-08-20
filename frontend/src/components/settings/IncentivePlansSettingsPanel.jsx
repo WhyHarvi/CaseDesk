@@ -31,6 +31,8 @@ const formulaLabels = {
   TIERED_PERCENT_OF_REVENUE: "Tiered percent of cumulative revenue",
 };
 
+const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" });
+
 function blankShare() {
   return { attributionKind: "CASE_ROLE", caseRoleId: "", sharePercent: "100" };
 }
@@ -160,23 +162,32 @@ function RoleShareEditor({ roleShares, caseRoles, onChange }) {
   );
 }
 
-function TimelineTierEditor({ tiers, onChange }) {
+function TimelineTierEditor({ tiers, baseBonusAmount, onChange }) {
   function update(index, key, value) {
     onChange(tiers.map((tier, i) => (i === index ? { ...tier, [key]: value } : tier)));
   }
   return (
     <div className="space-y-2">
-      {tiers.map((tier, index) => (
-        <div key={index} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
-          <label className={labelClass}>Reached within (days)
-            <input aria-label={`Tier ${index + 1} day threshold`} type="number" min="0.01" step="0.01" value={tier.thresholdDays} onChange={(event) => update(index, "thresholdDays", event.target.value)} className={`mt-1.5 ${inputClass}`} />
-          </label>
-          <label className={labelClass}>Bonus multiplier
-            <span className="relative mt-1.5 block"><input aria-label={`Tier ${index + 1} bonus multiplier`} type="number" min="0" max="100" step="0.01" value={tier.multiplierPercent} onChange={(event) => update(index, "multiplierPercent", event.target.value)} className={`${inputClass} pr-8`} /><span className="pointer-events-none absolute right-3 top-2.5 text-sm text-slate-500">%</span></span>
-          </label>
-          <button type="button" onClick={() => onChange(tiers.filter((_, i) => i !== index))} disabled={tiers.length <= 1} aria-label={`Remove tier ${index + 1}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><X className="h-4 w-4" /></button>
-        </div>
-      ))}
+      {tiers.map((tier, index) => {
+        const tierAmount = ((Number(baseBonusAmount) || 0) * (Number(tier.multiplierPercent) || 0)) / 100;
+        const days = Number(tier.thresholdDays);
+        return (
+          <div key={index} className="space-y-1">
+            <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <label className={labelClass}>Reached within (days)
+                <input aria-label={`Tier ${index + 1} day threshold`} type="number" min="0.01" step="0.01" value={tier.thresholdDays} onChange={(event) => update(index, "thresholdDays", event.target.value)} className={`mt-1.5 ${inputClass}`} />
+              </label>
+              <label className={labelClass}>Bonus multiplier
+                <span className="relative mt-1.5 block"><input aria-label={`Tier ${index + 1} bonus multiplier`} type="number" min="0" max="100" step="0.01" value={tier.multiplierPercent} onChange={(event) => update(index, "multiplierPercent", event.target.value)} className={`${inputClass} pr-8`} /><span className="pointer-events-none absolute right-3 top-2.5 text-sm text-slate-500">%</span></span>
+              </label>
+              <button type="button" onClick={() => onChange(tiers.filter((_, i) => i !== index))} disabled={tiers.length <= 1} aria-label={`Remove tier ${index + 1}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"><X className="h-4 w-4" /></button>
+            </div>
+            <motion.p key={`${tier.thresholdDays}-${tier.multiplierPercent}`} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }} className="text-xs text-slate-400">
+              Reached within {Number.isFinite(days) && days > 0 ? `${days} day${days === 1 ? "" : "s"}` : "—"} → <span className="font-semibold text-emerald-700">{money.format(tierAmount)}</span> for this leg
+            </motion.p>
+          </div>
+        );
+      })}
       <button type="button" onClick={() => onChange([...tiers, blankTimelineTier()])} className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold text-sky-700 hover:text-sky-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"><Plus className="h-3.5 w-3.5" /> Add tier</button>
     </div>
   );
@@ -224,7 +235,7 @@ function TimelineLegEditor({ timelineLegs, caseType, onChange }) {
           <label className={labelClass}>Base bonus amount
             <span className="relative mt-1.5 block"><span className="pointer-events-none absolute left-3 top-2.5 text-sm text-slate-500">$</span><input type="number" min="0" step="0.01" value={leg.baseBonusAmount} onChange={(event) => update(index, { baseBonusAmount: event.target.value })} placeholder="0.00" className={`${inputClass} pl-7`} /></span>
           </label>
-          <TimelineTierEditor tiers={leg.tiers} onChange={(tiers) => update(index, { tiers })} />
+          <TimelineTierEditor tiers={leg.tiers} baseBonusAmount={leg.baseBonusAmount} onChange={(tiers) => update(index, { tiers })} />
         </div>
       ))}
       <button type="button" onClick={() => onChange([...timelineLegs, blankTimelineLeg()])} className="inline-flex items-center gap-1.5 rounded-md text-xs font-semibold text-sky-700 hover:text-sky-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"><Plus className="h-3.5 w-3.5" /> Add timeline leg</button>
@@ -244,7 +255,6 @@ function incentivePoolExample(draft, collected = 1000) {
 function PlanExample({ draft, caseRoles }) {
   const collected = 1000;
   const pool = incentivePoolExample(draft, collected);
-  const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" });
   const recipientName = (share) => (share.attributionKind === "LEAD_OWNER"
     ? "Lead owner"
     : share.attributionKind === "LEAD_CONVERTER"
