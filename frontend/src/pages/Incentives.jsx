@@ -5,6 +5,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { getActiveTimelines, getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
 import TimelineProgressStrip from "../components/incentives/TimelineProgressStrip";
+import { computeLegProgress } from "../components/incentives/timelineProgressUtils";
+import InfoDrawer from "../components/ui/InfoDrawer";
 import useNow from "../hooks/useNow";
 
 const money = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2 });
@@ -96,7 +98,7 @@ function RoleBreakdown({ byRole, delay = 0 }) {
 // A read-only estimate, never money already earned — kept visually distinct
 // (amber, not emerald) and placed below the earned totals so it reads as
 // upside, not a promise.
-function PipelineCard({ rows, delay = 0 }) {
+function PipelineCard({ rows, onSelectCase, delay = 0 }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 18 }}
@@ -108,24 +110,26 @@ function PipelineCard({ rows, delay = 0 }) {
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 ring-1 ring-amber-200"><Sparkles className="h-5 w-5" /></span>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-slate-950">Potential — not guaranteed</h2>
-          <p className="text-[12px] text-slate-500">What you'd earn if these in-flight cases got fully paid right now.</p>
+          <p className="text-[12px] text-slate-500">What you'd earn if these in-flight cases got fully paid right now. Click a case to see how.</p>
         </div>
       </div>
       <div className="mt-4 space-y-2">
         {rows?.length ? rows.map((row, index) => (
-          <motion.div
+          <motion.button
             key={row.caseId}
+            type="button"
+            onClick={() => onSelectCase?.(row.caseId)}
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ ...spring, delay: delay + 0.04 * index }}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-white bg-white/80 px-3.5 py-2.5"
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white bg-white/80 px-3.5 py-2.5 text-left transition hover:border-amber-200 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">{row.client?.fullName}</p>
               <p className="truncate text-xs text-slate-500">{row.caseType} · {row.stage} · {money.format(row.outstandingBalance)} outstanding</p>
             </div>
             <span className="shrink-0 text-sm font-semibold text-amber-700 tabular-nums">+{money.format(row.estimatedAmount)}</span>
-          </motion.div>
+          </motion.button>
         )) : <EmptyRow>No in-flight cases with a projected payout right now.</EmptyRow>}
       </div>
     </motion.section>
@@ -135,7 +139,7 @@ function PipelineCard({ rows, delay = 0 }) {
 // The forward-looking counterpart to PipelineCard, for timeline bonuses
 // specifically — "here's what's still in motion, and how much time is
 // left to lock in the best tier." Same amber "not guaranteed" framing.
-function ActiveTimelinesCard({ rows, delay = 0 }) {
+function ActiveTimelinesCard({ rows, onSelectCase, delay = 0 }) {
   const now = useNow();
   return (
     <motion.section
@@ -148,24 +152,26 @@ function ActiveTimelinesCard({ rows, delay = 0 }) {
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 ring-1 ring-amber-200"><Sparkles className="h-5 w-5" /></span>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold tracking-[-0.015em] text-slate-950">Active timelines</h2>
-          <p className="text-[12px] text-slate-500">Milestone bonuses still in motion — keep them moving before a tier drops.</p>
+          <p className="text-[12px] text-slate-500">Milestone bonuses still in motion — keep them moving before a tier drops. Click a case to see how.</p>
         </div>
       </div>
       <div className="mt-4 space-y-3">
         {rows?.length ? rows.map((row, index) => (
-          <motion.div
+          <motion.button
             key={row.caseId}
+            type="button"
+            onClick={() => onSelectCase?.(row.caseId)}
             initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ ...spring, delay: delay + 0.04 * index }}
-            className="rounded-2xl border border-white bg-white/80 px-3.5 py-3"
+            className="block w-full rounded-2xl border border-white bg-white/80 px-3.5 py-3 text-left transition hover:border-amber-200 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
           >
             <p className="truncate text-sm font-semibold text-slate-900">{row.client?.fullName}</p>
             <p className="truncate text-xs text-slate-500">{row.caseType} · {row.stage}</p>
             <div className="mt-2">
               <TimelineProgressStrip legs={row.legs} now={now} />
             </div>
-          </motion.div>
+          </motion.button>
         )) : <EmptyRow>No active timeline bonuses right now.</EmptyRow>}
       </div>
     </motion.section>
@@ -201,6 +207,89 @@ function LedgerTable({ rows, showPerson = false, delay = 0 }) {
   );
 }
 
+function formulaLabel(invoice) {
+  if (invoice.formulaType === "FLAT_PER_PAYMENT") return `Flat ${money.format(invoice.flatAmount ?? 0)} per payment`;
+  if (invoice.formulaType === "PERCENT_OF_PAYMENT") return `${invoice.percentRate ?? 0}% of payment`;
+  if (invoice.formulaType === "TIERED_PERCENT_OF_REVENUE") {
+    return invoice.matchedRate != null ? `Tiered by revenue — currently ${invoice.matchedRate}%` : "Tiered by revenue";
+  }
+  return invoice.planName || "Plan";
+}
+
+/** Opened by clicking a case in PipelineCard or ActiveTimelinesCard — explains exactly how that case's
+ * potential amount is computed, using only data already loaded by PersonView (no extra fetch). */
+function CaseIncentiveBreakdownDrawer({ caseId, pipeline, activeTimelines, onClose }) {
+  const now = useNow();
+  const pipelineRow = pipeline?.find((row) => row.caseId === caseId);
+  const timelineRow = activeTimelines?.find((row) => row.caseId === caseId);
+  if (!pipelineRow && !timelineRow) return null;
+  const client = pipelineRow?.client || timelineRow?.client;
+  const caseType = pipelineRow?.caseType || timelineRow?.caseType;
+
+  return (
+    <InfoDrawer eyebrow="Incentive breakdown" title={client?.fullName || "Case"} onClose={onClose}>
+      <p className="text-xs font-medium text-slate-400">{caseType}</p>
+
+      {pipelineRow ? (
+        <section>
+          <h3 className="text-[13px] font-semibold text-slate-800">From outstanding payments</h3>
+          <div className="mt-2 space-y-2">
+            {pipelineRow.invoices.map((invoice) => (
+              <div key={invoice.caseInvoiceId} className="rounded-2xl border border-slate-100 bg-white/60 p-3.5">
+                <p className="text-xs font-semibold text-slate-700">{invoice.invoiceNumber || "Invoice"}{invoice.description ? ` · ${invoice.description}` : ""}</p>
+                <p className="mt-1 text-xs text-slate-500">{formulaLabel(invoice)} · {invoice.planName}</p>
+                <div className="mt-2 space-y-1">
+                  {invoice.myShares.map((share, index) => (
+                    <div key={index} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600">{share.roleNameSnapshot} · {share.sharePercentApplied}% share</span>
+                      <span className="font-semibold text-amber-700 tabular-nums">{money.format(share.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
+                  <span className="text-slate-500">Outstanding balance</span>
+                  <span className="font-medium text-slate-700 tabular-nums">{money.format(invoice.outstandingBalance)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {timelineRow ? (
+        <section>
+          <h3 className="text-[13px] font-semibold text-slate-800">From timeline bonuses</h3>
+          <div className="mt-2 space-y-2">
+            {timelineRow.legs.map((leg) => {
+              const progress = leg.state === "IN_PROGRESS"
+                ? computeLegProgress({ fromCheckpointAt: new Date(leg.fromCheckpointAt), tiers: leg.tiers, now })
+                : null;
+              return (
+                <div key={leg.legId} className="rounded-2xl border border-slate-100 bg-white/60 p-3.5">
+                  <p className="text-xs font-semibold text-slate-700">{leg.name}</p>
+                  {progress?.state === "IN_PROGRESS" && leg.potentialAmount ? (
+                    <>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {leg.myRoleName} · {leg.mySharePercent}% share of the {leg.currentMultiplierPercent}% tier
+                      </p>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span className="text-slate-500">{Math.floor(progress.elapsedDays)} day(s) in · tier holds until {progress.deadlineAt.toLocaleDateString()}</span>
+                        <span className="font-semibold text-amber-700 tabular-nums">{money.format(leg.potentialAmount)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-500">Not yet earning a tier — nothing credits here right now.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+    </InfoDrawer>
+  );
+}
+
 function PersonView({ userId, fullName, onBack }) {
   const [summary, setSummary] = useState(null);
   const [pipeline, setPipeline] = useState(null);
@@ -208,6 +297,16 @@ function PersonView({ userId, fullName, onBack }) {
   const [ledger, setLedger] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [openCaseId, setOpenCaseId] = useState(null);
+
+  const totalPotential = useMemo(() => {
+    const fromPipeline = (pipeline || []).reduce((sum, row) => sum + row.estimatedAmount, 0);
+    const fromTimelines = (activeTimelines || []).reduce(
+      (sum, row) => sum + row.legs.filter((leg) => leg.state === "IN_PROGRESS" && leg.potentialAmount).reduce((legSum, leg) => legSum + leg.potentialAmount, 0),
+      0,
+    );
+    return { total: fromPipeline + fromTimelines, fromPipeline, fromTimelines };
+  }, [pipeline, activeTimelines]);
 
   useEffect(() => {
     let active = true;
@@ -236,8 +335,8 @@ function PersonView({ userId, fullName, onBack }) {
   if (loading) {
     return (
       <div className="grid gap-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[0, 1].map((i) => <div key={i} className={cx(glass, "h-24 animate-pulse")} />)}
+        <div className="grid gap-4 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => <div key={i} className={cx(glass, "h-24 animate-pulse")} />)}
         </div>
         <div className={cx(glass, "h-40 animate-pulse")} />
       </div>
@@ -255,15 +354,29 @@ function PersonView({ userId, fullName, onBack }) {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <KpiCard label="Earned this month" value={summary?.monthTotal ?? 0} icon={TrendingUp} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} />
         <KpiCard label="Earned lifetime" value={summary?.lifetimeTotal ?? 0} icon={Wallet} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.1} />
+        <KpiCard
+          label="Potential right now"
+          value={totalPotential.total}
+          icon={Sparkles}
+          tint="bg-amber-50 text-amber-500 ring-amber-100"
+          delay={0.15}
+          footnote={`${money.format(totalPotential.fromPipeline)} pipeline + ${money.format(totalPotential.fromTimelines)} timelines`}
+        />
       </div>
 
       <RoleBreakdown byRole={summary?.byRole} delay={0.12} />
-      <PipelineCard rows={pipeline} delay={0.16} />
-      <ActiveTimelinesCard rows={activeTimelines} delay={0.18} />
+      <PipelineCard rows={pipeline} onSelectCase={setOpenCaseId} delay={0.16} />
+      <ActiveTimelinesCard rows={activeTimelines} onSelectCase={setOpenCaseId} delay={0.18} />
       <LedgerTable rows={ledger} delay={0.2} />
+
+      <AnimatePresence>
+        {openCaseId ? (
+          <CaseIncentiveBreakdownDrawer caseId={openCaseId} pipeline={pipeline} activeTimelines={activeTimelines} onClose={() => setOpenCaseId(null)} />
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

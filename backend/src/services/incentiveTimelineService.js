@@ -47,7 +47,7 @@ async function resolveCheckpointTimestamp(agencyId, caseId, checkpointType, chec
 // tier the case qualified for), not the largest threshold cleared. Tiers
 // must already be sorted ascending — every caller here sources them via
 // legInclude/planInclude, which both order by thresholdDays asc.
-function tierMultiplierFor(tiers, elapsedDays) {
+export function tierMultiplierFor(tiers, elapsedDays) {
   for (const tier of tiers) {
     if (Number(tier.thresholdDays) >= elapsedDays) return { tierId: tier.id, multiplierPercent: Number(tier.multiplierPercent) };
   }

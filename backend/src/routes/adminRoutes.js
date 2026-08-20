@@ -17,9 +17,11 @@ import {
   createTeamMember,
   disableTeamMember,
   getTeamMember,
+  listIncentiveRoleMembers,
   listPortalAccessMembers,
   listTeamMembers,
   resetTeamMemberPassword,
+  updateMemberProfile,
   updateTeamMember,
   updateTeamMemberPortalAccess,
 } from "../controllers/adminTeamMemberController.js";
@@ -31,6 +33,8 @@ const router = Router();
 router.use(requireRole("admin"));
 router.get("/team-members", asyncHandler(listTeamMembers));
 router.get("/portal-access", asyncHandler(listPortalAccessMembers));
+router.get("/incentive-role-members", asyncHandler(listIncentiveRoleMembers));
+router.patch("/incentive-role-members/:id", asyncHandler(updateMemberProfile));
 router.post(
   "/team-members",
   rateLimit({ windowMs: 15 * 60_000, max: 20 }),

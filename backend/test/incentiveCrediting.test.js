@@ -113,6 +113,59 @@ test("global incentive roles are stored on team members and existing case assign
   assert.match(teamMembers, /No incentive role/);
 });
 
+// An admin can just as easily be the RCIC or a Reviewer on cases as a
+// consultant can, but account lifecycle (invite/disable/reset-password) is
+// deliberately restricted to managedRoles (consultant/frontdesk) —
+// listIncentiveRoleMembers/updateMemberProfile must NOT reuse
+// teamMemberRecord (which enforces that same managedRoles restriction), or
+// admins would 404 out of their own incentive-role/avatar assignment.
+test("admins can be assigned an incentive role and pick their own avatar too — the read/write pair for it looks up any active staff member, not just managed roles", async () => {
+  const [controller, routes, teamMembers] = await Promise.all([
+    source("../src/controllers/adminTeamMemberController.js"),
+    source("../src/routes/adminRoutes.js"),
+    source("../../frontend/src/pages/TeamMembers.jsx"),
+  ]);
+
+  // User.role also covers client-portal accounts (and unused roles like
+  // developer/staff/manager/accountant) — both the list and the update
+  // below must scope to real staff only, or a client account could leak
+  // into (or worse, be written to via) this endpoint.
+  assert.match(controller, /const incentiveEligibleRoles = \["admin", \.\.\.managedRoles\];/);
+
+  const listStart = controller.indexOf("export async function listIncentiveRoleMembers(");
+  const listBody = controller.slice(listStart, controller.indexOf("\n}\n", listStart));
+  assert.match(listBody, /where: \{ agencyId: req\.auth\.agencyId, status: "active", role: \{ in: incentiveEligibleRoles \} \}/);
+  assert.match(listBody, /avatarPreset: resolvedAvatarPreset\(user\)/);
+  // The unified card grid needs a status badge for every role, admins
+  // included — the query's own filter is already the guarantee.
+  assert.match(listBody, /status: "active",/);
+
+  const updateStart = controller.indexOf("export async function updateMemberProfile(");
+  const updateBody = controller.slice(updateStart, controller.indexOf("\n}\n", updateStart));
+  assert.match(updateBody, /where: \{ id: req\.params\.id, agencyId: req\.auth\.agencyId, status: "active", role: \{ in: incentiveEligibleRoles \} \}/);
+  assert.doesNotMatch(updateBody, /teamMemberRecord/);
+  assert.match(updateBody, /validateIncentiveRoleIds\(/);
+  assert.match(updateBody, /tx\.teamIncentiveRoleAssignment\.deleteMany/);
+  // A picked preset always wins over a previously-uploaded custom photo,
+  // same rule updateTeamMember already applies for consultants.
+  assert.match(updateBody, /data: \{ avatarPreset, avatarStorageKey: null, avatarMimeType: null \}/);
+  assert.match(updateBody, /normalizeAvatarPreset\(req\.body\.avatarPreset, \{ required: true \}\)/);
+
+  assert.match(routes, /router\.get\("\/incentive-role-members", asyncHandler\(listIncentiveRoleMembers\)\)/);
+  assert.match(routes, /router\.patch\("\/incentive-role-members\/:id", asyncHandler\(updateMemberProfile\)\)/);
+  // This whole router is requireRole("admin")-gated at the top — confirm
+  // the new routes aren't accidentally mounted somewhere else unguarded.
+  assert.match(routes, /router\.use\(requireRole\("admin"\)\);[\s\S]*router\.get\("\/incentive-role-members"/);
+
+  // Admins render in the exact same card grid as consultants/frontdesk —
+  // same "Admins" filter pill, same role badge lookup, same
+  // click-a-card-to-open-an-overlay dispatcher — not a visually separate section.
+  assert.match(teamMembers, /\{ value: "admin", label: "Admins" \}/);
+  assert.match(teamMembers, /admin: "bg-amber-50 text-amber-700"/);
+  assert.match(teamMembers, /function openMember\(member\) \{/);
+  assert.match(teamMembers, /\/admin\/incentive-role-members/);
+});
+
 test("largest-remainder rounding keeps a share's holders summing exactly to its rounded cent amount", async () => {
   const service = await source("../src/services/incentiveCreditingService.js");
   assert.match(service, /function splitEvenly\(shareAmountCents, userIds\) \{/);
@@ -131,6 +184,45 @@ test("the pipeline estimate never writes ledger rows or advances the cursor — 
   const estimateFn = service.slice(service.indexOf("export async function estimatePotentialCredit"), service.indexOf("// Re-baselines"));
   assert.doesNotMatch(estimateFn, /caseInvoiceCreditCursor/);
   assert.doesNotMatch(estimateFn, /incentiveLedgerEntry\.create/);
+});
+
+test("computeSnapshotPool reports which rate it matched alongside the pool, and the real crediting path only takes the pool it needs", async () => {
+  const service = await source("../src/services/incentiveCreditingService.js");
+  const fnStart = service.indexOf("async function computeSnapshotPool(");
+  const fnBody = service.slice(fnStart, service.indexOf("\n}\n", fnStart));
+  assert.match(fnBody, /return \{ pool: Number\(snapshot\.flatAmount\), matchedRate: null \};/);
+  assert.match(fnBody, /return \{ pool: \(delta \* Number\(snapshot\.percentRate\)\) \/ 100, matchedRate: Number\(snapshot\.percentRate\) \};/);
+  assert.match(fnBody, /return \{ pool: rate === null \? 0 : \(delta \* rate\) \/ 100, matchedRate: rate \};/);
+  assert.match(service, /const \{ pool \} = await computeSnapshotPool\(snapshot, \{ agencyId, caseId, delta \}\);/);
+});
+
+test("the pipeline estimate exposes the formula detail and matched rate behind its final amount, not just the amount", async () => {
+  const service = await source("../src/services/incentiveCreditingService.js");
+  const fnStart = service.indexOf("export async function estimateInvoicePotentialCredit(");
+  const fnBody = service.slice(fnStart, service.indexOf("\n}\n", fnStart));
+  assert.match(fnBody, /const \{ pool, matchedRate \} = await computeSnapshotPool\(snapshot, \{ agencyId, caseId: invoice\.caseId, delta: balance \}\);/);
+  assert.match(fnBody, /formulaType: snapshot\.formulaType,/);
+  assert.match(fnBody, /tiers: Array\.isArray\(snapshot\.tiers\) \? snapshot\.tiers : \[\],/);
+  assert.match(fnBody, /matchedRate,/);
+});
+
+test("getPipeline keeps its existing per-case aggregate fields and additionally attaches a per-invoice breakdown carrying the formula, matched rate, and every one of the viewer's own role shares on that invoice", async () => {
+  const controller = await source("../src/controllers/incentiveLedgerController.js");
+  const fnStart = controller.indexOf("export async function getPipeline(");
+  const fnBody = controller.slice(fnStart, controller.indexOf("\n}\n", fnStart));
+
+  // Existing aggregate fields untouched — nothing else in the frontend
+  // depends on their absence of an `invoices` array, so this must stay additive.
+  assert.match(fnBody, /existing\.outstandingBalance \+= outstandingBalance;/);
+  assert.match(fnBody, /existing\.estimatedAmount \+= myTotal;/);
+  assert.match(fnBody, /client: invoice\.case\.client, outstandingBalance, planName: estimate\.planName, estimatedAmount: myTotal, estimated: true,/);
+
+  // New per-invoice breakdown, additive on the same row.
+  assert.match(fnBody, /existing\.invoices\.push\(invoiceDetail\);/);
+  assert.match(fnBody, /invoices: \[invoiceDetail\] \}\);/);
+  assert.match(fnBody, /formulaType: estimate\.formulaType,/);
+  assert.match(fnBody, /matchedRate: estimate\.matchedRate,/);
+  assert.match(fnBody, /myShares: mine\.map\(\(entry\) => \(\{ roleNameSnapshot: entry\.roleNameSnapshot, attributionKind: entry\.attributionKind, sharePercentApplied: entry\.sharePercentApplied, amount: entry\.amount \}\)\),/);
 });
 
 test("incentive read APIs scope self-vs-admin correctly and are mounted behind the incentives portal page", async () => {

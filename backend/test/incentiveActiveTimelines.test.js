@@ -48,3 +48,18 @@ test("the /incentives/timelines route is wired and mounted the same way /pipelin
   const routes = await source("../src/routes/incentiveRoutes.js");
   assert.match(routes, /router\.get\("\/timelines", asyncHandler\(getActiveTimelines\)\);/);
 });
+
+test("in-progress legs are enriched with the requesting user's own current-tier potential amount, reusing tierMultiplierFor and computeSplits rather than re-deriving the math", async () => {
+  const controller = await source("../src/controllers/incentiveLedgerController.js");
+  assert.match(controller, /import \{ fetchPlanTimelineLegs, projectCaseTimelineLegs, tierMultiplierFor \} from "\.\.\/services\/incentiveTimelineService\.js";/);
+
+  const fnStart = controller.indexOf("export async function getActiveTimelines(");
+  const fnBody = controller.slice(fnStart, controller.indexOf("\n}\n", fnStart));
+  assert.match(fnBody, /if \(leg\.state !== "IN_PROGRESS"\) continue;/);
+  assert.match(fnBody, /const match = tierMultiplierFor\(leg\.tiers, elapsedDays\);/);
+  assert.match(fnBody, /const pool = \(leg\.baseBonusAmount \* match\.multiplierPercent\) \/ 100;/);
+  assert.match(fnBody, /const mySplit = computeSplits\(resolved\.plan, pool, holders\)\.find\(\(entry\) => entry\.userId === userId\);/);
+  assert.match(fnBody, /leg\.potentialAmount = mySplit\.amount;/);
+  assert.match(fnBody, /leg\.mySharePercent = mySplit\.sharePercentApplied;/);
+  assert.match(fnBody, /leg\.myRoleName = mySplit\.roleNameSnapshot;/);
+});

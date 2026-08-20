@@ -14,13 +14,21 @@ const ROLE_OPTIONS = [
 
 const ROLE_FILTERS = [
   { value: "", label: "All members" },
+  { value: "admin", label: "Admins" },
   { value: "consultant", label: "Consultants" },
   { value: "frontdesk", label: "Front Desk" },
 ];
 
 const roleBadge = {
+  admin: "bg-amber-50 text-amber-700",
   consultant: "bg-sky-50 text-sky-700",
   frontdesk: "bg-violet-50 text-violet-700",
+};
+
+const roleLabel = {
+  admin: "Admin",
+  consultant: "Consultant",
+  frontdesk: "Front Desk",
 };
 
 const statusBadge = {
@@ -206,6 +214,53 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
   );
 }
 
+// One card for every role. Admins come from a lighter endpoint
+// (listIncentiveRoleMembers — no consultant profile, no status detail
+// beyond "active") than consultants/frontdesk (listTeamMembers), so this
+// reads whichever shape of incentive-role data is present rather than
+// assuming one.
+function MemberCard({ member, incentiveRoles, onOpen }) {
+  const profile = member.consultantProfiles?.[0];
+  const roleNames = member.incentiveRoleAssignments
+    ? member.incentiveRoleAssignments.map((assignment) => assignment.caseRole.name)
+    : incentiveRoles.filter((role) => member.incentiveRoleIds?.includes(role.id)).map((role) => role.name);
+
+  return (
+    <button type="button" onClick={() => onOpen(member)} className="rounded-3xl border border-white bg-white/80 p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <StaffAvatar user={member} alt={`${member.fullName} profile`} className="h-12 w-12 shrink-0 ring-2 ring-white" />
+          <div className="min-w-0">
+            <h2 className="truncate font-semibold">{member.fullName}</h2>
+            <p className="mt-1 truncate text-sm text-slate-500">{member.email}</p>
+          </div>
+        </div>
+        <div className="flex h-fit shrink-0 items-center gap-2">
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${roleBadge[member.role] || "bg-slate-100 text-slate-600"}`}>{roleLabel[member.role] || "Member"}</span>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadge[member.status] || "bg-slate-100 text-slate-500"}`}>{member.status}</span>
+        </div>
+      </div>
+      <p className="mt-5 text-sm text-slate-600">{member.jobTitle || roleLabel[member.role]}{member.phone ? ` · ${member.phone}` : ""}</p>
+      {member.role === "consultant" ? (
+        <>
+          <p className="mt-2 text-sm text-slate-600">Capacity: {profile?.maximumActiveCases ?? 20} active cases{profile?.masteryLevel ? ` · ${profile.masteryLevel}` : ""}</p>
+          <p className="mt-2 text-sm text-slate-500">{profile?.specializations?.length ? profile.specializations.join(" · ") : "No specializations set"}</p>
+        </>
+      ) : member.role === "frontdesk" ? (
+        <p className="mt-2 text-sm text-slate-500">Handles reception, lead intake, and scheduling.</p>
+      ) : (
+        <p className="mt-2 text-sm text-slate-500">Manages agency settings and administration.</p>
+      )}
+      <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-4">
+        <Award className="mr-0.5 h-3.5 w-3.5 text-emerald-600" />
+        {roleNames.length
+          ? roleNames.map((name) => <span key={name} className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">{name}</span>)
+          : <span className="text-xs text-slate-400">No incentive role</span>}
+      </div>
+    </button>
+  );
+}
+
 export default function TeamMembers() {
   const [items, setItems] = useState([]);
   const [roleFilter, setRoleFilter] = useState("");
@@ -224,7 +279,24 @@ export default function TeamMembers() {
   const [modalError, setModalError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Admins aren't in the manage-account flow above (invite/disable/reset
+  // password is deliberately restricted to consultant/frontdesk, and their
+  // list comes from a lighter, separate endpoint), but their cards render
+  // in the exact same grid, filtered by the same role pills, and open the
+  // same click-a-card-to-open-an-overlay pattern — just a narrower field
+  // set inside (no employee ID/capacity/licence, just avatar + roles).
+  const [admins, setAdmins] = useState(null);
+  const [adminError, setAdminError] = useState("");
+  const [editingAdmin, setEditingAdmin] = useState(null);
+  const [adminForm, setAdminForm] = useState({ incentiveRoleIds: [], avatarPreset: "avatar-1" });
+  const [savingAdmin, setSavingAdmin] = useState(false);
+  const [adminModalError, setAdminModalError] = useState("");
+
   const load = useCallback(() => {
+    // /admin/team-members rejects role=admin outright (account lifecycle
+    // there is deliberately consultant/frontdesk only) — admins always
+    // come from loadAdmins below instead.
+    if (roleFilter === "admin") { setItems([]); setLoading(false); return Promise.resolve(); }
     setLoading(true);
     return api
       .get(`/admin/team-members${roleFilter ? `?role=${roleFilter}` : ""}`)
@@ -234,6 +306,53 @@ export default function TeamMembers() {
   }, [roleFilter]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { getCaseRoles().then(setIncentiveRoles).catch(() => setIncentiveRoles([])); }, []);
+  const loadAdmins = useCallback(() => (
+    api.get("/admin/incentive-role-members")
+      .then(({ data }) => { setAdmins(data.data.filter((member) => member.role === "admin")); setAdminError(""); })
+      .catch(() => setAdminError("Admins could not be loaded."))
+  ), []);
+  useEffect(() => { loadAdmins(); }, [loadAdmins]);
+
+  // "role asc" already puts "admin" before "consultant"/"frontdesk"
+  // alphabetically, matching listTeamMembers' own ordering — a plain
+  // concat needs no extra sort to read correctly under "All members".
+  const pageLoading = loading || admins === null;
+  const visibleMembers = roleFilter === "admin" ? (admins || []) : roleFilter ? items : [...(admins || []), ...items];
+
+  function openMember(member) {
+    if (member.role === "admin") openAdminEdit(member);
+    else openEdit(member);
+  }
+
+  function openAdminEdit(admin) {
+    setEditingAdmin(admin);
+    setAdminForm({ incentiveRoleIds: admin.incentiveRoleIds, avatarPreset: admin.avatarPreset });
+    setAdminModalError("");
+  }
+
+  function toggleAdminFormIncentiveRole(roleId) {
+    setAdminForm((current) => ({
+      ...current,
+      incentiveRoleIds: current.incentiveRoleIds.includes(roleId)
+        ? current.incentiveRoleIds.filter((id) => id !== roleId)
+        : [...current.incentiveRoleIds, roleId],
+    }));
+  }
+
+  async function saveAdminProfile(event) {
+    event.preventDefault();
+    setSavingAdmin(true);
+    setAdminModalError("");
+    try {
+      const { data } = await api.patch(`/admin/incentive-role-members/${editingAdmin.id}`, adminForm);
+      setAdmins((current) => current.map((item) => (item.id === editingAdmin.id ? { ...item, ...data.data } : item)));
+      setEditingAdmin(null);
+    } catch (reason) {
+      setAdminModalError(apiError(reason, "Could not update this admin's profile."));
+    } finally {
+      setSavingAdmin(false);
+    }
+  }
 
   const updateForm = (setter) => (field) => (event) => setter((current) => ({ ...current, [field]: event.target.value }));
   const updateInvite = updateForm(setInviteForm);
@@ -350,47 +469,16 @@ export default function TeamMembers() {
 
     {notice ? <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{notice}</div> : null}
     {error ? <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</div> : null}
+    {adminError ? <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{adminError}</div> : null}
 
     <div className="mt-8 grid gap-4 md:grid-cols-2">
-      {items.map((item) => {
-        const profile = item.consultantProfiles?.[0];
-        return (
-          <button key={item.id} type="button" onClick={() => openEdit(item)} className="rounded-3xl border border-white bg-white/80 p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-            <div className="flex justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <StaffAvatar user={item} alt={`${item.fullName} profile`} className="h-12 w-12 shrink-0 ring-2 ring-white" />
-                <div className="min-w-0">
-                <h2 className="truncate font-semibold">{item.fullName}</h2>
-                <p className="mt-1 truncate text-sm text-slate-500">{item.email}</p>
-                </div>
-              </div>
-              <div className="flex h-fit shrink-0 items-center gap-2">
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${roleBadge[item.role] || "bg-slate-100 text-slate-600"}`}>{item.role === "frontdesk" ? "Front Desk" : "Consultant"}</span>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusBadge[item.status] || "bg-slate-100 text-slate-500"}`}>{item.status}</span>
-              </div>
-            </div>
-            <p className="mt-5 text-sm text-slate-600">{item.jobTitle || (item.role === "frontdesk" ? "Front Desk" : "Consultant")}{item.phone ? ` · ${item.phone}` : ""}</p>
-            {item.role === "consultant" ? (
-              <>
-                <p className="mt-2 text-sm text-slate-600">Capacity: {profile?.maximumActiveCases ?? 20} active cases{profile?.masteryLevel ? ` · ${profile.masteryLevel}` : ""}</p>
-                <p className="mt-2 text-sm text-slate-500">{profile?.specializations?.length ? profile.specializations.join(" · ") : "No specializations set"}</p>
-              </>
-            ) : (
-              <p className="mt-2 text-sm text-slate-500">Handles reception, lead intake, and scheduling.</p>
-            )}
-            <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-4">
-              <Award className="mr-0.5 h-3.5 w-3.5 text-emerald-600" />
-              {item.incentiveRoleAssignments?.length
-                ? item.incentiveRoleAssignments.map((assignment) => <span key={assignment.id} className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">{assignment.caseRole.name}</span>)
-                : <span className="text-xs text-slate-400">No incentive role</span>}
-            </div>
-          </button>
-        );
-      })}
+      {visibleMembers.map((member) => (
+        <MemberCard key={member.id} member={member} incentiveRoles={incentiveRoles} onOpen={openMember} />
+      ))}
     </div>
 
-    {loading ? <div className="mt-8 grid gap-4 md:grid-cols-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-40 animate-pulse rounded-3xl bg-slate-100" />)}</div> : null}
-    {!loading && !items.length && !error ? (
+    {pageLoading ? <div className="mt-8 grid gap-4 md:grid-cols-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-40 animate-pulse rounded-3xl bg-slate-100" />)}</div> : null}
+    {!pageLoading && !visibleMembers.length && !error && !adminError ? (
       <div className="mt-8 rounded-3xl border border-dashed border-slate-200 bg-white/60 px-6 py-12 text-center">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UserRound className="h-5 w-5" /></div>
         <p className="mt-4 font-medium text-slate-700">No team members yet</p>
@@ -449,6 +537,57 @@ export default function TeamMembers() {
               <button type="button" disabled={saving} onClick={disableMember} className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-rose-200 px-4 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-60"><ShieldOff className="h-4 w-4" />Disable member</button>
             ) : null}
           </div>
+        </section>
+      </div>,
+      document.body
+    ) : null}
+
+    {editingAdmin ? createPortal(
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 px-5 py-10 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingAdmin) setEditingAdmin(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="edit-admin-title" className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-white bg-white p-6 shadow-2xl sm:p-8">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 id="edit-admin-title" className="text-2xl font-semibold tracking-tight">{editingAdmin.fullName}</h2>
+              <p className="mt-2 text-sm text-slate-500">{editingAdmin.email}</p>
+            </div>
+            <button onClick={() => setEditingAdmin(null)} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-5 w-5" /></button>
+          </div>
+          <form onSubmit={saveAdminProfile} className="mt-7 space-y-6">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Profile avatar</p>
+              <div className="mt-3 grid grid-cols-6 gap-2">
+                {AVATAR_PRESETS.map((preset) => {
+                  const selected = adminForm.avatarPreset === preset;
+                  return (
+                    <button key={preset} type="button" onClick={() => setAdminForm((current) => ({ ...current, avatarPreset: preset }))} className={`aspect-square overflow-hidden rounded-full border-2 transition ${selected ? "border-sky-600 ring-2 ring-sky-100" : "border-transparent hover:border-slate-300"}`} aria-label={`Choose professional avatar ${preset.split("-")[1]}`}>
+                      <img src={avatarUrl(preset)} alt="" className="h-full w-full object-cover" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Incentive roles</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">When this admin owns or collaborates on a case, matching incentive plans credit them automatically. This does not change access permissions.</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {incentiveRoles.map((role) => {
+                  const selected = adminForm.incentiveRoleIds.includes(role.id);
+                  return (
+                    <button key={role.id} type="button" onClick={() => toggleAdminFormIncentiveRole(role.id)} className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition ${selected ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}>
+                      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${selected ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-300"}`}>{selected ? <Check className="h-3.5 w-3.5" /> : null}</span>
+                      <span className="text-sm font-semibold">{role.name}</span>
+                    </button>
+                  );
+                })}
+                {!incentiveRoles.length ? <p className="text-xs text-amber-700 sm:col-span-2">No incentive roles are configured yet. Add them in Settings → Case Roles.</p> : null}
+              </div>
+            </div>
+            {adminModalError ? <FormMessage error>{adminModalError}</FormMessage> : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button type="button" onClick={() => setEditingAdmin(null)} className="rounded-2xl px-4 py-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancel</button>
+              <button disabled={savingAdmin} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">{savingAdmin ? "Saving…" : "Save changes"}</button>
+            </div>
+          </form>
         </section>
       </div>,
       document.body

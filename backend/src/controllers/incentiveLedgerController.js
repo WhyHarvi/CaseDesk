@@ -1,6 +1,6 @@
 import prisma from "../services/prisma/client.js";
 import { estimateInvoicePotentialCredit, resolvePlan, resolveHolders, computeSplits } from "../services/incentiveCreditingService.js";
-import { fetchPlanTimelineLegs, projectCaseTimelineLegs } from "../services/incentiveTimelineService.js";
+import { fetchPlanTimelineLegs, projectCaseTimelineLegs, tierMultiplierFor } from "../services/incentiveTimelineService.js";
 
 // Incentive figures are personal financial data, not general case
 // visibility — admins can look at anyone's, everyone else only ever sees
@@ -108,7 +108,8 @@ export async function getPipeline(req, res) {
 
   const invoices = await prisma.caseInvoice.findMany({
     where: { agencyId, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] }, case: { archivedAt: null, deletedAt: null } },
-    select: { id: true, caseId: true, balance: true, case: { select: { caseType: true, stage: true, client: { select: { id: true, fullName: true } } } } },
+    select: { id: true, caseId: true, balance: true, invoiceNumber: true, description: true,
+      case: { select: { caseType: true, stage: true, client: { select: { id: true, fullName: true } } } } },
   });
   const byCase = new Map();
   for (const invoice of invoices) {
@@ -118,14 +119,30 @@ export async function getPipeline(req, res) {
     const mine = estimate.entries.filter((entry) => entry.userId === userId);
     const myTotal = mine.reduce((sum, entry) => sum + entry.amount, 0);
     if (!(myTotal > 0)) continue;
+    const invoiceDetail = {
+      caseInvoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      description: invoice.description,
+      outstandingBalance,
+      planName: estimate.planName,
+      formulaType: estimate.formulaType,
+      flatAmount: estimate.flatAmount,
+      percentRate: estimate.percentRate,
+      tiers: estimate.tiers,
+      matchedRate: estimate.matchedRate,
+      myShares: mine.map((entry) => ({ roleNameSnapshot: entry.roleNameSnapshot, attributionKind: entry.attributionKind, sharePercentApplied: entry.sharePercentApplied, amount: entry.amount })),
+      myAmount: myTotal,
+    };
     const existing = byCase.get(invoice.caseId);
     if (existing) {
       existing.outstandingBalance += outstandingBalance;
       existing.estimatedAmount += myTotal;
+      existing.invoices.push(invoiceDetail);
       continue;
     }
     byCase.set(invoice.caseId, { caseId: invoice.caseId, caseType: invoice.case.caseType, stage: invoice.case.stage,
-      client: invoice.case.client, outstandingBalance, planName: estimate.planName, estimatedAmount: myTotal, estimated: true });
+      client: invoice.case.client, outstandingBalance, planName: estimate.planName, estimatedAmount: myTotal, estimated: true,
+      invoices: [invoiceDetail] });
   }
   const rows = [...byCase.values()];
   rows.sort((a, b) => b.estimatedAmount - a.estimatedAmount);
@@ -193,7 +210,23 @@ export async function getActiveTimelines(req, res) {
     const splits = computeSplits(resolved.plan, 10000, holders);
     if (!splits.some((entry) => entry.userId === userId)) continue;
 
-    const legs = (await projectCaseTimelineLegs(agencyId, caseItem.id, resolved.legs)).filter((leg) => leg.state !== "RESOLVED");
+    const projectedLegs = await projectCaseTimelineLegs(agencyId, caseItem.id, resolved.legs);
+    const now = new Date();
+    for (const leg of projectedLegs) {
+      if (leg.state !== "IN_PROGRESS") continue;
+      const elapsedDays = (now.getTime() - new Date(leg.fromCheckpointAt).getTime()) / 86_400_000;
+      const match = tierMultiplierFor(leg.tiers, elapsedDays);
+      if (!match) continue;
+      const pool = (leg.baseBonusAmount * match.multiplierPercent) / 100;
+      const mySplit = computeSplits(resolved.plan, pool, holders).find((entry) => entry.userId === userId);
+      if (!mySplit) continue;
+      leg.currentTierId = match.tierId;
+      leg.currentMultiplierPercent = match.multiplierPercent;
+      leg.potentialAmount = mySplit.amount;
+      leg.mySharePercent = mySplit.sharePercentApplied;
+      leg.myRoleName = mySplit.roleNameSnapshot;
+    }
+    const legs = projectedLegs.filter((leg) => leg.state !== "RESOLVED");
     if (!legs.length) continue;
     rows.push({ caseId: caseItem.id, caseType: caseItem.caseType, stage: caseItem.stage, client: caseItem.client, legs });
   }

@@ -248,12 +248,16 @@ function computeSnapshotSplits(snapshot, pool) {
 }
 
 async function computeSnapshotPool(snapshot, { agencyId, caseId, delta }) {
-  if (snapshot.formulaType === "FLAT_PER_PAYMENT") return Number(snapshot.flatAmount);
-  if (snapshot.formulaType === "PERCENT_OF_PAYMENT") return (delta * Number(snapshot.percentRate)) / 100;
-  if (snapshot.formulaType !== "TIERED_PERCENT_OF_REVENUE") return 0;
+  if (snapshot.formulaType === "FLAT_PER_PAYMENT") {
+    return { pool: Number(snapshot.flatAmount), matchedRate: null };
+  }
+  if (snapshot.formulaType === "PERCENT_OF_PAYMENT") {
+    return { pool: (delta * Number(snapshot.percentRate)) / 100, matchedRate: Number(snapshot.percentRate) };
+  }
+  if (snapshot.formulaType !== "TIERED_PERCENT_OF_REVENUE") return { pool: 0, matchedRate: null };
   const summary = await getCasePaymentSummary(agencyId, caseId);
   const rate = tierRateFor(Array.isArray(snapshot.tiers) ? snapshot.tiers : [], Number(summary.paidAmount));
-  return rate === null ? 0 : (delta * rate) / 100;
+  return { pool: rate === null ? 0 : (delta * rate) / 100, matchedRate: rate };
 }
 
 async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refundAmount, trigger, newBalance }) {
@@ -373,7 +377,7 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     return { credited: false, reason: "no_plan_at_invoice_creation", claimed: claim.count === 1 };
   }
 
-  const pool = await computeSnapshotPool(snapshot, { agencyId, caseId, delta });
+  const { pool } = await computeSnapshotPool(snapshot, { agencyId, caseId, delta });
   const creditedAt = new Date();
   const rows = computeSnapshotSplits(snapshot, pool).map((entry) => ({
     agencyId,
@@ -443,9 +447,18 @@ export async function estimateInvoicePotentialCredit(agencyId, { caseInvoiceId, 
   });
   const snapshot = invoice?.incentiveSnapshot;
   if (!snapshot?.incentivePlanId) return null;
-  const pool = await computeSnapshotPool(snapshot, { agencyId, caseId: invoice.caseId, delta: balance });
+  const { pool, matchedRate } = await computeSnapshotPool(snapshot, { agencyId, caseId: invoice.caseId, delta: balance });
   if (!(pool > 0)) return null;
-  return { planId: snapshot.incentivePlanId, planName: snapshot.planName, entries: computeSnapshotSplits(snapshot, pool) };
+  return {
+    planId: snapshot.incentivePlanId,
+    planName: snapshot.planName,
+    formulaType: snapshot.formulaType,
+    flatAmount: snapshot.flatAmount != null ? Number(snapshot.flatAmount) : null,
+    percentRate: snapshot.percentRate != null ? Number(snapshot.percentRate) : null,
+    tiers: Array.isArray(snapshot.tiers) ? snapshot.tiers : [],
+    matchedRate,
+    entries: computeSnapshotSplits(snapshot, pool),
+  };
 }
 
 // Re-baselines an invoice's cursor to its new balance without crediting

@@ -19,7 +19,7 @@ import {
   portalPageKeys,
 } from "../services/portalAccessService.js";
 import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
-import { defaultAvatarPreset, normalizeAvatarPreset } from "../services/staffAvatarPresetService.js";
+import { defaultAvatarPreset, normalizeAvatarPreset, resolvedAvatarPreset } from "../services/staffAvatarPresetService.js";
 import { AVATAR_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
 
 const managedRoles = new Set(["consultant", "frontdesk"]);
@@ -412,6 +412,102 @@ export async function listPortalAccessMembers(req, res) {
         data: portalDataKeys,
         capabilities: portalCapabilityKeys,
       },
+    },
+  });
+}
+
+// Incentive-role attribution and the professional avatar aren't tied to
+// managedRoles the way account lifecycle (invite/disable/reset-password) is
+// — an admin can just as easily be the RCIC or a Reviewer on cases as a
+// consultant can, and can just as reasonably want to pick their own display
+// picture. This pair is deliberately narrower than
+// teamMemberRecord/updateTeamMember: it only ever touches
+// TeamIncentiveRoleAssignment and the avatar fields, and looks up ANY
+// active staff member in the agency, not just managedRoles ones.
+// User.role also covers client-portal accounts (and a few unused roles —
+// developer/staff/manager/accountant) — this endpoint is only ever for
+// staff who can actually hold a case-incentive role, so it's scoped to
+// exactly the three roles this whole page renders (admin plus the existing
+// managedRoles pair), not every active User row in the agency.
+const incentiveEligibleRoles = ["admin", ...managedRoles];
+
+export async function listIncentiveRoleMembers(req, res) {
+  const users = await prisma.user.findMany({
+    where: { agencyId: req.auth.agencyId, status: "active", role: { in: incentiveEligibleRoles } },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      role: true,
+      avatarPreset: true,
+      avatarStorageKey: true,
+      avatarMimeType: true,
+      incentiveRoleAssignments: { select: { caseRoleId: true } },
+    },
+    orderBy: [{ role: "asc" }, { fullName: "asc" }],
+  });
+  res.json({
+    success: true,
+    data: users.map((user) => ({
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      role: user.role,
+      // Already filtered to status: "active" above — the query's own guard
+      // is the source of truth here, so this is never anything else.
+      status: "active",
+      avatarPreset: resolvedAvatarPreset(user),
+      hasUploadedAvatar: Boolean(user.avatarStorageKey),
+      incentiveRoleIds: user.incentiveRoleAssignments.map((assignment) => assignment.caseRoleId),
+    })),
+  });
+}
+
+export async function updateMemberProfile(req, res) {
+  const existing = await prisma.user.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, status: "active", role: { in: incentiveEligibleRoles } },
+    select: { id: true, fullName: true, email: true, role: true, avatarPreset: true, avatarStorageKey: true },
+  });
+  if (!existing) throw createHttpError(404, "Team member not found.", "NOT_FOUND");
+  const incentiveRoleIds = await validateIncentiveRoleIds(
+    req.auth.agencyId,
+    Array.isArray(req.body?.incentiveRoleIds) ? req.body.incentiveRoleIds : [],
+  );
+  const avatarPreset = req.body?.avatarPreset === undefined ? null : normalizeAvatarPreset(req.body.avatarPreset, { required: true });
+  const changingAvatar = Boolean(avatarPreset) && avatarPreset !== existing.avatarPreset;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.teamIncentiveRoleAssignment.deleteMany({ where: { agencyId: req.auth.agencyId, userId: existing.id } });
+    if (incentiveRoleIds.length) {
+      await tx.teamIncentiveRoleAssignment.createMany({
+        data: incentiveRoleIds.map((caseRoleId) => ({ agencyId: req.auth.agencyId, userId: existing.id, caseRoleId })),
+      });
+    }
+    if (changingAvatar) {
+      // A newly-picked preset always wins over a previously-uploaded custom
+      // photo — same rule updateTeamMember already applies for consultants.
+      await tx.user.update({ where: { id: existing.id }, data: { avatarPreset, avatarStorageKey: null, avatarMimeType: null } });
+    }
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    action: "TEAM_MEMBER_PROFILE_UPDATED",
+    details: `Profile updated for ${existing.fullName}`,
+    entityType: "user",
+    entityId: existing.id,
+    metadata: { targetUserId: existing.id, role: existing.role, incentiveRoleIds },
+  });
+  res.json({
+    success: true,
+    data: {
+      id: existing.id,
+      fullName: existing.fullName,
+      email: existing.email,
+      role: existing.role,
+      avatarPreset: resolvedAvatarPreset({ id: existing.id, avatarPreset: changingAvatar ? avatarPreset : existing.avatarPreset }),
+      hasUploadedAvatar: changingAvatar ? false : Boolean(existing.avatarStorageKey),
+      incentiveRoleIds,
     },
   });
 }
