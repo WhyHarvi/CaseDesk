@@ -1,7 +1,6 @@
 import { Router } from "express";
 import {
   archiveCase,
-  createCase,
   closeCase,
   createCaseDocumentChecklist,
   getCaseById,
@@ -16,6 +15,12 @@ import {
   updateCase,
   updateCasePermissions,
 } from "../controllers/caseController.js";
+import {
+  createCaseWithRequiredCollaboration,
+  getCaseCollaboration,
+  getNewCaseCollaborationOptions,
+  updateCaseCollaboration,
+} from "../controllers/caseTeamController.js";
 import {
   getCaseLifecycle,
   updateCaseLifecycle,
@@ -86,12 +91,13 @@ const router = Router();
 router.get("/", asyncHandler(listCases));
 router.get("/case-types", asyncHandler(listCaseTypes));
 router.get("/study-intakes", asyncHandler(listStudyIntakes));
+router.get("/collaboration-options", asyncHandler(getNewCaseCollaborationOptions));
 router.get(
   "/payment-summaries",
   requirePortalCapability("financialData"),
   asyncHandler(getPaymentSummaries),
 );
-router.post("/", asyncHandler(createCase));
+router.post("/", asyncHandler(createCaseWithRequiredCollaboration));
 router.use("/:id", requireCaseAccess());
 router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));
 router.patch(
@@ -99,16 +105,8 @@ router.patch(
   requireRole("admin", "consultant"),
   asyncHandler(updateCaseLifecycle),
 );
-router.get(
-  "/:id/permissions",
-  requireRole("admin"),
-  asyncHandler(getCasePermissions),
-);
-router.put(
-  "/:id/permissions",
-  requireRole("admin"),
-  asyncHandler(updateCasePermissions),
-);
+router.get("/:id/permissions", asyncHandler(getCaseCollaboration));
+router.put("/:id/permissions", asyncHandler(updateCaseCollaboration));
 router.get("/:id/roles", asyncHandler(listCaseRoleAssignments));
 router.put("/:id/roles", asyncHandler(replaceCaseRoleAssignments));
 router.delete("/:id/roles/:assignmentId", asyncHandler(removeCaseRoleAssignment));
