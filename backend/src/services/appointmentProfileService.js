@@ -89,7 +89,7 @@ export const appointmentProfileInclude = {
   },
 };
 
-function intakeSummary(events = []) {
+function intakeSummary(appointmentId, events = []) {
   const intakeEvents = events.filter((event) => String(event.type || "").startsWith("PRE_CONSULTATION_INTAKE_"));
   const submitted = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.SUBMITTED);
   const opened = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.OPENED);
@@ -98,6 +98,7 @@ function intakeSummary(events = []) {
   const delivery = sent?.metadata && typeof sent.metadata === "object" ? sent.metadata : {};
   const submission = submitted?.metadata && typeof submitted.metadata === "object" ? submitted.metadata : {};
   return {
+    appointmentId,
     status: preConsultationStatus(intakeEvents),
     sentAt: sent?.createdAt || null,
     openedAt: opened?.createdAt || null,
@@ -107,6 +108,9 @@ function intakeSummary(events = []) {
     questionnaireVersion: submission.questionnaireVersion || delivery.questionnaireVersion || 1,
     answers: submission.answers || null,
     flags: Array.isArray(submission.flags) ? submission.flags : [],
+    source: submission.source || null,
+    consentRecordedAt: submission.consentRecordedAt || null,
+    enteredByUserId: submission.enteredByUserId || null,
   };
 }
 
@@ -167,7 +171,7 @@ export async function requireAppointmentProfile(
       : data.events,
     followUps: req.auth.role === "frontdesk" ? [] : data.followUps,
     clientNotes,
-    preConsultationIntake: intakeSummary(data.events || []),
+    preConsultationIntake: intakeSummary(data.id, data.events || []),
   };
 }
 
