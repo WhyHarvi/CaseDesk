@@ -1,14 +1,18 @@
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, ClockAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "react-router-dom";
 
 export default function LeadFilterMenu({ label, value, options, onChange, icon: Icon, allLabel }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0, width: 220 });
+  const [searchParams, setSearchParams] = useSearchParams();
   const rootRef = useRef(null);
   const menuRef = useRef(null);
   const selected = options.find((option) => option.value === value);
-  const active = Boolean(value);
+  const isStatusFilter = label === "Status";
+  const permitExpiryActive = isStatusFilter && searchParams.get("permitExpiry") === "true";
+  const active = Boolean(value) && !permitExpiryActive;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -47,12 +51,44 @@ export default function LeadFilterMenu({ label, value, options, onChange, icon: 
   }
 
   function choose(nextValue) {
-    onChange(nextValue);
+    if (permitExpiryActive) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("permitExpiry");
+        next.delete("page");
+        if (nextValue) next.set("status", nextValue);
+        else next.delete("status");
+        return next;
+      });
+    } else {
+      onChange(nextValue);
+    }
     setOpen(false);
   }
 
+  function togglePermitExpiry() {
+    setOpen(false);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (permitExpiryActive) {
+        next.delete("permitExpiry");
+      } else {
+        next.set("permitExpiry", "true");
+        // These filters describe normal lead workflow state, not a client's
+        // permit-expiry outreach queue. Search + assignee remain useful.
+        next.delete("status");
+        next.delete("stage");
+        next.delete("month");
+        next.delete("sortBy");
+        next.delete("sortDirection");
+      }
+      next.delete("page");
+      return next;
+    });
+  }
+
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative flex items-center gap-2">
       <button
         type="button"
         onClick={toggle}
@@ -72,6 +108,24 @@ export default function LeadFilterMenu({ label, value, options, onChange, icon: 
         <span className={active ? "max-w-[120px] truncate font-semibold text-brand-800" : "max-w-[120px] truncate font-semibold text-slate-700"}>{selected?.label || allLabel}</span>
         <ChevronDown className={["h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform", open ? "rotate-180" : ""].join(" ")} />
       </button>
+
+      {isStatusFilter ? (
+        <button
+          type="button"
+          onClick={togglePermitExpiry}
+          aria-pressed={permitExpiryActive}
+          title="Existing clients ordered by the soonest permit expiry from their pre-consultation questionnaire"
+          className={[
+            "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold shadow-sm transition duration-200",
+            permitExpiryActive
+              ? "border-amber-300 bg-amber-50 text-amber-800 ring-2 ring-amber-100"
+              : "border-slate-200/80 bg-white/85 text-slate-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-800",
+          ].join(" ")}
+        >
+          <ClockAlert className="h-3.5 w-3.5" />
+          Permit expiry
+        </button>
+      ) : null}
 
       {open ? createPortal(
         <div ref={menuRef} style={{ left: position.left, top: position.top, width: position.width }} className="fixed z-[600] overflow-hidden rounded-2xl border border-slate-200 bg-white/98 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.20)] backdrop-blur-xl">
