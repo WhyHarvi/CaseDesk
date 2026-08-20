@@ -16,6 +16,7 @@ import {
   createCaseWithRequiredCollaboration,
   getCaseCollaboration,
   getNewCaseCollaborationOptions,
+  requireCompleteCaseTeam,
   updateCaseCollaboration,
   updateCaseWithRequiredCollaboration,
 } from "../controllers/caseTeamController.js";
@@ -101,6 +102,7 @@ router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));
 router.patch(
   "/:id/lifecycle",
   requireRole("admin", "consultant"),
+  asyncHandler(requireCompleteCaseTeam),
   asyncHandler(updateCaseLifecycle),
 );
 router.get("/:id/permissions", asyncHandler(getCaseCollaboration));
@@ -193,7 +195,12 @@ router.patch("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHa
 router.delete("/:id/ledger/:entryId", requireRole("admin", "consultant"), asyncHandler(deleteLedgerEntry));
 router.get("/:id", asyncHandler(getCaseById));
 router.patch("/:id", requireRole("admin", "consultant"), asyncHandler(updateCaseWithRequiredCollaboration));
-router.patch("/:id/close", requireRole("admin", "consultant"), asyncHandler(closeCase));
+router.patch(
+  "/:id/close",
+  requireRole("admin", "consultant"),
+  asyncHandler(requireCompleteCaseTeam),
+  asyncHandler(closeCase),
+);
 router.patch("/:id/archive", requireRole("admin", "consultant"), asyncHandler(archiveCase));
 router.patch("/:id/unarchive", requireRole("admin", "consultant"), asyncHandler(unarchiveCase));
 router.delete("/:id", requireRole("admin", "consultant"), asyncHandler(softDeleteCase));
