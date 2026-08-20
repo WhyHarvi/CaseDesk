@@ -17,6 +17,10 @@ import {
   updateCasePermissions,
 } from "../controllers/caseController.js";
 import {
+  getCaseLifecycle,
+  updateCaseLifecycle,
+} from "../controllers/caseLifecycleController.js";
+import {
   getCaseAssessment,
   saveCaseAssessment,
 } from "../controllers/caseAssessmentController.js";
@@ -89,6 +93,12 @@ router.get(
 );
 router.post("/", asyncHandler(createCase));
 router.use("/:id", requireCaseAccess());
+router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));
+router.patch(
+  "/:id/lifecycle",
+  requireRole("admin", "consultant"),
+  asyncHandler(updateCaseLifecycle),
+);
 router.get(
   "/:id/permissions",
   requireRole("admin"),
