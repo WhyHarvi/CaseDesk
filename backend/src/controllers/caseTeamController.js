@@ -62,6 +62,18 @@ async function collaborationData(req) {
   };
 }
 
+export async function requireCompleteCaseTeam(req, _res, next) {
+  const team = await currentRequiredCaseTeam(req.auth.agencyId, req.params.id);
+  if (!team.complete || !team.rcic?.id || !team.caseWorker?.id) {
+    throw createHttpError(
+      409,
+      "Assign the required RCIC and Case Worker in Collaboration before moving or closing this case.",
+      "CASE_TEAM_REQUIRED",
+    );
+  }
+  next();
+}
+
 export async function getNewCaseCollaborationOptions(req, res) {
   const options = await requiredCaseTeamOptions(req.auth.agencyId);
   res.json({
@@ -154,10 +166,6 @@ export async function createCaseWithRequiredCollaboration(req, res) {
   const agencyId = req.auth.agencyId;
   const required = await validateRequiredCaseTeam(agencyId, req.body || {});
 
-  // The Case Worker is the operational owner throughout CaseDesk. The
-  // create controller may temporarily normalize a consultant creator to
-  // themselves; applyRequiredCaseTeam below makes the required team the
-  // authoritative final assignment before this request returns.
   req.body.assignedUserId = required.caseWorkerUserId;
 
   const captured = captureResponse();
@@ -206,10 +214,18 @@ export async function createCaseWithRequiredCollaboration(req, res) {
 }
 
 export async function updateCaseWithRequiredCollaboration(req, res) {
-  // Case.assignedUserId is now the Case Worker. Prevent the legacy generic
+  const team = await currentRequiredCaseTeam(req.auth.agencyId, req.params.id);
+  if (!team.complete || !team.rcic?.id || !team.caseWorker?.id) {
+    throw createHttpError(
+      409,
+      "Assign the required RCIC and Case Worker in Collaboration before updating this case.",
+      "CASE_TEAM_REQUIRED",
+    );
+  }
+
+  // Case.assignedUserId is the Case Worker. Prevent the legacy generic
   // "Assigned staff" field from changing ownership independently of the
-  // required role assignment. RCIC / Case Worker changes belong in the
-  // Collaboration panel where both role and access records stay in sync.
+  // required role assignment. Team changes belong in Collaboration.
   if (req.body && Object.prototype.hasOwnProperty.call(req.body, "assignedUserId")) {
     delete req.body.assignedUserId;
   }
