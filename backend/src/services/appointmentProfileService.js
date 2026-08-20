@@ -5,6 +5,7 @@ import {
 } from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
 import { hasPortalCapability, portalDataScope } from "./portalAccessService.js";
+import { PRE_CONSULTATION_EVENT, preConsultationStatus } from "./preConsultationIntakeService.js";
 
 export function appointmentProfileAccessWhere(req) {
   if (["admin", "frontdesk"].includes(req.auth.role)) return {};
@@ -88,6 +89,27 @@ export const appointmentProfileInclude = {
   },
 };
 
+function intakeSummary(events = []) {
+  const intakeEvents = events.filter((event) => String(event.type || "").startsWith("PRE_CONSULTATION_INTAKE_"));
+  const submitted = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.SUBMITTED);
+  const opened = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.OPENED);
+  const sent = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.DELIVERY_SENT)
+    || intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.DELIVERY_PARTIAL);
+  const delivery = sent?.metadata && typeof sent.metadata === "object" ? sent.metadata : {};
+  const submission = submitted?.metadata && typeof submitted.metadata === "object" ? submitted.metadata : {};
+  return {
+    status: preConsultationStatus(intakeEvents),
+    sentAt: sent?.createdAt || null,
+    openedAt: opened?.createdAt || null,
+    submittedAt: submitted?.createdAt || null,
+    emailStatus: delivery.emailStatus || null,
+    smsStatus: delivery.smsStatus || null,
+    questionnaireVersion: submission.questionnaireVersion || delivery.questionnaireVersion || 1,
+    answers: submission.answers || null,
+    flags: Array.isArray(submission.flags) ? submission.flags : [],
+  };
+}
+
 export async function requireAppointmentProfile(
   req,
   appointmentId,
@@ -145,6 +167,7 @@ export async function requireAppointmentProfile(
       : data.events,
     followUps: req.auth.role === "frontdesk" ? [] : data.followUps,
     clientNotes,
+    preConsultationIntake: intakeSummary(data.events || []),
   };
 }
 
