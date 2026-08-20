@@ -13,7 +13,8 @@ function boolText(value, fallback = "false") {
   return fallback;
 }
 
-function flattenAnswers(answers = {}) {
+function flattenAnswers(rawAnswers) {
+  const answers = rawAnswers && typeof rawAnswers === "object" ? rawAnswers : {};
   return {
     legalName: answers.identity?.legalName || "",
     dateOfBirth: answers.identity?.dateOfBirth || "",
@@ -105,8 +106,8 @@ function TextArea({ label, value, onChange, rows = 3 }) {
   return <label className={`${labelClass} sm:col-span-2`}>{label}<textarea className={textareaClass} rows={rows} value={value || ""} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
-function Section({ title, description, children }) {
-  return <section className="rounded-2xl border border-slate-200 bg-slate-50/65 p-4"><div><h3 className="text-sm font-semibold text-slate-900">{title}</h3>{description ? <p className="mt-1 text-xs text-slate-400">{description}</p> : null}</div><div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div></section>;
+function Section({ title, children }) {
+  return <section className="rounded-2xl border border-slate-200 bg-slate-50/65 p-4"><h3 className="text-sm font-semibold text-slate-900">{title}</h3><div className="mt-4 grid gap-4 sm:grid-cols-2">{children}</div></section>;
 }
 
 export default function PreConsultationManualEntryModal({ appointmentId, initialAnswers, onClose, onSaved }) {
