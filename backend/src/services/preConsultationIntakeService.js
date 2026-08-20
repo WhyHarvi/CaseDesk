@@ -20,7 +20,7 @@ const FEATURE_RELEASE_AT = new Date(process.env.PRE_CONSULTATION_INTAKE_START_AT
 let workerTimer = null;
 let workerRunning = false;
 
-const appointmentInclude = {
+export const preConsultationAppointmentInclude = {
   client: { select: { id: true, fullName: true, email: true, phone: true } },
   lead: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   agency: {
@@ -67,9 +67,22 @@ export function preConsultationIntakeUrl(manageToken, environment = process.env)
   return url.toString();
 }
 
-async function reserve(appointment) {
+async function reserve(appointment, { force = false, actorUserId = null } = {}) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`pre-consultation-intake:${appointment.id}`}))`;
+    if (force) {
+      return {
+        event: await recordAppointmentEvent(tx, {
+          agencyId: appointment.agencyId,
+          appointmentId: appointment.id,
+          actorUserId,
+          type: PRE_CONSULTATION_EVENT.DELIVERY_QUEUED,
+          summary: "Pre-consultation questionnaire queued manually",
+          metadata: { questionnaireVersion: 1, emailStatus: "pending", smsStatus: "pending", attempts: 0, source: "staff_manual" },
+        }),
+        skip: false,
+      };
+    }
     const existing = await tx.appointmentEvent.findFirst({ where: { appointmentId: appointment.id, type: { in: DELIVERY_TYPES } }, orderBy: { createdAt: "desc" } });
     if (existing?.type === PRE_CONSULTATION_EVENT.DELIVERY_SENT) return { event: existing, skip: true };
     const details = metadata(existing);
@@ -103,22 +116,22 @@ async function emailQuestionnaire(appointment, contact, intakeUrl) {
   } finally { transport.close?.(); }
 }
 
-async function smsQuestionnaire(appointment, contact, intakeUrl) {
+async function smsQuestionnaire(appointment, contact, intakeUrl, deliveryKey) {
   if (!contact.phone) return { status: "skipped", reason: "No phone number" };
   const result = await sendAgencyOomaSms({
     agencyId: appointment.agencyId,
     to: contact.phone,
     body: `${workspaceName(appointment)}: Please complete your pre-consultation immigration questionnaire before your appointment: ${intakeUrl}`,
-    idempotencyKey: `pre-consultation-intake:${appointment.id}`,
+    idempotencyKey: `pre-consultation-intake:${appointment.id}:${deliveryKey}`,
   });
   return { status: "sent", providerId: result?.id || null, provider: result?.provider || null };
 }
 
 const retryDelay = (attempt) => Math.min(60 * 60_000, 60_000 * 2 ** Math.max(0, attempt - 1));
 
-export async function deliverPreConsultationIntake(appointment) {
+export async function deliverPreConsultationIntake(appointment, { force = false, actorUserId = null } = {}) {
   if (!appointment?.id || appointment.status !== "Scheduled" || !appointment.manageToken) return null;
-  const reservation = await reserve(appointment);
+  const reservation = await reserve(appointment, { force, actorUserId });
   if (!reservation?.event || reservation.skip) return reservation?.event || null;
 
   const existing = metadata(reservation.event);
@@ -128,26 +141,32 @@ export async function deliverPreConsultationIntake(appointment) {
   let email = existing.emailStatus === "sent" ? { status: "sent", providerId: existing.emailProviderId || null } : existing.emailStatus === "skipped" ? { status: "skipped", reason: existing.emailError } : null;
   let sms = existing.smsStatus === "sent" ? { status: "sent", providerId: existing.smsProviderId || null } : existing.smsStatus === "skipped" ? { status: "skipped", reason: existing.smsError } : null;
   if (!email) { try { email = await emailQuestionnaire(appointment, contact, intakeUrl); } catch (error) { email = { status: "failed", reason: errorText(error) }; } }
-  if (!sms) { try { sms = await smsQuestionnaire(appointment, contact, intakeUrl); } catch (error) { sms = { status: "failed", reason: errorText(error) }; } }
+  if (!sms) { try { sms = await smsQuestionnaire(appointment, contact, intakeUrl, reservation.event.id); } catch (error) { sms = { status: "failed", reason: errorText(error) }; } }
 
   const sent = [email, sms].filter((item) => item?.status === "sent").length;
   const failed = [email, sms].filter((item) => item?.status === "failed").length;
+  const skipped = [email, sms].filter((item) => item?.status === "skipped").length;
   const complete = failed === 0 && sent > 0;
   const type = complete ? PRE_CONSULTATION_EVENT.DELIVERY_SENT : sent ? PRE_CONSULTATION_EVENT.DELIVERY_PARTIAL : PRE_CONSULTATION_EVENT.DELIVERY_FAILED;
   const nextAttemptAt = failed ? new Date(Date.now() + retryDelay(attempt)).toISOString() : null;
+  const source = force ? "staff_manual" : existing.source || "automatic";
   const updated = await prisma.appointmentEvent.update({
     where: { id: reservation.event.id },
     data: {
       type,
-      summary: complete ? "Pre-consultation questionnaire sent automatically" : sent ? "Pre-consultation questionnaire partially delivered" : "Pre-consultation questionnaire delivery failed",
+      summary: complete
+        ? (force ? "Pre-consultation questionnaire sent manually" : "Pre-consultation questionnaire sent automatically")
+        : sent
+          ? (force ? "Pre-consultation questionnaire manually sent with partial delivery" : "Pre-consultation questionnaire partially delivered")
+          : "Pre-consultation questionnaire delivery failed",
       metadata: {
-        questionnaireVersion: 1, intakeUrl, attempts: attempt, lastAttemptAt: new Date().toISOString(), nextAttemptAt,
+        questionnaireVersion: 1, intakeUrl, attempts: attempt, lastAttemptAt: new Date().toISOString(), nextAttemptAt, source,
         emailStatus: email?.status || "failed", emailProviderId: email?.providerId || null, emailError: email?.reason || null,
         smsStatus: sms?.status || "failed", smsProviderId: sms?.providerId || null, smsProvider: sms?.provider || null, smsError: sms?.reason || null,
       },
     },
   });
-  if (!complete) logger.warn("pre_consultation_intake.delivery_incomplete", { appointmentId: appointment.id, agencyId: appointment.agencyId, emailStatus: email?.status, smsStatus: sms?.status, nextAttemptAt });
+  if (!complete) logger.warn("pre_consultation_intake.delivery_incomplete", { appointmentId: appointment.id, agencyId: appointment.agencyId, emailStatus: email?.status, smsStatus: sms?.status, skipped, nextAttemptAt });
   return updated;
 }
 
@@ -163,7 +182,7 @@ export async function processPreConsultationIntakeDeliveries() {
         manageToken: { not: null },
         events: { none: { type: { in: [PRE_CONSULTATION_EVENT.DELIVERY_SENT, PRE_CONSULTATION_EVENT.SUBMITTED] } } },
       },
-      include: appointmentInclude,
+      include: preConsultationAppointmentInclude,
       orderBy: { createdAt: "asc" },
       take: 25,
     });
@@ -189,7 +208,7 @@ export function stopPreConsultationIntakeWorker() {
 }
 
 export async function getManagedPreConsultationAppointment(manageToken) {
-  const appointment = await prisma.appointment.findUnique({ where: { manageToken: clean(manageToken, 200) }, include: appointmentInclude });
+  const appointment = await prisma.appointment.findUnique({ where: { manageToken: clean(manageToken, 200) }, include: preConsultationAppointmentInclude });
   if (!appointment) return null;
   return { ...appointment, bookingSettings: appointment.agency?.bookingSettings || null };
 }
