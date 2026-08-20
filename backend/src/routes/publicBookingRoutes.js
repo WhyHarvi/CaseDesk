@@ -19,11 +19,19 @@ import {
 } from "../controllers/publicBookingController.js";
 import { getManagedRetainer, signManagedRetainer } from "../controllers/publicRetainerController.js";
 import { asyncHandler } from "../utils/http.js";
+import preConsultationIntakeRoutes from "./preConsultationIntakeRoutes.js";
+import { startPreConsultationIntakeWorker } from "../services/preConsultationIntakeService.js";
 
 const router = Router();
 const readLimit = rateLimit({ windowMs: 60_000, max: 60 });
 const writeLimit = rateLimit({ windowMs: 15 * 60_000, max: 10 });
 
+// Public booking routes are loaded during API startup, so this starts the
+// durable intake sender alongside the existing booking workers. The timer is
+// unref'd and therefore does not hold the Node process open during shutdown.
+startPreConsultationIntakeWorker();
+
+router.use("/consultation-intake", preConsultationIntakeRoutes);
 router.get("/manage/:manageToken", readLimit, asyncHandler(getManagedBooking));
 router.get("/manage/:manageToken/availability", readLimit, asyncHandler(getManagedAvailability));
 router.post("/manage/:manageToken/cancel", writeLimit, asyncHandler(cancelManagedBooking));
