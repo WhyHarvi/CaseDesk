@@ -9,7 +9,9 @@ function cleanText(value) {
 }
 
 function expiryDate(value) {
-  const raw = cleanText(value).slice(0, 10);
+  const raw = value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : cleanText(value).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
   const date = new Date(`${raw}T00:00:00.000Z`);
   return Number.isNaN(date.getTime()) ? null : { raw, date };
@@ -40,6 +42,14 @@ function permitExpiryFromAnswers(answers = {}) {
     .sort((left, right) => left.expiry.date - right.expiry.date);
 
   return candidates[0] || null;
+}
+
+function permitTypeFromCaseType(caseType = "") {
+  const normalized = cleanText(caseType).toLowerCase();
+  if (normalized.includes("work permit") || normalized.includes("work-permit") || normalized.includes("work_permit")) return "Work permit";
+  if (normalized.includes("study permit") || normalized.includes("study-permit") || normalized.includes("study_permit") || normalized === "study") return "Study permit";
+  if (normalized.includes("visitor") || normalized.includes("super visa")) return "Visitor status";
+  return cleanText(caseType) ? `${cleanText(caseType)} status` : "Immigration status";
 }
 
 function latestSubmission(appointments = []) {
@@ -79,63 +89,92 @@ function parseQueueQuery(query = {}) {
   };
 }
 
+async function approvedDecisionExpiries(agencyId) {
+  // An approved decision is newer and more authoritative than the permit
+  // expiry the client reported before consultation. Keep the latest approval
+  // per client and use its granted expiry as the proactive-outreach date.
+  const rows = await prisma.$queryRaw`
+    SELECT
+      cases."client_id" AS "clientId",
+      cases."id" AS "caseId",
+      cases."case_type" AS "caseType",
+      TO_CHAR(decision."decision_date", 'YYYY-MM-DD') AS "decisionDate",
+      TO_CHAR(decision."permit_expiry_date", 'YYYY-MM-DD') AS "permitExpiryDate"
+    FROM "case_decisions" decision
+    INNER JOIN "cases" cases ON cases."id" = decision."case_id"
+    WHERE decision."agency_id" = ${agencyId}
+      AND decision."decision_outcome" = 'APPROVED'
+      AND decision."permit_expiry_date" IS NOT NULL
+      AND cases."deleted_at" IS NULL
+    ORDER BY cases."client_id", decision."decision_date" DESC, decision."updated_at" DESC
+  `;
+  const byClient = new Map();
+  for (const row of rows) {
+    if (!byClient.has(row.clientId)) byClient.set(row.clientId, row);
+  }
+  return byClient;
+}
+
 export async function listPermitExpiryLeads(req) {
   const { page, limit, search, ownerUserId } = parseQueueQuery(req.query);
   const today = new Date();
   const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
 
-  // This queue intentionally reuses the original converted lead as the
-  // outreach record. We do not create a second Lead row for an existing
-  // client just because a permit is approaching expiry.
-  const convertedLeads = await prisma.lead.findMany({
-    where: {
-      agencyId: req.auth.agencyId,
-      deletedAt: null,
-      convertedClientId: { not: null },
-      AND: [
-        leadAccessWhere(req),
-        ...(search ? [leadSearchWhere(search)] : []),
-      ],
-    },
-    select: {
-      id: true,
-      leadNumber: true,
-      firstName: true,
-      lastName: true,
-      phone: true,
-      email: true,
-      currentImmigrationStatus: true,
-      ownerUserId: true,
-      owner: { select: { id: true, fullName: true, email: true } },
-      convertedClient: {
-        select: {
-          id: true,
-          clientNumber: true,
-          fullName: true,
-          givenNames: true,
-          familyName: true,
-          phone: true,
-          email: true,
-          assignedUserId: true,
-          assignedUser: { select: { id: true, fullName: true, email: true } },
-        },
+  const [convertedLeads, decisionExpiries] = await Promise.all([
+    // This queue intentionally reuses the original converted lead as the
+    // outreach record. We do not create a second Lead row for an existing
+    // client just because a permit is approaching expiry.
+    prisma.lead.findMany({
+      where: {
+        agencyId: req.auth.agencyId,
+        deletedAt: null,
+        convertedClientId: { not: null },
+        AND: [
+          leadAccessWhere(req),
+          ...(search ? [leadSearchWhere(search)] : []),
+        ],
       },
-      appointments: {
-        where: {
-          events: { some: { type: PRE_CONSULTATION_SUBMITTED } },
+      select: {
+        id: true,
+        leadNumber: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        currentImmigrationStatus: true,
+        ownerUserId: true,
+        owner: { select: { id: true, fullName: true, email: true } },
+        convertedClient: {
+          select: {
+            id: true,
+            clientNumber: true,
+            fullName: true,
+            givenNames: true,
+            familyName: true,
+            phone: true,
+            email: true,
+            assignedUserId: true,
+            assignedUser: { select: { id: true, fullName: true, email: true } },
+          },
         },
-        select: {
-          id: true,
-          events: {
-            where: { type: PRE_CONSULTATION_SUBMITTED },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: { id: true, createdAt: true, metadata: true },
+        appointments: {
+          where: {
+            events: { some: { type: PRE_CONSULTATION_SUBMITTED } },
+          },
+          select: {
+            id: true,
+            events: {
+              where: { type: PRE_CONSULTATION_SUBMITTED },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: { id: true, createdAt: true, metadata: true },
+            },
           },
         },
       },
-    },
-  });
+    }),
+    approvedDecisionExpiries(req.auth.agencyId),
+  ]);
 
   const queue = convertedLeads
     .map((lead) => {
@@ -143,9 +182,24 @@ export async function listPermitExpiryLeads(req) {
       if (!client) return null;
       if (ownerUserId && (client.assignedUserId || lead.ownerUserId) !== ownerUserId) return null;
 
+      const approvedDecision = decisionExpiries.get(client.id) || null;
       const submission = latestSubmission(lead.appointments);
       const answers = submission?.metadata?.answers;
-      const permit = permitExpiryFromAnswers(answers);
+      const questionnairePermit = permitExpiryFromAnswers(answers);
+      const decisionExpiry = approvedDecision ? expiryDate(approvedDecision.permitExpiryDate) : null;
+
+      // Once CaseDesk has a granted permit/status expiry from an approved
+      // application, it supersedes the older date the client supplied at
+      // consultation. Fall back to questionnaire data only until that exists.
+      const permit = decisionExpiry
+        ? {
+            type: permitTypeFromCaseType(approvedDecision.caseType),
+            expiry: decisionExpiry,
+            source: "CASE_DECISION",
+          }
+        : questionnairePermit
+          ? { ...questionnairePermit, source: "QUESTIONNAIRE" }
+          : null;
       if (!permit) return null;
 
       const expiryMs = permit.expiry.date.getTime();
@@ -173,16 +227,19 @@ export async function listPermitExpiryLeads(req) {
         permitType: permit.type,
         permitExpiryDate: permit.expiry.raw,
         daysUntilExpiry,
+        expirySource: permit.source,
+        decisionAt: approvedDecision?.decisionDate || null,
+        sourceCaseId: approvedDecision?.caseId || null,
         status: "OPEN",
         stage: "CONTACTING",
         priority: urgency.priority,
         temperature: urgency.temperature,
         owner,
         ownerUserId: owner?.id || null,
-        originalSource: { id: null, name: "Existing client", type: "OTHER" },
+        originalSource: { id: null, name: permit.source === "CASE_DECISION" ? "Approved case" : "Existing client", type: "OTHER" },
         nextActionDescription: `${permit.type} expires ${permit.expiry.raw}`,
         nextActionAt: permit.expiry.date.toISOString(),
-        questionnaireSubmittedAt: submission.createdAt,
+        questionnaireSubmittedAt: submission?.createdAt || null,
         retainerStatus: "NOT_REQUIRED",
         initialPaymentStatus: "WAIVED",
       };
