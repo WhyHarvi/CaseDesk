@@ -1,5 +1,5 @@
 import prisma from "../services/prisma/client.js";
-import { createCase } from "./caseController.js";
+import { createCase, updateCase } from "./caseController.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
@@ -203,4 +203,15 @@ export async function createCaseWithRequiredCollaboration(req, res) {
     ...captured.body,
     data: refreshed || caseItem,
   });
+}
+
+export async function updateCaseWithRequiredCollaboration(req, res) {
+  // Case.assignedUserId is now the Case Worker. Prevent the legacy generic
+  // "Assigned staff" field from changing ownership independently of the
+  // required role assignment. RCIC / Case Worker changes belong in the
+  // Collaboration panel where both role and access records stay in sync.
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, "assignedUserId")) {
+    delete req.body.assignedUserId;
+  }
+  return updateCase(req, res);
 }
