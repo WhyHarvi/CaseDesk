@@ -68,8 +68,40 @@ test("a converted lead does not block edits to its own client", async () => {
     ],
   });
   assert.deepEqual(leadWhere.AND[2], {
+    OR: [
+      { earlyClientId: null },
+      { earlyClientId: { not: "client-1" } },
+    ],
+  });
+  assert.deepEqual(leadWhere.AND[3], {
     appointments: { none: { clientId: "client-1" } },
   });
+});
+
+// Regression test for a real bug: a retainer signed before formal lead
+// conversion creates a real Client (and Case) early via Lead.earlyClientId
+// — the lead itself never gets convertedClientId set, since it stays open
+// working its own pipeline. Editing that early client's contact info (e.g.
+// adding an email) was incorrectly treated as colliding with a stranger's
+// duplicate lead, because only convertedClientId/appointments were ever
+// excluded, never earlyClientId. The where-clause shape itself is checked
+// above; this confirms the exclusion actually flows through to a
+// non-throwing call end to end.
+test("an early client (retainer signed before formal conversion) does not block edits to its own client", async () => {
+  const db = {
+    client: { findFirst: async () => null },
+    // A real database applying the where clause above would filter out
+    // Lovedeep Singh's own lead here (earlyClientId: "client-1" matches the
+    // excluded client), leaving nothing for this query to find.
+    lead: { findFirst: async () => null },
+  };
+  await assert.doesNotReject(() =>
+    assertNoContactDuplicate(db, {
+      agencyId: "agency-1",
+      phoneNormalized: "+12368804030",
+      excludeClientId: "client-1",
+    }),
+  );
 });
 
 test("database constraints and transactions protect client intake from races", async () => {

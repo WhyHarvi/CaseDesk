@@ -79,6 +79,19 @@ export async function assertNoContactDuplicate(tx, {
                     { convertedClientId: { not: excludeClientId } },
                   ],
                 },
+                // A retainer requested/signed before formal conversion
+                // creates a real Client (and Case) early, via earlyClientId
+                // — the lead itself stays open, working its own pipeline,
+                // never getting convertedClientId set at all. Without this
+                // gate, editing that early client's contact info makes the
+                // lead look like a stranger's duplicate record instead of
+                // its own source lead.
+                {
+                  OR: [
+                    { earlyClientId: null },
+                    { earlyClientId: { not: excludeClientId } },
+                  ],
+                },
                 // "Save as client" links the appointment to both records
                 // without formally converting the lead. That appointment is
                 // still authoritative proof that this is the same person.
