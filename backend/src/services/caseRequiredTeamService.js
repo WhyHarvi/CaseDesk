@@ -91,16 +91,36 @@ export async function validateRequiredCaseTeam(agencyId, values, db = prisma) {
 }
 
 async function replaceRequiredRoleAssignment(tx, { agencyId, caseId, caseRoleId, userId, actorUserId }) {
-  await tx.caseRoleAssignment.deleteMany({
-    where: { agencyId, caseId, caseRoleId, status: "active" },
+  await tx.caseRoleAssignment.updateMany({
+    where: {
+      agencyId,
+      caseId,
+      caseRoleId,
+      status: "active",
+      userId: { not: userId },
+    },
+    data: { status: "inactive" },
   });
-  await tx.caseRoleAssignment.create({
-    data: {
+  await tx.caseRoleAssignment.upsert({
+    where: {
+      agencyId_caseId_caseRoleId_userId: {
+        agencyId,
+        caseId,
+        caseRoleId,
+        userId,
+      },
+    },
+    create: {
       agencyId,
       caseId,
       caseRoleId,
       userId,
       assignedById: actorUserId || null,
+      status: "active",
+    },
+    update: {
+      assignedById: actorUserId || null,
+      assignedAt: new Date(),
       status: "active",
     },
   });
