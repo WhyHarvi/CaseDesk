@@ -168,7 +168,7 @@ async function findHandledBy(tx, agencyId, normalized) {
   });
 }
 
-async function phoneMatches(tx, agencyId, normalizedPhone, rawPhone = null) {
+export async function phoneMatches(tx, agencyId, normalizedPhone, rawPhone = null) {
   if (!normalizedPhone) return { clients: [], leads: [] };
   const phoneWhere = [
     { phoneNormalized: normalizedPhone },
@@ -189,7 +189,7 @@ async function phoneMatches(tx, agencyId, normalizedPhone, rawPhone = null) {
   return { clients, leads };
 }
 
-async function autoMatch(tx, session) {
+export async function autoMatch(tx, session) {
   if (session.resolution !== "UNRESOLVED" || !session.remoteNumberNormalized) return session;
   const matches = await phoneMatches(tx, session.agencyId, session.remoteNumberNormalized, session.remoteNumber);
   if (matches.clients.length === 1) {

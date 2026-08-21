@@ -36,6 +36,7 @@ const NO_CACHE_PATHS = [
   "/communications/",
   "/internal-chat/",
   "/ooma-calls",
+  "/twilio-calls",
 ];
 
 function pathOnly(url) {
@@ -79,6 +80,7 @@ const RELATED_PATHS = {
   payments: ["payments", "cases", "clients", "dashboard"],
   leads: ["leads", "dashboard", "workload", "clients", "cases"],
   "ooma-calls": ["ooma-calls", "leads", "clients", "communications", "follow-ups", "dashboard", "workload"],
+  "twilio-calls": ["twilio-calls", "ooma-calls", "leads", "clients", "communications", "follow-ups"],
   settings: ["settings", "booking", "staff", "team"],
   // Empty, not absent — the heartbeat ping fires up to once a minute per
   // active user and invalidates nothing of its own. An absent key here

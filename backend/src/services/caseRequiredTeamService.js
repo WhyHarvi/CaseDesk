@@ -1,6 +1,8 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { logger } from "./logger.js";
 import { ensureRequiredCaseRoles, listCaseRoles, REQUIRED_CASE_ROLE_CODES } from "./caseRoleService.js";
+import { refreshOpenInvoiceSnapshots } from "./incentiveCreditingService.js";
 
 const STAFF_ROLES = ["consultant", "frontdesk"];
 export const CASE_TEAM_ROLE_CODES = { RCIC: "rcic", CASE_WORKER: "case-worker" };
@@ -383,6 +385,14 @@ export async function backfillRequiredCaseTeams(agencyId, actorUserId, db = pris
         actorUserId,
         collaboratorUserIds: existingCollaborators.map((row) => row.consultantUserId),
       });
+    });
+    // This backfill exists precisely for cases whose invoices were created
+    // before a team existed — re-freeze those invoices' incentive
+    // snapshots with the team that's now actually on the case, or future
+    // collections would credit nobody (the RCIC gap). After the team
+    // transaction commits, best-effort. See refreshOpenInvoiceSnapshots.
+    await refreshOpenInvoiceSnapshots(agencyId, item.caseId, db).catch((error) => {
+      logger.warn("incentive.snapshot_refresh_failed", { agencyId, caseId: item.caseId, reason: error.message });
     });
     fixedCount += 1;
   }

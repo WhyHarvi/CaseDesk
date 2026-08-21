@@ -16,6 +16,8 @@ async function representativeUser(req) {
     select: {
       id: true,
       fullName: true,
+      firstName: true,
+      lastName: true,
       licenseNumber: true,
       representativeType: true,
       membershipBody: true,
@@ -34,6 +36,10 @@ async function representativeUser(req) {
 function publicSignature(user) {
   return {
     fullName: user.fullName,
+    // Optional, more reliable name split than guessing from fullName — used
+    // preferentially on IMM 5476 and similar forms when set (imm5476.js).
+    firstName: user.firstName || "",
+    lastName: user.lastName || "",
     licenseNumber: user.licenseNumber,
     representativeType: user.representativeType || "Paid",
     membershipBody: user.membershipBody || "College of Immigration and Citizenship Consultants (CICC)",
@@ -74,6 +80,10 @@ export async function updateMyRepresentativeProfile(req, res) {
     data: {
       licenseNumber,
       representativeType,
+      // Optional — a more reliable name split than guessing from fullName,
+      // used preferentially on IMM 5476 and similar forms when set.
+      firstName: clean(req.body?.firstName, 80),
+      lastName: clean(req.body?.lastName, 80),
       membershipBody: clean(req.body?.membershipBody, 160),
       membershipProvince: clean(req.body?.membershipProvince, 80),
       // Explicit per-representative override for the government-form office
@@ -83,7 +93,7 @@ export async function updateMyRepresentativeProfile(req, res) {
       formOfficePhone: clean(req.body?.formOfficePhone, 40),
       formOfficeEmail: cleanEmail(req.body?.formOfficeEmail, "office email"),
     },
-    select: { fullName: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
+    select: { fullName: true, firstName: true, lastName: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
   });
   await recordActivity({ agencyId: req.auth.agencyId, userId: req.auth.userId, action: "government_form.representative_profile_updated", details: "Representative credentials updated", entityType: "user", entityId: req.auth.userId });
   res.json({ data: publicSignature(user) });

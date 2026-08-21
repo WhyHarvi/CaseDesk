@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import {
   adminRecipientIds,
   financialOperationsRecipientIds,
@@ -458,7 +458,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
             : `${agencyName}: pay${amount ? ` $${Number(amount).toFixed(2)}` : ""} to confirm "${appointment.subject}" (${when}). This is not booked until paid${expiresAt ? `; the hold expires ${new Date(expiresAt).toLocaleTimeString("en-CA", { timeZone: timezone, hour: "numeric", minute: "2-digit" })}` : ""}. ${payNowUrl}`
           : `${agencyName}: ${copy.title.toLowerCase()} — ${appointment.subject}, ${when}.${smsAccess}${manageUrl ? ` Manage: ${manageUrl}` : ""}`;
       if (!(await bookingDeliveryAllowed(deliveryId, appointment.id))) return { suppressed: true };
-      await sendAgencyOomaSms({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${deliveryId || dedupeSuffix || appointment.startsAt}` });
+      await sendSmsMessage({ agencyId, to: contact.phone, body: smsBody, idempotencyKey: `${appointment.id}:${kind}:${deliveryId || dedupeSuffix || appointment.startsAt}` });
     } catch (error) {
       logger.warn("booking.sms_skipped", { agencyId, appointmentId: appointment.id, reason: error.message });
       if (channel === "sms") throw error;

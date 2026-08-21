@@ -99,7 +99,7 @@ const adminNavigation = [
     label: "Calls",
     to: "/calls",
     icon: PhoneCall,
-    description: "Ooma call inbox",
+    description: "Call history, dialpad, and address book",
     disabled: false,
     badgeKey: "calls",
   },

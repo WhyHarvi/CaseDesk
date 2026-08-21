@@ -1,6 +1,6 @@
 import prisma from "./prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { clientRecipientIds, notifyUsers } from "./notificationService.js";
 import { logger } from "./logger.js";
 import { runExpiringDocumentReminderPass } from "./expiringDocumentReminderService.js";
@@ -210,7 +210,7 @@ async function deliverReminder({ policy, delivery, target, agencyName, effective
 
   if (policy.smsEnabled && target.client.phone) {
     try {
-      await sendAgencyOomaSms({
+      await sendSmsMessage({
         agencyId: policy.agencyId,
         to: target.client.phone,
         body: fillAutomatedReminderTemplate(policy.smsTemplate, values).slice(0, 500),

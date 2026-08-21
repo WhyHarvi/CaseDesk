@@ -5,15 +5,17 @@ import {
   sendMicrosoftMailboxEmail,
 } from "./microsoftMailboxService.js";
 import { agencyOomaConnectionStatus, sendAgencyOomaSms, startAgencyOomaCall } from "./agencyOomaService.js";
+import { agencyTwilioConnectionStatus, resolveAgencyTwilioConfig, sendAgencyTwilioSms } from "./agencyTwilioService.js";
 import { supabaseRealtimeReady } from "./supabaseRealtimeService.js";
 
 const enabled = (value) => Boolean(String(value || "").trim());
 
 export async function communicationProviderStatus(agencyId, userId = null) {
-  const [agencyMail, agencyMicrosoftMail, personalMail, ooma] = await Promise.all([
+  const [agencyMail, agencyMicrosoftMail, personalMail, twilio, ooma] = await Promise.all([
     agencyMailConnectionStatus(agencyId),
     agencyMicrosoftMailboxStatus(agencyId),
     userId ? personalMailboxStatus(userId) : null,
+    agencyTwilioConnectionStatus(agencyId),
     agencyOomaConnectionStatus(agencyId),
   ]);
   const imapConfigured = ["IMAP_HOST", "IMAP_PORT", "IMAP_USER", "IMAP_PASSWORD"].every((key) => enabled(process.env[key]));
@@ -39,11 +41,11 @@ export async function communicationProviderStatus(agencyId, userId = null) {
       secureStorageReady: agencyMail.secureStorageReady,
     },
     Sms: {
-      provider: ooma.Sms.source === "Zapier" ? "Zapier / Ooma" : "Ooma Enterprise",
-      sendConfigured: ooma.Sms.configured,
+      provider: twilio.Sms.configured ? "Twilio" : ooma.Sms.source === "Zapier" ? "Zapier / Ooma" : "Ooma Enterprise",
+      sendConfigured: twilio.Sms.configured || ooma.Sms.configured,
       receiveConfigured: false,
-      detail: ooma.Sms.detail,
-      source: ooma.Sms.source,
+      detail: twilio.Sms.configured ? twilio.Sms.detail : ooma.Sms.detail,
+      source: twilio.Sms.configured ? "Twilio" : ooma.Sms.source,
     },
     Call: {
       provider: ooma.Call.source === "Zapier" ? "Zapier / Ooma" : "Ooma Enterprise",
@@ -86,8 +88,15 @@ export async function sendEmailMessage({ agencyId, userId = null, to, cc, bcc, r
   };
 }
 
-export function sendOomaSms({ agencyId, to, body, idempotencyKey }) {
-  return sendAgencyOomaSms({ agencyId, to, body, idempotencyKey });
+// Twilio first (probed with optional:true so an unready Twilio config never
+// throws here), Ooma otherwise — Ooma keeps its own existing Zapier/direct
+// fallback untouched. Every automated SMS path in CaseDesk calls this, not
+// either provider's service directly, so switching providers is a Settings
+// change, never a code change.
+export async function sendSmsMessage({ agencyId, to, body, idempotencyKey, requireVerified = true }) {
+  const twilioConfig = await resolveAgencyTwilioConfig(agencyId, { requireVerified, optional: true });
+  if (twilioConfig) return sendAgencyTwilioSms({ agencyId, to, body, idempotencyKey, requireVerified, config: twilioConfig });
+  return sendAgencyOomaSms({ agencyId, to, body, idempotencyKey, requireVerified });
 }
 
 export function startOomaCall({ agencyId, to, idempotencyKey }) {

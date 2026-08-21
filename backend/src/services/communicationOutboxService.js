@@ -1,7 +1,7 @@
 import prisma from "./prisma/client.js";
 import {
   sendEmailMessage,
-  sendOomaSms,
+  sendSmsMessage,
   startOomaCall,
 } from "./communicationProviderService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
@@ -39,7 +39,7 @@ async function deliver(job) {
     });
   }
   if (job.message.channel === "Sms") {
-    return sendOomaSms({
+    return sendSmsMessage({
       agencyId: job.agencyId,
       to: Array.isArray(payload.recipients) ? payload.recipients[0] : null,
       body: payload.bodyText || "",

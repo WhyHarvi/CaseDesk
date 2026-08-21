@@ -21,7 +21,7 @@ const uploadCopyTypes = new Set(["Working", "Filled", "ClientSigned"]);
 const browserCopyTypes = new Set(["Working", "Filled"]);
 const allowedOfficialHosts = new Set(["canada.ca", "www.canada.ca", "ircc.canada.ca", "www.ircc.canada.ca"]);
 
-const representativeUserSelect = { id: true, fullName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true };
+const representativeUserSelect = { id: true, fullName: true, firstName: true, lastName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formOfficePhone: true, formOfficeEmail: true };
 const include = {
   uploadedBy: { select: { id: true, fullName: true } },
   lockedBy: { select: { id: true, fullName: true } },
@@ -414,20 +414,30 @@ export async function serveCaseFormFile(req, res) {
       mimeType: true,
       formNumber: true,
       id: true,
-      representativeUser: { select: { fullName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true } },
+      currentCopyType: true,
+      representativeUser: { select: { fullName: true, firstName: true, lastName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
   if (!data?.storageKey) throw createHttpError(404, "No stored file is available for this form");
   const storedBuffer = await downloadStorageFile(DOCUMENT_BUCKET, data.storageKey, { allowMissing: true });
   if (!storedBuffer) throw createHttpError(404, "The stored form file was not found");
+  // Once the client has signed, the stored bytes are the actual legal record —
+  // an applicant's ink signature is baked in as a PDF annotation, not a field
+  // value, so re-stamping the (possibly since-changed) representative here
+  // would either wipe it outright (rebuilding from the blank original carries
+  // over field values only) or leave stale representative ink under a
+  // freshly-overwritten representative name. Neither is acceptable once a
+  // client has actually signed, so a signed/finalized copy is served exactly
+  // as stored — a representative change after signing never touches it.
   const isImm5476 = String(data.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
+  const isSignedCopy = data.currentCopyType === "ClientSigned" || data.currentCopyType === "Finalized";
   const representative = data.representativeUser;
   const hasSavedSignature = representative?.formSignatureImage && Array.isArray(representative.formSignatureStrokes) && representative.formSignatureStrokes.length;
   const signatureStrokes = hasSavedSignature && isTracedImageSignature(representative.formSignatureStrokes)
     ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
     : representative?.formSignatureStrokes;
   let preparedBuffer = storedBuffer;
-  if (isImm5476) {
+  if (isImm5476 && !isSignedCopy) {
     const embeddedSigner = await imm5476RepresentativeSignatureName(storedBuffer);
     const selectedSigner = hasSavedSignature ? representative.fullName.trim() : null;
     if (embeddedSigner && embeddedSigner.localeCompare(selectedSigner || "", undefined, { sensitivity: "base" }) !== 0) {
@@ -443,10 +453,17 @@ export async function serveCaseFormFile(req, res) {
       preparedBuffer = await rebuildImm5476FromOriginal(storedBuffer, originalBuffer);
     }
   }
-  const representativeName = String(representative?.fullName || "").trim().split(/\s+/).filter(Boolean);
-  const representativeFamilyName = representativeName.length > 1 ? representativeName.at(-1) : representativeName[0] || "";
-  const representativeGivenNames = representativeName.length > 1 ? representativeName.slice(0, -1).join(" ") : "";
-  const buffer = isImm5476
+  // Prefer the representative's explicit first/last name when set — same
+  // "explicit beats guessed" rule imm5476.js's normalizeIrccName() uses for
+  // the applicant side. Only guess from fullName (last word as family name)
+  // when neither is on file.
+  const representativeLastName = String(representative?.lastName || "").trim();
+  const representativeNameParts = String(representative?.fullName || "").trim().split(/\s+/).filter(Boolean);
+  const representativeFamilyName = representativeLastName || (representativeNameParts.length > 1 ? representativeNameParts.at(-1) : representativeNameParts[0] || "");
+  const representativeGivenNames = representativeLastName
+    ? String(representative?.firstName || "").trim()
+    : (representativeNameParts.length > 1 ? representativeNameParts.slice(0, -1).join(" ") : "");
+  const buffer = isImm5476 && !isSignedCopy
     ? await stampXfaPdfFormValues(
         preparedBuffer,
         [],

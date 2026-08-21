@@ -2,7 +2,9 @@ import prisma from "../services/prisma/client.js";
 import { createCase, updateCase } from "./caseController.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { logger } from "../services/logger.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
+import { refreshOpenInvoiceSnapshots } from "../services/incentiveCreditingService.js";
 import {
   applyRequiredCaseTeam,
   backfillRequiredCaseTeams,
@@ -142,6 +144,16 @@ export async function updateCaseCollaboration(req, res) {
       collaboratorUserIds: req.body.collaboratorUserIds,
       actorUserId: req.auth.userId,
     });
+  });
+
+  // The team just changed — re-freeze the incentive attribution of this
+  // case's open, never-credited invoices with the new holders, so future
+  // collections credit who actually owns the case now. Runs after the
+  // team transaction commits (holder resolution must see the new
+  // assignments) and is strictly best-effort. See
+  // refreshOpenInvoiceSnapshots for why only uncredited open invoices.
+  await refreshOpenInvoiceSnapshots(agencyId, caseId).catch((error) => {
+    logger.warn("incentive.snapshot_refresh_failed", { agencyId, caseId, reason: error.message });
   });
 
   await recordActivity({

@@ -111,10 +111,7 @@ const LeadsPage = lazyWithRetry(
   () => import("../modules/leads/pages/LeadsPage"),
   "leads",
 );
-const OomaCallsPage = lazyWithRetry(
-  () => import("../pages/OomaCallsPage"),
-  "ooma-calls",
-);
+const CallsPage = lazyWithRetry(() => import("../pages/CallsPage"), "calls");
 const ChatsPage = lazyWithRetry(
   () => import("../pages/ChatsPage"),
   "chats",
@@ -406,7 +403,7 @@ export default function AppRoutes() {
           path="/calls"
           element={
             <Access page="leads">
-              <OomaCallsPage />
+              <CallsPage />
             </Access>
           }
         />

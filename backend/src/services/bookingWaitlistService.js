@@ -18,7 +18,7 @@ import {
   assertMeetingModeConfigured,
   meetingModeEnabled,
 } from "./bookingMeetingModeService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { assertZoomOperational } from "./zoomService.js";
 
 function escapeHtml(value) {
@@ -211,7 +211,7 @@ export async function offerWaitlistOpening(appointment) {
   let smsDelivered = false;
   if (candidate.phone) {
     try {
-      await sendAgencyOomaSms({
+      await sendSmsMessage({
         agencyId: appointment.agencyId,
         to: candidate.phone,
         body: `${agencyName}: a ${when} appointment is reserved for you for 15 minutes. Claim it: ${bookingUrl}`,

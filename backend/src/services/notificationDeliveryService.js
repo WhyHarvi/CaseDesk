@@ -1,4 +1,4 @@
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
 import {
   adminRecipientIds,
@@ -117,7 +117,7 @@ async function deliver(job) {
     return result.messageId || null;
   }
   if (job.channel === "sms") {
-    const result = await sendAgencyOomaSms({
+    const result = await sendSmsMessage({
       agencyId: job.agencyId,
       to: job.recipient.phone,
       body: [job.notification.title, job.notification.body].filter(Boolean).join(": ").slice(0, 1200),

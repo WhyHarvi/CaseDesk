@@ -475,6 +475,42 @@ export async function resetCreditCursor(agencyId, caseInvoiceId, newBalance) {
   });
 }
 
+// Re-freezes the incentive snapshots of a case's open, never-credited
+// invoices with the CURRENT holders. Used when a case's required team
+// (RCIC/Case Worker) is first assigned or changed AFTER its invoices were
+// created — an invoice created before the team existed froze with empty
+// role shares, so its future collections would never credit the people who
+// actually own the case (the "RCIC isn't getting his check" gap). Only
+// invoices that still carry a balance and have never had a credit are
+// touched, so already-collected money is never re-attributed — "only
+// future collections qualify", the same rule applyPlanToLegacyInvoices
+// uses. Best-effort at every call site: a failure here must never break
+// the team assignment it's reacting to.
+export async function refreshOpenInvoiceSnapshots(agencyId, caseId, db = prisma) {
+  const invoices = await db.caseInvoice.findMany({
+    where: {
+      agencyId,
+      caseId,
+      balance: { gt: 0 },
+      status: { notIn: ["Void", "Voided"] },
+      incentiveLedgerEntries: { none: {} },
+    },
+    select: { id: true, case: { select: { caseType: true } } },
+  });
+  let refreshed = 0;
+  for (const invoice of invoices) {
+    const snapshot = await buildInvoiceIncentiveSnapshot(agencyId, caseId, invoice.case.caseType);
+    if (!snapshot?.incentivePlanId) continue;
+    await db.caseInvoiceIncentiveSnapshot.upsert({
+      where: { caseInvoiceId: invoice.id },
+      create: { ...snapshot, caseInvoiceId: invoice.id },
+      update: snapshot,
+    });
+    refreshed += 1;
+  }
+  return refreshed;
+}
+
 let retryTimer = null;
 
 export async function backfillMissingInvoiceSnapshots(limit = 100) {

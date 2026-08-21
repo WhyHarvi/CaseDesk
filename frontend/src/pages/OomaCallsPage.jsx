@@ -218,8 +218,7 @@ function CallDrawer({ call, staff, onClose, onChanged }) {
   );
 }
 
-export default function OomaCallsPage() {
-  const { role } = useAuth();
+export function CallHistorySection() {
   const { acknowledgeDestination } = useNotifications();
   const [params, setParams] = useSearchParams();
   const [calls, setCalls] = useState([]);
@@ -298,12 +297,7 @@ export default function OomaCallsPage() {
   }
 
   return (
-    <section className="space-y-6 pb-10">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-sky-600"><PhoneCall className="h-4 w-4" />Ooma workspace</div><h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Call inbox</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Incoming, outgoing, missed, and completed calls from Ooma. Unknown numbers stay here until staff link them, create a lead, or mark them as spam.</p></div>
-        <div className="flex gap-2">{role === "admin" ? <Link to="/app/settings?section=agency-phone" className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50">Zapier setup</Link> : null}<button type="button" disabled={loading} onClick={() => load()} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button></div>
-      </header>
-
+    <section className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-3">
         <div className={`${panel} p-4`}><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total in view</p><p className="mt-2 text-2xl font-semibold text-slate-950">{meta.total || 0}</p></div>
         <button type="button" onClick={() => update({ view: "unresolved" })} className={`${panel} p-4 text-left transition hover:border-amber-200 hover:bg-amber-50/30`}><p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Needs matching</p><p className="mt-2 text-2xl font-semibold text-slate-950">{meta.unresolved || 0}</p></button>
@@ -313,7 +307,7 @@ export default function OomaCallsPage() {
       <div className={panel}>
         <div className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" onClick={() => update({ view: value === "all" ? "" : value })} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${view === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>)}</div>
-          <div className="relative w-full lg:max-w-sm"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") update({ search: searchDraft.trim() }); }} className={`${input} pl-9 pr-20`} placeholder="Search calls" /><button type="button" onClick={() => update({ search: searchDraft.trim() })} className="absolute right-1.5 top-1.5 h-7 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white">Search</button></div>
+          <div className="flex items-center gap-2"><button type="button" disabled={loading} onClick={() => load()} className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50" aria-label="Refresh call history"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button><div className="relative w-full lg:max-w-sm"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") update({ search: searchDraft.trim() }); }} className={`${input} pl-9 pr-20`} placeholder="Search calls" /><button type="button" onClick={() => update({ search: searchDraft.trim() })} className="absolute right-1.5 top-1.5 h-7 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white">Search</button></div></div>
         </div>
 
         {error ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}<button type="button" onClick={() => load()} className="ml-2 font-semibold underline">Try again</button></div> : null}
@@ -332,3 +326,5 @@ export default function OomaCallsPage() {
     </section>
   );
 }
+
+export default CallHistorySection;

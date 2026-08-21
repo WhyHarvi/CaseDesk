@@ -1,6 +1,6 @@
 import prisma from "./prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { bookingPublicOrigin } from "./bookingPublicLinkService.js";
 import { logger } from "./logger.js";
 import { recordAppointmentEvent } from "./appointmentOperationsService.js";
@@ -118,7 +118,7 @@ async function emailQuestionnaire(appointment, contact, intakeUrl) {
 
 async function smsQuestionnaire(appointment, contact, intakeUrl, deliveryKey) {
   if (!contact.phone) return { status: "skipped", reason: "No phone number" };
-  const result = await sendAgencyOomaSms({
+  const result = await sendSmsMessage({
     agencyId: appointment.agencyId,
     to: contact.phone,
     body: `${workspaceName(appointment)}: Please complete your pre-consultation immigration questionnaire before your appointment: ${intakeUrl}`,

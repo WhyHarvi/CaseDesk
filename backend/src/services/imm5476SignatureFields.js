@@ -26,10 +26,41 @@ export function signatureAnnotation(strokes, { pageIndex, rect }, user) {
   const [left, bottom, right, top] = rect;
   const paddingX = 8;
   const paddingY = 4;
-  const height = Math.max(1, top - bottom - paddingY * 2);
-  const width = Math.min(Math.max(1, right - left - paddingX * 2), height * 3);
-  const containedLeft = left + (right - left - width) / 2;
-  const points = strokes.map((stroke) => stroke.flatMap(([x, y]) => [containedLeft + x * width, top - paddingY - y * height]));
+  const boxWidth = Math.max(1, right - left - paddingX * 2);
+  const boxHeight = Math.max(1, top - bottom - paddingY * 2);
+
+  // Crop to what was actually drawn, then stretch that to fill most (not
+  // all) of the available line, on both axes independently. The signature
+  // pad captures at a roughly 3:1 proportion, but this line is much flatter
+  // than that (~17:1) — preserving the pad's proportions left the signature
+  // constrained by the line's short height, squeezed down well below the
+  // line's actual width; filling both axes edge to edge instead made every
+  // signature blow up to the same box-filling size regardless of what was
+  // drawn. Targeting a fill fraction below 1 keeps a natural-looking margin
+  // and stops the annotation from touching the line's edges.
+  const fillFraction = 0.8;
+  const targetWidth = boxWidth * fillFraction;
+  const targetHeight = boxHeight * fillFraction;
+  const containedLeft = left + paddingX + (boxWidth - targetWidth) / 2;
+  const containedTop = top - paddingY - (boxHeight - targetHeight) / 2;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) {
+    for (const [x, y] of stroke) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  const drawnWidth = Math.max(maxX - minX, 0.02);
+  const drawnHeight = Math.max(maxY - minY, 0.02);
+  const scaleX = targetWidth / drawnWidth;
+  const scaleY = targetHeight / drawnHeight;
+  const points = strokes.map((stroke) => stroke.flatMap(([x, y]) => [containedLeft + (x - minX) * scaleX, containedTop - (y - minY) * scaleY]));
   const lines = points.map((stroke) => {
     const line = [];
     for (let index = 0; index < stroke.length; index += 2) {

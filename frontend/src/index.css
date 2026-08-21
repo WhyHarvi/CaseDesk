@@ -264,6 +264,12 @@ input {
   to { background-position: -200% center; }
 }
 
+/* ---------- Call center dialpad ---------- */
+@keyframes dialpop {
+  from { transform: scale(1.045); filter: brightness(1.25); }
+  to { transform: scale(1); filter: brightness(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

@@ -1,6 +1,6 @@
 import prisma from "../../services/prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../../services/agencyMailService.js";
-import { sendAgencyOomaSms } from "../../services/agencyOomaService.js";
+import { sendSmsMessage } from "../../services/communicationProviderService.js";
 import { publicBookingPageUrl } from "../../services/bookingPublicLinkService.js";
 import { logger } from "../../services/logger.js";
 
@@ -30,7 +30,7 @@ function escapeHtml(value) {
 export async function sendLeadWelcomeEmail(agencyId, lead, dependencies = {}) {
   if (!lead?.email && !lead?.phone) return;
   const db = dependencies.db || prisma;
-  const sendSms = dependencies.sendSms || sendAgencyOomaSms;
+  const sendSms = dependencies.sendSms || sendSmsMessage;
   const resolveMailConfig = dependencies.resolveMailConfig || resolveAgencyMailConfig;
   const makeMailTransport = dependencies.makeMailTransport || createMailTransport;
   const channel = lead.email ? "email" : "sms";

@@ -225,6 +225,38 @@ test("getPipeline keeps its existing per-case aggregate fields and additionally 
   assert.match(fnBody, /myShares: mine\.map\(\(entry\) => \(\{ roleNameSnapshot: entry\.roleNameSnapshot, attributionKind: entry\.attributionKind, sharePercentApplied: entry\.sharePercentApplied, amount: entry\.amount \}\)\),/);
 });
 
+test("a case-team change re-freezes open never-credited invoice snapshots with the current holders — the RCIC gap fix", async () => {
+  const [service, teamController, requiredTeamService] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/controllers/caseTeamController.js"),
+    source("../src/services/caseRequiredTeamService.js"),
+  ]);
+
+  // The re-snapshot helper: only invoices that still owe money, aren't
+  // void, and have never had a credit are touched — already-collected
+  // money is never re-attributed ("only future collections qualify").
+  const fnStart = service.indexOf("export async function refreshOpenInvoiceSnapshots(");
+  const fnBody = service.slice(fnStart, service.indexOf("\n}\n", fnStart));
+  assert.match(fnBody, /balance: \{ gt: 0 \}/);
+  assert.match(fnBody, /status: \{ notIn: \["Void", "Voided"\] \}/);
+  assert.match(fnBody, /incentiveLedgerEntries: \{ none: \{\} \}/);
+  // Rebuilds the snapshot from current holders and freezes it back.
+  assert.match(fnBody, /buildInvoiceIncentiveSnapshot\(agencyId, caseId, invoice\.case\.caseType\)/);
+  assert.match(fnBody, /caseInvoiceIncentiveSnapshot\.upsert/);
+
+  // Wired into both team-assignment paths, best-effort — a snapshot
+  // refresh failure must never break the team assignment it reacts to.
+  const updateStart = teamController.indexOf("export async function updateCaseCollaboration(");
+  const updateBody = teamController.slice(updateStart, teamController.indexOf("\n}\n", updateStart));
+  assert.match(updateBody, /refreshOpenInvoiceSnapshots\(agencyId, caseId\)/);
+  assert.match(updateBody, /logger\.warn\("incentive\.snapshot_refresh_failed"/);
+
+  const backfillStart = requiredTeamService.indexOf("export async function backfillRequiredCaseTeams(");
+  const backfillBody = requiredTeamService.slice(backfillStart, requiredTeamService.indexOf("\n}\n", backfillStart));
+  assert.match(backfillBody, /refreshOpenInvoiceSnapshots\(agencyId, item\.caseId, db\)/);
+  assert.match(backfillBody, /logger\.warn\("incentive\.snapshot_refresh_failed"/);
+});
+
 test("incentive read APIs scope self-vs-admin correctly and are mounted behind the incentives portal page", async () => {
   const [controller, server] = await Promise.all([
     source("../src/controllers/incentiveLedgerController.js"),

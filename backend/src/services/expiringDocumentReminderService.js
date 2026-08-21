@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { adminRecipientIds, clientRecipientIds, internalCaseRecipientIds, notifyUsers } from "./notificationService.js";
 import { logger } from "./logger.js";
 
@@ -299,7 +299,7 @@ async function deliverExpiryReminder({ policy, delivery, record, agencyName, now
   }
   if (policy.notifyClient && policy.smsEnabled && record.client.phone) {
     try {
-      await sendAgencyOomaSms({
+      await sendSmsMessage({
         agencyId: policy.agencyId,
         to: record.client.phone,
         body: fillTemplate(policy.smsTemplate, values).slice(0, 500),

@@ -30,6 +30,7 @@ import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPa
 import PersonalMailboxSettingsPanel from "../components/settings/PersonalMailboxSettingsPanel";
 import AgencyProfilePanel from "../components/settings/AgencyProfilePanel";
 import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPanel";
+import AgencyTwilioSettingsPanel from "../components/settings/AgencyTwilioSettingsPanel";
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
 import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
 import SchedulingSettingsPanel from "../components/booking/SchedulingSettingsPanel";
@@ -95,7 +96,7 @@ const adminSettingsItems = [
     label: "Phone & SMS",
     icon: PhoneCall,
     title: "Workspace Phone & SMS",
-    subtitle: "Connect Ooma Enterprise for client calls and text messages.",
+    subtitle: "Connect Twilio or Ooma Enterprise for client calls and text messages.",
   },
   {
     id: "communication-controls",
@@ -1034,7 +1035,10 @@ export default function Settings() {
                   ) : activeSection === "agency-email" ? (
                     <AgencyMailSettingsPanel />
                   ) : activeSection === "agency-phone" ? (
-                    <AgencyOomaSettingsPanel />
+                    <div className="space-y-6">
+                      <AgencyTwilioSettingsPanel />
+                      <AgencyOomaSettingsPanel />
+                    </div>
                   ) : activeSection === "communication-controls" ? (
                     <CommunicationSettingsPanel />
                   ) : activeSection === "notifications" ? (

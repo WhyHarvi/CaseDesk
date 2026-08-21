@@ -9,7 +9,7 @@ import { normalizeDocumentName } from "../../utils/documentNames.js";
 import { AVATAR_BUCKET, downloadStorageFile } from "../../services/supabaseStorage.js";
 import { renderRetainerDocumentHtml, wrapRetainerDocument } from "./retainerDocumentTemplate.js";
 import { sendAccountAccessEmail } from "../../services/accountAccessMailService.js";
-import { sendAgencyOomaSms } from "../../services/agencyOomaService.js";
+import { sendSmsMessage } from "../../services/communicationProviderService.js";
 import { publicRetainerSignUrl } from "../../services/bookingPublicLinkService.js";
 import { isFeatureEnabled } from "../../services/featureFlags.js";
 
@@ -48,7 +48,7 @@ async function agencyLogoDataUri(agency) {
 // against a mocked db without actually writing to storage or sending mail —
 // the same db-injection convention the rest of lead.service.js uses,
 // widened here to cover this function's non-Prisma side effects too.
-export async function ensureRetainerClientForLead(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendAgencyOomaSms, fetchLogo = agencyLogoDataUri } = {}) {
+export async function ensureRetainerClientForLead(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendSmsMessage, fetchLogo = agencyLogoDataUri } = {}) {
   if (!appointment?.leadId) return null;
   const lead = await db.lead.findUnique({ where: { id: appointment.leadId } });
   if (!lead || lead.status !== "OPEN" || lead.earlyClientId) return null;
@@ -194,7 +194,7 @@ export async function ensureRetainerClientForLead(appointment, { db = prisma, wr
 // file. This creates just the Case (the client already exists) and sends
 // the same document through the same signing flow. Idempotent: a client
 // that already has an open case is left alone.
-export async function ensureRetainerCaseForClient(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendAgencyOomaSms, fetchLogo = agencyLogoDataUri } = {}) {
+export async function ensureRetainerCaseForClient(appointment, { db = prisma, writeFile = writeDocumentFile, sendEmail = sendAccountAccessEmail, sendSms = sendSmsMessage, fetchLogo = agencyLogoDataUri } = {}) {
   if (!appointment?.clientId) return null;
   const client = await db.client.findUnique({ where: { id: appointment.clientId } });
   // Inactive/Closed reflects a real past decision to stop working with this

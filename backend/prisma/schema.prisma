@@ -677,6 +677,8 @@ model Agency {
   oomaSettings                    AgencyOomaSettings?
   oomaCallSessions                OomaCallSession[]
   oomaCallEvents                  OomaCallEvent[]
+  twilioSettings                  AgencyTwilioSettings?
+  twilioVoiceLines                AgencyTwilioVoiceLine[]
   accountStatements               AccountStatementGeneration[]
   leadSequence                    AgencyLeadSequence?
   clientSequence                  AgencyClientSequence?
@@ -1651,10 +1653,71 @@ model AgencyOomaSettings {
   @@map("agency_ooma_settings")
 }
 
+// One Twilio phone number configured for voice, with its inbound routing
+// rule. A call to a FRONTDESK line rings only frontdesk staff; STAFF/INTERNAL
+// lines ring everyone. The INTERNAL line is the office line staff dial to
+// reach each other and the number transfers ring from.
+model AgencyTwilioVoiceLine {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  numberSid   String   @unique @map("number_sid")
+  phoneNumber String   @map("phone_number")
+  label       String   @default("Line") @map("label")
+  routing     String   @default("STAFF") @map("routing")
+  enabled     Boolean  @default(true) @map("enabled")
+  isPrimary   Boolean  @default(false) @map("is_primary")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("agency_twilio_voice_line")
+}
+
+model AgencyTwilioSettings {
+  id                  String    @id @default(uuid())
+  agencyId            String    @unique @map("agency_id")
+  accountSid          String?   @map("account_sid")
+  authTokenEncrypted  String?   @map("auth_token_encrypted")
+  fromNumber          String?   @map("from_number")
+  messagingServiceSid String?   @map("messaging_service_sid")
+  // Twilio Voice — browser softphone. The API Key (SID + Secret) signs the
+  // Access Tokens the Voice SDK needs; the secret is encrypted like the
+  // Auth Token. voiceNumber is the number calls are placed FROM (falls back
+  // to fromNumber) and twimlAppSid is the TwiML Application that carries
+  // outbound calls to CaseDesk's TwiML handler (provisioned automatically).
+  apiKeySid            String?   @map("api_key_sid")
+  apiKeySecretEncrypted String?  @map("api_key_secret_encrypted")
+  callsEnabled         Boolean   @default(false) @map("calls_enabled")
+  voiceNumber          String?   @map("voice_number")
+  twimlAppSid          String?   @map("twiml_app_sid")
+  lastCallTestedAt     DateTime? @map("last_call_tested_at")
+  lastCallTestStatus   String?   @map("last_call_test_status")
+  lastCallTestMessage  String?   @map("last_call_test_message")
+  enabled             Boolean   @default(true)
+  smsEnabled          Boolean   @default(true) @map("sms_enabled")
+  lastVerifiedAt      DateTime? @map("last_verified_at")
+  lastVerifiedStatus  String?   @map("last_verified_status")
+  lastVerifiedMessage String?   @map("last_verified_message")
+  lastSmsTestedAt     DateTime? @map("last_sms_tested_at")
+  lastSmsTestStatus   String?   @map("last_sms_test_status")
+  lastSmsTestMessage  String?   @map("last_sms_test_message")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  agency              Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@map("agency_twilio_settings")
+}
+
 model OomaCallSession {
   id                     String          @id @default(uuid())
   agencyId               String          @map("agency_id")
   providerCallId         String          @map("provider_call_id")
+  // Which provider produced this session — "OOMA" (legacy, via Zapier) or
+  // "TWILIO" (browser softphone + status callbacks + API sync). Both share
+  // one inbox, so old Ooma history and new Twilio calls live together.
+  provider               String          @default("OOMA")
   direction              String
   status                 String
   remoteNumber           String?         @map("remote_number")
@@ -1724,6 +1787,11 @@ model User {
   agencyId                             String                          @map("agency_id")
   authUserId                           String?                         @unique @map("auth_user_id") @db.Uuid
   fullName                             String                          @map("full_name")
+  // Optional, more reliable split than guessing from fullName — used
+  // preferentially on government forms (IMM 5476 and similar) when set. See
+  // Client.familyName/givenNames for the same pattern on the applicant side.
+  firstName                            String?                         @map("first_name")
+  lastName                             String?                         @map("last_name")
   email                                String                          @unique
   role                                 UserRole
   status                               AccountStatus                   @default(active)

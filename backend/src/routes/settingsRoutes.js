@@ -16,6 +16,13 @@ import {
   testOomaSms,
   testZapierOutboundSms,
 } from "../controllers/oomaSettingsController.js";
+import {
+  deleteTwilioSettings,
+  getTwilioSettings,
+  saveTwilioSettings,
+  testTwilioSms,
+  verifyTwilioCredentials,
+} from "../controllers/twilioSettingsController.js";
 import { deleteAgencyAvatar, getAgencyAvatar, getAgencyProfile, updateAgencyProfile } from "../controllers/agencyProfileController.js";
 import { receiveProfileAvatar } from "../middleware/profileAvatarUpload.js";
 import { rateLimit } from "../middleware/rateLimit.js";
@@ -47,6 +54,11 @@ router.put("/ooma/zapier-outbound", asyncHandler(saveZapierOutboundWebhook));
 router.post("/ooma/zapier-outbound/test-sms", rateLimit({ windowMs: 60_000, max: 5 }), asyncHandler(testZapierOutboundSms));
 router.delete("/ooma/zapier-outbound", asyncHandler(deleteZapierOutboundWebhook));
 router.delete("/ooma", asyncHandler(deleteOomaSettings));
+router.get("/twilio", asyncHandler(getTwilioSettings));
+router.put("/twilio", asyncHandler(saveTwilioSettings));
+router.post("/twilio/verify", asyncHandler(verifyTwilioCredentials));
+router.post("/twilio/test-sms", rateLimit({ windowMs: 60_000, max: 5 }), asyncHandler(testTwilioSms));
+router.delete("/twilio", asyncHandler(deleteTwilioSettings));
 router.get("/automated-reminders", asyncHandler(getAutomatedReminderSettings));
 router.patch("/automated-reminders/:kind", rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(updateAutomatedReminderPolicy));
 router.post("/automated-reminders/:kind/preview", rateLimit({ windowMs: 60_000, max: 60 }), asyncHandler(previewAutomatedReminderPolicy));

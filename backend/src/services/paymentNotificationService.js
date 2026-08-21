@@ -1,7 +1,7 @@
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { createMailTransport, resolveAgencyMailConfig } from "./agencyMailService.js";
-import { sendAgencyOomaSms } from "./agencyOomaService.js";
+import { sendSmsMessage } from "./communicationProviderService.js";
 import { adminRecipientIds, caseNotificationActionUrl, notifyUsers } from "./notificationService.js";
 
 function frontendBase() {
@@ -96,7 +96,7 @@ async function notifyClientPaymentDue({ agencyId, clientId, caseId, caseInvoiceI
   if (notifyBySms && client.phone) {
     try {
       const body = fillTemplate(settings?.smsTemplate || DEFAULT_SMS, values).slice(0, 320);
-      await sendAgencyOomaSms({ agencyId, to: client.phone, body, idempotencyKey: `${dedupeKey}:sms` });
+      await sendSmsMessage({ agencyId, to: client.phone, body, idempotencyKey: `${dedupeKey}:sms` });
     } catch (error) {
       logger.warn("payment_notification.sms_skipped", { agencyId, caseInvoiceId, reason: error.message });
     }

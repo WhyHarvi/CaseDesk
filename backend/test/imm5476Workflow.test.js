@@ -13,6 +13,37 @@ test("IMM 5476 appointment mapping forces the A/B/E purpose and respects the IRC
   assert.match(mapping, /"102R": false, "101R": false, "100R": false, "97R": true, "96R": false, "95R": false/);
 });
 
+test("representatives with a saved legal first/last name skip the guess-from-full-name fallback on IMM 5476", async () => {
+  const [schema, mapping, fillService, formController, fieldController, adminController, profileController] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../../frontend/src/components/case-profile/formFieldMappings/imm5476.js"),
+    source("../src/services/caseFormFillService.js"),
+    source("../src/controllers/caseFormController.js"),
+    source("../src/controllers/caseFormFieldController.js"),
+    source("../src/controllers/adminTeamMemberController.js"),
+    source("../src/controllers/formSignatureProfileController.js"),
+  ]);
+  assert.match(schema, /firstName\s+String\?\s+@map\("first_name"\)/);
+  assert.match(schema, /lastName\s+String\?\s+@map\("last_name"\)/);
+  // The mapping passes explicit familyName/givenNames through to
+  // normalizeIrccName the same way it already does for the applicant —
+  // "explicit beats guessed" is only ever bypassed when both are empty.
+  assert.match(mapping, /familyName: representative\.lastName,\s*\n\s*givenNames: representative\.firstName,\s*\n\s*fullName: representative\.fullName,/);
+  // Every select that feeds a representative onto a form carries the fields.
+  assert.match(fillService, /const representativeSelect = \{ fullName: true, firstName: true, lastName: true,/);
+  assert.match(formController, /const representativeUserSelect = \{ id: true, fullName: true, firstName: true, lastName: true,/);
+  assert.match(fieldController, /fullName: true,\s*\n\s*firstName: true,\s*\n\s*lastName: true,/);
+  // The backend's own auto-stamp path (serveCaseFormFile) prefers the
+  // explicit last name too, only guessing from fullName when it's blank.
+  assert.match(formController, /const representativeLastName = String\(representative\?\.lastName \|\| ""\)\.trim\(\)/);
+  assert.match(formController, /const representativeFamilyName = representativeLastName \|\|/);
+  // Both places that can set these fields save them: admin-managed team
+  // members, and a representative's own self-service profile.
+  assert.match(adminController, /firstName: optionalText\(body\.firstName, 80\)/);
+  assert.match(adminController, /firstName: input\.firstName,\s*\n\s*lastName: input\.lastName,/);
+  assert.match(profileController, /firstName: clean\(req\.body\?\.firstName, 80\)/);
+});
+
 test("IMM 5476 fills a separate country code and punctuation-free full telephone number", async () => {
   const mapping = await source("../../frontend/src/components/case-profile/formFieldMappings/imm5476.js");
   assert.match(mapping, /"80R": phone\.countryCode/);
@@ -64,21 +95,23 @@ test("opening IMM 5476 applies the selected representative's saved signature and
     source("../src/controllers/caseFormController.js"),
     source("../src/services/pdfFormRenderService.js"),
   ]);
-  assert.match(controller, /representativeUser: \{ select: \{ fullName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
+  assert.match(controller, /representativeUser: \{ select: \{ fullName: true, firstName: true, lastName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true \} \}/);
   assert.match(controller, /stampXfaPdfFormValues\([\s\S]*preparedBuffer,[\s\S]*"547R": true/);
   assert.match(renderer, /const alreadySigned = annotations\.some/);
   assert.match(renderer, /const signedDate = existingDate \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/);
   assert.match(renderer, /if \(!alreadySigned\)/);
 });
 
-test("IMM 5476 contains signatures at their natural aspect ratio and retraces legacy uploaded images", async () => {
+test("IMM 5476 crops signatures to their drawn ink and stretches that to fill most (not all) of the signature line, and retraces legacy uploaded images", async () => {
   const [fields, tracer, controller] = await Promise.all([
     source("../src/services/imm5476SignatureFields.js"),
     source("../src/services/signatureImageTrace.js"),
     source("../src/controllers/caseFormController.js"),
   ]);
-  assert.match(fields, /width = Math\.min\([\s\S]*height \* 3\)/);
-  assert.match(fields, /const containedLeft = left \+ \(right - left - width\) \/ 2/);
+  assert.match(fields, /const fillFraction = 0\.8/);
+  assert.match(fields, /const scaleX = targetWidth \/ drawnWidth/);
+  assert.match(fields, /const scaleY = targetHeight \/ drawnHeight/);
+  assert.match(fields, /const containedLeft = left \+ paddingX \+ \(boxWidth - targetWidth\) \/ 2/);
   assert.match(tracer, /const normalizedInkAspect = \(inkWidth \/ inkHeight\) \/ 3/);
   assert.match(tracer, /export function isTracedImageSignature/);
   assert.match(controller, /isTracedImageSignature\(representative\.formSignatureStrokes\)/);
@@ -108,6 +141,19 @@ test("changing representatives removes a prior representative's embedded signatu
   assert.match(controller, /rebuildImm5476FromOriginal\(storedBuffer, originalBuffer\)/);
   assert.match(renderer, /field\.id === REPRESENTATIVE_SIGNATURE\.dateFieldId \|\| field\.id === APPLICANT_SIGNATURE\.dateFieldId/);
   assert.match(renderer, /originalDocument\.annotationStorage\.setValue\(field\.id, \{ value \}\)/);
+});
+
+test("a client-signed or finalized IMM 5476 is served exactly as stored, even after the representative changes", async () => {
+  const controller = await source("../src/controllers/caseFormController.js");
+  assert.match(controller, /currentCopyType: true/);
+  assert.match(controller, /const isSignedCopy = data\.currentCopyType === "ClientSigned" \|\| data\.currentCopyType === "Finalized"/);
+  // The representative-refresh rebuild and re-stamp must both be gated off
+  // once a client has signed — an applicant's ink signature is a PDF
+  // annotation, not a field value, so rebuilding from the blank original or
+  // re-stamping a different representative's info over it would silently
+  // discard or misrepresent a signature the client already gave.
+  assert.match(controller, /if \(isImm5476 && !isSignedCopy\) \{\s*\n\s*const embeddedSigner/);
+  assert.match(controller, /const buffer = isImm5476 && !isSignedCopy\s*\n\s*\? await stampXfaPdfFormValues/);
 });
 
 test("preparing IMM 5476 fills the date beside both representative and client signatures", async () => {

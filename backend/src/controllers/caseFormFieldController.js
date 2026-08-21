@@ -10,6 +10,8 @@ import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 const representativeUserSelect = {
   id: true,
   fullName: true,
+  firstName: true,
+  lastName: true,
   email: true,
   phone: true,
   licenseNumber: true,
@@ -104,7 +106,7 @@ export async function listRepresentativeOptions(req, res) {
       status: "active",
       licenseNumber: { not: null },
     },
-    select: { id: true, fullName: true, role: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
+    select: { id: true, fullName: true, firstName: true, lastName: true, role: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true, formSignatureImage: true, formSignatureStrokes: true, formSignatureUpdatedAt: true },
     orderBy: { fullName: "asc" },
   });
   res.json({

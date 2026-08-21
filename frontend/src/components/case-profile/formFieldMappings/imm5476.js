@@ -37,7 +37,11 @@ export default {
     });
 
     const representative = ctx.representative || {};
-    const representativeName = normalizeIrccName({ fullName: representative.fullName });
+    const representativeName = normalizeIrccName({
+      familyName: representative.lastName,
+      givenNames: representative.firstName,
+      fullName: representative.fullName,
+    });
 
     const agency = ctx.agency || {};
     const street = splitStreetAddress(agency.address);

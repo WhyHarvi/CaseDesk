@@ -567,7 +567,7 @@ test("waitlist offers are revalidated and serialized with new bookings", async (
   assert.match(waitlistService, /availabilityForRange\(/);
   assert.match(waitlistService, /lockSchedulingTransaction\(tx, appointment\.agencyId/);
   assert.match(waitlistService, /assertSlotAvailable\(tx/);
-  assert.match(waitlistService, /sendAgencyOomaSms\(/);
+  assert.match(waitlistService, /sendSmsMessage\(/);
   assert.match(waitlistService, /if \(!emailDelivered && !smsDelivered\)/);
   assert.match(
     waitlistService,

@@ -1,6 +1,6 @@
 import prisma from "../../services/prisma/client.js";
 import { createMailTransport, resolveAgencyMailConfig } from "../../services/agencyMailService.js";
-import { sendAgencyOomaSms } from "../../services/agencyOomaService.js";
+import { sendSmsMessage } from "../../services/communicationProviderService.js";
 import { publicBookingPageUrl } from "../../services/bookingPublicLinkService.js";
 import { logger } from "../../services/logger.js";
 
@@ -153,7 +153,7 @@ async function deliverPrepared({ db, delivery, lead, agency, content, bookingUrl
 export async function sendStaleLeadOutreach(settings, lead, dependencies = {}) {
   const db = dependencies.db || prisma;
   const now = dependencies.now || new Date();
-  const sendSms = dependencies.sendSms || sendAgencyOomaSms;
+  const sendSms = dependencies.sendSms || sendSmsMessage;
   const resolveMailConfig = dependencies.resolveMailConfig || resolveAgencyMailConfig;
   const makeMailTransport = dependencies.makeMailTransport || createMailTransport;
   const stillEligible = await db.lead.findFirst({ where: { ...staleLeadWhere(settings, now), id: lead.id }, select: { id: true } });
@@ -229,7 +229,7 @@ async function resumePendingStaleOutreach(db, now, agencyId = null) {
     }
     const generated = staleOutreachContent({ agencyName: agency.legalName || agency.name || "Our team", firstName: lead.firstName, bookingUrl });
     const content = { ...generated, subject: delivery.subject || generated.subject, text: delivery.channel === "email" ? delivery.body || generated.text : generated.text, sms: delivery.channel === "sms" ? delivery.body || generated.sms : generated.sms };
-    const result = await deliverPrepared({ db, delivery, lead, agency, content, bookingUrl, sendSms: sendAgencyOomaSms, resolveMailConfig: resolveAgencyMailConfig, makeMailTransport: createMailTransport });
+    const result = await deliverPrepared({ db, delivery, lead, agency, content, bookingUrl, sendSms: sendSmsMessage, resolveMailConfig: resolveAgencyMailConfig, makeMailTransport: createMailTransport });
     if (result?.status === "sent") sent += 1;
     else if (result?.status === "failed") failed += 1;
     else skipped += 1;

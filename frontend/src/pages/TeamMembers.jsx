@@ -58,6 +58,8 @@ function apiError(reason, fallback) {
 const emptyForm = {
   role: "consultant",
   fullName: "",
+  firstName: "",
+  lastName: "",
   email: "",
   phone: "",
   jobTitle: "",
@@ -78,6 +80,8 @@ function formFromMember(member) {
   return {
     role: member.role,
     fullName: member.fullName || "",
+    firstName: member.firstName || "",
+    lastName: member.lastName || "",
     email: member.email || "",
     phone: member.phone || "",
     jobTitle: member.jobTitle || "",
@@ -98,6 +102,8 @@ function memberPayload(form, { creating = false } = {}) {
   return {
     role: form.role,
     fullName: form.fullName,
+    firstName: form.firstName,
+    lastName: form.lastName,
     ...(creating ? { email: form.email } : {}),
     phone: form.phone,
     jobTitle: form.jobTitle,
@@ -135,6 +141,12 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
           <input className={fieldClass} value={form.fullName} onChange={update("fullName")} autoComplete="name" required />
         </FormField>
       </div>
+      <FormField label="Legal first name" hint="Optional — used on government forms instead of guessing from full name">
+        <input className={fieldClass} value={form.firstName} onChange={update("firstName")} autoComplete="given-name" />
+      </FormField>
+      <FormField label="Legal last name" hint="Optional — used on government forms instead of guessing from full name">
+        <input className={fieldClass} value={form.lastName} onChange={update("lastName")} autoComplete="family-name" />
+      </FormField>
       <div className="sm:col-span-2">
         <FormField label="Work email">
           <input className={fieldClass} value={form.email} onChange={update("email")} type="email" autoComplete="email" required disabled={!creating} />

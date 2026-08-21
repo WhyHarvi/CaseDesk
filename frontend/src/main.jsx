@@ -8,6 +8,7 @@ import faviconPng from "./assets/favicon_logo.png";
 import { AuthProvider } from "./auth/AuthContext";
 import { NotificationProvider } from "./components/notifications/NotificationProvider";
 import NotificationPanel from "./components/notifications/NotificationPanel";
+import { SoftphoneProvider } from "./components/calls/SoftphoneProvider";
 import CaseLifecycleModal from "./components/cases/CaseLifecycleModal";
 import RequiredCaseTeamModal from "./components/cases/RequiredCaseTeamModal";
 import { queryClient } from "./services/queryClient";
@@ -81,10 +82,12 @@ function AppShell() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <NotificationProvider>
-            <RoutedApplication />
-            <NotificationPanel />
-            <CaseLifecycleModal />
-            <RequiredCaseTeamModal />
+            <SoftphoneProvider>
+              <RoutedApplication />
+              <NotificationPanel />
+              <CaseLifecycleModal />
+              <RequiredCaseTeamModal />
+            </SoftphoneProvider>
           </NotificationProvider>
         </AuthProvider>
       </QueryClientProvider>

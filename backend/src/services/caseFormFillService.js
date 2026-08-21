@@ -2,7 +2,7 @@ import prisma from "./prisma/client.js";
 import { resolveSourcePath } from "./formDataSourceRegistry.js";
 import { createHttpError } from "../utils/http.js";
 
-const representativeSelect = { fullName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true };
+const representativeSelect = { fullName: true, firstName: true, lastName: true, email: true, phone: true, licenseNumber: true, representativeType: true, membershipBody: true, membershipProvince: true };
 
 function irccApplicantName(client) {
   if (!client) return client;

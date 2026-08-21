@@ -26,6 +26,8 @@ const managedRoles = new Set(["consultant", "frontdesk"]);
 const teamMemberSelect = {
   id: true,
   fullName: true,
+  firstName: true,
+  lastName: true,
   email: true,
   role: true,
   status: true,
@@ -108,6 +110,10 @@ function memberPayload(body, { creating = false } = {}) {
   return {
     role,
     fullName: requiredText(body.fullName, "Full name"),
+    // Optional — a more reliable name split than guessing from fullName,
+    // used preferentially on government forms (IMM 5476) when set.
+    firstName: optionalText(body.firstName, 80),
+    lastName: optionalText(body.lastName, 80),
     ...(creating
       ? { email: requiredText(body.email, "Email").toLowerCase() }
       : {}),
@@ -279,6 +285,8 @@ export async function createTeamMember(req, res) {
         agencyId: req.auth.agencyId,
         authUserId: authUser.id,
         fullName: input.fullName,
+        firstName: input.firstName,
+        lastName: input.lastName,
         email: input.email,
         role: input.role,
         status: "invited",
@@ -603,6 +611,8 @@ export async function updateTeamMember(req, res) {
       where: { id: existing.id },
       data: {
         fullName: input.fullName,
+        firstName: input.firstName,
+        lastName: input.lastName,
         phone: input.phone,
         jobTitle: input.jobTitle,
         ...(input.avatarPreset ? { avatarPreset: input.avatarPreset } : {}),

@@ -22,7 +22,7 @@ export default function GovernmentFormSignaturePanel() {
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
-  const [profile, setProfile] = useState({ licenseNumber: "", representativeType: "Paid", membershipBody: "College of Immigration and Citizenship Consultants (CICC)", membershipProvince: "", formOfficePhone: "", formOfficeEmail: "" });
+  const [profile, setProfile] = useState({ licenseNumber: "", firstName: "", lastName: "", representativeType: "Paid", membershipBody: "College of Immigration and Citizenship Consultants (CICC)", membershipProvince: "", formOfficePhone: "", formOfficeEmail: "" });
   // The shared agency office contact, shown as placeholder text so it's
   // obvious what appears on the form when these two fields are left blank —
   // every representative gets the same office phone/email by default.
@@ -39,6 +39,8 @@ export default function GovernmentFormSignaturePanel() {
         setData(signatureResponse.data.data);
         setProfile({
           licenseNumber: signatureResponse.data.data.licenseNumber || "",
+          firstName: signatureResponse.data.data.firstName || "",
+          lastName: signatureResponse.data.data.lastName || "",
           representativeType: signatureResponse.data.data.representativeType || "Paid",
           membershipBody: signatureResponse.data.data.membershipBody || "",
           membershipProvince: signatureResponse.data.data.membershipProvince || "",
@@ -70,6 +72,8 @@ export default function GovernmentFormSignaturePanel() {
       setProfile((current) => ({
         ...current,
         licenseNumber: profileResponse.data.data.licenseNumber || "",
+        firstName: profileResponse.data.data.firstName || "",
+        lastName: profileResponse.data.data.lastName || "",
         formOfficePhone: profileResponse.data.data.formOfficePhone || "",
         formOfficeEmail: profileResponse.data.data.formOfficeEmail || "",
       }));
@@ -151,6 +155,8 @@ export default function GovernmentFormSignaturePanel() {
           </div>
           <p className="mt-1 pl-[34px] text-xs leading-5 text-slate-500">CaseDesk fills the IMM 5476 dropdown and representative section from these fields. Fill them in, then draw your signature below — one Save at the bottom covers both.</p>
           <div className="mt-4 grid gap-4 pl-[34px] sm:grid-cols-2">
+            <label className="text-xs font-semibold text-slate-700">Legal first name<span className="ml-1 font-normal text-slate-400">(optional)</span><input value={profile.firstName} onChange={(event) => setProfile((current) => ({ ...current, firstName: event.target.value }))} placeholder="Used on forms instead of guessing from your full name" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-violet-300" /></label>
+            <label className="text-xs font-semibold text-slate-700">Legal last name<span className="ml-1 font-normal text-slate-400">(optional)</span><input value={profile.lastName} onChange={(event) => setProfile((current) => ({ ...current, lastName: event.target.value }))} placeholder="Used on forms instead of guessing from your full name" className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-violet-300" /></label>
             <label className="text-xs font-semibold text-slate-700">Licence / membership ID<input value={profile.licenseNumber} onChange={(event) => setProfile((current) => ({ ...current, licenseNumber: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-violet-300" /></label>
             <label className="text-xs font-semibold text-slate-700">Representative type<select value={profile.representativeType} onChange={(event) => setProfile((current) => ({ ...current, representativeType: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-violet-300"><option>Paid</option><option>Unpaid</option></select></label>
             <label className="text-xs font-semibold text-slate-700">Membership body<input value={profile.membershipBody} onChange={(event) => setProfile((current) => ({ ...current, membershipBody: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-violet-300" /></label>
