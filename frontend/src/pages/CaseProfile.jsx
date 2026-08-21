@@ -1734,6 +1734,21 @@ export default function CaseProfile() {
         <CaseRolesOverlay
           caseItem={caseItem}
           onClose={() => setCaseRolesOverlayOpen(false)}
+          onSaved={(collaboration) => setCaseItem((current) => ({
+            ...current,
+            // RCIC is the primary owner; keep the case summary header's
+            // RCIC/Case Worker badges live without a full reload.
+            assignedUser: collaboration.owner,
+            assignedUserId: collaboration.owner?.id || null,
+            roleAssignments: [
+              collaboration.requiredTeam?.rcic
+                ? { caseRole: { code: "rcic", name: collaboration.requiredTeam.roles?.rcic?.name || "RCIC" }, user: collaboration.requiredTeam.rcic }
+                : null,
+              collaboration.requiredTeam?.caseWorker
+                ? { caseRole: { code: "case-worker", name: collaboration.requiredTeam.roles?.caseWorker?.name || "Case Worker" }, user: collaboration.requiredTeam.caseWorker }
+                : null,
+            ].filter(Boolean),
+          }))}
         />
       ) : null}
 

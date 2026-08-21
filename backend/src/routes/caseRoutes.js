@@ -13,6 +13,7 @@ import {
   updateCaseDocumentAssignment,
 } from "../controllers/caseController.js";
 import {
+  backfillCaseTeams,
   createCaseWithRequiredCollaboration,
   getCaseCollaboration,
   getNewCaseCollaborationOptions,
@@ -91,6 +92,12 @@ router.get("/", asyncHandler(listCases));
 router.get("/case-types", asyncHandler(listCaseTypes));
 router.get("/study-intakes", asyncHandler(listStudyIntakes));
 router.get("/collaboration-options", asyncHandler(getNewCaseCollaborationOptions));
+router.post(
+  "/collaboration-backfill",
+  requireRole("admin"),
+  rateLimit({ windowMs: 60_000, max: 5 }),
+  asyncHandler(backfillCaseTeams),
+);
 router.get(
   "/payment-summaries",
   requirePortalCapability("financialData"),

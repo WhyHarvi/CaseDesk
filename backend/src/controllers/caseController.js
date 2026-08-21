@@ -50,6 +50,17 @@ const include = {
       formOfficeEmail: true,
     },
   },
+  // assignedUser (above) is the RCIC, the case's primary owner. Case Worker
+  // isn't a separate Case column — it's the other required CaseRoleAssignment
+  // — so the case summary header can show both at a glance without a second
+  // round-trip to Collaboration.
+  roleAssignments: {
+    where: { status: "active", caseRole: { code: { in: ["rcic", "case-worker"] } } },
+    select: {
+      caseRole: { select: { code: true, name: true } },
+      user: { select: { id: true, fullName: true } },
+    },
+  },
 };
 
 const fields = {

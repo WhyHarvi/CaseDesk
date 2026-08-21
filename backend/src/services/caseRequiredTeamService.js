@@ -1,6 +1,6 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
-import { ensureRequiredCaseRoles } from "./caseRoleService.js";
+import { ensureRequiredCaseRoles, listCaseRoles, REQUIRED_CASE_ROLE_CODES } from "./caseRoleService.js";
 
 const STAFF_ROLES = ["consultant", "frontdesk"];
 export const CASE_TEAM_ROLE_CODES = { RCIC: "rcic", CASE_WORKER: "case-worker" };
@@ -68,6 +68,17 @@ export async function requiredCaseTeamOptions(agencyId, db = prisma) {
     rcicUsers,
     caseWorkerUsers,
   };
+}
+
+// Optional (non-required) case roles, e.g. Reviewer, restricted the same way
+// RCIC/Case Worker already are: only people already granted that role in
+// Team Members (TeamIncentiveRoleAssignment) are offered as options.
+// Collaboration must never let someone assign a role at the case level that
+// wasn't first set up at the team level.
+export async function optionalCaseRoleOptions(agencyId, db = prisma) {
+  const roles = (await listCaseRoles(agencyId)).filter((role) => !REQUIRED_CASE_ROLE_CODES.has(role.code));
+  const eligibleUsersByRole = await Promise.all(roles.map((role) => eligibleUsersForRole(agencyId, role.id, db)));
+  return roles.map((role, index) => ({ roleId: role.id, users: eligibleUsersByRole[index] }));
 }
 
 export async function validateRequiredCaseTeam(agencyId, values, db = prisma) {
@@ -275,6 +286,107 @@ export async function userCanManageCaseCollaboration({ agencyId, userId, role, c
       : Promise.resolve(null),
   ]);
   return Boolean(globalRcic || caseRcic);
+}
+
+// Every case whose required team isn't complete yet — existing cases from
+// before this requirement existed, or ones an automated/no-review path
+// (bulk Case Easy import, a public booking, etc.) couldn't fully resolve on
+// its own. Batched (all cases + their role assignments in two queries), not
+// N+1, matching resolveHolders'/getPipeline's existing style elsewhere.
+export async function getCasesMissingRequiredTeam(agencyId, db = prisma) {
+  const roles = roleMap(await ensureRequiredCaseRoles(agencyId, db));
+  const rcicRoleId = roles[CASE_TEAM_ROLE_CODES.RCIC].id;
+  const caseWorkerRoleId = roles[CASE_TEAM_ROLE_CODES.CASE_WORKER].id;
+
+  const cases = await db.case.findMany({
+    where: { agencyId, archivedAt: null, deletedAt: null, status: { not: "Closed" } },
+    select: {
+      id: true,
+      caseType: true,
+      assignedUserId: true,
+      client: { select: { fullName: true } },
+      roleAssignments: {
+        where: { status: "active", caseRoleId: { in: [rcicRoleId, caseWorkerRoleId] } },
+        select: { caseRoleId: true, userId: true },
+      },
+    },
+  });
+
+  const results = [];
+  for (const caseItem of cases) {
+    const rcicUserId = caseItem.roleAssignments.find((row) => row.caseRoleId === rcicRoleId)?.userId || null;
+    const caseWorkerUserId = caseItem.roleAssignments.find((row) => row.caseRoleId === caseWorkerRoleId)?.userId || null;
+    if (rcicUserId && caseWorkerUserId) continue;
+    results.push({
+      caseId: caseItem.id,
+      caseType: caseItem.caseType,
+      clientName: caseItem.client?.fullName || null,
+      assignedUserId: caseItem.assignedUserId,
+      rcicUserId,
+      caseWorkerUserId,
+    });
+  }
+  return results;
+}
+
+// Admin-triggered, idempotent — a second run only ever looks at each case's
+// CURRENT coverage, so it fixes nothing new once everything resolves. Same
+// best-effort default rule as everywhere else a required role needs a
+// default: the sole eligible candidate wins; otherwise, if the case
+// already has an assignee who happens to be eligible, use them; otherwise
+// leave it for a human to pick via Collaboration.
+export async function backfillRequiredCaseTeams(agencyId, actorUserId, db = prisma) {
+  const [missing, options] = await Promise.all([
+    getCasesMissingRequiredTeam(agencyId, db),
+    requiredCaseTeamOptions(agencyId, db),
+  ]);
+
+  let fixedCount = 0;
+  const stillNeedsReview = [];
+  for (const item of missing) {
+    let rcicUserId = item.rcicUserId;
+    let caseWorkerUserId = item.caseWorkerUserId;
+
+    if (!rcicUserId) {
+      if (options.rcicUsers.length === 1) rcicUserId = options.rcicUsers[0].id;
+      else if (item.assignedUserId && options.rcicUsers.some((user) => user.id === item.assignedUserId)) rcicUserId = item.assignedUserId;
+    }
+    if (!caseWorkerUserId) {
+      if (options.caseWorkerUsers.length === 1) caseWorkerUserId = options.caseWorkerUsers[0].id;
+      else if (item.assignedUserId && options.caseWorkerUsers.some((user) => user.id === item.assignedUserId)) caseWorkerUserId = item.assignedUserId;
+    }
+
+    if (!rcicUserId || !caseWorkerUserId) {
+      stillNeedsReview.push({
+        caseId: item.caseId,
+        clientName: item.clientName,
+        caseType: item.caseType,
+        missing: [!rcicUserId ? "RCIC" : null, !caseWorkerUserId ? "Case Worker" : null].filter(Boolean),
+      });
+      continue;
+    }
+
+    // Preserve any collaborators the case already has — applyRequiredCaseTeam
+    // replaces the full supporting-collaborator set, so an empty list here
+    // would silently strip anyone already added for unrelated reasons.
+    const existingCollaborators = await db.caseAssignment.findMany({
+      where: { agencyId, caseId: item.caseId, assignmentType: "supporting", status: "active" },
+      select: { consultantUserId: true },
+    });
+
+    await db.$transaction(async (tx) => {
+      await applyRequiredCaseTeam(tx, {
+        agencyId,
+        caseId: item.caseId,
+        rcicUserId,
+        caseWorkerUserId,
+        actorUserId,
+        collaboratorUserIds: existingCollaborators.map((row) => row.consultantUserId),
+      });
+    });
+    fixedCount += 1;
+  }
+  return { fixedCount, stillNeedsReviewCount: stillNeedsReview.length, stillNeedsReview };
 }
 
 export async function cloneRequiredCaseTeam(tx, { agencyId, sourceCaseId, successorCaseId, actorUserId }) {

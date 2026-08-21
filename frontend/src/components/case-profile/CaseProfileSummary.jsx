@@ -21,6 +21,12 @@ import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./
 import { isStudyPermitCaseType } from "../../utils/studyIntake";
 
 export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditClient = true, onContactClient, onEditClient }) {
+  // assignedUser (rendered as "RCIC" below) is the case's primary owner.
+  // Case Worker is the other required role — not a Case column — so it's
+  // read off the same roleAssignments the backend already scopes to just
+  // the two required roles.
+  const caseWorker = caseItem.roleAssignments?.find((row) => row.caseRole?.code === "case-worker")?.user;
+  const sameRcicAndCaseWorker = Boolean(caseItem.assignedUser?.id && caseWorker?.id && caseItem.assignedUser.id === caseWorker.id);
   return (
     <section className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
       <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -49,11 +55,26 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
                     <BriefcaseBusiness className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                     <span className="truncate">{caseItem.caseType || "No case type"}</span>
                   </span>
-                  <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-sky-50 px-2.5 py-1 font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
-                    <UserRound className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-[11px] font-semibold uppercase text-sky-600">RCIC</span>
-                    <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
-                  </span>
+                  {sameRcicAndCaseWorker ? (
+                    <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 font-medium text-indigo-800 ring-1 ring-inset ring-indigo-100">
+                      <UserRound className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-[11px] font-semibold uppercase text-indigo-600">RCIC &amp; Case Worker</span>
+                      <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-sky-50 px-2.5 py-1 font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
+                        <UserRound className="h-3.5 w-3.5 shrink-0" />
+                        <span className="text-[11px] font-semibold uppercase text-sky-600">RCIC</span>
+                        <span className="truncate font-semibold">{caseItem.assignedUser?.fullName || "Unassigned"}</span>
+                      </span>
+                      <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-violet-50 px-2.5 py-1 font-medium text-violet-800 ring-1 ring-inset ring-violet-100">
+                        <UserRound className="h-3.5 w-3.5 shrink-0" />
+                        <span className="text-[11px] font-semibold uppercase text-violet-600">Case Worker</span>
+                        <span className="truncate font-semibold">{caseWorker?.fullName || "Unassigned"}</span>
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

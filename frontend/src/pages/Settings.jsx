@@ -43,6 +43,7 @@ import ActivityLogsSettingsPanel from "../components/settings/ActivityLogsSettin
 import PortalAccessSettingsPanel from "../components/settings/PortalAccessSettingsPanel";
 import GovernmentFormSignaturePanel from "../components/settings/GovernmentFormSignaturePanel";
 import CaseRolesSettingsPanel from "../components/settings/CaseRolesSettingsPanel";
+import CaseTeamBackfillPanel from "../components/settings/CaseTeamBackfillPanel";
 import IncentivePlansSettingsPanel from "../components/settings/IncentivePlansSettingsPanel";
 
 const LeadIntakeSettingsPanel = lazy(
@@ -1053,7 +1054,10 @@ export default function Settings() {
                   ) : isAdmin && activeSection === "document-templates" ? (
                     <DocumentTemplatesSettingsPanel />
                   ) : isAdmin && activeSection === "case-roles" ? (
-                    <CaseRolesSettingsPanel />
+                    <div className="space-y-5">
+                      <CaseRolesSettingsPanel />
+                      <CaseTeamBackfillPanel />
+                    </div>
                   ) : isAdmin && activeSection === "incentive-plans" ? (
                     <IncentivePlansSettingsPanel />
                   ) : (

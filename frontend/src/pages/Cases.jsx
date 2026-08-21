@@ -255,10 +255,15 @@ function buildPaymentSummary(caseId, payments) {
 function buildCaseViewModel(item, clients, users, documents, payments) {
   const client =
     item.client || clients.find((entry) => entry.id === item.clientId) || null;
+  // assignedUser is the RCIC, the case's primary owner. Case Worker isn't a
+  // Case column — it's the other required role — so it's read off the same
+  // roleAssignments the backend already scopes to just the two required roles.
   const assignedUser =
     item.assignedUser ||
     users.find((entry) => entry.id === item.assignedUserId) ||
     null;
+  const caseWorker = item.roleAssignments?.find((row) => row.caseRole?.code === "case-worker")?.user || null;
+  const sameRcicAndCaseWorker = Boolean(assignedUser && caseWorker && assignedUser.id === caseWorker.id);
   const documentSummary = buildDocumentSummary(item.id, documents);
   const paymentSummary = buildPaymentSummary(item.id, payments);
   const nextAction = item.nextAction || "No next action";
@@ -273,6 +278,8 @@ function buildCaseViewModel(item, clients, users, documents, payments) {
     ...item,
     client,
     assignedUser,
+    caseWorker,
+    sameRcicAndCaseWorker,
     clientName: client?.fullName || "Unknown client",
     clientInitials: getInitials(client?.fullName),
     fileNumber:
@@ -288,6 +295,7 @@ function buildCaseViewModel(item, clients, users, documents, payments) {
     nextAction,
     assignedName: assignedUser?.fullName || "Unassigned",
     assignedTo: assignedUser?.fullName || "Unassigned",
+    caseWorkerName: caseWorker?.fullName || "Unassigned",
     priority: item.priority || "Normal",
     lastUpdatedLabel: formatRelativeDate(item.updatedAt || item.createdAt),
     urgent,
@@ -740,14 +748,35 @@ function CaseMobileCard({
           {item.nextAction}
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
-              Assigned staff
-            </p>
-            <p className="mt-1 text-sm font-semibold text-slate-800">
-              {item.assignedName}
-            </p>
-          </div>
+          {item.sameRcicAndCaseWorker ? (
+            <div className="sm:col-span-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
+                RCIC &amp; Case Worker
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-800">
+                {item.assignedName}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                  RCIC
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {item.assignedName}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                  Case Worker
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {item.caseWorkerName}
+                </p>
+              </div>
+            </>
+          )}
           <div>
             <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
               Updated
@@ -1149,14 +1178,35 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing, canManage }) {
             <CaseStageBadge stage={item.stage} />
           </div>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
-                Assigned staff
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-800">
-                {item.assignedName}
-              </p>
-            </div>
+            {item.sameRcicAndCaseWorker ? (
+              <div className="sm:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
+                  RCIC &amp; Case Worker
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {item.assignedName}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                    RCIC
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">
+                    {item.assignedName}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                    Case Worker
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">
+                    {item.caseWorkerName}
+                  </p>
+                </div>
+              </>
+            )}
             <div>
               <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
                 Last updated
@@ -1469,6 +1519,7 @@ export default function Cases() {
           caseItem.stage,
           caseItem.status,
           caseItem.assignedTo,
+          caseItem.caseWorkerName,
           caseItem.nextAction,
           caseItem.paymentStatus,
           isStudyPermitCaseType(caseItem.caseType) ? formatStudyIntake(caseItem.studyIntakeMonth) : null,
@@ -2123,14 +2174,38 @@ export default function Cases() {
                                 </div>
                               </td>
                               <td className="px-4 py-5">
-                                <div className="flex items-center gap-2">
-                                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-                                    {getInitials(item.assignedName)}
+                                {item.sameRcicAndCaseWorker ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,#0ea5e9,#8b5cf6)] text-[11px] font-semibold text-white">
+                                      {getInitials(item.assignedName)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">RCIC &amp; Case Worker</p>
+                                      <p className="truncate font-medium text-slate-700">{item.assignedName}</p>
+                                    </div>
                                   </div>
-                                  <span className="font-medium text-slate-700">
-                                    {item.assignedName}
-                                  </span>
-                                </div>
+                                ) : (
+                                  <div className="flex flex-col gap-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-semibold text-sky-700">
+                                        {getInitials(item.assignedName)}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-600">RCIC</p>
+                                        <p className="truncate font-medium text-slate-700">{item.assignedName}</p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[11px] font-semibold text-violet-700">
+                                        {getInitials(item.caseWorkerName)}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600">Case Worker</p>
+                                        <p className="truncate font-medium text-slate-700">{item.caseWorkerName}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </td>
                               <td className="px-4 py-5">
                                 <CaseDocumentProgress

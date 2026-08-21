@@ -5,9 +5,11 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import {
   applyRequiredCaseTeam,
+  backfillRequiredCaseTeams,
   collaborationUserSelect,
   currentRequiredCaseTeam,
   listCollaborationStaff,
+  optionalCaseRoleOptions,
   requiredCaseTeamOptions,
   userCanManageCaseCollaboration,
   validateRequiredCaseTeam,
@@ -34,7 +36,7 @@ async function collaborationData(req) {
   });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
 
-  const [requiredTeam, options, staff, canManageCollaboration] = await Promise.all([
+  const [requiredTeam, options, staff, canManageCollaboration, optionalRoleOptions] = await Promise.all([
     currentRequiredCaseTeam(agencyId, caseId),
     requiredCaseTeamOptions(agencyId),
     listCollaborationStaff(agencyId),
@@ -44,6 +46,7 @@ async function collaborationData(req) {
       role: req.auth.role,
       caseId,
     }),
+    optionalCaseRoleOptions(agencyId),
   ]);
 
   return {
@@ -59,6 +62,7 @@ async function collaborationData(req) {
       rcicUsers: options.rcicUsers,
       caseWorkerUsers: options.caseWorkerUsers,
     },
+    optionalRoleOptions,
   };
 }
 
@@ -90,6 +94,16 @@ export async function getNewCaseCollaborationOptions(req, res) {
 
 export async function getCaseCollaboration(req, res) {
   res.json({ data: await collaborationData(req) });
+}
+
+// One-click retroactive fix for cases whose required team was never
+// completed — pre-existing cases from before this requirement existed, or
+// ones an automated path couldn't fully resolve on its own. Applies the
+// same best-effort default every automated path already uses; anything
+// still ambiguous is reported back for manual review in Collaboration.
+export async function backfillCaseTeams(req, res) {
+  const data = await backfillRequiredCaseTeams(req.auth.agencyId, req.auth.userId);
+  res.json({ data });
 }
 
 export async function updateCaseCollaboration(req, res) {
