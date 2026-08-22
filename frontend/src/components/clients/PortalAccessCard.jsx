@@ -2,11 +2,18 @@ import { ArrowUpRight, Check, Copy, KeyRound, Loader2, Mail, ShieldCheck, Shield
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
+import PortalPolicyEditor from "../portal-access/PortalPolicyEditor";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useAuth } from "../../auth/AuthContext";
 
 const statusTone = {
   active: "bg-emerald-50 text-emerald-700",
   invited: "bg-sky-50 text-sky-700",
   disabled: "bg-slate-100 text-slate-500",
+  ACTIVE: "bg-emerald-50 text-emerald-700",
+  RESTRICTED: "bg-amber-50 text-amber-800",
+  SUSPENDED: "bg-rose-50 text-rose-700",
 };
 
 export function usePortalAccess(clientId) {
@@ -225,7 +232,8 @@ function ManageAccessDialog({ clientId, account, clientName, onClose, onChanged 
   );
 }
 
-export default function PortalAccessCard({ clientId, clientEmail, clientName, openCaseCount = null }) {
+export default function PortalAccessCard({ clientId, clientEmail, clientName, caseId = null, openCaseCount = null }) {
+  const { role } = useAuth();
   const { account, loading, error, reload } = usePortalAccess(clientId);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -234,9 +242,11 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
   const [copied, setCopied] = useState(false);
   const [sendingLink, setSendingLink] = useState(false);
   const [sendLinkError, setSendLinkError] = useState("");
+  const [policyOpen, setPolicyOpen] = useState(false);
 
   const portalUrl = `${window.location.origin}/client-portal`;
-  const isActive = account?.hasAccess && account.status === "active";
+  const isActive = account?.hasAccess && account.status === "active" && account.policyStatus !== "SUSPENDED";
+  const displayedStatus = account?.policyStatus && account.policyStatus !== "ACTIVE" ? account.policyStatus : account?.status;
   const linkLabel = !account?.hasAccess ? "Send onboarding link" : isActive ? "Send reset link" : "Resend onboarding link";
 
   async function copyPortalLink() {
@@ -271,7 +281,7 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
           ) : account?.hasAccess ? (
             <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
               <span className="truncate">{account.email}</span>
-              <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize ${statusTone[account.status] || "bg-slate-100 text-slate-500"}`}>{account.status}</span>
+              <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize ${statusTone[displayedStatus] || "bg-slate-100 text-slate-500"}`}>{String(displayedStatus || "unknown").toLowerCase()}</span>
             </p>
           ) : (
             <p className="mt-1 text-sm text-slate-500">Access not configured</p>
@@ -300,6 +310,9 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
       <div className="mt-4 flex flex-wrap gap-2">
         {account?.hasAccess ? (
           <>
+            <Button variant="outline" onClick={() => setPolicyOpen(true)}>
+              <ShieldCheck data-icon="inline-start" /> Permissions
+            </Button>
             <button
               type="button"
               onClick={() => { setNotice(""); setManageOpen(true); }}
@@ -363,6 +376,23 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, op
           reload={reload}
         />
       ) : null}
+      <Dialog open={policyOpen} onOpenChange={setPolicyOpen}>
+        <DialogContent className="h-[calc(100dvh-1rem)] max-h-none w-[calc(100%-1rem)] max-w-none overflow-y-auto rounded-xl p-4 sm:h-auto sm:max-h-[92dvh] sm:w-full sm:max-w-6xl sm:rounded-3xl sm:p-6">
+          <DialogHeader>
+            <DialogTitle>{caseId ? "Case portal permissions" : "Client portal permissions"}</DialogTitle>
+            <DialogDescription>{caseId ? "Customize this case without changing agency defaults or the primary assignee." : "Customize access for this portal user without changing agency defaults."}</DialogDescription>
+          </DialogHeader>
+          <PortalPolicyEditor
+            compact
+            endpoint={caseId ? `/cases/${caseId}/client-portal-policy` : `/clients/${clientId}/portal-policy`}
+            resetEndpoint={caseId ? `/cases/${caseId}/client-portal-policy` : null}
+            title={caseId ? "Case-level overrides" : "Individual client overrides"}
+            description={caseId ? "Inherited settings remain connected to the agency policy. Only explicit overrides change the effective result." : "Use this layer when one portal user needs different access from the agency default."}
+            allowVeto={role === "admin"}
+            allowSuspension={role === "admin"}
+          />
+        </DialogContent>
+      </Dialog>
     </article>
   );
 }

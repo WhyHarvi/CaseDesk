@@ -157,6 +157,7 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
       {showPortalAccess ? (caseItem.client?.id ? (
         <PortalAccessCard
           clientId={caseItem.client.id}
+          caseId={caseItem.id}
           clientEmail={caseItem.client?.email}
           clientName={caseItem.client?.fullName}
         />

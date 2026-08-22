@@ -93,6 +93,7 @@ import {
   requirePortalCapability,
   requirePortalCaseTab,
 } from "../services/portalAccessService.js";
+import { getCasePortalPolicy, putCasePortalPolicy, resetCasePortalPolicy } from "../controllers/clientPortalPolicyController.js";
 
 const router = Router();
 
@@ -117,6 +118,9 @@ router.get("/:id/access-preview", requireRole("consultant", "frontdesk"), asyncH
 router.post("/:id/access-requests", requireRole("consultant", "frontdesk"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(requestCaseAccess));
 router.delete("/:id/access-requests/:requestId", requireRole("consultant", "frontdesk"), asyncHandler(withdrawCaseAccessRequest));
 router.use("/:id", requireCaseAccess());
+router.get("/:id/client-portal-policy", requireRole("admin", "consultant"), asyncHandler(getCasePortalPolicy));
+router.put("/:id/client-portal-policy", requireRole("admin", "consultant"), rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(putCasePortalPolicy));
+router.delete("/:id/client-portal-policy", requireRole("admin", "consultant"), asyncHandler(resetCasePortalPolicy));
 router.post("/:id/access-requests/:requestId/approve", requireRole("admin", "consultant"), asyncHandler(approveCaseAccessRequest));
 router.post("/:id/access-requests/:requestId/decline", requireRole("admin", "consultant"), asyncHandler(declineCaseAccessRequest));
 router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));

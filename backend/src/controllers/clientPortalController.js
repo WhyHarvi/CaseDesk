@@ -11,6 +11,7 @@ import { buildClientBillingLedger } from "../services/accountStatementService.js
 import { resolveSectionRequirements } from "../modules/case-information/caseRequirementResolver.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { logger } from "../services/logger.js";
+import { filterPortalRecordsByPermission, loadPortalPolicyContext, PORTAL_PERMISSION_KEYS, resolvePermissionFromPolicies } from "../services/clientPortalPolicyService.js";
 
 // Everything in this controller is scoped through the logged-in user's
 // ClientUser link — the frontend never supplies client or agency ids.
@@ -457,6 +458,8 @@ export async function getPortalOverview(req, res) {
         durationMinutes: freeSessionType.durationMinutes,
       })
     : null;
+  const policyContext = await loadPortalPolicyContext({ agencyId: req.auth.agencyId, clientUserId: link.id, caseId: caseItem?.id || null });
+  const permissions = Object.fromEntries(PORTAL_PERMISSION_KEYS.map((key) => [key, resolvePermissionFromPolicies({ key, ...policyContext }).allowed]));
 
   res.json({
     success: true,
@@ -493,25 +496,26 @@ export async function getPortalOverview(req, res) {
         ? {
             id: caseItem.id,
             caseType: caseItem.caseType,
-            stage: caseItem.stage,
-            status: caseItem.status,
-            progressPercent: STAGE_PROGRESS[caseItem.stage] ?? 10,
-            consultantName: caseItem.assignedUser?.fullName || null,
-            lastUpdatedAt: caseItem.updatedAt,
+            stage: permissions["dashboard.view_stage"] ? caseItem.stage : null,
+            status: permissions["dashboard.view_case_status"] ? caseItem.status : null,
+            progressPercent: permissions["dashboard.view_progress"] ? STAGE_PROGRESS[caseItem.stage] ?? 10 : null,
+            consultantName: permissions["dashboard.view_assigned_consultant"] ? caseItem.assignedUser?.fullName || null : null,
+            lastUpdatedAt: permissions["dashboard.view_important_dates"] ? caseItem.updatedAt : null,
           }
         : null,
-      nextAction: nextActionFor({ caseItem, documents, payment, assessment, agreements, formSignatureRequests }),
-      documents: documents.map(publicDocument),
-      payment,
+      nextAction: permissions["dashboard.view_next_action"] ? nextActionFor({ caseItem, documents, payment, assessment, agreements, formSignatureRequests }) : null,
+      documents: permissions["documents.view"] ? documents.map(publicDocument) : [],
+      payment: permissions["payments.view_balance"] ? payment : null,
       questionnaires: {
-        assigned: shared.length,
-        pending: shared.filter((item) => !item.locked && item.status !== "Submitted").length,
+        assigned: permissions["forms.view"] ? shared.length : 0,
+        pending: permissions["forms.view"] ? shared.filter((item) => !item.locked && item.status !== "Submitted").length : 0,
       },
       agreements: {
         total: agreements.length,
         awaitingSignature: agreements.filter((item) => item.correspondenceStatus === "Issued").length,
       },
-      timeline: buildTimeline({ caseItem, documents, invoices, assessment, agreements }),
+      timeline: permissions["dashboard.view_activity_timeline"] ? buildTimeline({ caseItem, documents, invoices, assessment, agreements }) : [],
+      permissions,
     },
   });
 }
@@ -520,10 +524,11 @@ export async function getPortalDocuments(req, res) {
   const link = await linkedClient(req);
   const documents = await prisma.clientDocument.findMany({
     where: { agencyId: req.auth.agencyId, clientId: link.clientId, visibility: "Client" },
-    select: { id: true, documentName: true, status: true, clientInstructions: true, receivedAt: true, reviewedAt: true, originalFilename: true, updatedAt: true },
+    select: { id: true, caseId: true, documentName: true, status: true, clientInstructions: true, receivedAt: true, reviewedAt: true, originalFilename: true, updatedAt: true },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
   });
-  res.json({ success: true, data: documents.map(publicDocument) });
+  const visible = await filterPortalRecordsByPermission({ agencyId: req.auth.agencyId, clientUserId: link.id, key: "documents.view", records: documents });
+  res.json({ success: true, data: visible.map(publicDocument) });
 }
 
 export async function getPortalPayments(req, res) {

@@ -13,6 +13,8 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../../services/api";
+import PortalPolicyEditor from "../portal-access/PortalPolicyEditor";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const pageOptions = [
   ["dashboard", "Dashboard", "Work summary and upcoming priorities"],
@@ -111,7 +113,7 @@ function Section({ icon: Icon, title, detail, children }) {
   );
 }
 
-export default function PortalAccessSettingsPanel() {
+function StaffPortalAccessSettingsPanel() {
   const [members, setMembers] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState(null);
@@ -506,5 +508,30 @@ export default function PortalAccessSettingsPanel() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function PortalAccessSettingsPanel() {
+  return (
+    <Tabs defaultValue="clients" className="flex flex-col gap-6">
+      <div className="border-b px-1">
+        <TabsList variant="line" aria-label="Portal access settings" className="grid h-auto w-full grid-cols-2 p-0 sm:w-fit">
+          <TabsTrigger value="clients" className="min-h-12 px-3 sm:px-5">Client portal</TabsTrigger>
+          <TabsTrigger value="staff" className="min-h-12 px-3 sm:px-5">Staff workspace</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="clients">
+        <PortalPolicyEditor
+          endpoint="/admin/client-portal-policy"
+          title="Agency client portal defaults"
+          description="Define what client accounts can see and do. Case and individual-client policies inherit from these defaults unless an authorized override or veto applies."
+          allowVeto
+          allowSuspension
+        />
+      </TabsContent>
+      <TabsContent value="staff">
+        <StaffPortalAccessSettingsPanel />
+      </TabsContent>
+    </Tabs>
   );
 }

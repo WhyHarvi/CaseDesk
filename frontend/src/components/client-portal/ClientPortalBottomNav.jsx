@@ -1,22 +1,24 @@
 import { CalendarDays, ClipboardList, CreditCard, FileText, House, MessagesSquare } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useNotifications } from "../notifications/NotificationProvider";
+import { usePortalData } from "./ClientPortalLayout";
 
 const items = [
   { label: "Home", to: "/client-portal", icon: House, end: true, badgeKey: "portalHome" },
-  { label: "Docs", to: "/client-portal/documents", icon: FileText, badgeKey: "portalDocuments" },
-  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList, badgeKey: "portalForms" },
-  { label: "Visits", to: "/client-portal/appointments", icon: CalendarDays, badgeKey: "portalAppointments" },
-  { label: "Pay", to: "/client-portal/payments", icon: CreditCard, badgeKey: "portalPayments" },
-  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare, badgeKey: "portalChat" },
+  { label: "Docs", to: "/client-portal/documents", icon: FileText, badgeKey: "portalDocuments", permission: "documents.view" },
+  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList, badgeKey: "portalForms", permission: "forms.view" },
+  { label: "Visits", to: "/client-portal/appointments", icon: CalendarDays, badgeKey: "portalAppointments", permission: "appointments.view" },
+  { label: "Pay", to: "/client-portal/payments", icon: CreditCard, badgeKey: "portalPayments", permission: "payments.view_balance" },
+  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare, badgeKey: "portalChat", permission: "communication.view_history" },
 ];
 
 export default function ClientPortalBottomNav() {
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
+  const { overview } = usePortalData();
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]" aria-label="Portal navigation">
       <div className="flex w-full max-w-[520px] items-center justify-between rounded-[1.6rem] border border-white/70 bg-white/80 px-2 py-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.16)] backdrop-blur-2xl">
-        {items.map((item) => {
+        {items.filter((item) => !item.permission || overview?.permissions?.[item.permission] !== false).map((item) => {
           const Icon = item.icon;
           const count = sidebarCounts[item.badgeKey];
           return (

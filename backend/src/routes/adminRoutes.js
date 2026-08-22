@@ -28,11 +28,15 @@ import {
 import { requireRole } from "../middleware/authorization.js";
 import { asyncHandler } from "../utils/http.js";
 import rateLimit from "../middleware/rateLimit.js";
+import { getAgencyPortalPolicy, getPortalPermissionCatalog, putAgencyPortalPolicy } from "../controllers/clientPortalPolicyController.js";
 
 const router = Router();
 router.use(requireRole("admin"));
 router.get("/team-members", asyncHandler(listTeamMembers));
 router.get("/portal-access", asyncHandler(listPortalAccessMembers));
+router.get("/client-portal-policy/catalog", getPortalPermissionCatalog);
+router.get("/client-portal-policy", asyncHandler(getAgencyPortalPolicy));
+router.put("/client-portal-policy", rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(putAgencyPortalPolicy));
 router.get("/incentive-role-members", asyncHandler(listIncentiveRoleMembers));
 router.patch("/incentive-role-members/:id", asyncHandler(updateMemberProfile));
 router.post(

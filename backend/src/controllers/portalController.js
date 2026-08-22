@@ -29,6 +29,7 @@ import { CHAT_ATTACH_GRACE_MS, storeCommunicationAttachment } from "../services/
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { getEffectiveClientCommunicationPreference } from "../services/clientCommunicationPolicyService.js";
+import { filterPortalRecordsByPermission, loadPortalPolicyContext } from "../services/clientPortalPolicyService.js";
 
 async function linkedClient(req) {
   const link = await prisma.clientUser.findFirst({
@@ -408,11 +409,14 @@ export async function getPortalAccountStatus(req, res) {
   const link = await prisma.clientUser.findFirst({
     where: { agencyId: req.auth.agencyId, clientId: client.id },
     select: {
+      id: true,
       createdAt: true,
       user: { select: { email: true, status: true } },
     },
     orderBy: { isPrimary: "desc" },
   });
+  const policyContext = link ? await loadPortalPolicyContext({ agencyId: req.auth.agencyId, clientUserId: link.id }) : null;
+  const policyStatus = [policyContext?.agencyPolicy?.status, policyContext?.clientPolicy?.status].includes("SUSPENDED") ? "SUSPENDED" : [policyContext?.agencyPolicy?.status, policyContext?.clientPolicy?.status].includes("RESTRICTED") ? "RESTRICTED" : "ACTIVE";
   res.json({
     success: true,
     data: link
@@ -420,6 +424,7 @@ export async function getPortalAccountStatus(req, res) {
           hasAccess: true,
           email: link.user.email,
           status: link.user.status,
+          policyStatus,
           invitedAt: link.createdAt,
         }
       : { hasAccess: false, email: null, status: null, invitedAt: null },
@@ -563,9 +568,10 @@ export async function portalDocuments(req, res) {
     },
     orderBy: { updatedAt: "desc" },
   });
+  const visible = await filterPortalRecordsByPermission({ agencyId: req.auth.agencyId, clientUserId: link.id, key: "documents.view", records: data });
   res.json({
     success: true,
-    data: data.map(({ storageKey, ...item }) => ({
+    data: visible.map(({ storageKey, ...item }) => ({
       ...item,
       hasFile: Boolean(storageKey),
     })),

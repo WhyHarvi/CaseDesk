@@ -352,6 +352,37 @@ input {
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
   }
+  .portal-policy-theme {
+    --primary: oklch(0.56 0.2 255);
+    --primary-foreground: oklch(0.985 0.01 250);
+    --secondary: oklch(0.94 0.04 252);
+    --secondary-foreground: oklch(0.32 0.12 255);
+    --muted: oklch(0.97 0.018 245);
+    --muted-foreground: oklch(0.47 0.04 250);
+    --accent: oklch(0.93 0.05 205);
+    --accent-foreground: oklch(0.3 0.1 230);
+    --border: oklch(0.89 0.035 250);
+    --input: oklch(0.84 0.055 250);
+    --ring: oklch(0.62 0.19 255);
+    --chart-1: oklch(0.62 0.2 255);
+    --chart-2: oklch(0.68 0.15 185);
+    --chart-3: oklch(0.7 0.16 145);
+    --chart-4: oklch(0.72 0.16 75);
+    --chart-5: oklch(0.65 0.2 320);
+  }
+  .dark .portal-policy-theme {
+    --primary: oklch(0.72 0.15 250);
+    --primary-foreground: oklch(0.2 0.05 255);
+    --secondary: oklch(0.31 0.08 255);
+    --secondary-foreground: oklch(0.94 0.03 250);
+    --muted: oklch(0.27 0.035 250);
+    --muted-foreground: oklch(0.75 0.04 250);
+    --accent: oklch(0.32 0.07 205);
+    --accent-foreground: oklch(0.94 0.03 205);
+    --border: oklch(0.42 0.05 250);
+    --input: oklch(0.48 0.07 250);
+    --ring: oklch(0.72 0.15 250);
+  }
   * {
     @apply border-border outline-ring;
   }

@@ -6,11 +6,11 @@ import { useNotifications } from "../notifications/NotificationProvider";
 
 const items = [
   { label: "Home", to: "/client-portal", icon: House, end: true, badgeKey: "portalHome" },
-  { label: "Documents", to: "/client-portal/documents", icon: FileText, badgeKey: "portalDocuments" },
-  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList, badgeKey: "portalForms" },
-  { label: "Appointments", to: "/client-portal/appointments", icon: CalendarDays, badgeKey: "portalAppointments" },
-  { label: "Payments", to: "/client-portal/payments", icon: CreditCard, badgeKey: "portalPayments" },
-  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare, badgeKey: "portalChat" },
+  { label: "Documents", to: "/client-portal/documents", icon: FileText, badgeKey: "portalDocuments", permission: "documents.view" },
+  { label: "Forms", to: "/client-portal/questionnaires", icon: ClipboardList, badgeKey: "portalForms", permission: "forms.view" },
+  { label: "Appointments", to: "/client-portal/appointments", icon: CalendarDays, badgeKey: "portalAppointments", permission: "appointments.view" },
+  { label: "Payments", to: "/client-portal/payments", icon: CreditCard, badgeKey: "portalPayments", permission: "payments.view_balance" },
+  { label: "Chat", to: "/client-portal/chat", icon: MessagesSquare, badgeKey: "portalChat", permission: "communication.view_history" },
 ];
 
 function PortalBadge({ count }) {
@@ -46,7 +46,7 @@ export default function ClientPortalSidebar() {
       </div>
 
       <nav className="mt-8 flex-1 space-y-1" aria-label="Portal navigation">
-        {items.map((item) => {
+        {items.filter((item) => !item.permission || overview?.permissions?.[item.permission] !== false).map((item) => {
           const Icon = item.icon;
           const count = sidebarCounts[item.badgeKey];
           return (

@@ -33,6 +33,7 @@ import {
   getGeneratedAccountStatement,
   createClientManualBillingEntry,
 } from "../controllers/accountStatementController.js";
+import { getClientPortalPolicy, putClientPortalPolicy } from "../controllers/clientPortalPolicyController.js";
 
 const router = Router();
 
@@ -71,6 +72,8 @@ router.post(
   rateLimit({ windowMs: 15 * 60_000, max: 20 }),
   asyncHandler(sendPortalTemporaryPassword),
 );
+router.get("/:clientId/portal-policy", requirePortalCapability("manageClientPortal"), requireClientAccess("clientId"), asyncHandler(getClientPortalPolicy));
+router.put("/:clientId/portal-policy", requirePortalCapability("manageClientPortal"), requireClientAccess("clientId"), rateLimit({ windowMs: 60_000, max: 30 }), asyncHandler(putClientPortalPolicy));
 router.use("/:id", requireClientAccess());
 router.get(
   "/:id/statements/account/options",
