@@ -26,8 +26,8 @@ import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
 import api from "../services/api";
 
-const panel = "rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.07)]";
-const input = "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
+const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
+const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70";
 
 const humanize = (value) => String(value || "").toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const personName = (call) => call.client?.fullName || [call.lead?.firstName, call.lead?.lastName].filter(Boolean).join(" ") || null;
@@ -63,6 +63,40 @@ function EmptyCalls({ unresolved, provider }) {
       <h2 className="mt-4 text-base font-semibold text-slate-900">{unresolved ? "No unresolved calls" : `No ${isTwilio ? "Twilio" : "Ooma"} calls yet`}</h2>
       <p className="mt-1 max-w-md text-sm leading-6 text-slate-500">{unresolved ? "Every call in this view has been matched or marked as spam." : isTwilio ? "Place a call with the dialpad or call your connected Twilio number. New calls will appear here automatically." : "Publish the Ooma call Zaps, then place a test call. It will appear here when Zapier posts the event."}</p>
     </div>
+  );
+}
+
+function MobileCallCard({ call, onOpen, provider }) {
+  const name = personName(call) || call.remoteNumber || "Private number";
+  const detail = personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched";
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="block w-full border-b border-slate-100 px-4 py-4 text-left transition hover:bg-slate-50/80 active:bg-slate-100 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      aria-label={`Open ${humanize(call.direction)} call with ${name}`}
+    >
+      <span className="flex items-start gap-3">
+        <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-slate-950">{name}</span>
+              <span className="mt-0.5 block truncate text-xs text-slate-500">{detail}</span>
+            </span>
+            <CallStatus value={call.status} />
+          </span>
+          <span className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <span><span className="block text-slate-400">Call</span><span className="mt-0.5 block font-medium text-slate-700">{humanize(call.direction)} · {duration(call.durationSeconds)}</span></span>
+            <span><span className="block text-slate-400">{provider === "TWILIO" ? "Team member" : "Ooma user"}</span><span className="mt-0.5 block truncate font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</span></span>
+          </span>
+          <span className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+            <span className="text-xs text-slate-500">{when(call.startedAt)}</span>
+            {call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}
+          </span>
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -300,29 +334,40 @@ export function CallHistorySection({ provider = "OOMA" }) {
   }
 
   return (
-    <section className="space-y-6">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className={`${panel} p-4`}><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total in view</p><p className="mt-2 text-2xl font-semibold text-slate-950">{meta.total || 0}</p></div>
-        <button type="button" onClick={() => update({ view: "unresolved" })} className={`${panel} p-4 text-left transition hover:border-amber-200 hover:bg-amber-50/30`}><p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Needs matching</p><p className="mt-2 text-2xl font-semibold text-slate-950">{meta.unresolved || 0}</p></button>
-        <div className={`${panel} p-4`}><p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Live refresh</p><p className="mt-2 flex items-center gap-2 text-sm font-semibold text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-500" />Every 15 seconds</p></div>
+    <section className="space-y-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_14px_40px_rgba(15,23,42,0.07)] ring-1 ring-slate-200/70 backdrop-blur-xl sm:grid-cols-3">
+        <div className="border-r border-slate-200 px-4 py-4 sm:px-5"><p className="text-xs font-medium text-slate-500">Calls in view</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{meta.total || 0}</p></div>
+        <button type="button" onClick={() => update({ view: "unresolved" })} className="border-slate-200 px-4 py-4 text-left transition hover:bg-amber-50 active:bg-amber-100/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 sm:border-r sm:px-5" aria-label={`Show ${meta.unresolved || 0} calls that need matching`}><p className="text-xs font-medium text-amber-700">Needs matching</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{meta.unresolved || 0}</p></button>
+        <div className="col-span-2 flex items-center gap-3 border-t border-slate-200 px-4 py-3 sm:col-span-1 sm:border-t-0 sm:px-5"><span className="relative flex h-2 w-2" aria-hidden="true"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-50 motion-reduce:animate-none" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600" /></span><p><span className="block text-xs font-medium text-slate-700">History is live</span><span className="block text-[11px] text-slate-400">Refreshes every 15 seconds</span></p></div>
       </div>
 
       <div className={panel}>
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" onClick={() => update({ view: value === "all" ? "" : value })} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${view === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{label}</button>)}</div>
-          <div className="flex items-center gap-2"><button type="button" disabled={loading} onClick={() => load()} className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50" aria-label="Refresh call history"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button><div className="relative w-full lg:max-w-sm"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") update({ search: searchDraft.trim() }); }} className={`${input} pl-9 pr-20`} placeholder="Search calls" /><button type="button" onClick={() => update({ search: searchDraft.trim() })} className="absolute right-1.5 top-1.5 h-7 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white">Search</button></div></div>
+        <div className="grid gap-4 border-b border-slate-200 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,28rem)] lg:items-end lg:p-5">
+          <div>
+            <p className="mb-2 text-xs font-semibold text-slate-600">Filter calls</p>
+            <div className="flex flex-wrap gap-2">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}</div>
+          </div>
+          <form onSubmit={(event) => { event.preventDefault(); update({ search: searchDraft.trim() }); }}>
+            <label className="block text-xs font-semibold text-slate-600">Search history</label>
+            <div className="mt-2 flex gap-2"><span className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" aria-hidden="true" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} className={`${input} pl-10`} placeholder="Contact, number, or reference" /></span><button type="submit" className="min-h-11 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-[0.97]">Search</button><button type="button" disabled={loading} onClick={() => load()} className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50" aria-label="Refresh call history"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} aria-hidden="true" /></button></div>
+          </form>
         </div>
 
         {error ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}<button type="button" onClick={() => load()} className="ml-2 font-semibold underline">Try again</button></div> : null}
         {loading ? <div className="space-y-3 p-5">{Array.from({ length: 7 }, (_, index) => <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)}</div> : !calls.length ? <EmptyCalls unresolved={view === "unresolved"} provider={provider} /> : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] border-collapse text-left">
+          <>
+          <div className="divide-y divide-slate-200 md:hidden">
+            {calls.map((call) => <MobileCallCard key={call.id} call={call} provider={provider} onOpen={() => openCall(call)} />)}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[900px] border-collapse text-left">
               <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">{provider === "TWILIO" ? "Team member" : "Ooma user"}</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => <tr key={call.id} onClick={() => openCall(call)} className="cursor-pointer border-b border-slate-100 text-sm transition last:border-0 hover:bg-sky-50/40"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-indigo-50 text-indigo-600" : call.status === "MISSED" ? "bg-rose-50 text-rose-600" : "bg-sky-50 text-sky-600"}`}><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{humanize(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></td><td className="px-4 py-4"><CallStatus value={call.status} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-700"><Clock3 className="h-3.5 w-3.5" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Open</button></td></tr>)}</tbody>
+              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{humanize(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></td><td className="px-4 py-4"><CallStatus value={call.status} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
             </table>
           </div>
+          </>
         )}
-        <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-500"><span>{meta.total ? `${(page - 1) * 25 + 1}–${Math.min(page * 25, meta.total)} of ${meta.total}` : "0 calls"}</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => update({ page: String(page - 1) })} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-4 w-4" /></button><span className="min-w-16 text-center text-xs font-semibold">Page {page}</span><button type="button" disabled={!meta.hasMore || loading} onClick={() => update({ page: String(page + 1) })} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-4 w-4" /></button></div></footer>
+        <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500"><span className="tabular-nums">{meta.total ? `${(page - 1) * 25 + 1}–${Math.min(page * 25, meta.total)} of ${meta.total}` : "0 calls"}</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => update({ page: String(page - 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button><span className="min-w-16 text-center text-xs font-semibold tabular-nums">Page {page}</span><button type="button" disabled={!meta.hasMore || loading} onClick={() => update({ page: String(page + 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button></div></footer>
       </div>
 
       {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}`} call={selected} staff={staff} provider={provider} onClose={closeCall} onChanged={async () => { await load({ quiet: true }); }} /> : null}
