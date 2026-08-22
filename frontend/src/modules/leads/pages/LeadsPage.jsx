@@ -1,8 +1,9 @@
-import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, ClipboardCheck, FilterX, Layers3, Loader2, Megaphone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
+import { ArrowDownUp, CalendarRange, ChevronLeft, ChevronRight, CircleDot, CirclePlus, ClipboardCheck, FilterX, Layers3, Loader2, Megaphone, Phone, Search, SlidersHorizontal, UserRoundSearch } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import { useAuth } from "../../../auth/AuthContext";
+import { useSoftphone } from "../../../components/calls/SoftphoneProvider";
 import QuickAddLeadSheet from "../components/QuickAddLeadSheet";
 import LeadFilterMenu from "../components/LeadFilterMenu";
 import LeadDetailSheet from "../components/LeadDetailSheet";
@@ -39,6 +40,8 @@ const SEGMENT_COPY = {
 
 export default function LeadsPage({ segment = "STANDARD" }) {
   const { role } = useAuth();
+  const { status: softphoneStatus, dial } = useSoftphone();
+  const [callError, setCallError] = useState("");
   const copy = SEGMENT_COPY[segment] || SEGMENT_COPY.STANDARD;
   const [params, setParams] = useSearchParams();
   const [leads, setLeads] = useState([]);
@@ -209,6 +212,15 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     setParams({});
   }
 
+  async function startCall(lead) {
+    try {
+      setCallError("");
+      await dial(lead.phone, { leadId: lead.id, leadName: leadName(lead) });
+    } catch (reason) {
+      setCallError(reason?.message || "The call could not be placed.");
+    }
+  }
+
   function toggleSelected(id) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -276,6 +288,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       </header>
 
       {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{supportingDataError} Refresh the page before adding a lead.</div> : null}
+      {callError ? <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{callError}</span><button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button></div> : null}
 
       <div className="overflow-visible rounded-3xl border border-white/80 bg-white/80 shadow-[0_18px_55px_rgba(28,45,74,0.10)] backdrop-blur-xl">
         <div className="rounded-t-3xl border-b border-slate-200/70 bg-gradient-to-b from-white/90 to-slate-50/75 p-4">
@@ -337,7 +350,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
                   {group.label ? <tr><td colSpan={canBulkSelect ? 6 : 5} className="bg-slate-100/80 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">{group.label} · {group.items.length} lead{group.items.length === 1 ? "" : "s"}</td></tr> : null}
                   {group.items.map((lead) => { const due = formatDueDate(lead.nextActionAt); const blockedOnConversion = lead.status === "OPEN" && lead.stage === "READY_TO_CONVERT" && !(RETAINER_READY_VALUES.includes(lead.retainerStatus) && PAYMENT_READY_VALUES.includes(lead.initialPaymentStatus)); return <tr key={lead.id} role="button" tabIndex={0} onClick={() => setSelectedLead(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedLead(lead); } }} className="cursor-pointer border-b border-slate-100 text-sm outline-none transition last:border-0 hover:bg-brand-50/45 focus:bg-brand-50/70">
                     {canBulkSelect ? <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selectedIds.has(lead.id)} onChange={() => toggleSelected(lead.id)} className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-200" aria-label={`Select ${leadName(lead)}`} /></td> : null}
-                    <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div></div></td>
+                    <td className="px-5 py-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">{initials(lead)}</div><div className="min-w-0"><p className="font-semibold text-slate-900">{leadName(lead)}</p><p className="mt-0.5 truncate text-xs text-slate-400">{lead.leadNumber} · {lead.phone}</p></div>{lead.phone ? <button type="button" disabled={softphoneStatus !== "ready"} onClick={(event) => { event.stopPropagation(); startCall(lead); }} title={softphoneStatus !== "ready" ? "Connect Twilio calling in Settings to call this lead" : `Call ${leadName(lead)}`} className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"><Phone className="h-3.5 w-3.5" /></button> : null}</div></td>
                     <td className="px-4 py-4"><p className="font-medium text-slate-700">{lead.originalSource?.name || "Unknown source"}</p><p className="mt-0.5 max-w-[190px] truncate text-xs text-slate-400">{lead.immigrationInterest || "Interest not specified"}</p></td>
                     <td className="px-4 py-4"><div className="flex items-center gap-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${statusTone[lead.status] || statusTone.ARCHIVED}`}>{humanize(lead.status)}</span><span className="text-xs font-medium text-slate-600">{humanize(lead.stage)}</span>{blockedOnConversion ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-100" title="Ready to Convert, but retainer or payment isn't confirmed yet">Blocked</span> : null}</div><p className="mt-1.5 text-xs text-slate-400">{humanize(lead.temperature)} · {humanize(lead.priority)}</p></td>
                     <td className="px-4 py-4"><p className="text-slate-700">{lead.owner?.fullName || "Unassigned"}</p></td>

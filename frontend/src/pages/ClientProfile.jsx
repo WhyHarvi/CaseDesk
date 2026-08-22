@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
+import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import PortalAccessCard from "../components/clients/PortalAccessCard";
 import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
 import CaseEasyReportsCard from "../components/clients/CaseEasyReportsCard";
@@ -380,6 +381,8 @@ export default function ClientProfile() {
   const location = useLocation();
   const navigate = useNavigate();
   const { role, appUser, membership } = useAuth();
+  const { status: softphoneStatus, dial } = useSoftphone();
+  const [callError, setCallError] = useState("");
   const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
   const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
   const canManageClientPortal = hasCapability(role, membership?.permissions, "manageClientPortal");
@@ -410,6 +413,16 @@ export default function ClientProfile() {
   useEffect(() => {
     if (initialChatConversationId) setChatOpen(true);
   }, [initialChatConversationId]);
+
+  async function startClientCall() {
+    if (!client?.phone) return;
+    try {
+      setCallError("");
+      await dial(client.phone, { clientId: client.id, clientName: client.fullName });
+    } catch (reason) {
+      setCallError(reason?.message || "The call could not be placed.");
+    }
+  }
 
   const isEditingNote = Boolean(editingNote);
   const client = profile?.client || null;
@@ -743,6 +756,12 @@ export default function ClientProfile() {
             {error}
           </div>
         ) : null}
+        {callError ? (
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <span>{callError}</span>
+            <button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button>
+          </div>
+        ) : null}
 
         {/* Identity header — who this is, what they're actively working on,
             and the fastest way to reach them, all in one glance. Everything
@@ -807,6 +826,7 @@ export default function ClientProfile() {
                     label={client.phone || "No mobile on file"}
                     disabled={!client.phone}
                     tone="phone"
+                    onClick={softphoneStatus === "ready" && client.phone ? startClientCall : undefined}
                   />
                   <QuickActionLink
                     href={client.phone ? `https://wa.me/${client.phone.replace(/[^\d]/g, "")}` : "#"}

@@ -127,6 +127,93 @@ test("settings saves and reports the voice fields (API key, calls toggle, test s
   assert.match(controller, /lastCallTestStatus/);
 });
 
+test("lead calls auto-record: the softphone dial threads the lead id through TwiML into the status callback", async () => {
+  const service = await source("../src/services/twilioCallService.js");
+  // The dial's custom leadId/clientId params are forwarded onto the status
+  // callback URL, which Twilio echoes back into the callback POST body — so
+  // the session links to the lead even when the number alone is ambiguous.
+  assert.match(service, /const dialLeadId = clean\(req\.body\?\.leadId, 100\);/);
+  assert.match(service, /leadId=\$\{encodeURIComponent\(dialLeadId\)\}/);
+  assert.match(service, /const explicitLeadId = clean\(body\.leadId, 100\) \|\| null;/);
+  // Only an agency-verified lead/client id is ever applied, and it only fills
+  // an unlinked session — it never overrides a match the number produced.
+  assert.match(service, /tx\.lead\.findFirst\(\{ where: \{ id: explicitLeadId, agencyId, deletedAt: null }/);
+  assert.match(service, /linkLeadId && !existing\.leadId \? \{ leadId: linkLeadId, resolution: "LINKED_LEAD"/);
+});
+
+test("the 'call ended' popup saves the outcome through a shared applyCallOutcome path", async () => {
+  const [service, controller, oomaController, routes] = await Promise.all([
+    source("../src/services/oomaCallService.js"),
+    source("../src/controllers/twilioCallController.js"),
+    source("../src/controllers/oomaCallController.js"),
+    source("../src/routes/twilioCallRoutes.js"),
+  ]);
+  // The outcome + follow-up logic is shared by the history drawer (Ooma
+  // routes) and the softphone popup (Twilio routes) so both write identically.
+  assert.match(service, /export async function applyCallOutcome\(call, \{ outcome, notes, nextFollowUp = null } = \{\}, \{ agencyId, userId }/);
+  assert.match(service, /CALL_OUTCOMES\.has\(value\)/);
+  assert.match(service, /leadFollowUp\.create/);
+  // The popup endpoint finds the session by the SDK CallSid and, when the
+  // status callback hasn't landed yet, creates a minimal linked session.
+  assert.match(controller, /export async function recordOutboundCallOutcome\(req, res\)/);
+  assert.match(controller, /rawPayload: \{ path: \["callSid"\], equals: providerCallId }/);
+  assert.match(controller, /createdByOutcomePopup: true/);
+  assert.match(controller, /await applyCallOutcome\(call, req\.body, \{ agencyId, userId: req\.user\.id }/);
+  // The Ooma drawer's outcome handler now routes through the same helper.
+  assert.match(oomaController, /await applyCallOutcome\(call, req\.body, \{ agencyId: req\.auth\.agencyId, userId: req\.auth\.userId }/);
+  assert.doesNotMatch(oomaController, /const allowed = new Set\(\["COMPLETED"/);
+  assert.match(routes, /router\.post\("\/outcome", asyncHandler\(recordOutboundCallOutcome\)\)/);
+});
+
+test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
+  const [clientsPage, profilePage] = await Promise.all([
+    source("../../frontend/src/pages/Clients.jsx"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+  ]);
+  // List rows (desktop + mobile cards) dial with the client record context.
+  assert.match(clientsPage, /import \{ useSoftphone } from "\.\.\/components\/calls\/SoftphoneProvider";/);
+  assert.match(clientsPage, /await dial\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
+  assert.match(clientsPage, /disabled=\{softphoneStatus !== "ready"}/);
+  assert.match(clientsPage, /onCall=\{\(\) => startCall\(client\)}/);
+  // Profile header phone action dials through the softphone when ready.
+  assert.match(profilePage, /useSoftphone\(\)/);
+  assert.match(profilePage, /await dial\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
+  assert.match(profilePage, /onClick=\{softphoneStatus === "ready" && client\.phone \? startClientCall : undefined}/);
+  // The popup keeps the follow-up option lead-only — client calls record the
+  // outcome on the call and the client's communication thread instead.
+  const provider = await source("../../frontend/src/components/calls/SoftphoneProvider.jsx");
+  assert.match(provider, /\/\* Follow-ups are a lead concept/);
+});
+
+test("the leads UI calls leads through the softphone and pops the outcome card on hang-up only", async () => {
+  const [provider, leadsPage, detailSheet] = await Promise.all([
+    source("../../frontend/src/components/calls/SoftphoneProvider.jsx"),
+    source("../../frontend/src/modules/leads/pages/LeadsPage.jsx"),
+    source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
+  ]);
+  // dial() accepts the record context, passes the ids to Twilio as custom
+  // params, and remembers them so the ended-call popup can autofill + save.
+  assert.match(provider, /const dial = useCallback\(async \(number, context = \{\}\) =>/);
+  assert.match(provider, /leadId: context\.leadId/);
+  assert.match(provider, /setEndedCall\(\{ number: target, callSid: call\.parameters\?\.CallSid \|\| "", durationSeconds, \.\.\.dialContextRef\.current }/);
+  // The popup itself: autofilled details, outcome + note, optional follow-up.
+  assert.match(provider, /function EndedCallCard\(\{ ended, onClose }/);
+  assert.match(provider, /api\.post\("\/twilio-calls\/outcome"/);
+  assert.match(provider, /nextFollowUp: \{ dueAt: new Date\(dueAt\)\.toISOString\(\)/);
+  // Incoming calls never trigger it — only calls WE placed do: the popup is
+  // only armed by the outbound dial path and is suppressed while an incoming
+  // call is showing.
+  assert.match(provider, /call\.on\("disconnect", \(\) => finish\(true\)\);/);
+  assert.match(provider, /endedCall && !active && !incoming/);
+  assert.doesNotMatch(provider, /call\.on\("disconnect", \(\) => \{\s*setEndedCall/);
+  // The leads list gains a per-row call button; the detail sheet dials too.
+  assert.match(leadsPage, /import \{ useSoftphone } from "\.\.\/\.\.\/\.\.\/components\/calls\/SoftphoneProvider";/);
+  assert.match(leadsPage, /await dial\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+  assert.match(leadsPage, /stopPropagation\(\); startCall\(lead\)/);
+  assert.match(detailSheet, /useSoftphone\(\)/);
+  assert.match(detailSheet, /await dial\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+});
+
 test("the frontend mounts a real softphone provider and a Call center page", async () => {
   const [provider, callsPage, main, routes, panel] = await Promise.all([
     source("../../frontend/src/components/calls/SoftphoneProvider.jsx"),
@@ -137,7 +224,7 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   ]);
   assert.match(provider, /import \{ Device \} from "@twilio\/voice-sdk";/);
   assert.match(provider, /device\.on\("incoming"/);
-  assert.match(provider, /device\.connect\(\{ params: \{ To: target \} \}\)/);
+  assert.match(provider, /device\.connect\(\{\s*params: \{\s*To: target/);
   assert.match(provider, /device\.updateToken\(response\.data\?\.data\?\.token\)/);
   assert.match(provider, /export function useSoftphone\(\)/);
   assert.match(callsPage, /export default function CallsPage\(\)/);

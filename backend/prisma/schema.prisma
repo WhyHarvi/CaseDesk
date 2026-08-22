@@ -569,6 +569,11 @@ model Agency {
   ownerLicenseNumber              String?                            @map("owner_license_number")
   ownerPhone                      String?                            @map("owner_phone")
   ownerEmail                      String?                            @map("owner_email")
+  // How large a drawn signature renders on government forms (IMM 5476 and
+  // similar) — the fraction of the signature line/box it's stretched to
+  // fill, on both axes. Null uses the built-in default (see
+  // DEFAULT_SIGNATURE_FILL_FRACTION in imm5476SignatureFields.js).
+  governmentFormSignatureScale    Float?                             @map("government_form_signature_scale")
   defaultCurrency                 String                             @default("CAD") @map("default_currency")
   locale                          String                             @default("en-CA")
   timezone                        String                             @default("America/Toronto")

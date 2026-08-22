@@ -26,6 +26,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../../auth/AuthContext";
+import { useSoftphone } from "../../../components/calls/SoftphoneProvider";
 import api from "../../../services/api";
 import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, PAYMENT_READY_VALUES, paymentStatusTone, RETAINER_READY_VALUES, retainerStatusTone, statusTone } from "../leadPresentation";
 import BookConsultationSheet from "./BookConsultationSheet";
@@ -89,6 +90,7 @@ function DetailSkeleton() {
 
 export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose, onChanged = () => {} }) {
   const { role, appUser } = useAuth();
+  const { status: softphoneStatus, dial } = useSoftphone();
   const isFrontdesk = role === "frontdesk";
   const [lead, setLead] = useState(initialLead);
   const [tab, setTab] = useState("overview");
@@ -120,6 +122,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState("");
   const [savedNote, setSavedNote] = useState(null);
+  const [calling, setCalling] = useState(false);
+  const [callError, setCallError] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
@@ -167,6 +171,19 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       .then((response) => setLead(response.data.data))
       .catch(() => {});
   }, [tab, initialLead.id]);
+
+  async function startCall() {
+    if (!lead.phone) return;
+    try {
+      setCalling(true);
+      setCallError("");
+      await dial(lead.phone, { leadId: lead.id, leadName: leadName(lead) });
+    } catch (reason) {
+      setCallError(reason?.message || "The call could not be placed.");
+    } finally {
+      setCalling(false);
+    }
+  }
 
   function refreshLead() {
     api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {});
@@ -385,7 +402,11 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {lead.phone ? <a href={`tel:${lead.phone}`} title="Open this number in the Windows phone app (set Ooma Desktop as the default)" className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500"><Phone className="h-3.5 w-3.5" />Call</a> : null}
+              {lead.phone ? softphoneStatus === "ready" ? (
+                <button type="button" disabled={calling} onClick={startCall} className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:opacity-60"><Phone className="h-3.5 w-3.5" />{calling ? "Calling…" : "Call"}</button>
+              ) : (
+                <a href={`tel:${lead.phone}`} title="Open this number in the Windows phone app (set Ooma Desktop as the default)" className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500"><Phone className="h-3.5 w-3.5" />Call</a>
+              ) : null}
               <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
           </div>
@@ -413,6 +434,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
           {loading ? <DetailSkeleton /> : (
             <div className="p-6">
               {error ? <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error} Showing the available summary.</div> : null}
+              {callError ? <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{callError}</div> : null}
 
               {tab === "overview" ? (
                 <div className="space-y-5">

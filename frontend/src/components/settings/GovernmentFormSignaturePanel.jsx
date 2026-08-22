@@ -1,4 +1,4 @@
-import { CheckCircle2, FileSignature, ImageUp, Loader2, PenLine, Trash2 } from "lucide-react";
+import { CheckCircle2, FileSignature, ImageUp, Loader2, PenLine, Ruler, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import SignaturePad from "../client-portal/SignaturePad";
 import SignatureImageUpload from "./SignatureImageUpload";
@@ -27,14 +27,23 @@ export default function GovernmentFormSignaturePanel() {
   // obvious what appears on the form when these two fields are left blank —
   // every representative gets the same office phone/email by default.
   const [officeContact, setOfficeContact] = useState(null);
+  // Agency-wide, open to anyone (not admin-only): how large every drawn
+  // signature (both representatives' and applicants') renders on a
+  // government form. No single fraction reads right for every signature,
+  // so this is a control rather than another guess baked into the code.
+  const [sizeSettings, setSizeSettings] = useState(null);
+  const [sizeSaving, setSizeSaving] = useState(false);
+  const [sizeError, setSizeError] = useState("");
+  const [sizeNotice, setSizeNotice] = useState("");
 
   useEffect(() => {
     let active = true;
     Promise.all([
       api.get("/account/form-signature"),
       api.get("/account/agency-office-contact").catch(() => null),
+      api.get("/account/government-forms").catch(() => null),
     ])
-      .then(([signatureResponse, officeResponse]) => {
+      .then(([signatureResponse, officeResponse, sizeResponse]) => {
         if (!active) return;
         setData(signatureResponse.data.data);
         setProfile({
@@ -48,11 +57,27 @@ export default function GovernmentFormSignaturePanel() {
           formOfficeEmail: signatureResponse.data.data.formOfficeEmail || "",
         });
         setOfficeContact(officeResponse?.data?.data || null);
+        if (sizeResponse?.data?.data) setSizeSettings(sizeResponse.data.data);
       })
       .catch((reason) => { if (active) setLoadError(reason.response?.data?.message || "Your government-form signature could not be loaded."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
+
+  async function saveSize() {
+    setSizeSaving(true);
+    setSizeError("");
+    setSizeNotice("");
+    try {
+      const response = await api.put("/account/government-forms", { signatureScale: sizeSettings.signatureScale });
+      setSizeSettings(response.data.data);
+      setSizeNotice("Signature size saved. It applies to every representative and applicant signature going forward.");
+    } catch (reason) {
+      setSizeError(reason.response?.data?.message || "Signature size could not be saved.");
+    } finally {
+      setSizeSaving(false);
+    }
+  }
 
   // One save action instead of two. Credentials and signature used to be
   // separate saves, and the backend requires a saved licence number before
@@ -210,6 +235,44 @@ export default function GovernmentFormSignaturePanel() {
             {data.hasSignature ? <button type="button" disabled={saving} onClick={remove} className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 px-4 py-2.5 text-xs font-semibold text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />Remove saved signature</button> : null}
             <button type="button" disabled={saving || !profile.licenseNumber.trim()} onClick={saveAll} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSignature className="h-3.5 w-3.5" />}{saving ? "Saving…" : signatureImage ? "Save credentials & signature" : "Save credentials"}</button>
           </div>
+        </section>
+      ) : null}
+
+      {sizeSettings ? (
+        <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">3</span>
+            <p className="text-sm font-semibold text-slate-900">Signature size on government forms</p>
+          </div>
+          <p className="mt-1 pl-[34px] text-xs leading-5 text-slate-500">
+            Applies agency-wide, to every representative's and every applicant's signature on IMM 5476 and similar forms — not just yours. A drawn
+            signature is stretched to fill this share of its line; there's no single size that reads right for every signature, so adjust it here instead
+            of us guessing. Save, then open or download a form to check it — we can't preview the exact PDF render here.
+          </p>
+          <div className="mt-4 flex items-center gap-4 pl-[34px]">
+            <Ruler className="h-4 w-4 shrink-0 text-slate-400" />
+            <input
+              type="range"
+              min={Math.round(sizeSettings.minSignatureScale * 100)}
+              max={Math.round(sizeSettings.maxSignatureScale * 100)}
+              step={5}
+              value={Math.round(sizeSettings.signatureScale * 100)}
+              onChange={(event) => setSizeSettings((current) => ({ ...current, signatureScale: Number(event.target.value) / 100 }))}
+              className="h-2 w-full max-w-xs accent-slate-950"
+            />
+            <span className="w-12 shrink-0 text-sm font-semibold text-slate-900">{Math.round(sizeSettings.signatureScale * 100)}%</span>
+            <button
+              type="button"
+              disabled={sizeSaving}
+              onClick={saveSize}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40"
+            >
+              {sizeSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {sizeSaving ? "Saving…" : "Save size"}
+            </button>
+          </div>
+          {sizeError ? <p className="mt-3 pl-[34px] text-sm text-rose-700">{sizeError}</p> : null}
+          {sizeNotice ? <p className="mt-3 flex items-center gap-2 pl-[34px] text-sm font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" />{sizeNotice}</p> : null}
         </section>
       ) : null}
     </div>

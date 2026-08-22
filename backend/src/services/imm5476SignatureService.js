@@ -4,7 +4,7 @@ import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import prisma from "./prisma/client.js";
 import { DOCUMENT_BUCKET, downloadStorageFile, removeStorageFile, uploadStorageFile } from "./supabaseStorage.js";
 import { createHttpError } from "../utils/http.js";
-import { APPLICANT_SIGNATURE, readFieldValue, REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
+import { APPLICANT_SIGNATURE, applyFieldValues, hasInkAnnotationInRect, readFieldValue, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction, signatureAnnotation } from "./imm5476SignatureFields.js";
 
 function hashBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
@@ -20,6 +20,8 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
   }
   const source = await downloadStorageFile(DOCUMENT_BUCKET, request.sourceStorageKey, { allowMissing: true });
   if (!source) throw createHttpError(409, "The filled IMM 5476 copy is not available. Ask your consultant to resend the signature request.");
+  const agency = await prisma.agency.findUnique({ where: { id: form.agencyId }, select: { governmentFormSignatureScale: true } });
+  const fillFraction = resolveSignatureFillFraction(agency?.governmentFormSignatureScale);
 
   const task = pdfjs.getDocument({ data: new Uint8Array(source), enableXfa: true });
   let signedBuffer;
@@ -31,11 +33,23 @@ export async function createSignedImm5476Copy({ request, applicantStrokes, appli
     // signature dates on a IMM 5476 should read the same day.
     const representativeSignedDate = String((await readFieldValue(document, REPRESENTATIVE_SIGNATURE.dateFieldId)) || "").trim();
     const signedDate = representativeSignedDate || new Date().toISOString().slice(0, 10);
-    document.annotationStorage.setValue("547R", { value: true });
+    // Explicitly clears any stale sibling radio widgets (e.g. from an
+    // earlier autofill) rather than only touching 547R — this copy becomes
+    // ClientSigned and is never re-stamped again, so it has to be correct
+    // here or it stays wrong forever.
+    await applyFieldValues(document, [["547R", true]]);
     document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
     document.annotationStorage.setValue(APPLICANT_SIGNATURE.dateFieldId, { value: signedDate });
-    document.annotationStorage.setValue(`pdfjs_internal_editor_casedesk-representative-${randomUUID()}`, signatureAnnotation(request.representativeSignatureStrokes, REPRESENTATIVE_SIGNATURE, request.representativeNameSnapshot));
-    document.annotationStorage.setValue(`pdfjs_internal_editor_casedesk-applicant-${randomUUID()}`, signatureAnnotation(applicantStrokes, APPLICANT_SIGNATURE, request.applicantNameSnapshot));
+    // The representative's signature is already baked into this source PDF
+    // from when the filled copy was generated/sent — re-adding it here
+    // unconditionally on every client-signing pass drew a second overlapping
+    // ink annotation in the same box. Only stamp what isn't already there.
+    if (!(await hasInkAnnotationInRect(document, REPRESENTATIVE_SIGNATURE))) {
+      document.annotationStorage.setValue(`pdfjs_internal_editor_casedesk-representative-${randomUUID()}`, signatureAnnotation(request.representativeSignatureStrokes, REPRESENTATIVE_SIGNATURE, request.representativeNameSnapshot, fillFraction));
+    }
+    if (!(await hasInkAnnotationInRect(document, APPLICANT_SIGNATURE))) {
+      document.annotationStorage.setValue(`pdfjs_internal_editor_casedesk-applicant-${randomUUID()}`, signatureAnnotation(applicantStrokes, APPLICANT_SIGNATURE, request.applicantNameSnapshot, fillFraction));
+    }
     signedBuffer = Buffer.from(await document.saveDocument());
   } catch (error) {
     throw createHttpError(500, `The signed IMM 5476 could not be generated: ${error.message}`);

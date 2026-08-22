@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import prisma from "./prisma/client.js";
 import { normalizeCommunicationPhone } from "./communicationAddressService.js";
+import { createHttpError } from "../utils/http.js";
 import { adminRecipientIds, notifyUsers } from "./notificationService.js";
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
@@ -477,6 +478,58 @@ export async function ensureOomaCallbackFollowUp(callSessionId, db = prisma) {
     });
   }
   return result;
+}
+
+const CALL_OUTCOMES = new Set(["COMPLETED", "FOLLOW_UP_REQUIRED", "NO_ANSWER", "BUSY", "VOICEMAIL", "WRONG_NUMBER", "NOT_INTERESTED", "OTHER"]);
+
+// Records a disposition + note on a shared call-history session and, when the
+// caller asks and the session is linked to an OPEN standard-pipeline lead,
+// creates the follow-up (plus the FOLLOW_UP_CREATED activity and the lead's
+// next-action pointer). Shared by the history drawer (Ooma routes) and the
+// browser-softphone "call ended" popup (Twilio routes) so both write the same
+// outcome through the same code path.
+export async function applyCallOutcome(call, { outcome, notes, nextFollowUp = null } = {}, { agencyId, userId }) {
+  const value = clean(outcome, 80).toUpperCase();
+  if (!CALL_OUTCOMES.has(value)) throw createHttpError(400, "Select a valid call outcome.", "INVALID_CALL_OUTCOME");
+  const noteText = clean(notes, 3000) || null;
+  await prisma.$transaction(async (tx) => {
+    await tx.oomaCallSession.update({ where: { id: call.id }, data: { disposition: value, outcomeNotes: noteText } });
+    if (nextFollowUp && call.leadId) {
+      const lead = await tx.lead.findFirst({ where: { id: call.leadId, agencyId, status: "OPEN", pipelineSegment: "STANDARD", deletedAt: null } });
+      if (lead) {
+        const dueAt = new Date(nextFollowUp.dueAt);
+        if (Number.isNaN(dueAt.getTime())) throw createHttpError(400, "Choose a valid follow-up date and time.", "INVALID_FOLLOW_UP_DATE");
+        const assignedUserId = clean(nextFollowUp.assignedUserId, 100) || lead.ownerUserId;
+        const staff = await tx.user.findFirst({ where: { id: assignedUserId, agencyId, status: "active" }, select: { id: true } });
+        if (!staff) throw createHttpError(400, "Select an active team member for the follow-up.", "INVALID_FOLLOW_UP_OWNER");
+        const followUp = await tx.leadFollowUp.create({
+          data: { agencyId, leadId: lead.id, assignedUserId, type: "PHONE_CALL", description: clean(nextFollowUp.description, 500) || "Follow up after call", dueAt },
+        });
+        await tx.leadActivity.create({
+          data: {
+            agencyId,
+            leadId: lead.id,
+            activityType: "FOLLOW_UP_CREATED",
+            direction: "INTERNAL",
+            channel: "SYSTEM",
+            title: followUp.description,
+            description: `Due ${dueAt.toISOString()}`,
+            performedById: userId,
+            metadata: { followUpId: followUp.id, oomaCallSessionId: call.id },
+          },
+        });
+        if (!lead.nextActionAt || dueAt < lead.nextActionAt) {
+          await tx.lead.update({
+            where: { id: lead.id },
+            data: { nextActionType: followUp.type, nextActionDescription: followUp.description, nextActionAt: dueAt, nextActionOwnerId: assignedUserId, version: { increment: 1 } },
+          });
+        }
+      }
+    }
+  });
+  if (call.leadId) await syncOomaLeadActivity(call.id);
+  if (call.clientId) await syncOomaClientCommunication(call.id);
+  return value;
 }
 
 async function notifyCall(session, isNew) {

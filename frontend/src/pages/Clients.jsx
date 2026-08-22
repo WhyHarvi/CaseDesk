@@ -10,6 +10,7 @@ import {
   Loader2,
   MoreHorizontal,
   Pencil,
+  Phone,
   Plus,
   Search,
   Users,
@@ -19,6 +20,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
 import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
@@ -814,7 +816,7 @@ function ClientActionsMenu({ client, isOpen, onToggle, onEdit, onDelete, deletin
   );
 }
 
-function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen, deletingId, canManage }) {
+function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen, deletingId, canManage, softphoneReady, onCall }) {
   return (
     <div className={`${cardClassName} space-y-4 p-5`}>
       <div className="flex items-start justify-between gap-4">
@@ -833,6 +835,9 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
             <p className="text-xs text-slate-400">{client.fileNumber}</p>
           </div>
         </div>
+        {client.phone ? (
+          <button type="button" disabled={!softphoneReady} onClick={onCall} title={softphoneReady ? `Call ${client.fullName}` : "Connect Twilio calling in Settings to call this client"} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Call ${client.fullName}`}><Phone className="h-4 w-4" /></button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
@@ -881,6 +886,8 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 
 export default function Clients() {
   const { role, membership } = useAuth();
+  const { status: softphoneStatus, dial } = useSoftphone();
+  const [callError, setCallError] = useState("");
   const canManageClients = ["admin", "consultant", "frontdesk"].includes(role);
   const navigate = useNavigate();
   const canReassignClients = ["admin", "frontdesk"].includes(role);
@@ -935,6 +942,15 @@ export default function Clients() {
       setError(requestError.response?.data?.message || "Unable to load clients.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function startCall(client) {
+    try {
+      setCallError("");
+      await dial(client.phone, { clientId: client.id, clientName: client.fullName });
+    } catch (reason) {
+      setCallError(reason?.message || "The call could not be placed.");
     }
   }
 
@@ -1604,6 +1620,7 @@ export default function Clients() {
           </div>
 
           {error ? <div className="mx-5 mt-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6">{error}</div> : null}
+          {callError ? <div className="mx-5 mt-5 flex items-center justify-between gap-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6"><span>{callError}</span><button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button></div> : null}
 
           {loading ? (
             <div className="space-y-3 p-5 sm:p-6">
@@ -1653,6 +1670,9 @@ export default function Clients() {
                               <p className="text-slate-500">{client.email || client.phone || "No contact on file"}</p>
                               <p className="text-xs text-slate-400">{client.fileNumber}</p>
                             </div>
+                            {client.phone ? (
+                              <button type="button" disabled={softphoneStatus !== "ready"} onClick={() => startCall(client)} title={softphoneStatus === "ready" ? `Call ${client.fullName}` : "Connect Twilio calling in Settings to call this client"} className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Call ${client.fullName}`}><Phone className="h-3.5 w-3.5" /></button>
+                            ) : null}
                           </div>
                         </td>
                         <td className="px-4 py-5">
@@ -1770,6 +1790,8 @@ export default function Clients() {
                     isMenuOpen={activeActionMenuId === client.id}
                     deletingId={deletingId}
                     canManage={canManageClients}
+                    softphoneReady={softphoneStatus === "ready"}
+                    onCall={() => startCall(client)}
                   />
                 ))}
               </div>

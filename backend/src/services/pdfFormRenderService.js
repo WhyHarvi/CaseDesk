@@ -1,7 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { randomUUID } from "node:crypto";
-import { APPLICANT_SIGNATURE, readFieldValue, REPRESENTATIVE_SIGNATURE, signatureAnnotation } from "./imm5476SignatureFields.js";
+import { APPLICANT_SIGNATURE, applyFieldValues, buildRadioGroupSiblingMap, hasInkAnnotationInRect, readFieldValue, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction, signatureAnnotation } from "./imm5476SignatureFields.js";
 
 const TRUE_VALUES = new Set(["true", "1", "yes", "on", "checked", "x"]);
 
@@ -63,21 +63,19 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
   const task = pdfjs.getDocument({ data: new Uint8Array(sourceBuffer), enableXfa: true });
   try {
     const document = await task.promise;
+    // fields then forcedValues, in that order — forcedValues is applied
+    // after and so takes precedence, including for any radio-group entry
+    // that also appears (possibly stale/conflicting) in fields.
+    const entries = [];
     for (const { fieldKey, fieldType, value } of fields) {
       if (value === null || value === undefined || value === "") continue;
       const isBooleanField = fieldType === "Checkbox" || fieldType === "Radio";
-      document.annotationStorage.setValue(fieldKey, { value: isBooleanField ? TRUE_VALUES.has(String(value).toLowerCase()) : String(value) });
+      entries.push([fieldKey, isBooleanField ? TRUE_VALUES.has(String(value).toLowerCase()) : String(value)]);
     }
-    for (const [fieldKey, value] of Object.entries(forcedValues)) document.annotationStorage.setValue(fieldKey, { value });
+    for (const [fieldKey, value] of Object.entries(forcedValues)) entries.push([fieldKey, value]);
+    await applyFieldValues(document, entries);
     if (representativeSignature?.strokes?.length) {
-      const page = await document.getPage(REPRESENTATIVE_SIGNATURE.pageIndex + 1);
-      const annotations = await page.getAnnotations({ intent: "display" });
-      const [left, bottom, right, top] = REPRESENTATIVE_SIGNATURE.rect;
-      const alreadySigned = annotations.some((annotation) => {
-        if (String(annotation?.subtype || "").toLowerCase() !== "ink" || !Array.isArray(annotation.rect)) return false;
-        const [annotationLeft, annotationBottom, annotationRight, annotationTop] = annotation.rect;
-        return annotationLeft < right && annotationRight > left && annotationBottom < top && annotationTop > bottom;
-      });
+      const alreadySigned = await hasInkAnnotationInRect(document, REPRESENTATIVE_SIGNATURE);
       const existingDate = String((await readFieldValue(document, REPRESENTATIVE_SIGNATURE.dateFieldId)) || "").trim();
       const signedDate = existingDate || new Date().toISOString().slice(0, 10);
       document.annotationStorage.setValue(REPRESENTATIVE_SIGNATURE.dateFieldId, { value: signedDate });
@@ -85,7 +83,7 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
       if (!alreadySigned) {
         document.annotationStorage.setValue(
           `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
-          signatureAnnotation(representativeSignature.strokes, REPRESENTATIVE_SIGNATURE, representativeSignature.name),
+          signatureAnnotation(representativeSignature.strokes, REPRESENTATIVE_SIGNATURE, representativeSignature.name, resolveSignatureFillFraction(representativeSignature.fillFraction)),
         );
       }
     }
@@ -118,14 +116,26 @@ export async function rebuildImm5476FromOriginal(sourceBuffer, originalBuffer) {
   try {
     const [sourceDocument, originalDocument] = await Promise.all([sourceTask.promise, originalTask.promise]);
     const fields = await sourceDocument.getFieldObjects();
-    for (const entries of Object.values(fields || {})) {
-      for (const field of entries) {
+    // Radio-group members are deliberately skipped here, not replayed: a
+    // shared-name group's getFieldObjects() entries all report the SAME
+    // resolved value with no reliable per-widget export value to tell which
+    // physical option that corresponds to, so replaying it onto every
+    // member would corrupt the group exactly like applyFieldValues guards
+    // against elsewhere. Safe to skip entirely — this function's only
+    // caller (serveCaseFormFile) always immediately re-stamps the
+    // representative's required selections right after this rebuild.
+    const radioGroupSiblings = await buildRadioGroupSiblingMap(sourceDocument);
+    const entries = [];
+    for (const entriesForName of Object.values(fields || {})) {
+      for (const field of entriesForName) {
         if (!field?.id || field.id === REPRESENTATIVE_SIGNATURE.dateFieldId || field.id === APPLICANT_SIGNATURE.dateFieldId) continue;
+        if (radioGroupSiblings.has(field.id)) continue;
         const value = field.value;
         if (value === null || value === undefined || value === "") continue;
-        originalDocument.annotationStorage.setValue(field.id, { value });
+        entries.push([field.id, value]);
       }
     }
+    await applyFieldValues(originalDocument, entries);
     return Buffer.from(await originalDocument.saveDocument());
   } finally {
     await Promise.all([sourceTask.destroy().catch(() => {}), originalTask.destroy().catch(() => {})]);

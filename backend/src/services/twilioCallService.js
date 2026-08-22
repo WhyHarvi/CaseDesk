@@ -309,8 +309,14 @@ export async function outboundTwiML(agencyId, req) {
   }
 
   const agentIdentity = identityFromClient(req.body?.From);
+  // The softphone dials with the lead/client id as a custom parameter so the
+  // status callbacks (which repeat this URL's query params in their POST
+  // body) can link the session to the record even when the number alone is
+  // ambiguous — that's what makes a lead call auto-record as lead activity.
+  const dialLeadId = clean(req.body?.leadId, 100);
+  const dialClientId = clean(req.body?.clientId, 100);
   const base = twilioPublicBase(req);
-  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}`;
+  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}${dialLeadId ? `&leadId=${encodeURIComponent(dialLeadId)}` : ""}${dialClientId ? `&clientId=${encodeURIComponent(dialClientId)}` : ""}`;
   return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" record="record-from-answer" recordingStatusCallback="${statusBase}&amp;recording=1" recordingStatusCallbackEvent="completed" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
 }
 
@@ -460,10 +466,21 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   const agentIdentity = identityFromClient(clean(body.agent, 200));
   const durationSeconds = number(body.CallDuration);
   const recordingUrl = clean(body.RecordingUrl, 2000) || null;
+  // Dial context threaded through the softphone → TwiML → status callback
+  // chain (see outboundTwiML). Verified against the agency so a stray or
+  // stale id can never link a call to another agency's record.
+  const explicitLeadId = clean(body.leadId, 100) || null;
+  const explicitClientId = clean(body.clientId, 100) || null;
 
   let result;
   try {
     result = await prisma.$transaction(async (tx) => {
+      const [leadMatch, clientMatch] = await Promise.all([
+        explicitLeadId ? tx.lead.findFirst({ where: { id: explicitLeadId, agencyId, deletedAt: null }, select: { id: true } }) : Promise.resolve(null),
+        explicitClientId ? tx.client.findFirst({ where: { id: explicitClientId, agencyId }, select: { id: true } }) : Promise.resolve(null),
+      ]);
+      const linkLeadId = leadMatch?.id || null;
+      const linkClientId = clientMatch?.id || null;
       const existing = await twilioSessionByCallIds(tx, agencyId, callSid, parentCallSid);
       let session;
       if (existing) {
@@ -477,6 +494,10 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
             remoteNumberNormalized: remoteNumberNormalized || existing.remoteNumberNormalized,
             businessNumber: businessNumber || existing.businessNumber,
             ...(agentIdentity && !existing.handledByUserId ? { handledByUserId: agentIdentity } : {}),
+            // An explicitly dialed record only fills an unlinked session —
+            // never overrides a match the number already produced.
+            ...(linkLeadId && !existing.leadId ? { leadId: linkLeadId, resolution: "LINKED_LEAD", resolvedAt: existing.resolvedAt || occurredAt, resolvedById: existing.resolvedById } : {}),
+            ...(linkClientId && !existing.clientId ? { clientId: linkClientId, resolution: "LINKED_CLIENT", resolvedAt: existing.resolvedAt || occurredAt, resolvedById: existing.resolvedById } : {}),
             ...(durationSeconds != null ? { durationSeconds } : {}),
             ...(recordingUrl ? { recordingUrl } : {}),
             ...(status === "ANSWERED" ? { answeredAt: existing.answeredAt || occurredAt } : {}),
@@ -500,6 +521,8 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
           remoteNumberNormalized,
           businessNumber,
           handledByUserId: agentIdentity || null,
+          ...(linkLeadId ? { leadId: linkLeadId, resolution: "LINKED_LEAD", resolvedAt: occurredAt } : {}),
+          ...(linkClientId ? { clientId: linkClientId, resolution: "LINKED_CLIENT", resolvedAt: occurredAt } : {}),
           startedAt: occurredAt,
           ...(status === "ANSWERED" ? { answeredAt: occurredAt } : {}),
           ...(status === "COMPLETED" ? { endedAt: occurredAt } : {}),

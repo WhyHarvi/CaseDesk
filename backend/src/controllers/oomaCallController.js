@@ -6,6 +6,7 @@ import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
 import { createLead as createLeadRecord } from "../modules/leads/lead.service.js";
 import { DEFAULT_LEAD_SOURCES } from "../modules/leads/lead.constants.js";
 import {
+  applyCallOutcome,
   ensureOomaCallbackFollowUp,
   syncOomaClientCommunication,
   syncOomaLeadActivity,
@@ -259,28 +260,6 @@ export async function markOomaCallSpam(req, res) {
 
 export async function recordOomaCallOutcome(req, res) {
   const call = await requireCall(req, {});
-  const allowed = new Set(["COMPLETED", "FOLLOW_UP_REQUIRED", "NO_ANSWER", "BUSY", "VOICEMAIL", "WRONG_NUMBER", "NOT_INTERESTED", "OTHER"]);
-  const outcome = clean(req.body.outcome, 80).toUpperCase();
-  if (!allowed.has(outcome)) throw createHttpError(400, "Select a valid call outcome.", "INVALID_CALL_OUTCOME");
-  const notes = clean(req.body.notes, 3000) || null;
-  const data = await prisma.$transaction(async (tx) => {
-    const updated = await tx.oomaCallSession.update({ where: { id: call.id }, data: { disposition: outcome, outcomeNotes: notes } });
-    if (req.body.nextFollowUp && call.leadId) {
-      const lead = await tx.lead.findFirst({ where: { id: call.leadId, agencyId: req.auth.agencyId, status: "OPEN", pipelineSegment: "STANDARD", deletedAt: null } });
-      if (lead) {
-        const dueAt = new Date(req.body.nextFollowUp.dueAt);
-        if (Number.isNaN(dueAt.getTime())) throw createHttpError(400, "Choose a valid follow-up date and time.", "INVALID_FOLLOW_UP_DATE");
-        const assignedUserId = clean(req.body.nextFollowUp.assignedUserId, 100) || lead.ownerUserId;
-        const staff = await tx.user.findFirst({ where: { id: assignedUserId, agencyId: req.auth.agencyId, status: "active" }, select: { id: true } });
-        if (!staff) throw createHttpError(400, "Select an active team member for the follow-up.", "INVALID_FOLLOW_UP_OWNER");
-        const followUp = await tx.leadFollowUp.create({ data: { agencyId: req.auth.agencyId, leadId: lead.id, assignedUserId, type: "PHONE_CALL", description: clean(req.body.nextFollowUp.description, 500) || "Follow up after Ooma call", dueAt } });
-        await tx.leadActivity.create({ data: { agencyId: req.auth.agencyId, leadId: lead.id, activityType: "FOLLOW_UP_CREATED", direction: "INTERNAL", channel: "SYSTEM", title: followUp.description, description: `Due ${dueAt.toISOString()}`, performedById: req.auth.userId, metadata: { followUpId: followUp.id, oomaCallSessionId: call.id } } });
-        if (!lead.nextActionAt || dueAt < lead.nextActionAt) await tx.lead.update({ where: { id: lead.id }, data: { nextActionType: followUp.type, nextActionDescription: followUp.description, nextActionAt: dueAt, nextActionOwnerId: assignedUserId, version: { increment: 1 } } });
-      }
-    }
-    return updated;
-  });
-  if (call.leadId) await syncOomaLeadActivity(call.id);
-  if (call.clientId) await syncOomaClientCommunication(call.id);
-  res.json({ data: { ...data, ...(await prisma.oomaCallSession.findUnique({ where: { id: call.id }, include: callInclude })) } });
+  await applyCallOutcome(call, req.body, { agencyId: req.auth.agencyId, userId: req.auth.userId });
+  res.json({ data: await prisma.oomaCallSession.findUnique({ where: { id: call.id }, include: callInclude }) });
 }

@@ -12,6 +12,7 @@ import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds,
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 import { imm5476RepresentativeSignatureName, rebuildImm5476FromOriginal, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
+import { resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
 import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
@@ -436,6 +437,9 @@ export async function serveCaseFormFile(req, res) {
   const signatureStrokes = hasSavedSignature && isTracedImageSignature(representative.formSignatureStrokes)
     ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
     : representative?.formSignatureStrokes;
+  const signatureFillFraction = hasSavedSignature
+    ? resolveSignatureFillFraction((await prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } }))?.governmentFormSignatureScale)
+    : undefined;
   let preparedBuffer = storedBuffer;
   if (isImm5476 && !isSignedCopy) {
     const embeddedSigner = await imm5476RepresentativeSignatureName(storedBuffer);
@@ -479,7 +483,7 @@ export async function serveCaseFormFile(req, res) {
           "95R": false,
           "94R": representative?.licenseNumber?.trim() || "",
         },
-        hasSavedSignature ? { strokes: signatureStrokes, name: representative.fullName } : null,
+        hasSavedSignature ? { strokes: signatureStrokes, name: representative.fullName, fillFraction: signatureFillFraction } : null,
       )
     : preparedBuffer;
   res.setHeader("Cache-Control", "private, no-store");

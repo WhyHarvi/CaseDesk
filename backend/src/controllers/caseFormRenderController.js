@@ -7,6 +7,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { assertFormUnlocked, requireFormPermission } from "../services/formPermissions.js";
 import { recordFormAudit } from "../utils/formAudit.js";
 import { stampPdfFormValues, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
+import { resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
 import { caseFormAccessWhere } from "../services/caseFormAccessService.js";
 
 const include = { uploadedBy: { select: { id: true, fullName: true } }, lockedBy: { select: { id: true, fullName: true } }, _count: { select: { versions: true, reviewComments: true } } };
@@ -29,13 +30,14 @@ export async function generateFilledCaseFormPdf(req, res) {
   if (!existing.storageKey) throw createHttpError(409, "This form doesn't have a source file to stamp values into");
 
   const isImm5476 = String(existing.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
-  const [schema, values, sourceBuffer, representativeUser] = await Promise.all([
+  const [schema, values, sourceBuffer, representativeUser, agency] = await Promise.all([
     prisma.formTemplateFieldSchema.findMany({ where: { agencyFormTemplateId: existing.sourceAgencyFormTemplateId } }),
     prisma.caseFormFieldValue.findMany({ where: { caseFormId: existing.id } }),
     downloadStorageFile(DOCUMENT_BUCKET, existing.storageKey, { allowMissing: true }),
     isImm5476 && existing.representativeUserId
       ? prisma.user.findUnique({ where: { id: existing.representativeUserId }, select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } })
       : null,
+    isImm5476 ? prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } }) : null,
   ]);
   if (!sourceBuffer) throw createHttpError(404, "The stored source file for this form was not found");
 
@@ -50,7 +52,7 @@ export async function generateFilledCaseFormPdf(req, res) {
   // saved signature + today's date into Section B right away rather than
   // leaving it blank until the applicant also signs in Section E.
   const representativeSignature = representativeUser?.formSignatureImage && Array.isArray(representativeUser.formSignatureStrokes) && representativeUser.formSignatureStrokes.length
-    ? { strokes: representativeUser.formSignatureStrokes, name: representativeUser.fullName }
+    ? { strokes: representativeUser.formSignatureStrokes, name: representativeUser.fullName, fillFraction: resolveSignatureFillFraction(agency?.governmentFormSignatureScale) }
     : null;
   const filledBuffer = isImm5476
     ? await stampXfaPdfFormValues(sourceBuffer, fields, { "547R": true }, representativeSignature)
