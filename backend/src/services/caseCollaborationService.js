@@ -10,7 +10,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { notifyUsers, adminRecipientIds } from "./notificationService.js";
 import { TERMINAL_CASE_STATUSES } from "../controllers/caseController.js";
 
-const REQUESTABLE_ROLES = new Set(["primary", "supporting", "reviewer"]);
+const REQUESTABLE_ROLES = new Set(["supporting", "reviewer"]);
 const TERMINAL_CASE_STATUS_LIST = [...TERMINAL_CASE_STATUSES];
 
 const caseSummarySelect = {
@@ -55,6 +55,34 @@ function shapeRequest(request) {
     case: request.case ? shapeCase(request.case) : null,
     requestedBy: request.requestedBy || null,
     reviewedBy: request.reviewedBy || null,
+  };
+}
+
+export async function getRestrictedCaseAccessPreview(agencyId, userId, caseId) {
+  const caseItem = await prisma.case.findFirst({
+    where: { id: caseId, agencyId, deletedAt: null },
+    select: {
+      id: true,
+      caseType: true,
+      status: true,
+      assignedUser: { select: { id: true, fullName: true } },
+      client: { select: { fullName: true } },
+      assignments: { where: { consultantUserId: userId, status: "active" }, select: { id: true } },
+      collaborationRequests: {
+        where: { requestedById: userId, status: "Pending" },
+        select: { id: true, status: true, createdAt: true, note: true },
+        take: 1,
+      },
+    },
+  });
+  if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
+  return {
+    id: caseItem.id,
+    clientName: caseItem.client?.fullName || "Restricted client",
+    caseType: caseItem.caseType,
+    owner: caseItem.assignedUser,
+    accessStatus: caseItem.assignments.length ? "Granted" : caseItem.collaborationRequests.length ? "Pending" : "Restricted",
+    pendingRequest: caseItem.collaborationRequests[0] || null,
   };
 }
 
@@ -140,14 +168,47 @@ export async function submitCollaborationRequest(agencyId, userId, { caseId, req
   });
   if (existingPending) throw createHttpError(409, "You already have a pending request for this case.", "REQUEST_EXISTS");
 
-  const created = await prisma.caseCollaborationRequest.create({
-    data: { agencyId, caseId, requestedById: userId, requestedRole: role, note: trimmedNote || null },
-    select: fullRequestSelect(),
+  let created;
+  try {
+    created = await prisma.caseCollaborationRequest.create({
+      data: { agencyId, caseId, requestedById: userId, requestedRole: role, note: trimmedNote || null },
+      select: fullRequestSelect(),
+    });
+  } catch (error) {
+    if (error?.code === "P2002") {
+      throw createHttpError(409, "You already have a pending request for this case.", "REQUEST_EXISTS");
+    }
+    throw error;
+  }
+
+  await recordActivity({
+    agencyId,
+    userId,
+    clientId: created.case?.client?.id,
+    caseId,
+    action: "case.collaboration_requested",
+    details: `${created.requestedBy.fullName} requested collaborator access${trimmedNote ? `: ${trimmedNote}` : ""}`,
   });
+
+  const [admins, approverAssignments] = await Promise.all([
+    adminRecipientIds(agencyId),
+    prisma.case.findFirst({
+      where: { id: caseId, agencyId },
+      select: {
+        assignedUserId: true,
+        assignments: { where: { status: "active", assignmentType: "reviewer" }, select: { consultantUserId: true } },
+      },
+    }),
+  ]);
+  const approverIds = [...new Set([
+    ...admins,
+    approverAssignments?.assignedUserId,
+    ...(approverAssignments?.assignments || []).map((item) => item.consultantUserId),
+  ].filter((id) => id && id !== userId))];
 
   await notifyUsers({
     agencyId,
-    recipientIds: await adminRecipientIds(agencyId),
+    recipientIds: approverIds,
     actorUserId: userId,
     type: "case.collaboration_requested",
     category: "cases",
@@ -156,11 +217,37 @@ export async function submitCollaborationRequest(agencyId, userId, { caseId, req
     severity: "info",
     entityType: "case",
     entityId: caseId,
-    actionUrl: "/app/team-workload",
+    actionUrl: `/app/workload?accessRequest=${created.id}`,
     dedupeKey: `case-collab:${created.id}:requested`,
   });
 
   return shapeRequest(created);
+}
+
+async function assertCanReviewRequest(agencyId, actorUserId, request) {
+  if (request.requestedById === actorUserId) {
+    throw createHttpError(403, "You cannot approve or decline your own access request.", "SELF_REVIEW_FORBIDDEN");
+  }
+  const actor = await prisma.user.findFirst({
+    where: { id: actorUserId, agencyId, status: "active" },
+    select: {
+      memberships: { where: { agencyId, isActive: true }, select: { role: true }, take: 1 },
+    },
+  });
+  const isAdmin = actor?.memberships[0]?.role === "admin";
+  if (isAdmin) return;
+  const caseAccess = await prisma.case.findFirst({
+    where: {
+      id: request.caseId,
+      agencyId,
+      OR: [
+        { assignedUserId: actorUserId },
+        { assignments: { some: { consultantUserId: actorUserId, assignmentType: "reviewer", status: "active" } } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (!caseAccess) throw createHttpError(403, "Only an administrator, the case RCIC, or an assigned reviewer can review this request.", "FORBIDDEN");
 }
 
 export async function withdrawCollaborationRequest(agencyId, userId, requestId) {
@@ -174,7 +261,42 @@ export async function withdrawCollaborationRequest(agencyId, userId, requestId) 
     data: { status: "Withdrawn", reviewedAt: new Date() },
     select: fullRequestSelect(),
   });
+  await recordActivity({
+    agencyId,
+    userId,
+    clientId: updated.case?.client?.id,
+    caseId: updated.case?.id,
+    action: "case.collaboration_withdrawn",
+    details: `${updated.requestedBy?.fullName || "A staff member"} cancelled their collaborator access request`,
+  });
   return shapeRequest(updated);
+}
+
+export async function listReviewableCollaborationRequests(agencyId, actorUserId) {
+  const membership = await prisma.agencyMember.findFirst({
+    where: { agencyId, userId: actorUserId, isActive: true },
+    select: { role: true },
+  });
+  const isAdmin = membership?.role === "admin";
+  const requests = await prisma.caseCollaborationRequest.findMany({
+    where: {
+      agencyId,
+      status: "Pending",
+      requestedById: { not: actorUserId },
+      ...(!isAdmin ? {
+        case: {
+          OR: [
+            { assignedUserId: actorUserId },
+            { assignments: { some: { consultantUserId: actorUserId, assignmentType: "reviewer", status: "active" } } },
+          ],
+        },
+      } : {}),
+    },
+    select: fullRequestSelect(),
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  return requests.map(shapeRequest);
 }
 
 export async function listCollaborationRequestsForAdmin(agencyId, { status = "Pending" } = {}) {
@@ -205,28 +327,18 @@ async function reviewedRequestOrThrow(agencyId, requestId) {
 
 export async function approveCollaborationRequest(agencyId, adminUserId, requestId, { reviewNote = "" } = {}) {
   const request = await reviewedRequestOrThrow(agencyId, requestId);
+  await assertCanReviewRequest(agencyId, adminUserId, request);
   if (request.case.archivedAt) throw createHttpError(409, "Restore this case before granting access.", "CASE_ARCHIVED");
 
   const trimmedNote = String(reviewNote || "").trim().slice(0, 500);
-  const assignmentType = request.requestedRole === "primary" ? "primary" : request.requestedRole;
+  const assignmentType = request.requestedRole === "reviewer" ? "reviewer" : "supporting";
 
   const result = await prisma.$transaction(async (tx) => {
-    if (assignmentType === "primary") {
-      await tx.case.update({ where: { id: request.caseId }, data: { assignedUserId: request.requestedById } });
-      if (request.case.assignedUserId) {
-        await tx.caseAssignment.upsert({
-          where: { agencyId_caseId_consultantUserId_assignmentType: { agencyId, caseId: request.caseId, consultantUserId: request.case.assignedUserId, assignmentType: "supporting" } },
-          create: { agencyId, caseId: request.caseId, consultantUserId: request.case.assignedUserId, assignmentType: "supporting", status: "active", assignedById: adminUserId },
-          update: { status: "active", assignedById: adminUserId, assignedAt: new Date() },
-        });
-      }
-    } else {
-      await tx.caseAssignment.upsert({
+    await tx.caseAssignment.upsert({
         where: { agencyId_caseId_consultantUserId_assignmentType: { agencyId, caseId: request.caseId, consultantUserId: request.requestedById, assignmentType } },
         create: { agencyId, caseId: request.caseId, consultantUserId: request.requestedById, assignmentType, status: "active", assignedById: adminUserId },
         update: { status: "active", assignedById: adminUserId, assignedAt: new Date() },
-      });
-    }
+    });
     return tx.caseCollaborationRequest.update({
       where: { id: request.id },
       data: { status: "Approved", reviewedById: adminUserId, reviewedAt: new Date(), reviewNote: trimmedNote || null },
@@ -263,12 +375,22 @@ export async function approveCollaborationRequest(agencyId, adminUserId, request
 
 export async function declineCollaborationRequest(agencyId, adminUserId, requestId, { reviewNote = "" } = {}) {
   const request = await reviewedRequestOrThrow(agencyId, requestId);
+  await assertCanReviewRequest(agencyId, adminUserId, request);
   const trimmedNote = String(reviewNote || "").trim().slice(0, 500);
 
   const updated = await prisma.caseCollaborationRequest.update({
     where: { id: request.id },
     data: { status: "Declined", reviewedById: adminUserId, reviewedAt: new Date(), reviewNote: trimmedNote || null },
     select: fullRequestSelect(),
+  });
+
+  await recordActivity({
+    agencyId,
+    userId: adminUserId,
+    clientId: request.case.clientId,
+    caseId: request.caseId,
+    action: "case.collaboration_declined",
+    details: `${request.requestedBy.fullName}'s collaborator access request was declined${trimmedNote ? `: ${trimmedNote}` : ""}`,
   });
 
   await notifyUsers({

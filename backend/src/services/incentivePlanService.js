@@ -1,7 +1,7 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { buildInvoiceIncentiveSnapshotForPlan } from "./incentiveCreditingService.js";
+import { buildInvoiceIncentiveSnapshotForPlan, computePool, computeSplits, resolveHolders, tierRateFor } from "./incentiveCreditingService.js";
 import { CHECKPOINT_TYPES, CHECKPOINT_TYPES_REQUIRING_VALUE } from "./incentiveTimelineCheckpoints.js";
 import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
 import { LEAD_STAGES } from "../modules/leads/lead.constants.js";
@@ -334,10 +334,194 @@ function legacyInvoiceWhere(agencyId, plan) {
 }
 
 async function requireActivePlan(agencyId, id) {
-  const plan = await prisma.incentivePlan.findFirst({ where: { id, agencyId } });
+  const plan = await prisma.incentivePlan.findFirst({ where: { id, agencyId }, include: { tiers: { orderBy: { minCumulativeAmount: "asc" } }, roleShares: true } });
   if (!plan) throw createHttpError(404, "Incentive plan not found.", "NOT_FOUND");
   if (!plan.isActive) throw createHttpError(409, "Activate this plan before applying it to old invoices.", "PLAN_NOT_ACTIVE");
   return plan;
+}
+
+function paidAmountForHistoricalInvoice(invoice) {
+  const refunded = (invoice.refunds || []).reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+  return Math.max(0, Number(invoice.amount) - Number(invoice.balance) - refunded);
+}
+
+function historicalApprovalTriggerRef(invoiceId, planId) {
+  return `retroactive:${invoiceId}:${planId}`;
+}
+
+async function findHistoricalApprovalCandidates(agencyId, plan) {
+  if (!plan.activatedAt) return [];
+  const invoices = await prisma.caseInvoice.findMany({
+    where: {
+      agencyId,
+      lastPaymentAt: { lt: plan.activatedAt },
+      status: { notIn: ["Void", "Voided"] },
+      ...(plan.caseType ? { case: { caseType: plan.caseType, deletedAt: null } } : { case: { deletedAt: null } }),
+      OR: [
+        { incentiveSnapshot: null },
+        { incentiveSnapshot: { is: { incentivePlanId: null } } },
+      ],
+      incentiveLedgerEntries: { none: {} },
+    },
+    orderBy: [{ lastPaymentAt: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      caseId: true,
+      clientId: true,
+      invoiceNumber: true,
+      description: true,
+      amount: true,
+      balance: true,
+      status: true,
+      createdAt: true,
+      lastPaymentAt: true,
+      refunds: { where: { status: "Completed" }, select: { amount: true } },
+      case: { select: { caseType: true, client: { select: { id: true, fullName: true } } } },
+    },
+  });
+  return invoices.filter((invoice) => paidAmountForHistoricalInvoice(invoice) > 0);
+}
+
+async function computeHistoricalPool(plan, agencyId, invoice, paidAmount) {
+  if (plan.formulaType !== "TIERED_PERCENT_OF_REVENUE") {
+    return computePool(plan, { agencyId, caseId: invoice.caseId, delta: paidAmount });
+  }
+  const priorInvoices = await prisma.caseInvoice.findMany({
+    where: {
+      agencyId,
+      caseId: invoice.caseId,
+      lastPaymentAt: { lte: invoice.lastPaymentAt },
+      status: { notIn: ["Void", "Voided"] },
+    },
+    select: {
+      amount: true,
+      balance: true,
+      refunds: { where: { status: "Completed" }, select: { amount: true } },
+    },
+  });
+  const cumulativeAfterPayment = priorInvoices.reduce((sum, row) => sum + paidAmountForHistoricalInvoice(row), 0);
+  const rate = tierRateFor(plan.tiers, cumulativeAfterPayment);
+  return rate === null ? 0 : (paidAmount * rate) / 100;
+}
+
+export async function previewRetroactiveIncentiveApprovals(agencyId, id) {
+  const plan = await requireActivePlan(agencyId, id);
+  const candidates = await findHistoricalApprovalCandidates(agencyId, plan);
+  const rows = [];
+  const userIds = new Set();
+  for (const invoice of candidates) {
+    const snapshot = await buildInvoiceIncentiveSnapshotForPlan(agencyId, invoice.caseId, plan.id);
+    if (!snapshot) continue;
+    const paidAmount = paidAmountForHistoricalInvoice(invoice);
+    const pool = await computeHistoricalPool(plan, agencyId, invoice, paidAmount);
+    const entries = computeSplits(plan, pool, await resolveHolders(agencyId, invoice.caseId));
+    const eligibleEntries = entries.filter((entry) => entry.amount > 0);
+    eligibleEntries.forEach((entry) => userIds.add(entry.userId));
+    rows.push({
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      description: invoice.description,
+      caseId: invoice.caseId,
+      caseType: invoice.case.caseType,
+      client: invoice.case.client,
+      paidAmount,
+      paidAt: invoice.lastPaymentAt,
+      pool,
+      entries: eligibleEntries,
+    });
+  }
+  const users = userIds.size
+    ? await prisma.user.findMany({ where: { id: { in: [...userIds] }, agencyId }, select: { id: true, fullName: true } })
+    : [];
+  const names = new Map(users.map((user) => [user.id, user.fullName]));
+  return {
+    plan: { id: plan.id, name: plan.name, activatedAt: plan.activatedAt },
+    count: rows.length,
+    paidTotal: rows.reduce((sum, row) => sum + row.paidAmount, 0),
+    incentiveTotal: rows.reduce((sum, row) => sum + row.entries.reduce((entrySum, entry) => entrySum + entry.amount, 0), 0),
+    invoices: rows.map((row) => ({ ...row, entries: row.entries.map((entry) => ({ ...entry, userName: names.get(entry.userId) || "Former team member" })) })),
+  };
+}
+
+export async function approveRetroactiveIncentiveApprovals(agencyId, id, actorUserId) {
+  const plan = await requireActivePlan(agencyId, id);
+  const candidates = await findHistoricalApprovalCandidates(agencyId, plan);
+  let approved = 0;
+  let skipped = 0;
+  let skippedNoRecipients = 0;
+  let creditedTotal = 0;
+
+  for (const invoice of candidates) {
+    const paidAmount = paidAmountForHistoricalInvoice(invoice);
+    const snapshot = await buildInvoiceIncentiveSnapshotForPlan(agencyId, invoice.caseId, plan.id);
+    if (!snapshot) {
+      skipped += 1;
+      continue;
+    }
+    const holders = await resolveHolders(agencyId, invoice.caseId);
+    const pool = await computeHistoricalPool(plan, agencyId, invoice, paidAmount);
+    const entries = computeSplits(plan, pool, holders);
+    if (!entries.length) {
+      skippedNoRecipients += 1;
+      continue;
+    }
+    const triggerRef = historicalApprovalTriggerRef(invoice.id, plan.id);
+    const changed = await prisma.$transaction(async (tx) => {
+      const existing = await tx.incentiveLedgerEntry.findFirst({ where: { agencyId, caseInvoiceId: invoice.id, triggerSource: "RETROACTIVE_APPROVAL", triggerRef }, select: { id: true } });
+      if (existing) return false;
+      await tx.caseInvoiceIncentiveSnapshot.upsert({
+        where: { caseInvoiceId: invoice.id },
+        create: { ...snapshot, caseInvoiceId: invoice.id },
+        update: snapshot,
+      });
+      // The retroactive rows cover all money collected through the current
+      // balance. Advance the normal CAS cursor in the same transaction so
+      // the retry worker cannot credit that historical collection again.
+      await tx.caseInvoiceCreditCursor.upsert({
+        where: { caseInvoiceId: invoice.id },
+        create: { agencyId, caseInvoiceId: invoice.id, lastCreditedBalance: Number(invoice.balance) },
+        update: { lastCreditedBalance: Number(invoice.balance) },
+      });
+      await tx.incentiveLedgerEntry.createMany({
+        data: entries.map((entry) => ({
+          agencyId,
+          caseId: invoice.caseId,
+          caseInvoiceId: invoice.id,
+          incentivePlanId: plan.id,
+          userId: entry.userId,
+          attributionKind: entry.attributionKind,
+          caseRoleId: entry.caseRoleId,
+          roleNameSnapshot: entry.roleNameSnapshot,
+          sharePercentApplied: entry.sharePercentApplied,
+          sourceAmountCollected: paidAmount,
+          creditedAmount: entry.amount,
+          triggerSource: "RETROACTIVE_APPROVAL",
+          triggerRef,
+          entryType: "CREDIT",
+          creditedAt: invoice.lastPaymentAt || new Date(),
+        })),
+      });
+      return true;
+    });
+    if (!changed) {
+      skipped += 1;
+      continue;
+    }
+    approved += 1;
+    creditedTotal += entries.reduce((sum, entry) => sum + entry.amount, 0);
+    await recordActivity({
+      agencyId,
+      userId: actorUserId,
+      clientId: invoice.clientId,
+      caseId: invoice.caseId,
+      action: "incentive.retroactive_approval",
+      details: `${plan.name} approved for ${invoice.invoiceNumber}: $${paidAmount.toFixed(2)} collected before plan activation; $${entries.reduce((sum, entry) => sum + entry.amount, 0).toFixed(2)} credited across eligible roles`,
+      entityType: "caseInvoice",
+      entityId: invoice.id,
+      metadata: { incentivePlanId: plan.id, invoiceId: invoice.id, paidAmount, creditedTotal: entries.reduce((sum, entry) => sum + entry.amount, 0), triggerRef },
+    });
+  }
+  return { approved, skipped, skippedNoRecipients, creditedTotal };
 }
 
 export async function previewLegacyInvoicePlanApplication(agencyId, id) {

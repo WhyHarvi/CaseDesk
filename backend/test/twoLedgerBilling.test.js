@@ -76,6 +76,22 @@ test("Payments exposes combined ledgers, approvals, historical review and cash c
   assert.match(page, /CaseDesk Cash closing/);
 });
 
+test("custom ledgers own only newly-posted transactions and never reclassify historical cash", async () => {
+  const [overview, ledgerPosting, invoiceService] = await Promise.all([
+    read("src/services/paymentsOverviewService.js"),
+    read("src/services/paymentApprovalLedgerService.js"),
+    read("src/services/caseInvoiceService.js"),
+  ]);
+  assert.match(overview, /customLedgerId: null, status: "Posted"/);
+  assert.match(overview, /caseDeskCashTransactionCount/);
+  assert.match(overview, /count: caseDeskCashTransactionCount/);
+  assert.doesNotMatch(overview, /if \(!ledger\.cashTransactions\.length && !typeBreakdown\[key\]\) continue/);
+  assert.match(overview, /Never retroactively move/);
+  assert.doesNotMatch(overview, /customLedgers\.find\(/);
+  assert.match(ledgerPosting, /customLedgerId: owningLedgerId/);
+  assert.match(invoiceService, /customLedgerId: invoice\.customLedgerId \|\| null/);
+});
+
 test("staff payment selectors expose only card, e-transfer and cash while legacy methods remain backend-compatible", async () => {
   const [calendar, clientEntry, caseBilling, booking, holdService] = await Promise.all([
     read("../frontend/src/pages/CalendarPage.jsx"),

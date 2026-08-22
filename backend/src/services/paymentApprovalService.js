@@ -5,6 +5,7 @@ import { notifyUsers, resolveNotifications } from "./notificationService.js";
 import { invalidateDashboardCache } from "./dashboardCache.js";
 import { assertNoLivePaymentApproval, recordWalkInManualPayment, updatePaidAppointmentPaymentDetails } from "./bookingPaymentHoldService.js";
 import { ACCOUNTING_PROVIDERS, completeCashInvoiceRefund, createCaseInvoice, recordManualPayment } from "./caseInvoiceService.js";
+import { resolveCustomPaymentLedger } from "./customPaymentLedgerService.js";
 import {
   normalizePaymentApprovalKey,
   PAYMENT_APPROVAL_STATUSES,
@@ -169,6 +170,7 @@ export async function submitPaymentApproval(agencyId, {
   const context = await targetContext(agencyId, { entryType, amount, chargeAmount, paymentType, description, appointmentId, caseInvoiceId, invoiceId, caseId, clientId });
   const resolvedEntryType = entryType === "appointment_payment" && context.existingPaid ? "appointment_payment_details" : entryType;
   const validated = validateStaffPayment({ method, amount: context.amount, transactionReference, paymentDate });
+  const customLedger = await resolveCustomPaymentLedger(agencyId, context.caseId, method);
   const key = normalizePaymentApprovalKey(idempotencyKey)
     || normalizePaymentApprovalKey(`${entryType}:${appointmentId || caseInvoiceId || invoiceId || caseId}:${method}:${validated.reference || validated.paymentDate.toISOString().slice(0, 10)}`);
   const row = await prisma.paymentApproval.upsert({
@@ -179,6 +181,7 @@ export async function submitPaymentApproval(agencyId, {
       caseId: context.caseId || null,
       appointmentId: context.appointmentId || null,
       caseInvoiceId: context.caseInvoiceId || null,
+      customLedgerId: customLedger?.id || null,
       entryType: resolvedEntryType,
       method,
       amount: validated.numericAmount,
@@ -359,6 +362,7 @@ export async function approvePaymentApproval(agencyId, id, actorUserId) {
         paymentDate: updated.paymentDate,
         note: updated.note,
         actorUserId,
+        customLedgerId: updated.customLedgerId,
       });
     }
     await resolveNotifications({ agencyId, entityType: "paymentApproval", entityId: id, types: ["payment.approval_required"] }).catch(() => {});

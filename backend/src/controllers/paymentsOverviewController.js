@@ -18,10 +18,11 @@ function requireAdmin(req) {
 }
 
 export async function getPaymentsList(req, res) {
-  const { status, source, query, from, to, bucket, page, pageSize } = req.query;
+  const { status, source, ledgerId, query, from, to, bucket, page, pageSize } = req.query;
   const data = await listAgencyPayments(req.auth.agencyId, {
     status: status || undefined,
     source: source || undefined,
+    ledgerId: ledgerId || undefined,
     query: query || undefined,
     from: from || undefined,
     to: to || undefined,

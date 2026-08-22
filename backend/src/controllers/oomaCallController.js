@@ -83,8 +83,11 @@ export async function listOomaCalls(req, res) {
   const direction = callDirections.has(req.query.direction) ? req.query.direction : null;
   const resolution = callResolutions.has(req.query.resolution) ? req.query.resolution : null;
   const search = clean(req.query.search, 120);
+  const provider = clean(req.query.provider, 20).toUpperCase();
+  const providerFilter = ["OOMA", "TWILIO"].includes(provider) ? provider : null;
   const where = {
     agencyId: req.auth.agencyId,
+    ...(providerFilter ? { provider: providerFilter } : {}),
     AND: [
       callAccessWhere(req),
       ...(search ? [{
@@ -104,7 +107,7 @@ export async function listOomaCalls(req, res) {
   const [raw, total, unresolved] = await Promise.all([
     prisma.oomaCallSession.findMany({ where, include: callInclude, orderBy: { lastEventAt: "desc" }, skip: (page - 1) * limit, take: limit }),
     prisma.oomaCallSession.count({ where }),
-    prisma.oomaCallSession.count({ where: { agencyId: req.auth.agencyId, resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
+    prisma.oomaCallSession.count({ where: { agencyId: req.auth.agencyId, ...(providerFilter ? { provider: providerFilter } : {}), resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
   ]);
   const data = await addMatchSummaries(raw, req.auth.agencyId);
   res.json({ data, meta: { page, limit, total, unresolved, hasMore: page * limit < total } });

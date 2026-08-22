@@ -38,3 +38,23 @@ export async function applyPlanToLegacyInvoices(id) {
   const response = await api.post(`/incentive-plans/${id}/legacy-invoices/apply`);
   return response.data.data;
 }
+
+export async function previewRetroactiveIncentiveApprovals(id) {
+  const response = await api.get(`/incentive-plans/${id}/retroactive-approvals`, { cache: false });
+  return response.data.data;
+}
+
+export async function approveRetroactiveIncentiveApprovals(id) {
+  const response = await api.post(`/incentive-plans/${id}/retroactive-approvals/approve`);
+  return response.data.data;
+}
+
+export async function previewIncentivePlanRecalculation(id) {
+  const response = await api.get(`/incentive-plans/${id}/recalculation`, { cache: false });
+  return response.data.data;
+}
+
+export async function applyIncentivePlanRecalculation(id) {
+  const response = await api.post(`/incentive-plans/${id}/recalculation/apply`);
+  return response.data.data;
+}

@@ -1,5 +1,6 @@
 import prisma from "./prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { resolveCustomPaymentLedger } from "./customPaymentLedgerService.js";
 
 export const PAYMENT_APPROVAL_STATUSES = Object.freeze({
   pending: "Pending",
@@ -55,7 +56,11 @@ export async function postApprovedCashTransaction({
   note = null,
   actorUserId = null,
   type = "Payment",
+  customLedgerId = undefined,
 }) {
+  const owningLedgerId = customLedgerId === undefined
+    ? (await prisma.paymentApproval.findUnique({ where: { id: paymentApprovalId }, select: { customLedgerId: true } }))?.customLedgerId || null
+    : customLedgerId;
   const transaction = await prisma.cashTransaction.upsert({
     where: { paymentApprovalId },
     create: {
@@ -64,6 +69,7 @@ export async function postApprovedCashTransaction({
       clientId,
       caseId,
       appointmentId,
+      customLedgerId: owningLedgerId,
       type,
       amount,
       // Cash has no bank transaction identifier. Optional receipt text stays
@@ -93,8 +99,9 @@ export async function createApprovedCashLedgerRecord({
 }) {
   const key = normalizePaymentApprovalKey(idempotencyKey);
   if (!key) throw createHttpError(400, "A valid payment operation key is required.", "VALIDATION_ERROR");
+  const customLedger = await resolveCustomPaymentLedger(agencyId, caseId, "Cash");
   const data = {
-    agencyId, clientId, caseId, appointmentId, caseInvoiceId, paymentId,
+    agencyId, clientId, caseId, appointmentId, caseInvoiceId, paymentId, customLedgerId: customLedger?.id || null,
     entryType, method: "Cash", amount, chargeAmount, paymentType,
     description: String(description || "").trim().slice(0, 500) || null,
     transactionReference: String(transactionReference || "").trim().slice(0, 100) || null,
@@ -115,7 +122,7 @@ export async function createApprovedCashLedgerRecord({
   await postApprovedCashTransaction({
     agencyId, paymentApprovalId: approval.id, clientId, caseId, appointmentId,
     caseInvoiceId, amount, transactionReference, paymentDate, note,
-    actorUserId,
+    actorUserId, customLedgerId: customLedger?.id || null,
   });
   return approval;
 }

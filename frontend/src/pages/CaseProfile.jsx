@@ -24,6 +24,7 @@ import CaseActionDialog from "../components/case-profile/CaseActionDialog";
 import ESignCenterOverlay from "../components/case-profile/ESignCenterOverlay";
 import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOverlay";
 import CaseRolesOverlay from "../components/case-profile/CaseRolesOverlay";
+import RestrictedCaseAccess from "../components/case-profile/RestrictedCaseAccess";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import { useAuth } from "../auth/AuthContext";
 import { canAccessCaseTab, canAccessPage, hasCapability } from "../auth/portalAccess";
@@ -84,6 +85,7 @@ export default function CaseProfile() {
   const canManageCase = ["admin", "consultant"].includes(role);
   const canAccessIncentives = canAccessPage(role, membership?.permissions, "incentives");
   const [caseItem, setCaseItem] = useState(null);
+  const [restrictedCase, setRestrictedCase] = useState(null);
   const [documents, setDocuments] = useState([]);
   const [paymentSummary, setPaymentSummary] = useState({ totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid" });
   const [followUps, setFollowUps] = useState([]);
@@ -222,6 +224,7 @@ export default function CaseProfile() {
       else {
         setLoading(true);
         setCaseItem(null);
+        setRestrictedCase(null);
       }
 
       const get = recovery ? api.getFresh : api.get;
@@ -255,6 +258,7 @@ export default function CaseProfile() {
       ] = results;
 
       setCaseItem(caseResponse.data.data || null);
+      setRestrictedCase(null);
       setDocuments(
         documentsResult.status === "fulfilled" ? documentsResult.value : [],
       );
@@ -316,6 +320,20 @@ export default function CaseProfile() {
       }
     } catch (requestError) {
       if (!mountedRef.current || generation !== loadGenerationRef.current) return;
+      if (Number(requestError?.response?.status) === 403 && ["consultant", "frontdesk"].includes(role)) {
+        try {
+          const previewResponse = await api.getFresh(`/cases/${id}/access-preview`);
+          if (!mountedRef.current || generation !== loadGenerationRef.current) return;
+          setRestrictedCase(previewResponse.data.data);
+          setError("");
+          recoveryAttemptRef.current = 0;
+          return;
+        } catch (previewError) {
+          if (!mountedRef.current || generation !== loadGenerationRef.current) return;
+          setError(previewError.response?.data?.message || "Unable to load this case.");
+          return;
+        }
+      }
       const message = requestError.response?.data?.message || "Unable to load this case.";
       if (isRecoverableCaseLoadError(requestError)) {
         queueRecovery(message);
@@ -328,7 +346,7 @@ export default function CaseProfile() {
         setRecovering(false);
       }
     }
-  }, [canAccessFinancialData, canAccessInternalNotes, canAccessIncentives, id]);
+  }, [canAccessFinancialData, canAccessInternalNotes, canAccessIncentives, id, role]);
 
   const refreshPaymentSummary = useCallback(async () => {
     if (!canAccessFinancialData) return;
@@ -1575,6 +1593,14 @@ export default function CaseProfile() {
     );
   }
 
+  if (restrictedCase) {
+    return (
+      <PageContainer title="Case access" description="A protected CaseDesk workspace.">
+        <RestrictedCaseAccess preview={restrictedCase} onChange={setRestrictedCase} />
+      </PageContainer>
+    );
+  }
+
   if (!caseItem) {
     return (
       <PageContainer
@@ -1853,6 +1879,8 @@ export default function CaseProfile() {
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
           onEditClient={() => setEditingClient(true)}
+          canManageCollaborators={canManageCase}
+          onManageCollaborators={() => setCaseRolesOverlayOpen(true)}
         />
 
         <CaseProfileToolbar

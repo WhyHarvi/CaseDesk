@@ -222,6 +222,11 @@ export async function getLead(req) {
     include: {
       ...leadInclude,
       activities: { orderBy: { occurredAt: "desc" }, take: 100 },
+      oomaCallSessions: {
+        where: { provider: "TWILIO" },
+        orderBy: { startedAt: "desc" },
+        select: { id: true, direction: true, status: true, remoteNumber: true, startedAt: true, answeredAt: true, endedAt: true, durationSeconds: true, disposition: true, outcomeNotes: true, recordingUrl: true, handledBy: { select: { id: true, fullName: true } } },
+      },
       stageHistory: { orderBy: { createdAt: "desc" } },
       assignmentHistory: { orderBy: { createdAt: "desc" } },
       transferRequests: {

@@ -69,7 +69,7 @@ export function preConsultationIntakeUrl(manageToken, environment = process.env)
 
 async function reserve(appointment, { force = false, actorUserId = null } = {}) {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`pre-consultation-intake:${appointment.id}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pre-consultation-intake:${appointment.id}`}))`;
     if (force) {
       return {
         event: await recordAppointmentEvent(tx, {

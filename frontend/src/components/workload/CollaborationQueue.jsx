@@ -37,16 +37,16 @@ export default function CollaborationQueue({ onGranted }) {
   const [decliningId, setDecliningId] = useState(null);
 
   async function reload() {
-    const response = await api.get("/admin/consultants/collaboration-requests", { params: { status: "Pending" } });
+    const response = await api.get("/cases/access-requests/review");
     setRequests(response.data.data);
   }
 
   useEffect(() => { reload(); }, []);
 
-  async function approve(id) {
-    setBusyId(id);
+  async function approve(item) {
+    setBusyId(item.id);
     try {
-      await api.post(`/admin/consultants/collaboration-requests/${id}/approve`);
+      await api.post(`/cases/${item.case.id}/access-requests/${item.id}/approve`);
       await reload();
       onGranted?.();
     } finally {
@@ -54,10 +54,10 @@ export default function CollaborationQueue({ onGranted }) {
     }
   }
 
-  async function decline(id, reviewNote) {
-    setBusyId(id);
+  async function decline(item, reviewNote) {
+    setBusyId(item.id);
     try {
-      await api.post(`/admin/consultants/collaboration-requests/${id}/decline`, { reviewNote });
+      await api.post(`/cases/${item.case.id}/access-requests/${item.id}/decline`, { reviewNote });
       setDecliningId(null);
       await reload();
     } finally {
@@ -106,7 +106,7 @@ export default function CollaborationQueue({ onGranted }) {
                   <button
                     type="button"
                     disabled={busyId === item.id}
-                    onClick={() => approve(item.id)}
+                    onClick={() => approve(item)}
                     className="flex h-8 items-center gap-1 rounded-full bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
                   >
                     {busyId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Grant
@@ -120,7 +120,7 @@ export default function CollaborationQueue({ onGranted }) {
                   </button>
                 </div>
               </div>
-              {decliningId === item.id ? <DeclineForm busy={busyId === item.id} onCancel={() => setDecliningId(null)} onConfirm={(note) => decline(item.id, note)} /> : null}
+              {decliningId === item.id ? <DeclineForm busy={busyId === item.id} onCancel={() => setDecliningId(null)} onConfirm={(note) => decline(item, note)} /> : null}
             </motion.div>
           ))}
         </AnimatePresence>

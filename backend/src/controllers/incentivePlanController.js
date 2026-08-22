@@ -1,3 +1,4 @@
+import { applyIncentivePlanRecalculation, previewIncentivePlanRecalculation } from "../services/incentiveRecalculationService.js";
 import {
   activateIncentivePlan,
   createIncentivePlan,
@@ -6,7 +7,9 @@ import {
   getIncentivePlan,
   listIncentivePlans,
   applyPlanToLegacyInvoices,
+  approveRetroactiveIncentiveApprovals,
   previewLegacyInvoicePlanApplication,
+  previewRetroactiveIncentiveApprovals,
   updateIncentivePlan,
 } from "../services/incentivePlanService.js";
 
@@ -52,5 +55,25 @@ export async function previewLegacyInvoices(req, res) {
 
 export async function applyLegacyInvoices(req, res) {
   const data = await applyPlanToLegacyInvoices(req.auth.agencyId, req.params.id, req.auth.userId);
+  res.json({ data });
+}
+
+export async function previewRetroactiveApprovals(req, res) {
+  const data = await previewRetroactiveIncentiveApprovals(req.auth.agencyId, req.params.id);
+  res.json({ data });
+}
+
+export async function approveRetroactiveApprovals(req, res) {
+  const data = await approveRetroactiveIncentiveApprovals(req.auth.agencyId, req.params.id, req.auth.userId);
+  res.json({ data });
+}
+
+export async function previewRecalculation(req, res) {
+  const data = await previewIncentivePlanRecalculation(req.auth.agencyId, req.params.id);
+  res.json({ data });
+}
+
+export async function applyRecalculation(req, res) {
+  const data = await applyIncentivePlanRecalculation(req.auth.agencyId, req.params.id, req.auth.userId);
   res.json({ data });
 }

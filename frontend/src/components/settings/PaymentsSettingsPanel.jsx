@@ -6,6 +6,7 @@ import PaymentCommunicationSettingsCard from "./PaymentCommunicationSettingsCard
 import PaymentScheduleTemplatesCard from "./PaymentScheduleTemplatesCard";
 import QuickBooksMappingCard from "./QuickBooksMappingCard";
 import BillingSignatureSettingsCard from "./BillingSignatureSettingsCard";
+import CustomPaymentLedgersCard from "./CustomPaymentLedgersCard";
 
 const card = "rounded-[1.4rem] border border-white/70 bg-white/80 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-xl";
 
@@ -142,6 +143,7 @@ export default function PaymentsSettingsPanel() {
       </section>
 
       {connected ? <QuickBooksMappingCard /> : null}
+      <CustomPaymentLedgersCard />
 
       <section className={card}>
         <h3 className="text-sm font-semibold text-slate-900">How payments flow once connected</h3>

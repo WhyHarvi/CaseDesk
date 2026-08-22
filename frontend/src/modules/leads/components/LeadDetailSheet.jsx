@@ -90,7 +90,7 @@ function DetailSkeleton() {
 
 export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose, onChanged = () => {} }) {
   const { role, appUser } = useAuth();
-  const { status: softphoneStatus, dial } = useSoftphone();
+  const { status: softphoneStatus, active: activeCall, dial } = useSoftphone();
   const isFrontdesk = role === "frontdesk";
   const [lead, setLead] = useState(initialLead);
   const [tab, setTab] = useState("overview");
@@ -278,6 +278,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
   const due = formatDueDate(lead.nextActionAt);
   const activities = lead.activities || [];
+  const callHistory = lead.oomaCallSessions || [];
   const followUps = lead.followUps || [];
   const leadMessages = useMemo(() => [
     ...(lead.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "lead" })),
@@ -402,11 +403,16 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {lead.phone ? softphoneStatus === "ready" ? (
-                <button type="button" disabled={calling} onClick={startCall} className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:opacity-60"><Phone className="h-3.5 w-3.5" />{calling ? "Calling…" : "Call"}</button>
-              ) : (
-                <a href={`tel:${lead.phone}`} title="Open this number in the Windows phone app (set Ooma Desktop as the default)" className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-3.5 text-xs font-semibold text-white transition hover:bg-sky-500"><Phone className="h-3.5 w-3.5" />Call</a>
-              ) : null}
+              <button
+                type="button"
+                disabled={!lead.phone || softphoneStatus !== "ready" || Boolean(activeCall) || calling}
+                onClick={startCall}
+                title={!lead.phone ? "Add a phone number to call this lead" : softphoneStatus !== "ready" ? "Twilio calling is not ready" : activeCall ? "Finish the current call first" : "Call this lead with Twilio"}
+                className="relative z-0 inline-flex h-9 items-center gap-2 overflow-visible rounded-full bg-[#34c759] px-3.5 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(52,199,89,0.25)] transition hover:-translate-y-0.5 hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+              >
+                {lead.phone && softphoneStatus === "ready" && !activeCall && !calling ? <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.4s" }} aria-hidden="true" /> : null}
+                <Phone className="h-3.5 w-3.5 fill-current" />{calling ? "Calling…" : "Call"}
+              </button>
               <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
           </div>
@@ -692,10 +698,22 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
               ) : null}
 
               {tab === "history" ? (
-                <section>
+                <div className="space-y-6">
+                  <section>
+                    <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Phone className="h-4 w-4 text-[#34c759]" />Twilio call history</h3><p className="mt-1 text-xs text-slate-500">Every incoming and outgoing call linked to this lead.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">{callHistory.length} calls</span></div>
+                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">
+                      {callHistory.length ? callHistory.map((call, index) => {
+                        const seconds = Math.max(0, Number(call.durationSeconds) || 0);
+                        const callDuration = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+                        return <div key={call.id} className={`flex items-center gap-3 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${call.status === "MISSED" || call.status === "FAILED" ? "bg-rose-50 text-rose-600" : call.direction === "OUTBOUND" ? "bg-emerald-50 text-emerald-600" : "bg-sky-50 text-sky-600"}`}><PhoneIncoming className={`h-4 w-4 ${call.direction === "OUTBOUND" ? "rotate-180" : ""}`} /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-slate-800">{call.direction === "OUTBOUND" ? "Outgoing" : call.status === "MISSED" ? "Missed incoming" : "Incoming"} Twilio call</p><p className="mt-0.5 truncate text-xs text-slate-500">{call.remoteNumber || lead.phone || "Private number"} · {humanize(call.disposition || call.status)} · {callDuration}{call.handledBy?.fullName ? ` · ${call.handledBy.fullName}` : ""}</p>{call.outcomeNotes ? <p className="mt-1 text-xs text-slate-600">{call.outcomeNotes}</p> : null}</div><div className="shrink-0 text-right"><time className="block text-xs text-slate-400">{new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(call.startedAt))}</time>{call.recordingUrl ? <a href={call.recordingUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[10px] font-semibold text-sky-600 hover:underline">Recording</a> : null}</div></div>;
+                      }) : <EmptyState>No Twilio calls recorded for this lead.</EmptyState>}
+                    </div>
+                  </section>
+                  <section>
                   <div className="mb-4"><h3 className="text-sm font-semibold text-slate-900">Activity timeline</h3><p className="mt-1 text-xs text-slate-500">A chronological record of work completed on this lead.</p></div>
                   <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{activities.length ? activities.map((item, index) => <div key={item.id} className={`flex gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"><Activity className="h-3.5 w-3.5" /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-4"><div><p className="text-sm font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-xs text-slate-500">{humanize(item.activityType)}{item.outcome ? ` · ${humanize(item.outcome)}` : ""}{item.performedBy?.fullName ? ` · ${item.performedBy.fullName}` : ""}</p></div><time className="shrink-0 text-xs text-slate-400">{new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(item.occurredAt))}</time></div>{item.description ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.description}</p> : null}</div></div>) : <EmptyState>No activity recorded.</EmptyState>}</div>
-                </section>
+                  </section>
+                </div>
               ) : null}
 
               {tab === "payments" ? <section className="rounded-2xl border border-slate-200/70 bg-white px-5 py-8 text-center"><Landmark className="mx-auto h-5 w-5 text-slate-400" /><h3 className="mt-3 text-sm font-semibold text-slate-900">Financial records move with the client</h3><p className="mx-auto mt-1 max-w-md text-sm leading-6 text-slate-500">Leads no longer have an editable notepad ledger. Book a consultation or convert the lead, then record its invoice and payment through the evidence-backed billing flow.</p></section> : null}

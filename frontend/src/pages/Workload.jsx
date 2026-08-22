@@ -599,6 +599,7 @@ function PersonalWorkload({ data, onOpenAppointment }) {
         <Kpi icon={Layers} label="Case capacity" value={data.capacity ?? 0} format={(v) => (data.capacity == null ? "—" : String(Math.round(v)))} delay={0.16} />
         <Kpi icon={Layers} label="Capacity used" value={data.caseCapacityPercentage ?? 0} format={(v) => (data.capacity == null ? "—" : `${Math.round(v)}%`)} tone={data.caseCapacityPercentage >= 90 ? "rose" : data.caseCapacityPercentage >= 70 ? "amber" : "emerald"} delay={0.18} />
       </div>
+      <CollaborationQueue />
       <CollaborationRequests />
       <WorkDetails workload={data} onOpenAppointment={onOpenAppointment} />
     </div>

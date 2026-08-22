@@ -39,6 +39,7 @@ import {
   failInvoiceRefund,
   getCashLedgerActivity,
   getQuickBooksSyncFailures,
+  getCustomPaymentLedgers,
 } from "../api/paymentsOverviewApi";
 import api from "../services/api";
 import { leadName } from "../modules/leads/leadPresentation";
@@ -865,41 +866,46 @@ function StatusDonut({ breakdown }) {
 
 /** Horizontal collected-vs-outstanding bars per payment source. */
 function TypeBars({ breakdown }) {
-  const entries = Object.entries(breakdown || {}).sort((a, b) => (b[1].collected + b[1].outstanding) - (a[1].collected + a[1].outstanding));
-  const maxTotal = Math.max(1, ...entries.map(([, v]) => v.collected + v.outstanding));
+  const displayTotal = (value) => value.balance == null ? value.collected + value.outstanding : value.balance;
+  const entries = Object.entries(breakdown || {}).sort((a, b) => displayTotal(b[1]) - displayTotal(a[1]));
+  const maxTotal = Math.max(1, ...entries.map(([, value]) => displayTotal(value)));
 
   return (
     <div className="space-y-4">
       {entries.map(([key, value], index) => {
         const Icon = SOURCE_ICON[key] || Banknote;
-        const total = value.collected + value.outstanding;
+        const total = displayTotal(value);
+        const isBalanceLedger = value.balance != null;
+        const color = value.color || SOURCE_COLOR[key] || "#6366f1";
         return (
           <motion.div key={key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 + index * 0.1 }} className="group">
             <div className="flex items-center justify-between gap-3">
               <span className="flex min-w-0 items-center gap-2 text-[12px] font-medium text-slate-600">
-                <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: SOURCE_COLOR[key] }} />
-                <span className="truncate">{SOURCE_LABEL[key] || key}</span>
+                <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
+                <span className="truncate">{value.label || SOURCE_LABEL[key] || key}</span>
               </span>
               <span className="shrink-0 text-[12px] font-semibold tabular-nums text-slate-700">{compactMoney(total)}</span>
             </div>
             <div className="mt-1.5 flex h-3 w-full gap-0.5 overflow-hidden rounded-full bg-slate-100">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${(value.collected / maxTotal) * 100}%` }}
+                animate={{ width: `${((isBalanceLedger ? value.balance : value.collected) / maxTotal) * 100}%` }}
                 transition={{ duration: 0.8, delay: 0.45 + index * 0.1, ease: [0.32, 0.72, 0, 1] }}
                 className="h-full rounded-l-full transition-[filter] group-hover:brightness-110"
-                style={{ backgroundColor: SOURCE_COLOR[key] }}
+                style={{ backgroundColor: color }}
               />
-              <motion.div
+              {!isBalanceLedger ? <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${(value.outstanding / maxTotal) * 100}%` }}
                 transition={{ duration: 0.8, delay: 0.55 + index * 0.1, ease: [0.32, 0.72, 0, 1] }}
                 className="h-full rounded-r-full opacity-30 transition-[filter] group-hover:brightness-110"
-                style={{ backgroundColor: SOURCE_COLOR[key] }}
-              />
+                style={{ backgroundColor: color }}
+              /> : null}
             </div>
             <p className="mt-1 text-[10.5px] font-medium text-slate-400">
-              {compactMoney(value.collected)} collected · {compactMoney(value.outstanding)} outstanding · {value.count} record{value.count === 1 ? "" : "s"}
+              {isBalanceLedger
+                ? `${compactMoney(value.balance)} balance · ${value.count} ledger transaction${value.count === 1 ? "" : "s"}`
+                : `${compactMoney(value.collected)} collected · ${compactMoney(value.outstanding)} outstanding · ${value.count} record${value.count === 1 ? "" : "s"}`}
             </p>
           </motion.div>
         );
@@ -1319,6 +1325,8 @@ export default function Payments() {
   const pageSize = 20;
   const [status, setStatus] = useState("");
   const [source, setSource] = useState(() => searchParams.get("source") || "");
+  const [ledgerId, setLedgerId] = useState("");
+  const [customLedgers, setCustomLedgers] = useState([]);
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -1394,7 +1402,7 @@ export default function Payments() {
     let active = true;
     setLoading(true);
     setError("");
-    getPaymentsOverview({ status, source, query, from, to, bucket, page, pageSize })
+    getPaymentsOverview({ status, source, ledgerId, query, from, to, bucket, page, pageSize })
       .then((data) => {
         if (!active) return;
         setRows(data.rows);
@@ -1403,9 +1411,13 @@ export default function Payments() {
       .catch((reason) => active && setError(reason.response?.data?.message || "Payments could not be loaded."))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [status, source, query, from, to, bucket, page, refreshKey]);
+  }, [status, source, ledgerId, query, from, to, bucket, page, refreshKey]);
 
-  useEffect(() => { setPage(1); }, [status, source, query, from, to, bucket]);
+  useEffect(() => { setPage(1); }, [status, source, ledgerId, query, from, to, bucket]);
+
+  useEffect(() => {
+    getCustomPaymentLedgers().then((data) => setCustomLedgers((data.ledgers || []).filter((item) => item.isActive))).catch(() => setCustomLedgers([]));
+  }, [refreshKey]);
 
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
@@ -1613,6 +1625,7 @@ export default function Payments() {
               placeholder="All types"
               options={[{ value: "", label: "All types" }, ...Object.entries(SOURCE_ROW_LABEL).map(([value, label]) => ({ value, label }))]}
             />
+            {customLedgers.length ? <FilterDropdown value={ledgerId} onChange={setLedgerId} placeholder="All ledgers" options={[{ value: "", label: "All ledgers" }, ...customLedgers.map((item) => ({ value: item.id, label: item.name }))]} /> : null}
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className={filterControl} />
             <span className="text-xs text-slate-400">to</span>
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} className={filterControl} />
@@ -1665,7 +1678,7 @@ export default function Payments() {
                             <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.qbInvoiceNumber}</p>
                           ) : null}
                           {row.invoiceNumber ? <p className="mt-1 text-[11px] font-semibold text-sky-700">Invoice #{row.invoiceNumber}</p> : null}
-                          {row.ledger ? <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${row.ledger === "QuickBooks" ? "bg-sky-50 text-sky-700" : row.ledger === "CaseDesk Cash" ? "bg-emerald-50 text-emerald-700" : "bg-orange-50 text-orange-700"}`}>{row.ledger}</span> : null}
+                          {row.ledger ? <span style={row.ledgerColor ? { color: row.ledgerColor, backgroundColor: `${row.ledgerColor}14` } : undefined} className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${row.ledgerColor ? "" : row.ledger === "QuickBooks" ? "bg-sky-50 text-sky-700" : row.ledger === "CaseDesk Cash" ? "bg-emerald-50 text-emerald-700" : "bg-orange-50 text-orange-700"}`}>{row.ledger}</span> : null}
                         </td>
                         <td className="border-t border-slate-100 px-4 py-3.5">
                           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600"><Icon className="h-3.5 w-3.5" style={{ color: SOURCE_COLOR[row.source] }} /> {row.type || SOURCE_ROW_LABEL[row.source]}</span>

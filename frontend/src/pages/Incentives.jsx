@@ -178,9 +178,25 @@ function ActiveTimelinesCard({ rows, onSelectCase, delay = 0 }) {
   );
 }
 
-function LedgerTable({ rows, showPerson = false, delay = 0 }) {
+function LedgerTable({ rows, showPerson = false, approvalStatus, onApprovalStatusChange, delay = 0 }) {
   return (
-    <ChartCard title="Recent activity" subtitle="Every payment that credited you, most recent first" delay={delay}>
+    <ChartCard
+      title="Recent activity"
+      subtitle="Every payment that credited you, most recent first"
+      delay={delay}
+      action={(
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+          <span className="hidden sm:inline">Approval</span>
+          <select value={approvalStatus} onChange={(event) => onApprovalStatusChange?.(event.target.value)} className="h-9 rounded-full border border-slate-200 bg-white/80 px-3 text-xs font-semibold text-slate-700 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100">
+            <option value="ALL">All statuses</option>
+            <option value="APPROVED">Approved</option>
+            <option value="RECALCULATED">Recalculated</option>
+            <option value="AUTOMATIC">Automatic</option>
+            <option value="REVERSED">Reversed</option>
+          </select>
+        </label>
+      )}
+    >
       <div className="space-y-2">
         {rows?.length ? rows.map((row) => {
           const date = new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(new Date(row.creditedAt));
@@ -193,7 +209,7 @@ function LedgerTable({ rows, showPerson = false, delay = 0 }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-slate-900">{row.case?.client?.fullName} · {row.case?.caseType}</p>
                 <p className="truncate text-xs text-slate-500">
-                  {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {context} · {date}
+                  {showPerson ? `${row.user?.fullName} · ` : ""}{row.roleNameSnapshot} · {context} · {row.approvalStatus || "AUTOMATIC"} · {date}
                 </p>
               </div>
               <span className={`shrink-0 text-sm font-semibold tabular-nums ${Number(row.creditedAmount) < 0 ? "text-rose-600" : "text-emerald-600"}`}>
@@ -295,6 +311,7 @@ function PersonView({ userId, fullName, onBack }) {
   const [pipeline, setPipeline] = useState(null);
   const [activeTimelines, setActiveTimelines] = useState(null);
   const [ledger, setLedger] = useState(null);
+  const [approvalStatus, setApprovalStatus] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openCaseId, setOpenCaseId] = useState(null);
@@ -315,7 +332,7 @@ function PersonView({ userId, fullName, onBack }) {
       getIncentiveSummary({ userId }),
       getIncentivePipeline({ userId }),
       getActiveTimelines({ userId }),
-      getIncentiveLedger({ userId, pageSize: 20 }),
+      getIncentiveLedger({ userId, pageSize: 20, approvalStatus }),
     ])
       .then(([summaryData, pipelineData, activeTimelinesData, ledgerData]) => {
         if (!active) return;
@@ -328,7 +345,7 @@ function PersonView({ userId, fullName, onBack }) {
       .catch((reason) => active && setError(reason.response?.data?.message || "Incentives could not be loaded."))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [userId]);
+  }, [userId, approvalStatus]);
 
   if (error) return <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>;
 
@@ -370,7 +387,7 @@ function PersonView({ userId, fullName, onBack }) {
       <RoleBreakdown byRole={summary?.byRole} delay={0.12} />
       <PipelineCard rows={pipeline} onSelectCase={setOpenCaseId} delay={0.16} />
       <ActiveTimelinesCard rows={activeTimelines} onSelectCase={setOpenCaseId} delay={0.18} />
-      <LedgerTable rows={ledger} delay={0.2} />
+      <LedgerTable rows={ledger} approvalStatus={approvalStatus} onApprovalStatusChange={setApprovalStatus} delay={0.2} />
 
       <AnimatePresence>
         {openCaseId ? (

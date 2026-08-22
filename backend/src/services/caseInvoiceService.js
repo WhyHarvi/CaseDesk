@@ -19,6 +19,7 @@ import { generateCaseInvoicePdf } from "./caseInvoicePdfService.js";
 import { syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financial.service.js";
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 import { applyLocalCashToInvoice, createApprovedCashLedgerRecord, postApprovedCashTransaction } from "./paymentApprovalLedgerService.js";
+import { resolveCustomPaymentLedger } from "./customPaymentLedgerService.js";
 import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
@@ -480,6 +481,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
     transactionReference,
     paymentDate,
   });
+  const customLedger = await resolveCustomPaymentLedger(agencyId, caseId, method);
   const priorCash = row.accountingProvider === ACCOUNTING_PROVIDERS.QUICKBOOKS
     ? await prisma.paymentApproval.aggregate({
       where: { agencyId, caseInvoiceId: row.id, status: "Approved", method: "Cash" },
@@ -540,6 +542,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
         lastPaymentReference: paymentReference,
         lastPaymentAt: transactionDate?.paidAt || new Date(),
         lastPaymentIdempotencyKey: operationKey,
+        customLedgerId: customLedger?.id || null,
       },
     });
     const updated = { ...updatedRow, localCashPaid: numericAmount };
@@ -591,6 +594,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
       lastQbPaymentId: payment.id,
       lastPaymentIdempotencyKey: operationKey,
       lastSyncedAt: new Date(),
+      customLedgerId: customLedger?.id || null,
     },
   });
 
@@ -846,6 +850,7 @@ export async function completeCashInvoiceRefund(agencyId, { invoiceId, caseId, a
     note: refundReason,
     actorUserId,
     type: "Refund",
+    customLedgerId: invoice.customLedgerId || null,
   });
   const refund = await prisma.invoiceRefund.upsert({
     where: { cashTransactionId: transaction.id },

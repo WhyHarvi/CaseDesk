@@ -108,6 +108,7 @@ export default function FloatingChatWidget() {
   const isChatsRoute = location.pathname === "/app/chats"; // the full page already polls/plays sound itself
 
   const [open, setOpen] = useState(false);
+  const [phoneFloat, setPhoneFloat] = useState({ open: false, active: false });
   const [view, setView] = useState("list");
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
@@ -123,6 +124,29 @@ export default function FloatingChatWidget() {
   const [error, setError] = useState("");
   const [realtime, setRealtime] = useState(null);
   const [lightbox, setLightbox] = useState(null);
+
+  useEffect(() => {
+    const handlePhoneFloat = (event) => setPhoneFloat({ open: Boolean(event.detail?.open), active: Boolean(event.detail?.active) });
+    window.addEventListener("casedesk:phone-float-state", handlePhoneFloat);
+    return () => window.removeEventListener("casedesk:phone-float-state", handlePhoneFloat);
+  }, []);
+
+  useEffect(() => {
+    const handleChatShortcut = (event) => {
+      const target = event.target;
+      const editing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+      if (editing) return;
+      if (!open && event.key.toLowerCase() === "m" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        setOpen(true);
+      } else if (open && event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleChatShortcut);
+    return () => window.removeEventListener("keydown", handleChatShortcut);
+  }, [open]);
   const [incomingPreview, setIncomingPreview] = useState(null);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
   const previewTimerRef = useRef(null);
@@ -571,7 +595,7 @@ export default function FloatingChatWidget() {
   const unreadTotal = sidebarCounts?.chats?.total || 0;
 
   return createPortal(
-    <div className="fixed bottom-6 right-6 z-[400] flex flex-col items-end">
+    <div className={`fixed bottom-6 z-[410] flex flex-col items-end transition-[right] duration-300 ${phoneFloat.open ? "right-24 lg:right-[26rem]" : phoneFloat.active ? "right-24 lg:right-[21rem]" : "right-24"}`} data-floating-chat>
       <AnimatePresence>
         {open ? (
           <motion.div
@@ -722,7 +746,7 @@ export default function FloatingChatWidget() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.92 }}
             transition={reduceMotion ? { duration: 0.15 } : { type: "spring", stiffness: 420, damping: 30 }}
-            className="mb-3 flex max-w-[280px] items-center gap-2.5 rounded-2xl border border-white/70 bg-white/95 py-2.5 pl-2.5 pr-4 text-left shadow-[0_20px_50px_rgba(15,23,42,0.22)] backdrop-blur-xl transition hover:shadow-[0_24px_60px_rgba(15,23,42,0.28)]"
+            className="relative z-10 mb-3 flex max-w-[280px] items-center gap-2.5 rounded-2xl border border-white/70 bg-white/95 py-2.5 pl-2.5 pr-4 text-left shadow-[0_20px_50px_rgba(15,23,42,0.22)] backdrop-blur-xl transition hover:shadow-[0_24px_60px_rgba(15,23,42,0.28)]"
           >
             <QuickAvatar item={incomingPreview} avatarUrl={threadAvatarUrl(incomingPreview)} className="h-10 w-10 text-[11px]" />
             <span className="min-w-0 flex-1">
@@ -739,7 +763,8 @@ export default function FloatingChatWidget() {
         onClick={toggleOpen}
         whileTap={{ scale: 0.92 }}
         aria-label={open ? "Close quick chat" : "Open quick chat"}
-        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-sky-600 to-indigo-600 text-white shadow-[0_16px_40px_rgba(37,99,235,0.35)] transition hover:shadow-[0_20px_48px_rgba(37,99,235,0.45)]"
+        aria-keyshortcuts="M"
+        className="relative flex h-14 w-14 items-center justify-center rounded-full bg-[#0a84ff] text-white shadow-[0_10px_24px_rgba(15,23,42,0.2)] transition hover:bg-[#2492ff] hover:shadow-[0_12px_28px_rgba(15,23,42,0.24)]"
       >
         {open ? <X className="h-6 w-6" /> : <MessagesSquare className="h-6 w-6" />}
         {!open && unreadTotal ? (

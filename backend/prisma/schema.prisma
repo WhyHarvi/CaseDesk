@@ -586,6 +586,7 @@ model Agency {
   clientUsers                     ClientUser[]
   caseAssignments                 CaseAssignment[]
   caseCollaborationRequests       CaseCollaborationRequest[]
+  portalAccessPolicies            PortalAccessPolicy[]
   clients                         Client[]
   cases                           Case[]
   caseStageHistory                CaseStageHistory[]
@@ -626,6 +627,7 @@ model Agency {
   zoomHostMappings                ZoomHostMapping[]
   appointmentMeetingJobs          AppointmentMeetingJob[]
   caseInvoices                    CaseInvoice[]
+  customPaymentLedgers            AgencyCustomPaymentLedger[]
   caseInvoiceLines                CaseInvoiceLine[]
   cashTransactions                CashTransaction[]
   cashAllocations                 CashAllocation[]
@@ -847,6 +849,7 @@ model CaseInvoice {
   // are optional because cash-only invoices never leave CaseDesk.
   invoiceNumber                   String                        @map("invoice_number")
   accountingProvider              String                        @default("QuickBooks") @map("accounting_provider")
+  customLedgerId                  String?                       @map("custom_ledger_id")
   currency                        String                        @default("CAD")
   issuedAt                        DateTime                      @default(now()) @map("issued_at")
   subtotalAmount                  Decimal                       @default(0) @map("subtotal_amount") @db.Decimal(10, 2)
@@ -874,6 +877,7 @@ model CaseInvoice {
   updatedAt                       DateTime                      @updatedAt @map("updated_at")
   lastSyncedAt                    DateTime?                     @map("last_synced_at")
   agency                          Agency                        @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  customLedger                    AgencyCustomPaymentLedger?    @relation(fields: [customLedgerId], references: [id], onDelete: SetNull)
   case                            Case                          @relation(fields: [caseId], references: [id], onDelete: Cascade)
   client                          Client                        @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy                       User?                         @relation(fields: [createdById], references: [id], onDelete: SetNull)
@@ -894,7 +898,31 @@ model CaseInvoice {
   @@unique([agencyId, lastPaymentIdempotencyKey])
   @@index([agencyId, caseId])
   @@index([agencyId, clientId])
+  @@index([agencyId, customLedgerId])
   @@map("case_invoices")
+}
+
+model AgencyCustomPaymentLedger {
+  id               String            @id @default(uuid())
+  agencyId         String            @map("agency_id")
+  name             String
+  description      String?
+  color            String            @default("#6366F1")
+  caseTypes        String[]          @default([]) @map("case_types")
+  paymentMethods   String[]          @default([]) @map("payment_methods")
+  isActive         Boolean           @default(true) @map("is_active")
+  createdById      String?           @map("created_by_id")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  agency           Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  createdBy        User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  invoices         CaseInvoice[]
+  paymentApprovals PaymentApproval[]
+  cashTransactions CashTransaction[]
+
+  @@unique([agencyId, name])
+  @@index([agencyId, isActive])
+  @@map("agency_custom_payment_ledgers")
 }
 
 model CaseInvoiceLine {
@@ -920,32 +948,34 @@ model CaseInvoiceLine {
 }
 
 model CashTransaction {
-  id                    String            @id @default(uuid())
-  agencyId              String            @map("agency_id")
-  clientId              String?           @map("client_id")
-  caseId                String?           @map("case_id")
-  appointmentId         String?           @map("appointment_id")
-  paymentApprovalId     String?           @unique @map("payment_approval_id")
-  idempotencyKey        String?           @map("idempotency_key")
-  type                  String            @default("Payment")
-  amount                Decimal           @db.Decimal(10, 2)
-  currency              String            @default("CAD")
-  reference             String?           @map("reference")
-  occurredAt            DateTime          @map("occurred_at") @db.Date
-  status                String            @default("Posted")
+  id                    String                     @id @default(uuid())
+  agencyId              String                     @map("agency_id")
+  clientId              String?                    @map("client_id")
+  caseId                String?                    @map("case_id")
+  appointmentId         String?                    @map("appointment_id")
+  paymentApprovalId     String?                    @unique @map("payment_approval_id")
+  customLedgerId        String?                    @map("custom_ledger_id")
+  idempotencyKey        String?                    @map("idempotency_key")
+  type                  String                     @default("Payment")
+  amount                Decimal                    @db.Decimal(10, 2)
+  currency              String                     @default("CAD")
+  reference             String?                    @map("reference")
+  occurredAt            DateTime                   @map("occurred_at") @db.Date
+  status                String                     @default("Posted")
   note                  String?
-  createdById           String?           @map("created_by_id")
-  reversedTransactionId String?           @map("reversed_transaction_id")
-  createdAt             DateTime          @default(now()) @map("created_at")
-  updatedAt             DateTime          @updatedAt @map("updated_at")
-  agency                Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client                Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case                  Case?             @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  appointment           Appointment?      @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  paymentApproval       PaymentApproval?  @relation(fields: [paymentApprovalId], references: [id], onDelete: SetNull)
-  createdBy             User?             @relation("CashTransactionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  reversedTransaction   CashTransaction?  @relation("CashTransactionReversal", fields: [reversedTransactionId], references: [id], onDelete: SetNull)
-  reversals             CashTransaction[] @relation("CashTransactionReversal")
+  createdById           String?                    @map("created_by_id")
+  reversedTransactionId String?                    @map("reversed_transaction_id")
+  createdAt             DateTime                   @default(now()) @map("created_at")
+  updatedAt             DateTime                   @updatedAt @map("updated_at")
+  agency                Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client                Client?                    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                  Case?                      @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment           Appointment?               @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  paymentApproval       PaymentApproval?           @relation(fields: [paymentApprovalId], references: [id], onDelete: SetNull)
+  customLedger          AgencyCustomPaymentLedger? @relation(fields: [customLedgerId], references: [id], onDelete: SetNull)
+  createdBy             User?                      @relation("CashTransactionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  reversedTransaction   CashTransaction?           @relation("CashTransactionReversal", fields: [reversedTransactionId], references: [id], onDelete: SetNull)
+  reversals             CashTransaction[]          @relation("CashTransactionReversal")
   allocations           CashAllocation[]
   invoiceRefund         InvoiceRefund?
 
@@ -954,6 +984,7 @@ model CashTransaction {
   @@index([agencyId, occurredAt])
   @@index([clientId, occurredAt])
   @@index([caseId, occurredAt])
+  @@index([agencyId, customLedgerId, occurredAt])
   @@index([createdById, occurredAt])
   @@map("cash_transactions")
 }
@@ -1680,36 +1711,36 @@ model AgencyTwilioVoiceLine {
 }
 
 model AgencyTwilioSettings {
-  id                  String    @id @default(uuid())
-  agencyId            String    @unique @map("agency_id")
-  accountSid          String?   @map("account_sid")
-  authTokenEncrypted  String?   @map("auth_token_encrypted")
-  fromNumber          String?   @map("from_number")
-  messagingServiceSid String?   @map("messaging_service_sid")
+  id                    String    @id @default(uuid())
+  agencyId              String    @unique @map("agency_id")
+  accountSid            String?   @map("account_sid")
+  authTokenEncrypted    String?   @map("auth_token_encrypted")
+  fromNumber            String?   @map("from_number")
+  messagingServiceSid   String?   @map("messaging_service_sid")
   // Twilio Voice — browser softphone. The API Key (SID + Secret) signs the
   // Access Tokens the Voice SDK needs; the secret is encrypted like the
   // Auth Token. voiceNumber is the number calls are placed FROM (falls back
   // to fromNumber) and twimlAppSid is the TwiML Application that carries
   // outbound calls to CaseDesk's TwiML handler (provisioned automatically).
-  apiKeySid            String?   @map("api_key_sid")
-  apiKeySecretEncrypted String?  @map("api_key_secret_encrypted")
-  callsEnabled         Boolean   @default(false) @map("calls_enabled")
-  voiceNumber          String?   @map("voice_number")
-  twimlAppSid          String?   @map("twiml_app_sid")
-  lastCallTestedAt     DateTime? @map("last_call_tested_at")
-  lastCallTestStatus   String?   @map("last_call_test_status")
-  lastCallTestMessage  String?   @map("last_call_test_message")
-  enabled             Boolean   @default(true)
-  smsEnabled          Boolean   @default(true) @map("sms_enabled")
-  lastVerifiedAt      DateTime? @map("last_verified_at")
-  lastVerifiedStatus  String?   @map("last_verified_status")
-  lastVerifiedMessage String?   @map("last_verified_message")
-  lastSmsTestedAt     DateTime? @map("last_sms_tested_at")
-  lastSmsTestStatus   String?   @map("last_sms_test_status")
-  lastSmsTestMessage  String?   @map("last_sms_test_message")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
-  agency              Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  apiKeySid             String?   @map("api_key_sid")
+  apiKeySecretEncrypted String?   @map("api_key_secret_encrypted")
+  callsEnabled          Boolean   @default(false) @map("calls_enabled")
+  voiceNumber           String?   @map("voice_number")
+  twimlAppSid           String?   @map("twiml_app_sid")
+  lastCallTestedAt      DateTime? @map("last_call_tested_at")
+  lastCallTestStatus    String?   @map("last_call_test_status")
+  lastCallTestMessage   String?   @map("last_call_test_message")
+  enabled               Boolean   @default(true)
+  smsEnabled            Boolean   @default(true) @map("sms_enabled")
+  lastVerifiedAt        DateTime? @map("last_verified_at")
+  lastVerifiedStatus    String?   @map("last_verified_status")
+  lastVerifiedMessage   String?   @map("last_verified_message")
+  lastSmsTestedAt       DateTime? @map("last_sms_tested_at")
+  lastSmsTestStatus     String?   @map("last_sms_test_status")
+  lastSmsTestMessage    String?   @map("last_sms_test_message")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  agency                Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@index([agencyId])
   @@map("agency_twilio_settings")
@@ -1925,6 +1956,7 @@ model User {
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                       LeadConversion[]                @relation("LeadConversionActorUser")
   createdCaseInvoices                  CaseInvoice[]
+  createdCustomPaymentLedgers          AgencyCustomPaymentLedger[]
   createdCashTransactions              CashTransaction[]               @relation("CashTransactionCreator")
   closedCashReconciliations            CashReconciliation[]            @relation("CashReconciliationCloser")
   requestedInvoiceRefunds              InvoiceRefund[]                 @relation("InvoiceRefundRequester")
@@ -2079,6 +2111,40 @@ enum CaseCollaborationRequestStatus {
   Approved
   Declined
   Withdrawn
+}
+
+enum PortalPolicyScope {
+  AGENCY
+  CASE
+  CLIENT_USER
+}
+
+enum PortalPolicyStatus {
+  ACTIVE
+  RESTRICTED
+  SUSPENDED
+}
+
+model PortalAccessPolicy {
+  id          String             @id @default(uuid())
+  agencyId    String             @map("agency_id")
+  scope       PortalPolicyScope
+  scopeId     String             @map("scope_id")
+  preset      String             @default("STANDARD")
+  status      PortalPolicyStatus @default(ACTIVE)
+  permissions Json               @default("{}")
+  vetoes      Json               @default("{}")
+  validFrom   DateTime?          @map("valid_from")
+  validUntil  DateTime?          @map("valid_until")
+  updatedById String?            @map("updated_by_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  agency      Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@unique([agencyId, scope, scopeId])
+  @@index([agencyId, scope])
+  @@index([agencyId, validUntil])
+  @@map("portal_access_policies")
 }
 
 // A consultant's self-service ask to join a case they don't currently own
@@ -2735,27 +2801,27 @@ model BookingPaymentHold {
   // marked "Booked") until payment actually confirms, which happens later
   // and in a different request (webhook/reconcile), so it has to be
   // persisted here rather than handled inline like the free booking path.
-  offerHoldId            String?                  @unique @map("offer_hold_id")
-  createdById            String?                  @map("created_by_id")
+  offerHoldId              String?                  @unique @map("offer_hold_id")
+  createdById              String?                  @map("created_by_id")
   // Set by staff bookings and by verified portal/public bookings that match
   // an existing client. The guest* fields remain the booking-time snapshot.
   // Also prevents an expired checkout from becoming a duplicate Lead.
-  clientId               String?                  @map("client_id")
+  clientId                 String?                  @map("client_id")
   // Set once an unlinked abandoned (Expired/Voided, never-paid) public hold
   // has been recovered into a Lead. Linked-client holds use an idempotent
   // ActivityLog instead and intentionally leave this null.
-  leadId                 String?                  @map("lead_id")
-  createdAt              DateTime                 @default(now()) @map("created_at")
-  updatedAt              DateTime                 @updatedAt @map("updated_at")
-  agency                 Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignedTo             User                     @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
-  sessionType            BookingSessionType?      @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
-  appointment            Appointment?             @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  offerHold              BookingSlotHold?         @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
-  createdBy              User?                    @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
-  client                 Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  lead                   Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  messageDeliveries      BookingMessageDelivery[]
+  leadId                   String?                  @map("lead_id")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+  agency                   Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignedTo               User                     @relation("AssignedBookingPaymentHoldUser", fields: [assignedToId], references: [id], onDelete: Cascade)
+  sessionType              BookingSessionType?      @relation(fields: [sessionTypeId], references: [id], onDelete: SetNull)
+  appointment              Appointment?             @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  offerHold                BookingSlotHold?         @relation(fields: [offerHoldId], references: [id], onDelete: SetNull)
+  createdBy                User?                    @relation("CreatedBookingPaymentHoldUser", fields: [createdById], references: [id], onDelete: SetNull)
+  client                   Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  lead                     Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  messageDeliveries        BookingMessageDelivery[]
 
   @@unique([agencyId, idempotencyKey])
   @@unique([agencyId, qbInvoiceId])
@@ -2773,43 +2839,45 @@ model BookingPaymentHold {
 // remain Pending until an administrator decides them. Approved cash stays in
 // CaseDesk; approved non-cash entries retain their QuickBooks payment result.
 model PaymentApproval {
-  id                   String           @id @default(uuid())
-  agencyId             String           @map("agency_id")
-  clientId             String?          @map("client_id")
-  caseId               String?          @map("case_id")
-  appointmentId        String?          @map("appointment_id")
-  caseInvoiceId        String?          @map("case_invoice_id")
-  paymentId            String?          @map("payment_id")
-  entryType            String           @map("entry_type")
+  id                   String                     @id @default(uuid())
+  agencyId             String                     @map("agency_id")
+  clientId             String?                    @map("client_id")
+  caseId               String?                    @map("case_id")
+  appointmentId        String?                    @map("appointment_id")
+  caseInvoiceId        String?                    @map("case_invoice_id")
+  paymentId            String?                    @map("payment_id")
+  customLedgerId       String?                    @map("custom_ledger_id")
+  entryType            String                     @map("entry_type")
   method               String
-  amount               Decimal          @db.Decimal(10, 2)
-  chargeAmount         Decimal?         @map("charge_amount") @db.Decimal(10, 2)
-  paymentType          String?          @map("payment_type")
+  amount               Decimal                    @db.Decimal(10, 2)
+  chargeAmount         Decimal?                   @map("charge_amount") @db.Decimal(10, 2)
+  paymentType          String?                    @map("payment_type")
   description          String?
-  transactionReference String?          @map("transaction_reference")
-  paymentDate          DateTime         @map("payment_date") @db.Date
+  transactionReference String?                    @map("transaction_reference")
+  paymentDate          DateTime                   @map("payment_date") @db.Date
   note                 String?
-  status               String           @default("Pending")
-  sourceRole           String           @map("source_role")
-  idempotencyKey       String           @map("idempotency_key")
-  submittedById        String           @map("submitted_by_id")
-  reviewedById         String?          @map("reviewed_by_id")
-  reviewedAt           DateTime?        @map("reviewed_at")
-  rejectionReason      String?          @map("rejection_reason")
-  qbPaymentId          String?          @map("qb_payment_id")
-  processingError      String?          @map("processing_error")
+  status               String                     @default("Pending")
+  sourceRole           String                     @map("source_role")
+  idempotencyKey       String                     @map("idempotency_key")
+  submittedById        String                     @map("submitted_by_id")
+  reviewedById         String?                    @map("reviewed_by_id")
+  reviewedAt           DateTime?                  @map("reviewed_at")
+  rejectionReason      String?                    @map("rejection_reason")
+  qbPaymentId          String?                    @map("qb_payment_id")
+  processingError      String?                    @map("processing_error")
   result               Json?
-  createdAt            DateTime         @default(now()) @map("created_at")
-  updatedAt            DateTime         @updatedAt @map("updated_at")
-  agency               Agency           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  client               Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  case                 Case?            @relation(fields: [caseId], references: [id], onDelete: SetNull)
-  appointment          Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
-  caseInvoice          CaseInvoice?     @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
-  payment              Payment?         @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  updatedAt            DateTime                   @updatedAt @map("updated_at")
+  agency               Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client               Client?                    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  case                 Case?                      @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  appointment          Appointment?               @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  caseInvoice          CaseInvoice?               @relation(fields: [caseInvoiceId], references: [id], onDelete: SetNull)
+  payment              Payment?                   @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  customLedger         AgencyCustomPaymentLedger? @relation(fields: [customLedgerId], references: [id], onDelete: SetNull)
   cashTransaction      CashTransaction?
-  submittedBy          User             @relation("SubmittedPaymentApprovalUser", fields: [submittedById], references: [id], onDelete: Restrict)
-  reviewedBy           User?            @relation("ReviewedPaymentApprovalUser", fields: [reviewedById], references: [id], onDelete: SetNull)
+  submittedBy          User                       @relation("SubmittedPaymentApprovalUser", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy           User?                      @relation("ReviewedPaymentApprovalUser", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId, status, createdAt])
@@ -2817,6 +2885,7 @@ model PaymentApproval {
   @@index([caseId, createdAt])
   @@index([appointmentId, createdAt])
   @@index([caseInvoiceId, createdAt])
+  @@index([agencyId, customLedgerId, paymentDate])
   @@map("payment_approvals")
 }
 

@@ -10,8 +10,8 @@ export async function getIncentiveTeamSummary() {
   return response.data.data;
 }
 
-export async function getIncentiveLedger({ userId, caseId, dateFrom, dateTo, page, pageSize } = {}) {
-  const response = await api.get("/incentives/ledger", { params: { userId, caseId, dateFrom, dateTo, page, pageSize }, cache: false });
+export async function getIncentiveLedger({ userId, caseId, dateFrom, dateTo, page, pageSize, approvalStatus } = {}) {
+  const response = await api.get("/incentives/ledger", { params: { userId, caseId, dateFrom, dateTo, page, pageSize, approvalStatus }, cache: false });
   return response.data;
 }
 

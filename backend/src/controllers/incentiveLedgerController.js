@@ -27,16 +27,36 @@ function parseDate(value) {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
+const APPROVAL_STATUSES = new Set(["APPROVED", "RECALCULATED", "AUTOMATIC", "REVERSED"]);
+
+function approvalStatusFor(entry) {
+  if (entry.entryType === "REVERSAL") return "REVERSED";
+  if (entry.entryType === "ADJUSTMENT" || entry.triggerSource === "PLAN_RECALCULATION") return "RECALCULATED";
+  if (entry.triggerSource === "RETROACTIVE_APPROVAL") return "APPROVED";
+  return "AUTOMATIC";
+}
+
+function parseApprovalStatus(value) {
+  const status = String(value || "").trim().toUpperCase();
+  if (!status || status === "ALL") return null;
+  return APPROVAL_STATUSES.has(status) ? status : null;
+}
+
 export async function getLedger(req, res) {
   const agencyId = req.auth.agencyId;
   const userId = targetUserId(req);
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 50));
 
+  const approvalStatus = parseApprovalStatus(req.query.approvalStatus);
   const where = {
     agencyId,
     ...(userId ? { userId } : {}),
     ...(req.query.caseId ? { caseId: String(req.query.caseId) } : {}),
+    ...(approvalStatus === "APPROVED" ? { triggerSource: "RETROACTIVE_APPROVAL", entryType: "CREDIT" } : {}),
+    ...(approvalStatus === "RECALCULATED" ? { entryType: "ADJUSTMENT", triggerSource: "PLAN_RECALCULATION" } : {}),
+    ...(approvalStatus === "REVERSED" ? { entryType: "REVERSAL" } : {}),
+    ...(approvalStatus === "AUTOMATIC" ? { entryType: { notIn: ["REVERSAL", "ADJUSTMENT"] }, NOT: { triggerSource: "RETROACTIVE_APPROVAL" } } : {}),
   };
   const creditedAt = {};
   const from = parseDate(req.query.dateFrom);
@@ -60,7 +80,10 @@ export async function getLedger(req, res) {
     }),
     prisma.incentiveLedgerEntry.count({ where }),
   ]);
-  res.json({ data: rows, meta: { page, pageSize, total } });
+  res.json({
+    data: rows.map((row) => ({ ...row, approvalStatus: approvalStatusFor(row) })),
+    meta: { page, pageSize, total, approvalStatuses: [...APPROVAL_STATUSES] },
+  });
 }
 
 export async function getSummary(req, res) {

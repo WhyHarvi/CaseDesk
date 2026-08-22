@@ -16,8 +16,13 @@ import {
   getQuickBooksSyncFailures,
 } from "../controllers/paymentsOverviewController.js";
 import { asyncHandler } from "../utils/http.js";
+import { requireRole } from "../middleware/authorization.js";
+import * as customLedgers from "../controllers/customPaymentLedgerController.js";
 
 const router = Router();
+router.get("/custom-ledgers", asyncHandler(customLedgers.list));
+router.post("/custom-ledgers", requireRole("admin"), asyncHandler(customLedgers.create));
+router.patch("/custom-ledgers/:id", requireRole("admin"), asyncHandler(customLedgers.update));
 router.get("/", asyncHandler(getPaymentsList));
 router.get("/summary", asyncHandler(getPaymentsSummaryOverview));
 router.get("/cash-closing", asyncHandler(getCashClosing));

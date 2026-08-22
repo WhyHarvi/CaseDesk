@@ -11,6 +11,11 @@ export async function getPaymentsOverviewSummary(month) {
   return response.data.data;
 }
 
+export async function getCustomPaymentLedgers() {
+  const response = await api.get("/payments-overview/custom-ledgers", { cache: false });
+  return response.data.data;
+}
+
 export async function getConsultationRefundReview(refundReceiptId) {
   const response = await api.get(
     `/payments-overview/refunds/${encodeURIComponent(refundReceiptId)}`,

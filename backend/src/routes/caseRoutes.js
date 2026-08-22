@@ -82,6 +82,14 @@ import {
 } from "../controllers/paymentScheduleController.js";
 import rateLimit from "../middleware/rateLimit.js";
 import {
+  approveCaseAccessRequest,
+  declineCaseAccessRequest,
+  requestCaseAccess,
+  restrictedCasePreview,
+  withdrawCaseAccessRequest,
+  listReviewableCaseAccessRequests,
+} from "../controllers/caseCollaborationController.js";
+import {
   requirePortalCapability,
   requirePortalCaseTab,
 } from "../services/portalAccessService.js";
@@ -104,7 +112,13 @@ router.get(
   asyncHandler(getPaymentSummaries),
 );
 router.post("/", asyncHandler(createCaseWithRequiredCollaboration));
+router.get("/access-requests/review", requireRole("admin", "consultant"), asyncHandler(listReviewableCaseAccessRequests));
+router.get("/:id/access-preview", requireRole("consultant", "frontdesk"), asyncHandler(restrictedCasePreview));
+router.post("/:id/access-requests", requireRole("consultant", "frontdesk"), rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(requestCaseAccess));
+router.delete("/:id/access-requests/:requestId", requireRole("consultant", "frontdesk"), asyncHandler(withdrawCaseAccessRequest));
 router.use("/:id", requireCaseAccess());
+router.post("/:id/access-requests/:requestId/approve", requireRole("admin", "consultant"), asyncHandler(approveCaseAccessRequest));
+router.post("/:id/access-requests/:requestId/decline", requireRole("admin", "consultant"), asyncHandler(declineCaseAccessRequest));
 router.get("/:id/lifecycle", asyncHandler(getCaseLifecycle));
 router.patch(
   "/:id/lifecycle",

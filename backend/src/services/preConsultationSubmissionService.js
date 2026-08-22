@@ -242,7 +242,7 @@ export async function savePreConsultationSubmission(db, {
   const submittedAt = new Date();
 
   return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`pre-consultation-submit:${appointment.id}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pre-consultation-submit:${appointment.id}`}))`;
     const existing = await tx.appointmentEvent.findFirst({
       where: { appointmentId: appointment.id, type: PRE_CONSULTATION_EVENT.SUBMITTED },
       orderBy: { createdAt: "desc" },

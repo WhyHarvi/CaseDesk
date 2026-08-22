@@ -4,6 +4,7 @@ import Header from "../components/layout/Header";
 import Sidebar from "../components/layout/Sidebar";
 import IncomingOomaCallAlert from "../components/communications/IncomingOomaCallAlert";
 import FloatingChatWidget from "../components/chat/FloatingChatWidget";
+import GlobalDialpad from "../components/calls/GlobalDialpad";
 import usePortalHeartbeat from "../hooks/usePortalHeartbeat";
 
 export default function MainLayout({ children, hideTopBar = false, lockContentScroll = false, flushContent = false }) {
@@ -61,6 +62,7 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
         </div>
       </div>
       <IncomingOomaCallAlert />
+      <GlobalDialpad />
       <FloatingChatWidget />
     </div>
   );

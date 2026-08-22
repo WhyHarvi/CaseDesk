@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Calculator, Check, ChevronDown, CircleAlert, History, Loader2, Plus, PowerOff, Sparkles, Trash2, Wallet2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getCaseRoles } from "../../api/caseRoleApi";
-import { activateIncentivePlan, applyPlanToLegacyInvoices, createIncentivePlan, deactivateIncentivePlan, deleteIncentivePlan, getIncentivePlans, previewLegacyInvoicePlanApplication, updateIncentivePlan } from "../../api/incentivePlanApi";
+import { activateIncentivePlan, approveRetroactiveIncentiveApprovals, applyIncentivePlanRecalculation, applyPlanToLegacyInvoices, createIncentivePlan, deactivateIncentivePlan, deleteIncentivePlan, getIncentivePlans, previewIncentivePlanRecalculation, previewLegacyInvoicePlanApplication, previewRetroactiveIncentiveApprovals, updateIncentivePlan } from "../../api/incentivePlanApi";
 import { caseStagesForType } from "../../constants/caseStages";
 import { humanize, LEAD_STAGES } from "../../modules/leads/leadPresentation";
 import api from "../../services/api";
@@ -364,6 +364,14 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
   const [legacyLoading, setLegacyLoading] = useState(false);
   const [legacyApplying, setLegacyApplying] = useState(false);
   const [legacyResult, setLegacyResult] = useState(null);
+  const [retroPreview, setRetroPreview] = useState(null);
+  const [retroLoading, setRetroLoading] = useState(false);
+  const [retroApproving, setRetroApproving] = useState(false);
+  const [retroResult, setRetroResult] = useState(null);
+  const [recalcPreview, setRecalcPreview] = useState(null);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [recalcApplying, setRecalcApplying] = useState(false);
+  const [recalcResult, setRecalcResult] = useState(null);
   const [error, setError] = useState("");
 
   async function loadLegacyPreview() {
@@ -394,6 +402,68 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
       setError(reason.response?.data?.message || "Could not apply this plan to old invoices.");
     } finally {
       setLegacyApplying(false);
+    }
+  }
+
+  async function loadRetroPreview() {
+    if (retroPreview) {
+      setRetroPreview(null);
+      setRetroResult(null);
+      return;
+    }
+    setRetroLoading(true);
+    setRetroResult(null);
+    setError("");
+    try {
+      setRetroPreview(await previewRetroactiveIncentiveApprovals(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not check historical incentive approvals.");
+    } finally {
+      setRetroLoading(false);
+    }
+  }
+
+  async function approveRetroactive() {
+    setRetroApproving(true);
+    setError("");
+    try {
+      setRetroResult(await approveRetroactiveIncentiveApprovals(plan.id));
+      setRetroPreview(await previewRetroactiveIncentiveApprovals(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not approve historical incentives.");
+    } finally {
+      setRetroApproving(false);
+    }
+  }
+
+  async function loadRecalculationPreview() {
+    if (recalcPreview) {
+      setRecalcPreview(null);
+      setRecalcResult(null);
+      return;
+    }
+    setRecalcLoading(true);
+    setRecalcResult(null);
+    setError("");
+    try {
+      setRecalcPreview(await previewIncentivePlanRecalculation(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not review existing incentives.");
+    } finally {
+      setRecalcLoading(false);
+    }
+  }
+
+  async function applyRecalculation() {
+    setRecalcApplying(true);
+    setError("");
+    try {
+      setRecalcResult(await applyIncentivePlanRecalculation(plan.id));
+      setRecalcPreview(await previewIncentivePlanRecalculation(plan.id));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not update existing incentives.");
+    } finally {
+      setRecalcApplying(false);
     }
   }
 
@@ -491,6 +561,9 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
                 <button type="button" onClick={save} disabled={saving} className="flex h-9 items-center gap-1.5 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50">
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save
                 </button>
+                <button type="button" onClick={loadRecalculationPreview} disabled={recalcLoading || recalcApplying || saving} className="flex h-9 items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-50">
+                  {recalcLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} {recalcPreview ? "Hide existing incentive review" : "Review existing incentives"}
+                </button>
                 {!plan.isActive ? (
                   <button type="button" onClick={activate} disabled={activating} className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50">
                     {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Activate
@@ -499,6 +572,9 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
                   <>
                     <button type="button" onClick={loadLegacyPreview} disabled={legacyLoading || deactivating} className="flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
                       {legacyLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} Apply to old invoices
+                    </button>
+                    <button type="button" onClick={loadRetroPreview} disabled={retroLoading || deactivating} className="flex h-9 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-4 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50">
+                      {retroLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} Review past payments
                     </button>
                     <button type="button" onClick={deactivate} onBlur={() => setConfirmingDeactivate(false)} disabled={deactivating} className={`flex h-9 items-center gap-1.5 rounded-full border px-4 text-xs font-semibold transition disabled:opacity-50 ${confirmingDeactivate ? "border-amber-600 bg-amber-600 text-white hover:bg-amber-700" : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"}`}>
                       {deactivating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PowerOff className="h-3.5 w-3.5" />} {confirmingDeactivate ? "Confirm deactivate" : "Deactivate"}
@@ -519,6 +595,59 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
                   {confirmingDelete ? <button type="button" onClick={() => setConfirmingDelete(false)} className="text-xs font-semibold text-slate-500 hover:text-slate-700">Cancel</button> : null}
                 </div>
               </div>
+              {recalcPreview ? (
+                <div className="border-t border-sky-200 pt-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-900">Existing incentive update</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        {recalcPreview.changedEventCount} historical event{recalcPreview.changedEventCount === 1 ? "" : "s"} changed · {recalcPreview.pendingCorrectionCount} adjustment{recalcPreview.pendingCorrectionCount === 1 ? "" : "s"} · {recalcPreview.netChange >= 0 ? "+" : ""}{money.format(recalcPreview.netChange)} net change. Existing ledger rows stay immutable; approval adds auditable adjustments.
+                      </p>
+                    </div>
+                    {recalcPreview.pending ? (
+                      <button type="button" onClick={applyRecalculation} disabled={recalcApplying} className="flex h-9 items-center gap-1.5 rounded-full bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-700 disabled:opacity-50">
+                        {recalcApplying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Apply plan changes
+                      </button>
+                    ) : null}
+                  </div>
+                  {recalcPreview.unmatchedTimelineLegs?.length ? <p className="mt-3 text-xs font-medium text-amber-700">{recalcPreview.unmatchedTimelineLegs.length} historical timeline leg{recalcPreview.unmatchedTimelineLegs.length === 1 ? "" : "s"} could not be matched after a leg rename and were left unchanged.</p> : null}
+                  {recalcResult ? <p className="mt-3 text-xs font-semibold text-emerald-700">Applied {recalcResult.applied} adjustment{recalcResult.applied === 1 ? "" : "s"}; refreshed {recalcResult.snapshotCount} invoice snapshot{recalcResult.snapshotCount === 1 ? "" : "s"}.</p> : null}
+                </div>
+              ) : null}
+              {retroPreview ? (
+                <div className="border-t border-amber-200 pt-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-900">Historical approval review</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        {retroPreview.count} paid invoice{retroPreview.count === 1 ? "" : "s"} · {money.format(retroPreview.paidTotal)} collected before activation · {money.format(retroPreview.incentiveTotal)} role-based credit. Approval is recorded in the activity history.
+                      </p>
+                    </div>
+                    {retroPreview.count > 0 ? (
+                      <button type="button" onClick={approveRetroactive} disabled={retroApproving} className="flex h-9 items-center gap-1.5 rounded-full bg-amber-600 px-4 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:opacity-50">
+                        {retroApproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Approve historical credits
+                      </button>
+                    ) : null}
+                  </div>
+                  {retroPreview.invoices?.length ? (
+                    <div className="mt-3 divide-y divide-amber-100 border-y border-amber-100">
+                      {retroPreview.invoices.slice(0, 10).map((invoice) => (
+                        <div key={invoice.id} className="py-2 text-xs">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate font-medium text-slate-700">{invoice.client.fullName} · {invoice.invoiceNumber}</span>
+                            <span className="shrink-0 font-semibold tabular-nums text-slate-800">{money.format(invoice.pool)} pool</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
+                            {invoice.entries.map((entry) => <span key={`${invoice.id}-${entry.userId}-${entry.attributionKind}-${entry.caseRoleId || "lead"}`}>{entry.userName}: {entry.roleNameSnapshot} {money.format(entry.amount)}</span>)}
+                          </div>
+                        </div>
+                      ))}
+                      {retroPreview.count > 10 ? <p className="py-2 text-xs text-slate-500">And {retroPreview.count - 10} more paid invoices</p> : null}
+                    </div>
+                  ) : null}
+                  {retroResult ? <p className="mt-3 text-xs font-semibold text-emerald-700">Approved {retroResult.approved} invoice{retroResult.approved === 1 ? "" : "s"}; credited {money.format(retroResult.creditedTotal)}{retroResult.skippedNoRecipients ? `; ${retroResult.skippedNoRecipients} had no eligible recipient` : ""}.</p> : null}
+                </div>
+              ) : null}
               {legacyPreview ? (
                 <div className="border-t border-slate-200 pt-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">

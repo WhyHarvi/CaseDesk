@@ -19,14 +19,16 @@ import StudyIntakeBadge from "../cases/StudyIntakeBadge";
 import { ExpandingPillMenu, QuickActionLink, SimpleActionPill } from "./CaseProfileActions";
 import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./caseProfileUtils";
 import { isStudyPermitCaseType } from "../../utils/studyIntake";
+import { Avatar, AvatarFallback, AvatarGroup } from "@/components/ui/avatar";
 
-export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditClient = true, onContactClient, onEditClient }) {
+export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditClient = true, canManageCollaborators = false, onContactClient, onEditClient, onManageCollaborators }) {
   // assignedUser (rendered as "RCIC" below) is the case's primary owner.
   // Case Worker is the other required role — not a Case column — so it's
   // read off the same roleAssignments the backend already scopes to just
   // the two required roles.
   const caseWorker = caseItem.roleAssignments?.find((row) => row.caseRole?.code === "case-worker")?.user;
   const sameRcicAndCaseWorker = Boolean(caseItem.assignedUser?.id && caseWorker?.id && caseItem.assignedUser.id === caseWorker.id);
+  const collaborators = caseItem.assignments || [];
   return (
     <section className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
       <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
@@ -96,6 +98,24 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
               <p>
                 <span className="font-medium text-slate-900">Next:</span> {caseItem.nextAction || "No action set"}
               </p>
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <span className="font-medium text-slate-900">Collaborators:</span>
+                {collaborators.length ? (
+                  <>
+                    <AvatarGroup aria-label={collaborators.map((item) => item.consultant?.fullName).filter(Boolean).join(", ")}>
+                      {collaborators.slice(0, 4).map((item) => (
+                        <Avatar key={item.id} size="sm" title={`${item.consultant?.fullName || "Staff member"} · ${item.assignmentType}`}>
+                          <AvatarFallback>{getInitials(item.consultant?.fullName)}</AvatarFallback>
+                        </Avatar>
+                      ))}
+                    </AvatarGroup>
+                    <span className="text-slate-500">{collaborators.map((item) => `${item.consultant?.fullName || "Staff member"} (${item.assignmentType})`).join(", ")}</span>
+                  </>
+                ) : <span className="text-slate-400">None</span>}
+                {canManageCollaborators ? (
+                  <button type="button" onClick={onManageCollaborators} className="font-semibold text-sky-700 hover:text-sky-800 hover:underline">Manage</button>
+                ) : null}
+              </div>
               {showFinancials ? <p>
                 <span className="font-medium text-slate-900">Payments:</span> {formatCurrency(paymentSummary.balance)} balance
                 <span className="text-slate-400"> • {paymentSummary.status}</span>

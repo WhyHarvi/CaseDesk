@@ -8,7 +8,7 @@ const glass = "rounded-[1.6rem] border border-white/70 bg-white/70 shadow-[0_18p
 const spring = { type: "spring", stiffness: 320, damping: 30 };
 function cx(...classes) { return classes.filter(Boolean).join(" "); }
 
-const ROLE_LABEL = { primary: "Take ownership", supporting: "Support", reviewer: "Review" };
+const ROLE_LABEL = { supporting: "Support", reviewer: "Review" };
 const STATUS_TONE = {
   Pending: "bg-amber-50 text-amber-700 ring-amber-100",
   Approved: "bg-emerald-50 text-emerald-700 ring-emerald-100",
@@ -36,7 +36,7 @@ function RequestForm({ item, onSubmit, onCancel }) {
     >
       <div className="mt-3 space-y-2.5 rounded-2xl border border-sky-100 bg-sky-50/50 p-3.5" onClick={(event) => event.stopPropagation()}>
         <div className="flex flex-wrap items-center gap-2">
-          {["supporting", "reviewer", "primary"].map((value) => (
+          {["supporting", "reviewer"].map((value) => (
             <button
               key={value}
               type="button"

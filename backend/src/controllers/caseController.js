@@ -61,6 +61,15 @@ const include = {
       user: { select: { id: true, fullName: true } },
     },
   },
+  assignments: {
+    where: { status: "active", assignmentType: { in: ["supporting", "reviewer"] } },
+    select: {
+      id: true,
+      assignmentType: true,
+      consultant: { select: { id: true, fullName: true, role: true } },
+    },
+    orderBy: { assignedAt: "asc" },
+  },
 };
 
 const fields = {

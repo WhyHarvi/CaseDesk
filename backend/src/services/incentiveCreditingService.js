@@ -13,7 +13,7 @@ export async function resolvePlan(agencyId, caseType) {
   return prisma.incentivePlan.findFirst({ where: { agencyId, caseType: null, isActive: true }, include: planInclude });
 }
 
-function tierRateFor(tiers, cumulativeAfterPayment) {
+export function tierRateFor(tiers, cumulativeAfterPayment) {
   let rate = null;
   for (const tier of tiers) {
     if (Number(tier.minCumulativeAmount) <= cumulativeAfterPayment) rate = Number(tier.rate);
@@ -22,7 +22,7 @@ function tierRateFor(tiers, cumulativeAfterPayment) {
   return rate;
 }
 
-async function computePool(plan, { agencyId, caseId, delta }) {
+export async function computePool(plan, { agencyId, caseId, delta }) {
   if (plan.formulaType === "FLAT_PER_PAYMENT") return Number(plan.flatAmount);
   if (plan.formulaType === "PERCENT_OF_PAYMENT") return (delta * Number(plan.percentRate)) / 100;
   // TIERED_PERCENT_OF_REVENUE — the rate depends on the case's cumulative

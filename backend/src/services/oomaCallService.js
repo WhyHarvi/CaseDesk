@@ -227,13 +227,14 @@ export async function autoMatch(tx, session) {
 }
 
 function activityPresentation(session) {
+  const providerName = session.provider === "TWILIO" ? "Twilio" : "Ooma";
   if (session.direction === "OUTBOUND") {
-    return { activityType: "OUTGOING_CALL", direction: "OUTBOUND", title: "Outgoing Ooma call" };
+    return { activityType: "OUTGOING_CALL", direction: "OUTBOUND", title: `Outgoing ${providerName} call` };
   }
   if (["MISSED", "FAILED"].includes(session.status)) {
-    return { activityType: "MISSED_CALL", direction: "INBOUND", title: "Missed Ooma call" };
+    return { activityType: "MISSED_CALL", direction: "INBOUND", title: `Missed ${providerName} call` };
   }
-  return { activityType: "INCOMING_CALL", direction: "INBOUND", title: "Incoming Ooma call" };
+  return { activityType: "INCOMING_CALL", direction: "INBOUND", title: `Incoming ${providerName} call` };
 }
 
 export async function syncOomaLeadActivity(callSessionId, db = prisma) {
@@ -241,7 +242,8 @@ export async function syncOomaLeadActivity(callSessionId, db = prisma) {
     const session = await tx.oomaCallSession.findUnique({ where: { id: callSessionId }, include: { lead: true } });
     if (!session?.lead) return null;
     const presentation = activityPresentation(session);
-    const externalId = `ooma-call:${session.providerCallId}`;
+    const providerKey = session.provider === "TWILIO" ? "twilio" : "ooma";
+    const externalId = `${providerKey}-call:${session.providerCallId}`;
     const metadata = {
       callSessionId: session.id,
       providerCallId: session.providerCallId,
@@ -250,10 +252,11 @@ export async function syncOomaLeadActivity(callSessionId, db = prisma) {
       recordingUrl: session.recordingUrl,
       extensionLabel: session.extensionLabel,
     };
-    const existing = await tx.leadActivity.findFirst({ where: { agencyId: session.agencyId, leadId: session.leadId, externalId } });
+    const legacyExternalId = `ooma-call:${session.providerCallId}`;
+    const existing = await tx.leadActivity.findFirst({ where: { agencyId: session.agencyId, leadId: session.leadId, externalId: { in: session.provider === "TWILIO" ? [externalId, legacyExternalId] : [externalId] } } });
     const activityData = {
       ...presentation,
-      channel: "OOMA",
+      channel: session.provider === "TWILIO" ? "PHONE" : "OOMA",
       outcome: session.disposition || session.status,
       description: session.outcomeNotes || (session.durationSeconds != null ? `${session.durationSeconds} seconds` : null),
       durationSeconds: session.durationSeconds,
@@ -297,7 +300,7 @@ export async function syncOomaLeadActivity(callSessionId, db = prisma) {
     });
     if (nextStage !== session.lead.stage) {
       await tx.leadStageHistory.create({
-        data: { agencyId: session.agencyId, leadId: session.lead.id, previousStage: session.lead.stage, newStage: nextStage, changedById: session.handledByUserId, reason: "Ooma call activity" },
+        data: { agencyId: session.agencyId, leadId: session.lead.id, previousStage: session.lead.stage, newStage: nextStage, changedById: session.handledByUserId, reason: `${session.provider === "TWILIO" ? "Twilio" : "Ooma"} call activity` },
       });
     }
     return activity;

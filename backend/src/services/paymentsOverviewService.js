@@ -71,6 +71,7 @@ async function cashDayTotals(agencyId, day, db = prisma) {
   const rows = await db.cashTransaction.findMany({
     where: {
       agencyId,
+      customLedgerId: null,
       status: "Posted",
       occurredAt: { ...(sinceExclusive ? { gt: sinceExclusive } : {}), lte: bounds.end },
     },
@@ -102,7 +103,7 @@ export async function getCashOnHand(agencyId) {
   const baseline = Number(lastClosing?.countedAmount || 0);
   const since = lastClosing?.periodEnd || null;
   const movement = await prisma.cashTransaction.aggregate({
-    where: { agencyId, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
+    where: { agencyId, customLedgerId: null, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
     _sum: { amount: true },
   });
   return Math.round((baseline + Number(movement._sum.amount || 0)) * 100) / 100;
@@ -120,10 +121,11 @@ export async function listCashLedgerActivity(agencyId, { limit = 100 } = {}) {
   const baseline = Math.round(Number(lastClosing?.countedAmount || 0) * 100) / 100;
   const since = lastClosing?.periodEnd || null;
   const rows = await prisma.cashTransaction.findMany({
-    where: { agencyId, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
+    where: { agencyId, customLedgerId: null, status: "Posted", ...(since ? { occurredAt: { gt: since } } : {}) },
     include: {
       client: { select: { fullName: true } },
       case: { select: { caseType: true } },
+      customLedger: { select: { id: true, name: true, color: true } },
       createdBy: { select: { fullName: true } },
     },
     orderBy: { occurredAt: "desc" },
@@ -144,6 +146,9 @@ export async function listCashLedgerActivity(agencyId, { limit = 100 } = {}) {
       caseType: row.case?.caseType || null,
       reference: row.reference,
       note: row.note,
+      ledgerId: row.customLedger?.id || null,
+      ledgerName: row.customLedger?.name || null,
+      ledgerColor: row.customLedger?.color || null,
       createdByName: row.createdBy?.fullName || null,
     })),
   };
@@ -180,7 +185,7 @@ export async function getCashReconciliation(agencyId, day) {
       include: { closedBy: { select: { id: true, fullName: true } } },
     }),
     prisma.cashTransaction.findMany({
-      where: { agencyId, type: "Withdrawal", status: "Posted", occurredAt: { gte: totals.start, lte: totals.end } },
+      where: { agencyId, customLedgerId: null, type: "Withdrawal", status: "Posted", occurredAt: { gte: totals.start, lte: totals.end } },
       include: { createdBy: { select: { id: true, fullName: true } } },
       orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
     }),
@@ -592,12 +597,13 @@ const BUCKET_FILTERS = {
 };
 
 async function fetchCaseInvoiceRows(agencyId, { from, to }) {
-  const [rows, categories] = await Promise.all([prisma.caseInvoice.findMany({
+  const [rows, categories, customLedgers] = await Promise.all([prisma.caseInvoice.findMany({
     where: { agencyId, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) },
     include: {
       client: { select: { fullName: true, email: true } },
       case: { select: { caseType: true } },
       paymentApprovals: { where: { status: "Approved", method: "Cash" }, orderBy: { paymentDate: "desc" } },
+      customLedger: { select: { id: true, name: true, color: true } },
       refunds: { where: { status: { in: ["Requested", "AwaitingQuickBooks", "Completed"] } }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { createdAt: "desc" },
@@ -606,6 +612,10 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
   const labels = new Map(categories.map((category) => [category.code, category.name]));
   return rows.map((rawRow) => {
     const row = applyLocalCashToInvoice(rawRow);
+    const normalizedMethod = row.lastPaymentMethod === "E-transfer" ? "ETransfer" : row.lastPaymentMethod;
+    // Ownership is persisted when money is posted. Never retroactively move
+    // historical payments merely because a newly-created rule now matches.
+    const customLedger = row.customLedger;
     const status = normalizeCaseInvoiceStatus(row.status);
     const completedRefundAmount = (row.refunds || [])
       .filter((refund) => refund.status === "Completed")
@@ -614,7 +624,9 @@ async function fetchCaseInvoiceRows(agencyId, { from, to }) {
       id: `case_invoice:${row.id}`,
       recordId: row.id,
       source: "case_invoice",
-      ledger: row.accountingProvider === "CaseDeskCash" ? "CaseDesk Cash" : "QuickBooks",
+      ledger: customLedger?.name || (row.accountingProvider === "CaseDeskCash" ? "CaseDesk Cash" : "QuickBooks"),
+      ledgerId: customLedger?.id || null,
+      ledgerColor: customLedger?.color || null,
       type: labels.get(row.paymentType) || CASE_INVOICE_TYPE_LABEL[row.paymentType] || row.paymentType,
       description: row.description,
       clientName: row.client?.fullName || "Unknown client",
@@ -646,6 +658,7 @@ async function fetchCashTransactionRows(agencyId, { from, to }) {
     include: {
       client: { select: { fullName: true } },
       case: { select: { caseType: true } },
+      customLedger: { select: { id: true, name: true, color: true } },
       allocations: { include: { invoice: { select: { invoiceNumber: true, description: true } } } },
     },
     orderBy: { occurredAt: "desc" },
@@ -663,7 +676,9 @@ async function fetchCashTransactionRows(agencyId, { from, to }) {
     id: `cash_transaction:${row.id}`,
     recordId: row.id,
     source: "cash_transaction",
-    ledger: "CaseDesk Cash",
+    ledger: row.customLedger?.name || "CaseDesk Cash",
+    ledgerId: row.customLedger?.id || null,
+    ledgerColor: row.customLedger?.color || null,
     type: row.type === "Withdrawal" ? "Cash withdrawal" : row.type === "Refund" ? "Cash refund" : "Cash receipt",
     description: row.allocations[0]?.invoice?.description || row.note || "Cash transaction",
     clientName: row.client?.fullName || (row.type === "Withdrawal" ? "Cash drawer" : "Unknown client"),
@@ -891,7 +906,7 @@ async function fetchLegacyPaymentRows(agencyId, { from, to }) {
  * merged/filtered/sorted/paginated in application code — simple and fast
  * enough at single-agency scale, capped per source as a safety valve.
  */
-export async function listAgencyPayments(agencyId, { status, source, query, from, to, bucket, page = 1, pageSize = 25 } = {}) {
+export async function listAgencyPayments(agencyId, { status, source, ledgerId, query, from, to, bucket, page = 1, pageSize = 25 } = {}) {
   await reconcileAgencyBookingRefunds(agencyId).catch((error) => {
     logger.warn("payments_overview.refund_reconcile_failed", { agencyId, reason: error.message });
   });
@@ -916,6 +931,7 @@ export async function listAgencyPayments(agencyId, { status, source, query, from
   // by explicitly filtering to it.
   combined = status ? combined.filter((row) => row.status === status) : combined.filter((row) => row.status !== "Voided");
   if (source) combined = combined.filter((row) => row.source === source);
+  if (ledgerId) combined = combined.filter((row) => row.ledgerId === ledgerId);
   if (bucket && BUCKET_FILTERS[bucket]) combined = combined.filter(BUCKET_FILTERS[bucket]);
   if (query) {
     const needle = query.trim().toLowerCase();
@@ -1040,15 +1056,25 @@ export async function getPaymentsSummary(agencyId, { month, reconcile = true } =
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
 
-  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments, legacyManualRows, cashOnHand, pendingApprovalCount, quickBooksSyncFailures] = await Promise.all([
+  const [caseInvoices, bookingPayments, missingAppointmentPayments, legacyPayments, legacyManualRows, cashOnHand, caseDeskCashTransactionCount, pendingApprovalCount, quickBooksSyncFailures, customLedgers] = await Promise.all([
     fetchCaseInvoiceRows(agencyId, {}),
     fetchBookingPaymentRows(agencyId, {}),
     fetchMissingAppointmentPaymentRows(agencyId, {}),
     fetchLegacyPaymentRows(agencyId, {}),
     fetchLegacyManualLedgerRows(agencyId),
     getCashOnHand(agencyId),
+    prisma.cashTransaction.count({ where: { agencyId, customLedgerId: null, status: "Posted" } }),
     prisma.paymentApproval.count({ where: { agencyId, status: "Pending" } }),
     prisma.quickBooksWebhookEvent.count({ where: { agencyId, status: "FAILED" } }),
+    prisma.agencyCustomPaymentLedger.findMany({
+      where: { agencyId },
+      select: {
+        id: true,
+        name: true,
+        color: true,
+        cashTransactions: { where: { status: "Posted" }, select: { amount: true } },
+      },
+    }),
   ]);
   const all = [...caseInvoices, ...bookingPayments, ...missingAppointmentPayments, ...legacyPayments, ...legacyManualRows];
 
@@ -1101,17 +1127,45 @@ export async function getPaymentsSummary(agencyId, { month, reconcile = true } =
     statusEntry.amount += row.amount;
     statusBreakdown[row.status] = statusEntry;
 
-    const ledgerKey = row.ledger === "CaseDesk Cash"
-      || (row.source === "booking_payment" && row.paymentMethod === "Cash")
-      ? "casedesk_cash"
-      : row.ledger === "QuickBooks" || row.source === "booking_payment"
-        ? "quickbooks"
-        : row.source;
-    const typeEntry = typeBreakdown[ledgerKey] || { count: 0, collected: 0, outstanding: 0 };
+    const ledgerKey = row.ledgerId
+      ? `custom_ledger:${row.ledgerId}`
+      : row.ledger === "CaseDesk Cash" || (row.source === "booking_payment" && row.paymentMethod === "Cash")
+        ? "casedesk_cash"
+        : row.ledger === "QuickBooks" || row.source === "booking_payment"
+          ? "quickbooks"
+          : row.source;
+    const typeEntry = typeBreakdown[ledgerKey] || {
+      count: 0,
+      collected: 0,
+      outstanding: 0,
+      ...(row.ledgerId ? { label: row.ledger, color: row.ledgerColor, ledgerId: row.ledgerId } : {}),
+    };
     typeEntry.count += 1;
     typeEntry.collected += paidAmount;
     if (row.status !== "Voided") typeEntry.outstanding += row.balance;
     typeBreakdown[ledgerKey] = typeEntry;
+  }
+
+  // CaseDesk Cash is a balance ledger, not an invoice-face-value total.
+  // Keep its collected figure for summary calculations, but make the ledger
+  // card itself use only actual posted cash movements — never invoice count.
+  typeBreakdown.casedesk_cash = {
+    ...(typeBreakdown.casedesk_cash || { collected: 0, outstanding: 0 }),
+    count: caseDeskCashTransactionCount,
+    balance: cashOnHand,
+    label: "CaseDesk Cash",
+  };
+  for (const ledger of customLedgers) {
+    const key = `custom_ledger:${ledger.id}`;
+    const balance = Math.round(ledger.cashTransactions.reduce((sum, transaction) => sum + Number(transaction.amount), 0) * 100) / 100;
+    typeBreakdown[key] = {
+      ...(typeBreakdown[key] || { collected: 0, outstanding: 0 }),
+      count: ledger.cashTransactions.length,
+      balance,
+      label: ledger.name,
+      color: ledger.color,
+      ledgerId: ledger.id,
+    };
   }
 
   // Selected-month view: defaults to the current month when no filter is

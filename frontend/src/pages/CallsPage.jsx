@@ -4,6 +4,7 @@ import {
   Clipboard,
   Delete,
   History,
+  Keyboard,
   Loader2,
   Phone,
   PhoneCall,
@@ -12,11 +13,13 @@ import {
   Search,
   Settings2,
   UserRoundPlus,
+  X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
+import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import api from "../services/api";
 import { CallHistorySection } from "./OomaCallsPage";
 
@@ -41,12 +44,41 @@ function ProviderPill() {
 
 const KEY_LETTERS = { 2: "ABC", 3: "DEF", 4: "GHI", 5: "JKL", 6: "MNO", 7: "PQRS", 8: "TUV", 9: "WXYZ" };
 
-function Dialpad({ initialNumber = "" }) {
+function Dialpad({ initialNumber = "", open, onClose }) {
   const { dial, active, status } = useSoftphone();
   const [number, setNumber] = useState(initialNumber);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (initialNumber) setNumber(initialNumber);
+  }, [initialNumber]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    panelRef.current?.focus();
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      const isEditing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+      if (isEditing) return;
+      if (/^[0-9*#]$/.test(event.key)) {
+        event.preventDefault();
+        setError("");
+        setNumber((current) => (current.length < 20 ? `${current}${event.key}` : current));
+      } else if (event.key === "Backspace") {
+        event.preventDefault();
+        setError("");
+        setNumber((current) => current.slice(0, -1));
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   const display = useMemo(() => {
     const digits = number.replace(/\D/g, "");
@@ -87,21 +119,37 @@ function Dialpad({ initialNumber = "" }) {
   const canCall = status === "ready" && number.replace(/\D/g, "").length >= 7 && !active && !busy;
   const digitsCount = number.replace(/\D/g, "").length;
 
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleCallShortcut = (event) => {
+      const target = event.target;
+      const isEditing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+      if (event.key === "Enter" && !isEditing && canCall) {
+        event.preventDefault();
+        void startCall();
+      }
+    };
+    window.addEventListener("keydown", handleCallShortcut);
+    return () => window.removeEventListener("keydown", handleCallShortcut);
+  }, [open, canCall, number]);
+
+  if (!open) return null;
+
   return (
-    <div className="mx-auto grid w-full max-w-3xl items-center gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
-      <div className="relative w-full overflow-hidden rounded-[2rem] border border-slate-200/80 bg-gradient-to-b from-white via-sky-50/40 to-slate-50 shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
+    <aside ref={panelRef} tabIndex={-1} className="fixed bottom-24 right-4 z-[80] w-[calc(100%-2rem)] max-w-[21rem] outline-none sm:bottom-6 sm:right-24" role="dialog" aria-modal="false" aria-label="Phone dialpad">
+      <div className="relative w-full overflow-hidden rounded-[2rem] border border-slate-200/80 bg-gradient-to-b from-white via-sky-50/60 to-slate-50 shadow-[0_28px_80px_rgba(15,23,42,0.2)] backdrop-blur-xl">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-sky-200/40 blur-3xl" aria-hidden="true" />
         <div className="pointer-events-none absolute -bottom-24 -left-20 h-64 w-64 rounded-full bg-indigo-200/30 blur-3xl" aria-hidden="true" />
 
-        <div className="relative p-5">
+        <div className="relative p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">Dialpad</p>
-              <h3 className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-950">Place a call</h3>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-600">Browser phone</p>
+              <h3 className="mt-0.5 text-lg font-semibold tracking-[-0.02em] text-slate-950">New call</h3>
             </div>
-            {active ? (
+            <div className="flex items-center gap-2">{active ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/70 bg-emerald-50/90 px-3 py-1.5 text-xs font-semibold text-emerald-700"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />On a call</span>
-            ) : null}
+            ) : null}<button type="button" onClick={onClose} aria-label="Close dialpad" className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-slate-500 shadow-sm transition hover:bg-white hover:text-slate-900"><X className="h-4 w-4" /></button></div>
           </div>
 
           {/* Number display */}
@@ -120,7 +168,7 @@ function Dialpad({ initialNumber = "" }) {
           {error ? <p className="mt-2.5 text-sm font-medium text-rose-600">{error}</p> : null}
 
           {/* Keypad */}
-          <div className="mt-4 grid grid-cols-3 gap-x-2 gap-y-3">
+          <div className="mt-4 grid grid-cols-3 gap-x-2 gap-y-2">
             {KEYPAD.map((key) => {
               const letters = KEY_LETTERS[key];
               const subtitle = key === "0" ? "+" : letters || "";
@@ -130,7 +178,7 @@ function Dialpad({ initialNumber = "" }) {
                   type="button"
                   disabled={active}
                   onClick={() => press(key)}
-                  className="group relative mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/80 bg-white/85 shadow-[0_6px_18px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-xl transition-all duration-150 hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_12px_30px_rgba(14,165,233,0.2),inset_0_1px_0_rgba(255,255,255,0.95)] active:translate-y-0 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group relative mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/80 bg-white/90 shadow-[0_5px_15px_rgba(15,23,42,0.07)] transition-all duration-150 hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_10px_24px_rgba(14,165,233,0.18)] active:translate-y-0 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <span className="flex flex-col items-center leading-none">
                     <span className="text-xl font-semibold text-slate-900 transition-colors duration-150 group-active:text-sky-600">{key}</span>
@@ -142,10 +190,10 @@ function Dialpad({ initialNumber = "" }) {
           </div>
 
           {/* Action row */}
-          <div className="mt-5 grid grid-cols-3 gap-x-2">
+          <div className="mt-4 grid grid-cols-3 gap-x-2">
             <button
               type="button"
-              disabled={active || !number}
+              disabled={active}
               onClick={paste}
               aria-label="Paste number"
               className="group mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/80 bg-white/85 text-slate-500 shadow-[0_6px_18px_rgba(15,23,42,0.07),inset_0_1px_0_rgba(255,255,255,0.95)] backdrop-blur-xl transition-all duration-150 hover:-translate-y-0.5 hover:text-sky-600 hover:shadow-[0_12px_30px_rgba(14,165,233,0.18)] active:translate-y-0 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
@@ -179,6 +227,7 @@ function Dialpad({ initialNumber = "" }) {
             </button>
           </div>
 
+          <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] font-medium text-slate-400"><Keyboard className="h-3.5 w-3.5" />Type digits · Enter to call · Esc to close</div>
           {!canCall && status !== "ready" && !active ? (
             <p className="mt-4 rounded-2xl border border-amber-100 bg-amber-50/70 px-4 py-2.5 text-xs leading-5 text-amber-800">
               The softphone is not ready to place calls. {status === "unconfigured" ? "Connect Twilio calling in Settings first." : "Wait for the softphone to register."}
@@ -188,22 +237,7 @@ function Dialpad({ initialNumber = "" }) {
           ) : null}
         </div>
       </div>
-
-      {/* Quick tips */}
-      <div className="relative w-full max-w-md overflow-hidden rounded-[2.25rem] border border-slate-800/70 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-6 text-white shadow-[0_18px_55px_rgba(15,23,42,0.25)]">
-        <div className="pointer-events-none absolute -right-14 -top-16 h-48 w-48 rounded-full bg-sky-500/20 blur-3xl" aria-hidden="true" />
-        <div className="pointer-events-none absolute -bottom-16 -left-14 h-48 w-48 rounded-full bg-indigo-500/20 blur-3xl" aria-hidden="true" />
-        <div className="relative">
-          <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-emerald-400 backdrop-blur"><PhoneCall className="h-4 w-4" /></span><h3 className="text-sm font-semibold">Quick tips</h3></div>
-          <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
-            <li className="flex gap-2.5"><Phone className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />Calls are placed through your Twilio number and appear in History automatically.</li>
-            <li className="flex gap-2.5"><BookUser className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />Use the Address book tab to find a client or lead and call them with one tap.</li>
-            <li className="flex gap-2.5"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />North American 10-digit numbers are dialed as +1 automatically.</li>
-            <li className="flex gap-2.5"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />Answered calls are recorded if recording is enabled on your Twilio account.</li>
-          </ul>
-        </div>
-      </div>
-    </div>
+    </aside>
   );
 }
 
@@ -289,15 +323,13 @@ function ContactRow({ row, kind, reference, onCall }) {
 
 export default function CallsPage() {
   const { role } = useAuth();
-  const { status, dial } = useSoftphone();
+  const { status } = useSoftphone();
   const [tab, setTab] = useState("history");
-  const [dialpadNumber, setDialpadNumber] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState("");
 
-  const pickFromAddressBook = (number, name) => {
-    setDialpadNumber(String(number || "").replace(/[^\d+]/g, ""));
-    setTab("dialpad");
+  const pickFromAddressBook = (number) => {
+    openGlobalDialpad(String(number || "").replace(/[^\d+]/g, ""));
   };
 
   const syncHistory = async () => {
@@ -315,38 +347,40 @@ export default function CallsPage() {
   };
 
   return (
-    <section className="space-y-6 pb-10">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+    <section className="relative space-y-6 pb-24">
+      <header className="relative overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white px-5 py-6 shadow-[0_18px_55px_rgba(15,23,42,0.07)] sm:px-7 sm:py-7">
+        <div className="pointer-events-none absolute -right-20 -top-28 h-72 w-72 rounded-full bg-sky-100 blur-3xl" aria-hidden="true" />
+        <div className="pointer-events-none absolute -bottom-28 right-32 h-56 w-56 rounded-full bg-indigo-100/60 blur-3xl" aria-hidden="true" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-sky-600"><PhoneCall className="h-4 w-4" />Twilio calling</div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Call center</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Call clients and leads straight from your browser. Incoming calls ring this workspace, and every call lands in one shared history.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ProviderPill />
-          {role === "admin" ? (
-            <>
-              <button type="button" disabled={syncing} onClick={syncHistory} className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />Sync history</button>
-              <Link to="/app/settings?section=agency-phone" className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"><Settings2 className="h-4 w-4" />Settings</Link>
-            </>
-          ) : null}
+          </div>
+          <div className="flex flex-col items-start gap-3 sm:items-end">
+            <ProviderPill />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => openGlobalDialpad()} className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.2)] transition hover:-translate-y-0.5 hover:bg-slate-800"><PhoneCall className="h-4 w-4" />New call <kbd className="rounded border border-white/20 bg-white/10 px-1.5 py-0.5 text-[9px]">D</kbd></button>
+              {role === "admin" ? (
+                <>
+                  <button type="button" disabled={syncing} onClick={syncHistory} className="inline-flex h-10 items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-4 text-xs font-semibold text-slate-700 transition hover:bg-white disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />Sync</button>
+                  <Link to="/app/settings?section=agency-phone" aria-label="Calling settings" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-slate-600 transition hover:bg-white hover:text-slate-900"><Settings2 className="h-4 w-4" /></Link>
+                </>
+              ) : null}
+            </div>
+          </div>
         </div>
       </header>
 
       {syncNotice ? <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">{syncNotice}</div> : null}
 
-      <div className="flex flex-wrap gap-1 rounded-2xl bg-slate-100 p-1 sm:w-fit">
-        {[["history", "History", History], ["dialpad", "Dialpad", PhoneCall], ["address-book", "Address book", BookUser]].map(([value, label, Icon]) => (
-          <button key={value} type="button" onClick={() => setTab(value)} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition ${tab === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}><Icon className="h-4 w-4" />{label}</button>
+      <div className="flex gap-1 rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-sm sm:w-fit">
+        {[["history", "History", History], ["address-book", "Address book", BookUser]].map(([value, label, Icon]) => (
+          <button key={value} type="button" onClick={() => setTab(value)} className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold transition ${tab === value ? "bg-slate-950 text-white shadow-md" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}><Icon className="h-4 w-4" />{label}</button>
         ))}
       </div>
 
-      {tab === "history" ? <CallHistorySection /> : null}
-      {tab === "dialpad" ? (
-        <div className="flex items-center justify-center lg:min-h-[calc(100vh-19rem)]">
-          <Dialpad initialNumber={dialpadNumber} />
-        </div>
-      ) : null}
+      {tab === "history" ? <CallHistorySection provider="TWILIO" /> : null}
       {tab === "address-book" ? <AddressBook onPick={pickFromAddressBook} /> : null}
 
       {status !== "ready" ? (
@@ -359,6 +393,7 @@ export default function CallsPage() {
           )}</p>
         </div>
       ) : null}
+
     </section>
   );
 }

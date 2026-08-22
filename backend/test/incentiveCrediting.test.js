@@ -186,6 +186,29 @@ test("the pipeline estimate never writes ledger rows or advances the cursor — 
   assert.doesNotMatch(estimateFn, /incentiveLedgerEntry\.create/);
 });
 
+test("the incentive ledger exposes and filters derived approval statuses without adding a mutable payout status column", async () => {
+  const [controller, api, page, schema] = await Promise.all([
+    source("../src/controllers/incentiveLedgerController.js"),
+    source("../../frontend/src/api/incentivesApi.js"),
+    source("../../frontend/src/pages/Incentives.jsx"),
+    source("../prisma/schema.prisma"),
+  ]);
+  assert.match(controller, /const APPROVAL_STATUSES = new Set\(\["APPROVED", "RECALCULATED", "AUTOMATIC", "REVERSED"\]\)/);
+  assert.match(controller, /if \(entry\.entryType === "REVERSAL"\) return "REVERSED"/);
+  assert.match(controller, /if \(entry\.entryType === "ADJUSTMENT" \|\| entry\.triggerSource === "PLAN_RECALCULATION"\) return "RECALCULATED"/);
+  assert.match(controller, /if \(entry\.triggerSource === "RETROACTIVE_APPROVAL"\) return "APPROVED"/);
+  assert.match(controller, /triggerSource: "RETROACTIVE_APPROVAL", entryType: "CREDIT"/);
+  assert.match(controller, /entryType: \{ notIn: \["REVERSAL", "ADJUSTMENT"\] \}, NOT: \{ triggerSource: "RETROACTIVE_APPROVAL" \}/);
+  assert.match(controller, /data: rows\.map\(\(row\) => \(\{ \.\.\.row, approvalStatus: approvalStatusFor\(row\) \}\)\)/);
+  assert.match(api, /approvalStatus/);
+  assert.match(page, /<option value="APPROVED">Approved<\/option>/);
+  assert.match(page, /<option value="RECALCULATED">Recalculated<\/option>/);
+  assert.match(page, /<option value="AUTOMATIC">Automatic<\/option>/);
+  assert.match(page, /<option value="REVERSED">Reversed<\/option>/);
+  assert.match(page, /getIncentiveLedger\(\{ userId, pageSize: 20, approvalStatus \}\)/);
+  assert.doesNotMatch(schema.slice(schema.indexOf("model IncentiveLedgerEntry"), schema.indexOf("model IncentiveTimelineLegEvaluation")), /approvalStatus/);
+});
+
 test("computeSnapshotPool reports which rate it matched alongside the pool, and the real crediting path only takes the pool it needs", async () => {
   const service = await source("../src/services/incentiveCreditingService.js");
   const fnStart = service.indexOf("async function computeSnapshotPool(");

@@ -100,3 +100,46 @@ test("admins can preview and explicitly apply an active plan to safe outstanding
   assert.match(panel, /Apply to old invoices/);
   assert.match(panel, /Only payments collected after applying this plan will create incentive credit/);
 });
+
+test("historical incentive credits require explicit admin approval, reuse role shares, and are idempotent", async () => {
+  const [routes, service, api, panel] = await Promise.all([
+    source("../src/routes/incentivePlanRoutes.js"),
+    source("../src/services/incentivePlanService.js"),
+    source("../../frontend/src/api/incentivePlanApi.js"),
+    source("../../frontend/src/components/settings/IncentivePlansSettingsPanel.jsx"),
+  ]);
+  assert.match(routes, /router\.get\("\/:id\/retroactive-approvals", asyncHandler\(previewRetroactiveApprovals\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/retroactive-approvals\/approve", rateLimit\([\s\S]*?asyncHandler\(approveRetroactiveApprovals\)\)/);
+  assert.match(service, /lastPaymentAt: \{ lt: plan\.activatedAt \}/);
+  assert.match(service, /function paidAmountForHistoricalInvoice\(invoice\)/);
+  assert.match(service, /computeSplits\(plan, pool, await resolveHolders\(agencyId, invoice\.caseId\)\)/);
+  assert.match(service, /triggerSource: "RETROACTIVE_APPROVAL"/);
+  assert.match(service, /historicalApprovalTriggerRef/);
+  assert.match(service, /caseInvoiceCreditCursor\.upsert/);
+  assert.match(service, /action: "incentive\.retroactive_approval"/);
+  assert.match(api, /previewRetroactiveIncentiveApprovals/);
+  assert.match(api, /approveRetroactiveIncentiveApprovals/);
+  assert.match(panel, /Review past payments/);
+  assert.match(panel, /Approve historical credits/);
+});
+
+test("existing plan changes have an explicit, idempotent historical recalculation workflow with immutable adjustments and snapshot refresh", async () => {
+  const [routes, service, api, panel] = await Promise.all([
+    source("../src/routes/incentivePlanRoutes.js"),
+    source("../src/services/incentiveRecalculationService.js"),
+    source("../../frontend/src/api/incentivePlanApi.js"),
+    source("../../frontend/src/components/settings/IncentivePlansSettingsPanel.jsx"),
+  ]);
+  assert.match(routes, /router\.get\("\/:id\/recalculation", asyncHandler\(previewRecalculation\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/recalculation\/apply", rateLimit\([\s\S]*?asyncHandler\(applyRecalculation\)\)/);
+  assert.match(service, /export const PLAN_RECALCULATION_TRIGGER = "PLAN_RECALCULATION"/);
+  assert.match(service, /entryType: "ADJUSTMENT"/);
+  assert.match(service, /triggerRef: correctionRef\(plan, groupKey, key\)/);
+  assert.match(service, /alreadyAppliedRefs/);
+  assert.match(service, /caseInvoiceIncentiveSnapshot\.update/);
+  assert.match(service, /action: "incentive\.plan_recalculation"/);
+  assert.match(api, /previewIncentivePlanRecalculation/);
+  assert.match(api, /applyIncentivePlanRecalculation/);
+  assert.match(panel, /Review existing incentives/);
+  assert.match(panel, /Apply plan changes/);
+});
