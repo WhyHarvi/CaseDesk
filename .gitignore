@@ -10,3 +10,8 @@ coverage
 .vite
 backend/storage/
 docs/production/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
