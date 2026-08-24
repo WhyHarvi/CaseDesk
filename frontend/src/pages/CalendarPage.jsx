@@ -1246,27 +1246,24 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   }
 
   const activeTypes = sessionTypes.filter((type) => type.isActive);
-  // A session type named "free" is only ever actually free for a contact
-  // who's already had a prior paid, completed consultation and is still
-  // within their free-follow-up limit (contactEligible) — that's a
-  // property of the contact, not of the type, so it can't be baked into
-  // the type itself. Until that's verified for whoever's currently
-  // selected, offering the option at all just invites exactly what
-  // happened here: a brand-new client booked straight into a "free"
-  // session that was never actually free, with the fee silently skipped.
+  // Earned eligibility remains the default. Admin and front desk may also
+  // deliberately grant the dedicated free follow-up type; the API verifies
+  // that narrow role/type/duration override before skipping payment.
   const contactVerifiedFreeEligible = Boolean(freeEligibility?.contactEligible);
+  const canGrantFreeFollowUp = ["admin", "frontdesk"].includes(role);
   const isFreeNamedType = (type) => /free/i.test(type.name);
   useEffect(() => {
     const current = activeTypes.find((type) => type.id === form.sessionTypeId);
-    if (current && isFreeNamedType(current) && !contactVerifiedFreeEligible) {
+    if (current && isFreeNamedType(current) && !contactVerifiedFreeEligible && !canGrantFreeFollowUp) {
       setForm((c) => ({ ...c, sessionTypeId: "" }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contactVerifiedFreeEligible, form.sessionTypeId]);
+  }, [canGrantFreeFollowUp, contactVerifiedFreeEligible, form.sessionTypeId]);
   const selectedType = activeTypes.find((type) => type.id === form.sessionTypeId) || activeTypes.find((type) => !isFreeNamedType(type)) || activeTypes[0] || null;
   const consultFeeAmount = Number(settings?.consultFeeAmount) || 0;
   const intakePaymentRequested = initialIntake?.action === "appointment-payment";
-  const showsPaymentStep = intakePaymentRequested || (consultFeeAmount > 0 && freeEligibility?.eligible !== true);
+  const staffFreeFollowUpSelected = Boolean(!intakePaymentRequested && canGrantFreeFollowUp && freeEligibility?.eligible !== true && selectedType && isFreeNamedType(selectedType));
+  const showsPaymentStep = intakePaymentRequested || (consultFeeAmount > 0 && freeEligibility?.eligible !== true && !staffFreeFollowUpSelected);
   const zoomCandidateId = role === "consultant" ? userId : form.assignedToId;
   const zoomHostAvailable = zoomCandidateId
     ? staff.some((member) => member.id === zoomCandidateId && member.zoomHostMapping?.status === "active")
@@ -1391,6 +1388,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         recurrence: { frequency: form.recurrenceFrequency, count: form.recurrenceFrequency === "NONE" ? 1 : Number(form.recurrenceCount) },
         paymentMethod: showsPaymentStep && form.paymentMethod !== "Skip" ? form.paymentMethod : undefined,
         paymentReference: showsPaymentStep && ["Cash", "ETransfer"].includes(form.paymentMethod) ? form.paymentReference.trim() || undefined : undefined,
+        staffFreeFollowUp: staffFreeFollowUpSelected,
         idempotencyKey: form.idempotencyKey,
       });
       if (created.pending) {
@@ -1560,6 +1558,9 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                   <p className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"><Check className="h-3.5 w-3.5 shrink-0" /> Eligible for a free follow-up — choose a 15-minute appointment type to apply it.</p>
                 )
               ) : null}
+              {staffFreeFollowUpSelected && freeEligibility?.eligible !== true && !intakePaymentRequested ? (
+                <p className="flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700"><Check className="h-3.5 w-3.5 shrink-0" /> Free follow-up selected by staff — no payment will be requested.</p>
+              ) : null}
 
               {showsPaymentStep ? (
                 <div className={initialIntake?.action === "appointment-payment" ? "rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3" : ""}>
@@ -1619,10 +1620,10 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                 <label className="block text-xs font-medium text-slate-600">Session type
                   <Select value={selectedType?.id || ""} onChange={(event) => setForm((c) => ({ ...c, sessionTypeId: event.target.value, startsAt: "" }))} className="mt-1.5 w-full" ariaLabel="Session type">
                     {activeTypes.map((type) => {
-                      const locked = isFreeNamedType(type) && !contactVerifiedFreeEligible;
+                      const locked = isFreeNamedType(type) && !contactVerifiedFreeEligible && !canGrantFreeFollowUp;
                       return (
                         <option key={type.id} value={type.id} disabled={locked}>
-                          {type.name} · {type.durationMinutes}m{locked ? " (requires a prior paid consultation)" : ""}
+                          {type.name} · {type.durationMinutes}m{locked ? " (requires a prior paid consultation)" : isFreeNamedType(type) && canGrantFreeFollowUp && !contactVerifiedFreeEligible ? " (staff override)" : ""}
                         </option>
                       );
                     })}

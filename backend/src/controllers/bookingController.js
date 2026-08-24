@@ -749,6 +749,21 @@ export async function createBookingAppointment(req, res) {
     guestEmailNormalized: client ? client.email?.toLowerCase() || null : guestEmailNormalized,
     durationMinutes,
   });
+  const staffFreeFollowUpRequested = body.staffFreeFollowUp === true;
+  const canGrantFreeFollowUp = ["admin", "frontdesk"].includes(req.auth.role);
+  if (staffFreeFollowUpRequested && !canGrantFreeFollowUp) {
+    throw createHttpError(403, "Only an administrator or front desk staff member can grant a free follow-up.", "FORBIDDEN");
+  }
+  if (staffFreeFollowUpRequested && (durationMinutes !== 15 || !/free/i.test(String(sessionType?.name || "")))) {
+    throw createHttpError(400, "Choose the 15-minute free follow-up appointment type.", "FREE_FOLLOW_UP_TYPE_REQUIRED");
+  }
+  if (staffFreeFollowUpRequested && startDates.length > 1) {
+    throw createHttpError(400, "A staff-granted free follow-up cannot be recurring.", "FREE_FOLLOW_UP_RECURRENCE_NOT_ALLOWED");
+  }
+  if (staffFreeFollowUpRequested && body.paymentMethod) {
+    throw createHttpError(400, "Remove payment details before granting a free follow-up.", "FREE_FOLLOW_UP_PAYMENT_CONFLICT");
+  }
+  const isFreeConsultation = freeEligibility.eligible || staffFreeFollowUpRequested;
   assertMeetingModeConfigured({
     settings,
     sessionType,
@@ -769,7 +784,7 @@ export async function createBookingAppointment(req, res) {
   const subject = trimmedSubject.slice(0, 200);
   const effectiveBuffer = sessionType?.bufferMinutes ?? settings.bufferMinutes;
   const paymentMethod = ["Card", "Cash", "ETransfer", "Cheque", "Wire", "Debit", "BankDraft"].includes(String(body.paymentMethod || "")) ? String(body.paymentMethod) : null;
-  const feeApplies = !freeEligibility.eligible && Number(settings.consultFeeAmount) > 0;
+  const feeApplies = !isFreeConsultation && Number(settings.consultFeeAmount) > 0;
   const paymentReference = String(body.paymentReference || "").trim().slice(0, 100) || null;
   const [existingRequestAppointment, existingRequestHold] = idempotencyKey
     ? await Promise.all([
@@ -941,7 +956,7 @@ export async function createBookingAppointment(req, res) {
         assignedToId: assignee.id,
         createdById: req.auth.userId,
         source: body.source === "WalkIn" ? "WalkIn" : "Internal",
-        isFreeConsultation: freeEligibility.eligible,
+        isFreeConsultation,
         idempotencyKey: occurrenceIdempotencyKey,
         reminderDueAt: new Date(occurrenceStart.getTime() - Math.max(...(Array.isArray(settings.reminderSchedule) && settings.reminderSchedule.length ? settings.reminderSchedule : [settings.reminderMinutes])) * 60_000),
         referenceCode: appointmentReference(),
@@ -964,7 +979,7 @@ export async function createBookingAppointment(req, res) {
           fee: feeApplies ? Number(settings.consultFeeAmount) : null,
         });
       }
-      await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: requestedSeriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source } });
+      await recordAppointmentEvent(tx, { agencyId: req.auth.agencyId, appointmentId: appointment.id, actorUserId: req.auth.userId, type: "BOOKED", summary: requestedSeriesKey ? `Recurring appointment ${index + 1} of ${startDates.length} created` : "Appointment created", metadata: { source: appointment.source, ...(staffFreeFollowUpRequested ? { staffFreeFollowUpOverride: true, grantedByRole: req.auth.role } : {}) } });
       if (requestedMeetingMode === MEETING_MODES.ZOOM) {
         await enqueueAppointmentMeetingJob(tx, {
           appointment,

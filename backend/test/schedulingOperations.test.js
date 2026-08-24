@@ -853,25 +853,33 @@ test("an abandoned portal checkout stays on the linked client instead of creatin
   assert.doesNotMatch(linkedClientBranch, /sendAbandonedBookingPaymentEmail/);
 });
 
-test("staff can't pick a free-named session type for a contact who hasn't earned it yet", async () => {
-  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+test("admin and front desk can grant a free follow-up while consultants remain eligibility-bound", async () => {
+  const [calendar, bookingController] = await Promise.all([
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+  ]);
 
-  // A brand-new client booked straight into "Free Follow-up Consultation"
-  // as their very first appointment isn't actually free — the fee is still
-  // charged underneath, just silently, because nothing stopped the option
-  // from being picked in the first place. Locking the option itself (not
-  // just warning after the fact) is what actually prevents a repeat.
+  // Consultants still need earned eligibility. Admin and front desk get a
+  // deliberate, server-validated override for the 15-minute free type.
   assert.match(calendar, /const contactVerifiedFreeEligible = Boolean\(freeEligibility\?\.contactEligible\);/);
   assert.match(calendar, /const isFreeNamedType = \(type\) => \/free\/i\.test\(type\.name\);/);
-  assert.match(calendar, /const locked = isFreeNamedType\(type\) && !contactVerifiedFreeEligible;/);
+  assert.match(calendar, /const canGrantFreeFollowUp = \["admin", "frontdesk"\]\.includes\(role\);/);
+  assert.match(calendar, /const locked = isFreeNamedType\(type\) && !contactVerifiedFreeEligible && !canGrantFreeFollowUp;/);
   assert.match(calendar, /<option key=\{type\.id\} value=\{type\.id\} disabled=\{locked\}>/);
   // Switching to a contact who hasn't earned it clears a stale selection
   // rather than silently keeping a now-invalid free type selected.
-  assert.match(calendar, /if \(current && isFreeNamedType\(current\) && !contactVerifiedFreeEligible\) \{/);
+  assert.match(calendar, /if \(current && isFreeNamedType\(current\) && !contactVerifiedFreeEligible && !canGrantFreeFollowUp\) \{/);
   assert.match(calendar, /setForm\(\(c\) => \(\{ \.\.\.c, sessionTypeId: "" \}\)\);/);
 
-  // Eligibility remains enforced by the locked session type, while the form
-  // only calls attention to the positive, actionable state.
+  assert.match(calendar, /staffFreeFollowUp: staffFreeFollowUpSelected/);
+  assert.match(bookingController, /const canGrantFreeFollowUp = \["admin", "frontdesk"\]\.includes\(req\.auth\.role\);/);
+  assert.match(bookingController, /durationMinutes !== 15/);
+  assert.match(bookingController, /FREE_FOLLOW_UP_RECURRENCE_NOT_ALLOWED/);
+  assert.match(bookingController, /FREE_FOLLOW_UP_PAYMENT_CONFLICT/);
+  assert.match(bookingController, /const isFreeConsultation = freeEligibility\.eligible \|\| staffFreeFollowUpRequested;/);
+  assert.match(bookingController, /staffFreeFollowUpOverride: true/);
+
+  // Earned eligibility messaging remains positive and actionable.
   assert.match(calendar, /freeEligibility\?\.enabled && freeEligibility\.contactEligible/);
   assert.match(calendar, /border-emerald-200 bg-emerald-50/);
   assert.doesNotMatch(calendar, /Not eligible for a free follow-up/);
