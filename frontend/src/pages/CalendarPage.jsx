@@ -870,9 +870,9 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
       </div>
 
       {appointment.description ? (
-        <div className="mt-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">About</p>
-          <p className="mt-1.5 text-sm leading-6 text-slate-600">{appointment.description}</p>
+        <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-sky-600">About</p>
+          <p className="mt-1 text-base font-medium leading-6 text-slate-900">{appointment.description}</p>
         </div>
       ) : null}
 
@@ -1125,7 +1125,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
   // `open` might be true, so the reset effect below only skips its normal
   // clear-the-form behavior on that one specific restore.
   const isRestoringDraft = useRef(Boolean(open) && Boolean(readAppointmentDraft()));
-  const [form, setForm] = useState(() => readAppointmentDraft()?.form || { mode: role === "frontdesk" ? "guest" : "client", clientId: "", leadId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
+  const [form, setForm] = useState(() => readAppointmentDraft()?.form || { mode: role === "frontdesk" ? "guest" : "client", clientId: "", leadId: "", guestName: "", guestEmail: "", guestPhone: "", sessionTypeId: "", assignedToId: "", date: dateKey(new Date()), startsAt: "", subject: "", description: "", location: "", locationId: locations.length === 1 ? locations[0].id : "", meetingMode: "InPerson", recurrenceFrequency: "NONE", recurrenceCount: 2, paymentMethod: "", paymentReference: "", idempotencyKey: newBookingOperationKey() });
   const [selectedClient, setSelectedClient] = useState(() => readAppointmentDraft()?.selectedClient || null);
   const [slots, setSlots] = useState(null);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -1383,6 +1383,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         guestEmail: form.mode === "guest" ? form.guestEmail : undefined,
         guestPhone: form.mode === "guest" ? form.guestPhone : undefined,
         subject: form.subject || undefined,
+        description: (form.description || "").trim() || undefined,
         location: form.location || undefined,
         locationId: (form.meetingMode || "InPerson") === "InPerson" ? form.locationId || undefined : undefined,
         meetingMode: form.meetingMode || "InPerson",
@@ -1687,6 +1688,19 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
                     </span>
                   </div>
                 ) : null}
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600">Private staff context
+                  <textarea
+                    value={form.description || ""}
+                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value.slice(0, 2000) }))}
+                    placeholder="Notes for the consultant/staff only — e.g. what the client wants to cover. Never shown to the client."
+                    rows={3}
+                    className={`mt-1.5 resize-none ${input}`}
+                  />
+                </label>
+                <p className="mt-1 text-[10px] text-slate-400">Internal only — shows in the appointment's About section for staff, not sent to the client.</p>
               </div>
               {form.meetingMode === "Phone" ? hasValidPhoneBookingNumber ? (
                 <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">The office will call {phoneBookingNumber}{settings?.phoneCallerId ? ` from ${settings.phoneCallerId}` : ""}.</p>
