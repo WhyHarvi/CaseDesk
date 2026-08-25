@@ -1,6 +1,7 @@
 import { FileText, FileUp, Loader2, Paperclip } from "lucide-react";
 import { useRef, useState } from "react";
 import { uploadPortalDocument, portalErrorMessage } from "../../api/clientPortalApi";
+import InlineActionError from "../ui/inline-action-error";
 import { usePortalToast } from "./ClientPortalToast";
 import { formatPortalDate } from "./ClientStatusCard";
 
@@ -15,6 +16,7 @@ export const DOCUMENT_STATUS_TONE = {
 
 const UPLOADABLE = new Set(["Required", "Needs Changes", "Uploaded", "Under Review"]);
 const ACCEPTED_TYPES = ".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf";
+const isPdf = (file) => file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
 
 export default function ClientDocumentCard({ document, onUploaded }) {
   const { showToast } = usePortalToast();
@@ -29,8 +31,12 @@ export default function ClientDocumentCard({ document, onUploaded }) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    if (isPdf(file) && file.size > 5 * 1024 * 1024) {
+      setError("This PDF is larger than 5 MB. Choose a smaller PDF, then press Upload again.");
+      return;
+    }
     if (file.size > 25 * 1024 * 1024) {
-      setError("Files must be 25 MB or smaller.");
+      setError("This file is larger than 25 MB. Choose a smaller file, then press Upload again.");
       return;
     }
     setUploading(true);
@@ -70,14 +76,13 @@ export default function ClientDocumentCard({ document, onUploaded }) {
         </div>
       </div>
 
-      {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">{error}</p> : null}
-
       {canUpload ? (
         <>
           <input ref={inputRef} type="file" accept={ACCEPTED_TYPES} className="hidden" onChange={handleFile} />
           <button
             type="button"
             disabled={uploading}
+            aria-describedby={error ? `document-upload-error-${document.id}` : undefined}
             onClick={() => inputRef.current?.click()}
             className={[
               "mt-3.5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition-all duration-200 active:scale-[0.98] disabled:opacity-60",
@@ -89,6 +94,7 @@ export default function ClientDocumentCard({ document, onUploaded }) {
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
             {uploading ? "Uploading…" : document.uploadedFileName ? "Replace file" : "Upload now"}
           </button>
+          <InlineActionError id={`document-upload-error-${document.id}`} message={error} className="mt-2.5" />
         </>
       ) : null}
     </article>

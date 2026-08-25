@@ -13,6 +13,10 @@ const DTMF = {
   7: [852, 1209], 8: [852, 1336], 9: [852, 1477],
   "*": [941, 1209], 0: [941, 1336], "#": [941, 1477],
 };
+const phoneMatchKey = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+};
 
 export function openGlobalDialpad(number = "") {
   window.dispatchEvent(new CustomEvent("casedesk:open-dialpad", { detail: { number } }));
@@ -38,6 +42,7 @@ export default function GlobalDialpad() {
   const [recordingError, setRecordingError] = useState("");
   const [showCallNotes, setShowCallNotes] = useState(false);
   const [linkedRecord, setLinkedRecord] = useState(null); // { type: "lead" | "client", id, name } | null
+  const [linkedRecordLoading, setLinkedRecordLoading] = useState(false);
   const [callNoteText, setCallNoteText] = useState("");
   const [callNoteId, setCallNoteId] = useState("");
   const [callNoteSavedText, setCallNoteSavedText] = useState("");
@@ -219,25 +224,35 @@ export default function GlobalDialpad() {
   // call (keyed on callSid) rather than once, since a new call may be with
   // someone different.
   useEffect(() => {
-    if (!active) { setLinkedRecord(null); return undefined; }
-    if (active.leadId) { setLinkedRecord({ type: "lead", id: active.leadId, name: active.leadName || "" }); return undefined; }
-    if (active.clientId) { setLinkedRecord({ type: "client", id: active.clientId, name: active.clientName || "" }); return undefined; }
+    if (!active) { setLinkedRecord(null); setLinkedRecordLoading(false); return undefined; }
+    if (active.leadId) { setLinkedRecord({ type: "lead", id: active.leadId, name: active.leadName || "" }); setLinkedRecordLoading(false); return undefined; }
+    if (active.clientId) { setLinkedRecord({ type: "client", id: active.clientId, name: active.clientName || "" }); setLinkedRecordLoading(false); return undefined; }
     const digits = String(active.number || "").replace(/\D/g, "");
-    if (!digits) { setLinkedRecord(null); return undefined; }
+    if (!digits) { setLinkedRecord(null); setLinkedRecordLoading(false); return undefined; }
     let cancelled = false;
-    api.get(`/twilio-calls/address-book?search=${encodeURIComponent(digits)}`, { cache: false })
+    const matchKey = phoneMatchKey(digits);
+    setLinkedRecord(null);
+    setLinkedRecordLoading(true);
+    api.get(`/twilio-calls/address-book?search=${encodeURIComponent(matchKey)}`, { cache: false })
       .then((response) => {
         if (cancelled) return;
         const data = response.data?.data || {};
-        const client = (data.clients || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
-        const lead = (data.leads || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
+        const client = (data.clients || []).find((row) => phoneMatchKey(row.phoneNormalized || row.phone) === matchKey);
+        const lead = (data.leads || []).find((row) => phoneMatchKey(row.phoneNormalized || row.phone) === matchKey);
         if (client) setLinkedRecord({ type: "client", id: client.id, name: client.fullName || "" });
         else if (lead) setLinkedRecord({ type: "lead", id: lead.id, name: lead.fullName || "" });
         else setLinkedRecord(null);
       })
-      .catch(() => { if (!cancelled) setLinkedRecord(null); });
+      .catch(() => { if (!cancelled) setLinkedRecord(null); })
+      .finally(() => { if (!cancelled) setLinkedRecordLoading(false); });
     return () => { cancelled = true; };
-  }, [active?.callSid]);
+  }, [active?.callSid, active?.clientId, active?.leadId, active?.number]);
+
+  const callNoteTarget = useMemo(() => {
+    if (linkedRecord) return linkedRecord;
+    if (!linkedRecordLoading && active?.callSid) return { type: "call", id: active.callSid, name: activeNumber };
+    return null;
+  }, [active?.callSid, activeNumber, linkedRecord, linkedRecordLoading]);
 
   // Saves straight to the lead's activity feed or the client's Notes — the
   // same endpoints and shapes LeadDetailSheet.jsx / ClientProfile.jsx
@@ -246,19 +261,26 @@ export default function GlobalDialpad() {
   // the server (not just local state) is also what makes the draft survive
   // a refresh: nothing about it depends on the call itself still existing.
   const saveCallNote = useCallback(async () => {
-    if (!linkedRecord) return;
+    if (!callNoteTarget) return;
     const content = callNoteText.trim();
     if (!content) return;
     try {
       setCallNoteSaving(true);
       setCallNoteError("");
-      const response = linkedRecord.type === "lead"
+      const response = callNoteTarget.type === "lead"
         ? callNoteId
-          ? await api.patch(`/leads/${linkedRecord.id}/activities/${callNoteId}/note`, { description: content })
-          : await api.post(`/leads/${linkedRecord.id}/activities`, { activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Call note", description: content })
-        : callNoteId
-          ? await api.patch(`/notes/${callNoteId}`, { clientId: linkedRecord.id, content })
-          : await api.post("/notes", { clientId: linkedRecord.id, content });
+          ? await api.patch(`/leads/${callNoteTarget.id}/activities/${callNoteId}/note`, { description: content })
+          : await api.post(`/leads/${callNoteTarget.id}/activities`, { activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Call note", description: content })
+        : callNoteTarget.type === "client"
+          ? callNoteId
+            ? await api.patch(`/notes/${callNoteId}`, { clientId: callNoteTarget.id, content })
+            : await api.post("/notes", { clientId: callNoteTarget.id, content })
+          : await api.put("/twilio-calls/active-note", {
+            callSid: active?.callSid,
+            direction: active?.direction,
+            remoteNumber: active?.number,
+            notes: content,
+          });
       setCallNoteId(response.data.data.id);
       setCallNoteSavedText(content);
     } catch (reason) {
@@ -266,12 +288,12 @@ export default function GlobalDialpad() {
     } finally {
       setCallNoteSaving(false);
     }
-  }, [linkedRecord, callNoteText, callNoteId]);
+  }, [active?.callSid, active?.direction, active?.number, callNoteTarget, callNoteText, callNoteId]);
 
   useDebouncedAutosave({
     value: callNoteText,
     savedValue: callNoteSavedText,
-    enabled: showCallNotes && Boolean(linkedRecord) && !callNoteSaving,
+    enabled: showCallNotes && Boolean(callNoteTarget) && !callNoteSaving,
     delay: 2000,
     onSave: saveCallNote,
   });
@@ -494,7 +516,11 @@ export default function GlobalDialpad() {
             <div className="mt-6 flex w-full max-w-[19rem] min-h-0 flex-1 flex-col text-left">
               <div className="flex items-center justify-between gap-2">
                 <p className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  Note for {linkedRecord?.type === "lead" ? "lead" : "client"}{linkedRecord?.name ? ` · ${linkedRecord.name}` : ""}
+                  {linkedRecordLoading
+                    ? "Finding CRM record…"
+                    : linkedRecord
+                      ? `Note for ${linkedRecord.type}${linkedRecord.name ? ` · ${linkedRecord.name}` : ""}`
+                      : `Note for call · ${activeNumber}`}
                 </p>
                 <button type="button" onClick={() => setShowCallNotes(false)} className="shrink-0 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff]">Done</button>
               </div>
@@ -506,14 +532,14 @@ export default function GlobalDialpad() {
                 className="mt-3 h-36 w-full flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-[#0a84ff]/50"
               />
               <p className="mt-2 text-[10px] text-zinc-500">
-                {callNoteError ? <span className="text-red-400">{callNoteError}</span> : callNoteSaving ? "Saving…" : callNoteSavedText && callNoteSavedText === callNoteText.trim() ? "Saved" : callNoteSavedText ? "Unsaved changes" : "Not saved yet"}
+                {callNoteError ? <span role="alert" className="text-red-400">{callNoteError}</span> : linkedRecordLoading ? "Finding the matching Lead or Client…" : !callNoteTarget ? "The call is connecting. Your note will save when it connects." : callNoteSaving ? "Saving…" : callNoteSavedText && callNoteSavedText === callNoteText.trim() ? "Saved" : callNoteSavedText ? "Unsaved changes" : "Not saved yet"}
               </p>
             </div>
           ) : (
             <div className="mx-auto mt-10 grid w-full max-w-[18rem] grid-cols-3 gap-x-6 gap-y-6">
               <CallActionButton icon={muted ? MicOff : Mic} label={muted ? "Unmute" : "Mute"} active={muted} onClick={toggleMute} />
               <CallActionButton icon={recordingBusy ? Loader2 : Circle} label={recordingSid ? "Stop recording" : "Record"} active={Boolean(recordingSid)} tone="record" onClick={toggleRecording} disabled={recordingBusy} spin={recordingBusy} fill={!recordingBusy} />
-              <CallActionButton icon={StickyNote} label="Notes" onClick={() => setShowCallNotes(true)} disabled={!linkedRecord} />
+              <CallActionButton icon={StickyNote} label="Notes" onClick={() => setShowCallNotes(true)} />
               <CallActionButton icon={Grid3x3} label="Keypad" onClick={() => setShowCallKeypad(true)} />
               <CallActionButton icon={ArrowLeftRight} label="Transfer" onClick={() => setTransferOpen(true)} disabled={transferring} />
             </div>

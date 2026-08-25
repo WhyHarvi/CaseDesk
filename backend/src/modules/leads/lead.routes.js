@@ -2,7 +2,7 @@ import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
 import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, bulkReassignLeads, changeLeadPriority, changeLeadStage, convertLead, createClientForPayment, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getStaleLeadOutreachOverview, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, listLeadTransferRequests, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordLeadActivity, rejectLeadTransferRequest, requestLeadTransfer, runStaleLeadOutreach, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadNote, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, forceCreateFromEvent, getDuplicateReview, getImport, getOperations, listEvents, listForms, listImports, previewImport, resolveDuplicate, retryEvent, updateForm } from "./lead.intake.controller.js";
-import { createLeadRoutingRule, deleteLeadRoutingRule, listLeadRoutingRules, updateLeadRoutingRule } from "./lead.routing.controller.js";
+import { createLeadRoutingRule, deleteLeadRoutingRule, listLeadRoutingBacklog, listLeadRoutingRules, reviewLeadRoutingBacklog, updateLeadRoutingRule } from "./lead.routing.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
 import { createConnection, createSourceConnection, listConnections, listSourceConnections, rotateSecret, rotateSourceConnectionSecret, updateConnection, updateSourceConnection } from "./lead.website.controller.js";
 import { requireRole } from "../../middleware/authorization.js";
@@ -55,6 +55,8 @@ router.get("/routing-rules", requireRole("admin"), asyncHandler(listLeadRoutingR
 router.post("/routing-rules", requireRole("admin"), asyncHandler(createLeadRoutingRule));
 router.patch("/routing-rules/:id", requireRole("admin"), asyncHandler(updateLeadRoutingRule));
 router.delete("/routing-rules/:id", requireRole("admin"), asyncHandler(deleteLeadRoutingRule));
+router.get("/routing-rules/:id/backlog", requireRole("admin"), asyncHandler(listLeadRoutingBacklog));
+router.post("/routing-rules/:id/backlog/:leadId/review", requireRole("admin"), asyncHandler(reviewLeadRoutingBacklog));
 router.get("/transfer-requests", requireRole("admin"), asyncHandler(listLeadTransferRequests));
 router.post("/transfer-requests/:requestId/approve", requireRole("admin"), asyncHandler(approveLeadTransferRequest));
 router.post("/transfer-requests/:requestId/reject", requireRole("admin"), asyncHandler(rejectLeadTransferRequest));

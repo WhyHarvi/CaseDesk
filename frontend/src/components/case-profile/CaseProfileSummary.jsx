@@ -21,7 +21,7 @@ import { caseOptionItems, formatCurrency, getInitials, getStageStyles } from "./
 import { isStudyPermitCaseType } from "../../utils/studyIntake";
 import { Avatar, AvatarFallback, AvatarGroup } from "@/components/ui/avatar";
 
-export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditClient = true, canManageCollaborators = false, onContactClient, onEditClient, onManageCollaborators }) {
+export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDocuments, showFinancials = true, showPortalAccess = true, showCommunications = true, showEditCase = false, showEditClient = true, canManageCollaborators = false, onContactClient, onEditCase, onEditClient, onManageCollaborators }) {
   // assignedUser (rendered as "RCIC" below) is the case's primary owner.
   // Case Worker is the other required role — not a Case column — so it's
   // read off the same roleAssignments the backend already scopes to just
@@ -125,6 +125,13 @@ export function CaseProfileTopSection({ caseItem, paymentSummary, outstandingDoc
           </div>
 
           <div className="flex flex-wrap gap-2 lg:max-w-[42%] lg:justify-end">
+            {showEditCase ? (
+              <QuickActionLink
+                icon={Pencil}
+                label="Edit case"
+                onClick={onEditCase}
+              />
+            ) : null}
             {caseItem.client?.id && showEditClient ? (
               <QuickActionLink
                 icon={Pencil}

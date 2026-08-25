@@ -29,13 +29,15 @@ test("a plan's formula shape is validated per formulaType, and numbers stay admi
 test("role shares must sum to exactly 100%, reference valid case roles, and never repeat the same attribution point", async () => {
   const service = await source("../src/services/incentivePlanService.js");
 
-  assert.match(service, /export const ATTRIBUTION_KINDS = \["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER"\];/);
+  assert.match(service, /export const ATTRIBUTION_KINDS = \["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER", "PAYMENT_PROCESSOR"\];/);
   assert.match(service, /if \(attributionKind === "CASE_ROLE" && !caseRoleId\) throw createHttpError\(400, "Choose a case role for each case-role share\."/);
   assert.match(service, /if \(dedupeKeys\.has\(key\)\) throw createHttpError\(400, "Each role can only appear once in a plan's shares\."/);
   assert.match(service, /if \(Math\.abs\(total - 100\) > 0\.01\) throw createHttpError\(400, `Role shares must sum to exactly 100% /);
   // Case-role references are checked against this agency's active roles —
   // a share can't silently point at another agency's role or a hidden one.
   assert.match(service, /prisma\.agencyCaseRole\.findMany\(\{ where: \{ agencyId, id: \{ in: caseRoleIds \}, isActive: true \}/);
+  assert.match(service, /Frontdesk incentives must use Payment processor/);
+  assert.match(service, /Replace the Frontdesk case-role share with Payment processor before activating this plan/);
 });
 
 test("activating a plan atomically deactivates whatever else holds its scope, in one transaction", async () => {

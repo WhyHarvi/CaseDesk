@@ -9,7 +9,12 @@ test("case document upload accepts multiple files in one pick, uploaded sequenti
 
   assert.match(workspace, /<input ref=\{myDocumentInput\} type="file" accept=\{acceptedDocumentTypes\} multiple/);
   assert.match(workspace, /async function uploadMyDocuments\(files\)/);
-  assert.match(workspace, /const oversized = queued\.filter\(\(file\) => file\.size > 25 \* 1024 \* 1024\)/);
+  // PDFs and other files carry different size limits (PDFs get compressed
+  // client-side first), so the flat 25MB check moved into a shared
+  // exceedsCaseUploadLimit helper both this batch path and the single-file
+  // upload() above call — kept in sync instead of two divergent checks.
+  assert.match(workspace, /const exceedsCaseUploadLimit = \(file\) => isPdfUpload\(file\)/);
+  assert.match(workspace, /const oversized = queued\.filter\(exceedsCaseUploadLimit\)/);
   // Sequential, not Promise.all — a batch upload must not fire every file at
   // the storage backend simultaneously, and progress needs to stay honest
   // for a single file at a time.

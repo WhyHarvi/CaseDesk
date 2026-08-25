@@ -176,6 +176,42 @@ export async function listTwilioCallAddressBook(req, res) {
   res.json({ data });
 }
 
+// Keeps in-call notes usable even when the remote number is not yet linked to
+// a CRM Lead/Client. The status callback normally creates this shared call
+// session first; upsert also covers the brief race where someone starts a note
+// before that callback arrives.
+export async function saveActiveTwilioCallNote(req, res) {
+  const agencyId = req.user.agencyId;
+  const callSid = clean(req.body?.callSid, 64);
+  const notes = clean(req.body?.notes, 3000);
+  if (!callSid) throw createHttpError(400, "The call is still connecting. Keep typing and try again in a moment.", "CALL_SID_REQUIRED");
+  if (!notes) throw createHttpError(400, "Enter a note before saving.", "CALL_NOTE_REQUIRED");
+  const direction = clean(req.body?.direction, 20).toUpperCase() === "INBOUND" ? "INBOUND" : "OUTBOUND";
+  const remoteNumber = clean(req.body?.remoteNumber, 80) || null;
+  const now = new Date();
+  const call = await prisma.oomaCallSession.upsert({
+    where: { agencyId_providerCallId: { agencyId, providerCallId: callSid } },
+    update: { outcomeNotes: notes, handledByUserId: req.user.id },
+    create: {
+      agencyId,
+      provider: TWILIO_CALL_PROVIDER,
+      providerCallId: callSid,
+      direction,
+      status: "ANSWERED",
+      remoteNumber,
+      remoteNumberNormalized: normalizeCommunicationPhone(remoteNumber),
+      handledByUserId: req.user.id,
+      outcomeNotes: notes,
+      startedAt: now,
+      answeredAt: now,
+      lastEventAt: now,
+      rawPayload: { callSid, createdByInCallNote: true },
+    },
+    select: { id: true, outcomeNotes: true, leadId: true, clientId: true },
+  });
+  res.json({ data: call });
+}
+
 // Called by the browser softphone's "call ended" popup. The Twilio status
 // callback normally creates/updates the shared call-history session, but the
 // popup can land before (or even without) it, so we find the session by the
@@ -205,7 +241,7 @@ export async function recordOutboundCallOutcome(req, res) {
       OR: [{ providerCallId }, { rawPayload: { path: ["callSid"], equals: providerCallId } }, { rawPayload: { path: ["parentCallSid"], equals: providerCallId } }],
     },
     orderBy: { lastEventAt: "desc" },
-    select: { id: true, leadId: true, clientId: true },
+    select: { id: true, leadId: true, clientId: true, outcomeNotes: true },
   });
 
   if (!call) {
@@ -229,7 +265,7 @@ export async function recordOutboundCallOutcome(req, res) {
         lastEventAt: now,
         rawPayload: { callSid: providerCallId, createdByOutcomePopup: true },
       },
-      select: { id: true, leadId: true, clientId: true },
+      select: { id: true, leadId: true, clientId: true, outcomeNotes: true },
     });
   } else {
     const data = {};
@@ -237,9 +273,12 @@ export async function recordOutboundCallOutcome(req, res) {
     if (clientId && !call.clientId) Object.assign(data, { clientId, resolution: "LINKED_CLIENT", resolvedAt: new Date(), resolvedById: req.user.id });
     const durationSeconds = number(req.body?.durationSeconds);
     if (durationSeconds != null) data.durationSeconds = durationSeconds;
-    if (Object.keys(data).length) call = await prisma.oomaCallSession.update({ where: { id: call.id }, data, select: { id: true, leadId: true, clientId: true } });
+    if (Object.keys(data).length) call = await prisma.oomaCallSession.update({ where: { id: call.id }, data, select: { id: true, leadId: true, clientId: true, outcomeNotes: true } });
   }
 
-  await applyCallOutcome(call, req.body, { agencyId, userId: req.user.id });
+  // Keep a note written during the live call when the post-call outcome card
+  // is saved without an additional note. Explicit post-call text still wins.
+  const outcomeInput = { ...req.body, notes: clean(req.body?.notes, 3000) || call.outcomeNotes || "" };
+  await applyCallOutcome(call, outcomeInput, { agencyId, userId: req.user.id });
   res.json({ data: call });
 }

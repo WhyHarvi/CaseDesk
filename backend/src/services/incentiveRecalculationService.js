@@ -54,6 +54,7 @@ function holdersForHistoricalGroup(plan, groupEntries, liveHolders) {
   const result = {
     leadOwnerUserId: liveHolders.leadOwnerUserId,
     leadConverterUserId: liveHolders.leadConverterUserId,
+    paymentProcessorUserId: liveHolders.paymentProcessorUserId || null,
     caseRoleHolders: new Map(liveHolders.caseRoleHolders),
   };
   for (const share of plan.roleShares) {
@@ -62,6 +63,7 @@ function holdersForHistoricalGroup(plan, groupEntries, liveHolders) {
     if (!priorUserIds.length) continue;
     if (share.attributionKind === "LEAD_OWNER") result.leadOwnerUserId = priorUserIds[0];
     else if (share.attributionKind === "LEAD_CONVERTER") result.leadConverterUserId = priorUserIds[0];
+    else if (share.attributionKind === "PAYMENT_PROCESSOR") result.paymentProcessorUserId = priorUserIds[0];
     else {
       const current = liveHolders.caseRoleHolders.get(share.caseRoleId);
       result.caseRoleHolders.set(share.caseRoleId, { name: current?.name || share.caseRole?.name || prior[0]?.roleNameSnapshot || "Case role", userIds: priorUserIds });

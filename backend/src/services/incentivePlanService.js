@@ -8,7 +8,7 @@ import { LEAD_STAGES } from "../modules/leads/lead.constants.js";
 import { logger } from "./logger.js";
 
 export const FORMULA_TYPES = ["FLAT_PER_PAYMENT", "PERCENT_OF_PAYMENT", "TIERED_PERCENT_OF_REVENUE"];
-export const ATTRIBUTION_KINDS = ["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER"];
+export const ATTRIBUTION_KINDS = ["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER", "PAYMENT_PROCESSOR"];
 
 const planInclude = {
   tiers: { orderBy: { minCumulativeAmount: "asc" } },
@@ -89,9 +89,12 @@ async function validateRoleShares(agencyId, roleShares) {
 
   const caseRoleIds = [...new Set(normalized.filter((share) => share.caseRoleId).map((share) => share.caseRoleId))];
   if (caseRoleIds.length) {
-    const validRoles = await prisma.agencyCaseRole.findMany({ where: { agencyId, id: { in: caseRoleIds }, isActive: true }, select: { id: true } });
+    const validRoles = await prisma.agencyCaseRole.findMany({ where: { agencyId, id: { in: caseRoleIds }, isActive: true }, select: { id: true, code: true } });
     const validIds = new Set(validRoles.map((role) => role.id));
     if (caseRoleIds.some((id) => !validIds.has(id))) throw createHttpError(400, "One or more selected case roles are invalid.", "VALIDATION_ERROR");
+    if (validRoles.some((role) => role.code === "frontdesk")) {
+      throw createHttpError(400, "Frontdesk incentives must use Payment processor so credit follows the person who recorded each payment.", "EVENT_ATTRIBUTION_REQUIRED");
+    }
   }
 
   return normalized;
@@ -280,9 +283,12 @@ export async function updateIncentivePlan(agencyId, id, values) {
 // activated.
 export async function activateIncentivePlan(agencyId, id) {
   return prisma.$transaction(async (tx) => {
-    const plan = await tx.incentivePlan.findFirst({ where: { id, agencyId }, include: { roleShares: true } });
+    const plan = await tx.incentivePlan.findFirst({ where: { id, agencyId }, include: { roleShares: { include: { caseRole: { select: { code: true } } } } } });
     if (!plan) throw createHttpError(404, "Incentive plan not found.", "NOT_FOUND");
     if (!plan.roleShares.length) throw createHttpError(409, "Add role shares before activating this plan.", "VALIDATION_ERROR");
+    if (plan.roleShares.some((share) => share.attributionKind === "CASE_ROLE" && share.caseRole?.code === "frontdesk")) {
+      throw createHttpError(409, "Replace the Frontdesk case-role share with Payment processor before activating this plan.", "EVENT_ATTRIBUTION_REQUIRED");
+    }
     if (plan.isActive) return tx.incentivePlan.findUnique({ where: { id }, include: planInclude });
 
     const now = new Date();

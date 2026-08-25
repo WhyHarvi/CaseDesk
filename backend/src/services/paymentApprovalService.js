@@ -271,6 +271,7 @@ async function processApprovedPayment(row, actorUserId) {
       note: row.note,
       idempotencyKey: `approval-${row.id}`,
       actorUserId,
+      paymentProcessorUserId: row.submittedById,
       approvalId: row.id,
     });
     return { qbPaymentId: invoice.lastQbPaymentId || null, result: { caseInvoiceId: invoice.id } };
@@ -308,6 +309,7 @@ async function processApprovedPayment(row, actorUserId) {
       note: row.note,
       idempotencyKey: `approval-${row.id}`,
       actorUserId,
+      paymentProcessorUserId: row.submittedById,
       approvalId: row.id,
     });
     return { qbPaymentId: updated.lastQbPaymentId || null, caseInvoiceId: invoice.id, result: { caseInvoiceId: invoice.id } };

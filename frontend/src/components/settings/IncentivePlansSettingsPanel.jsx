@@ -136,6 +136,7 @@ function RoleShareEditor({ roleShares, caseRoles, onChange }) {
               <option value="CASE_ROLE">Global team role</option>
               <option value="LEAD_OWNER">Lead owner</option>
               <option value="LEAD_CONVERTER">Lead converter</option>
+              <option value="PAYMENT_PROCESSOR">Payment processor</option>
             </Select>
           </label>
           {share.attributionKind === "CASE_ROLE" ? (
@@ -259,7 +260,9 @@ function PlanExample({ draft, caseRoles }) {
     ? "Lead owner"
     : share.attributionKind === "LEAD_CONVERTER"
       ? "Lead converter"
-      : caseRoles.find((role) => role.id === share.caseRoleId)?.name || "Select a case role");
+      : share.attributionKind === "PAYMENT_PROCESSOR"
+        ? "Payment processor"
+        : caseRoles.find((role) => role.id === share.caseRoleId)?.name || "Select a case role");
   return (
     <div className="border-t border-slate-200 pt-3">
       <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><Calculator className="h-4 w-4 text-emerald-600" /> Example when {money.format(collected)} is collected</div>

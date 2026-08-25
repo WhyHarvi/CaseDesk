@@ -122,6 +122,11 @@ function snapshotRecipients(plan, holders) {
     } else if (share.attributionKind === "LEAD_CONVERTER") {
       roleName = "Lead converter";
       if (holders.leadConverterUserId) userIds = [holders.leadConverterUserId];
+    } else if (share.attributionKind === "PAYMENT_PROCESSOR") {
+      // The processor is not known when an invoice is created. Freeze the
+      // formula share now and resolve its recipient from the authenticated
+      // payment event when money is actually collected.
+      roleName = "Payment processor";
     } else {
       const bucket = holders.caseRoleHolders.get(share.caseRoleId);
       roleName = bucket?.name || roleName;
@@ -137,13 +142,14 @@ function snapshotRecipients(plan, holders) {
   });
 }
 
-// Called before an invoice is persisted. Even "no plan" is snapshotted so
-// activating a plan later never reaches backward into earlier invoices.
-export async function buildInvoiceIncentiveSnapshot(agencyId, caseId, caseType) {
+// Called before an invoice is persisted. With no active formula there is no
+// incentive state to store. The activation timestamp check prevents a later
+// activation from silently reaching backward into older invoices; applying a
+// plan to legacy invoices remains an explicit, audited admin action.
+export async function buildInvoiceIncentiveSnapshot(agencyId, caseId, caseType, invoiceCreatedAt = new Date()) {
   const plan = await resolvePlan(agencyId, caseType || null);
-  if (!plan) {
-    return { agencyId, tiers: [], recipients: [] };
-  }
+  if (!plan) return null;
+  if (plan.activatedAt && new Date(invoiceCreatedAt) < plan.activatedAt) return null;
   return buildSnapshotForResolvedPlan(agencyId, caseId, plan);
 }
 
@@ -204,6 +210,9 @@ export function computeSplits(plan, pool, holders) {
     } else if (share.attributionKind === "LEAD_CONVERTER") {
       roleNameSnapshot = "Lead converter";
       if (holders.leadConverterUserId) userIds = [holders.leadConverterUserId];
+    } else if (share.attributionKind === "PAYMENT_PROCESSOR") {
+      roleNameSnapshot = "Payment processor";
+      if (holders.paymentProcessorUserId) userIds = [holders.paymentProcessorUserId];
     } else {
       const bucket = holders.caseRoleHolders.get(share.caseRoleId);
       roleNameSnapshot = bucket?.name || "Case role";
@@ -225,12 +234,14 @@ export function computeSplits(plan, pool, holders) {
   return entries;
 }
 
-function computeSnapshotSplits(snapshot, pool) {
+function computeSnapshotSplits(snapshot, pool, { paymentProcessorUserId = null } = {}) {
   const poolCents = Math.round(pool * 100);
   const entries = [];
   for (const share of Array.isArray(snapshot.recipients) ? snapshot.recipients : []) {
     const shareCents = Math.round((poolCents * Number(share.sharePercent)) / 100);
-    const userIds = Array.isArray(share.userIds) ? share.userIds : [];
+    const userIds = share.attributionKind === "PAYMENT_PROCESSOR"
+      ? [paymentProcessorUserId].filter(Boolean)
+      : (Array.isArray(share.userIds) ? share.userIds : []);
     if (shareCents <= 0 || !userIds.length) continue;
     for (const split of splitEvenly(shareCents, userIds)) {
       if (split.cents <= 0) continue;
@@ -316,17 +327,18 @@ async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refu
 // credit the invoice's entire amount as if it had all just been paid,
 // which is backwards. Use resetCreditCursor for that case instead — it
 // re-baselines the cursor to the new balance without crediting anything.
-export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId, newBalance, trigger }) {
+export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId, newBalance, trigger, paymentProcessorUserId = null }) {
   const newBalanceNumber = Number(newBalance);
   const invoice = await prisma.caseInvoice.findFirst({
     where: { id: caseInvoiceId, caseId, agencyId },
-    select: { id: true, caseId: true, balance: true, incentiveSnapshot: true, case: { select: { caseType: true } } },
+    select: { id: true, caseId: true, balance: true, createdAt: true, incentiveSnapshot: true, case: { select: { caseType: true } } },
   });
   if (!invoice) return { credited: false, reason: "invoice_not_found" };
 
   let snapshot = invoice.incentiveSnapshot;
   if (!snapshot) {
-    const data = await buildInvoiceIncentiveSnapshot(agencyId, caseId, invoice.case.caseType);
+    const data = await buildInvoiceIncentiveSnapshot(agencyId, caseId, invoice.case.caseType, invoice.createdAt);
+    if (!data) return { credited: false, reason: "no_active_plan" };
     try {
       snapshot = await prisma.caseInvoiceIncentiveSnapshot.create({ data: { ...data, caseInvoiceId } });
     } catch (error) {
@@ -377,9 +389,23 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     return { credited: false, reason: "no_plan_at_invoice_creation", claimed: claim.count === 1 };
   }
 
+  let verifiedPaymentProcessorId = null;
+  if (paymentProcessorUserId) {
+    const processor = await prisma.user.findFirst({
+      where: { id: paymentProcessorUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true } } },
+      select: { id: true },
+    });
+    verifiedPaymentProcessorId = processor?.id || null;
+  }
+  const needsPaymentProcessor = Array.isArray(snapshot.recipients)
+    && snapshot.recipients.some((share) => share?.attributionKind === "PAYMENT_PROCESSOR");
+  if (needsPaymentProcessor && !verifiedPaymentProcessorId) {
+    logger.warn("incentive.payment_processor_missing", { agencyId, caseId, caseInvoiceId, trigger });
+  }
+
   const { pool } = await computeSnapshotPool(snapshot, { agencyId, caseId, delta });
   const creditedAt = new Date();
-  const rows = computeSnapshotSplits(snapshot, pool).map((entry) => ({
+  const rows = computeSnapshotSplits(snapshot, pool, { paymentProcessorUserId: verifiedPaymentProcessorId }).map((entry) => ({
     agencyId,
     caseId,
     caseInvoiceId,
@@ -468,11 +494,17 @@ export async function estimateInvoicePotentialCredit(agencyId, { caseInvoiceId, 
 // it would compute a large false "delta" against the stale pre-void
 // baseline and credit the whole amount as if it had just been collected.
 export async function resetCreditCursor(agencyId, caseInvoiceId, newBalance) {
+  const invoice = await prisma.caseInvoice.findFirst({
+    where: { id: caseInvoiceId, agencyId, incentiveSnapshot: { is: { incentivePlanId: { not: null } } } },
+    select: { id: true },
+  });
+  if (!invoice) return false;
   await prisma.caseInvoiceCreditCursor.upsert({
     where: { caseInvoiceId },
     create: { agencyId, caseInvoiceId, lastCreditedBalance: Number(newBalance) },
     update: { lastCreditedBalance: Number(newBalance) },
   });
+  return true;
 }
 
 // Re-freezes the incentive snapshots of a case's open, never-credited
@@ -514,14 +546,26 @@ export async function refreshOpenInvoiceSnapshots(agencyId, caseId, db = prisma)
 let retryTimer = null;
 
 export async function backfillMissingInvoiceSnapshots(limit = 100) {
+  const activePlans = await prisma.incentivePlan.findMany({
+    where: { isActive: true },
+    select: { agencyId: true, caseType: true },
+  });
+  if (!activePlans.length) return 0;
+  const eligibleScopes = activePlans.map((plan) => plan.caseType
+    ? { agencyId: plan.agencyId, case: { caseType: plan.caseType } }
+    : { agencyId: plan.agencyId });
   const invoices = await prisma.caseInvoice.findMany({
-    where: { incentiveSnapshot: null },
+    where: { incentiveSnapshot: null, OR: eligibleScopes },
     take: limit,
     orderBy: { createdAt: "asc" },
-    select: { id: true, agencyId: true, caseId: true, case: { select: { caseType: true } } },
+    select: { id: true, agencyId: true, caseId: true, createdAt: true, case: { select: { caseType: true } } },
   });
   for (const invoice of invoices) {
-    const data = await buildInvoiceIncentiveSnapshot(invoice.agencyId, invoice.caseId, invoice.case.caseType);
+    const data = await buildInvoiceIncentiveSnapshot(invoice.agencyId, invoice.caseId, invoice.case.caseType, invoice.createdAt);
+    // A workspace may have only case-type-specific active plans. Keep this
+    // guard even after the scope filter above so a concurrent deactivation
+    // cannot rebuild testing-era state between the list and create queries.
+    if (!data?.incentivePlanId) continue;
     await prisma.caseInvoiceIncentiveSnapshot.create({ data: { ...data, caseInvoiceId: invoice.id } }).catch((error) => {
       if (error?.code !== "P2002") throw error;
     });

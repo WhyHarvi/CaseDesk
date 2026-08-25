@@ -16,7 +16,7 @@ import {
   listDocumentFolders,
   renameDocumentFolder,
 } from "../controllers/documentFolderController.js";
-import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
+import { receiveCompressedCaseDocument } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -27,7 +27,7 @@ router.patch("/folders/:id", asyncHandler(renameDocumentFolder));
 router.delete("/folders/:id", asyncHandler(deleteDocumentFolder));
 
 router.get("/", asyncHandler(listClientDocuments));
-router.post("/upload", receiveDocumentFile, asyncHandler(uploadClientDocumentFile));
+router.post("/upload", receiveCompressedCaseDocument, asyncHandler(uploadClientDocumentFile));
 router.post("/:id/finalize", asyncHandler(finalizeClientDocument));
 router.post("/:id/status", asyncHandler(updateClientDocumentStatus));
 router.get("/:id/file", asyncHandler(serveClientDocumentFile));

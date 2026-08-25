@@ -45,7 +45,10 @@ test("the Twilio call service issues Voice-grant access tokens and bridges TwiML
 });
 
 test("status callbacks ingest into the shared call history and distinguish missed calls", async () => {
-  const service = await source("../src/services/twilioCallService.js");
+  const [service, webhookController] = await Promise.all([
+    source("../src/services/twilioCallService.js"),
+    source("../src/controllers/twilioWebhookController.js"),
+  ]);
   assert.match(service, /export async function handleTwilioCallStatus/);
   assert.match(service, /oomaCallSession\.create/);
   assert.match(service, /TWILIO_CALL_PROVIDER/);
@@ -56,6 +59,14 @@ test("status callbacks ingest into the shared call history and distinguish misse
   // The client identity Twilio reports ("client:casedesk:<userId>") is
   // normalized back to the raw userId for handledByUserId.
   assert.match(service, /replace\(\/\^client:\/, ""\)\.replace\(\/\^casedesk:\/, ""\)/);
+  // Inbound <Client> events must retain the parent PSTN leg's caller number.
+  // Twilio does not reliably include ParentCallSid on those child callbacks,
+  // so inboundTwiML explicitly threads the stable context through the URL.
+  assert.match(service, /parentCallSid=\$\{encodeURIComponent\(parentCallSid\)\}/);
+  assert.match(service, /callerNumber=\$\{encodeURIComponent\(inboundCallerNumber\)\}/);
+  assert.match(service, /body\.parentCallSid \|\| body\.ParentCallSid/);
+  assert.match(service, /explicitInboundCaller \|\| body\.From/);
+  assert.match(webhookController, /\{ \.\.\.\(req\.body \|\| \{\}\), \.\.\.\(req\.query \|\| \{\}\) \}/);
 });
 
 test("voice lines route inbound calls to their group and the internal line bridges staff calls", async () => {
@@ -96,12 +107,14 @@ test("history sync and address book back the Call center without exposing secret
   ]);
   assert.match(service, /export async function syncTwilioCallHistory/);
   assert.match(service, /export async function listTwilioAddressBook/);
+  assert.match(service, /digits\.length > 10 \? digits\.slice\(-10\)/);
   assert.match(service, /prisma\.client\.findMany/);
   assert.match(service, /prisma\.lead\.findMany/);
   assert.match(controller, /export async function issueTwilioCallToken/);
   assert.match(controller, /export async function createTwilioVoiceLine/);
   assert.match(controller, /export async function transferCall/);
   assert.match(controller, /export async function syncTwilioCallHistoryHandler/);
+  assert.match(controller, /export async function saveActiveTwilioCallNote/);
 });
 
 test("auth routes and public webhooks are both wired into the server", async () => {
@@ -119,6 +132,7 @@ test("auth routes and public webhooks are both wired into the server", async () 
   assert.match(callRoutes, /router\.patch\("\/lines\/:lineId"/);
   assert.match(callRoutes, /router\.delete\("\/lines\/:lineId"/);
   assert.match(callRoutes, /router\.post\("\/transfer"/);
+  assert.match(callRoutes, /router\.put\("\/active-note", asyncHandler\(saveActiveTwilioCallNote\)\)/);
   assert.match(callRoutes, /router\.get\("\/staff"/);
   // Twilio itself fetches the TwiML endpoints — they are public on purpose
   // and carry the agency id in the path, never auth.
@@ -186,7 +200,8 @@ test("the 'call ended' popup saves the outcome through a shared applyCallOutcome
   assert.match(controller, /export async function recordOutboundCallOutcome\(req, res\)/);
   assert.match(controller, /rawPayload: \{ path: \["callSid"\], equals: providerCallId }/);
   assert.match(controller, /createdByOutcomePopup: true/);
-  assert.match(controller, /await applyCallOutcome\(call, req\.body, \{ agencyId, userId: req\.user\.id }/);
+  assert.match(controller, /const outcomeInput = \{ \.\.\.req\.body, notes: clean\(req\.body\?\.notes, 3000\) \|\| call\.outcomeNotes \|\| "" };/);
+  assert.match(controller, /await applyCallOutcome\(call, outcomeInput, \{ agencyId, userId: req\.user\.id }/);
   // The Ooma drawer's outcome handler now routes through the same helper.
   assert.match(oomaController, /await applyCallOutcome\(call, req\.body, \{ agencyId: req\.auth\.agencyId, userId: req\.auth\.userId }/);
   assert.doesNotMatch(oomaController, /const allowed = new Set\(\["COMPLETED"/);
@@ -264,7 +279,7 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(provider, /export function useSoftphone\(\)/);
   assert.match(callsPage, /export default function CallsPage\(\)/);
   assert.match(callsPage, /"history", "History", History/);
-  assert.match(callsPage, /"dialpad", "Dialpad", PhoneCall/);
+  assert.match(callsPage, /openGlobalDialpad/);
   assert.match(callsPage, /"address-book", "Address book", BookUser/);
   assert.match(callsPage, /CallHistorySection/);
   assert.match(main, /import \{ SoftphoneProvider \} from "\.\/components\/calls\/SoftphoneProvider";/);
@@ -285,4 +300,10 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(dialpad, /twilio-calls\/transfer/);
   assert.match(dialpad, /twilio-calls\/staff/);
   assert.match(dialpad, /function TransferPicker\(/);
+  // Notes opens for every active call. Known numbers save to the matching
+  // Lead/Client; unknown numbers fall back to the shared call-history row.
+  assert.match(dialpad, /const callNoteTarget = useMemo/);
+  assert.match(dialpad, /api\.put\("\/twilio-calls\/active-note"/);
+  assert.match(dialpad, /label="Notes" onClick=\{\(\) => setShowCallNotes\(true\)\} \/>/);
+  assert.doesNotMatch(dialpad, /label="Notes"[^>]+disabled=\{!linkedRecord\}/);
 });

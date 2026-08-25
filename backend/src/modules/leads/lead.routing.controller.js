@@ -15,3 +15,11 @@ export async function updateLeadRoutingRule(req, res) {
 export async function deleteLeadRoutingRule(req, res) {
   res.json({ data: await service.deleteLeadRoutingRule(req) });
 }
+
+export async function listLeadRoutingBacklog(req, res) {
+  res.json({ data: await service.listLeadRoutingBacklog(req) });
+}
+
+export async function reviewLeadRoutingBacklog(req, res) {
+  res.json({ data: await service.reviewLeadRoutingBacklog(req) });
+}

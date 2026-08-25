@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { createPortalMessage, getPortalRealtimeConfig, markPortalChatRead, portalActions, portalApplications, portalAppointments, portalDocuments, portalMe, portalMessages, portalProfile, servePortalDocument, servePortalMessageAttachment, uploadPortalDocument, uploadPortalMessageAttachment } from "../controllers/portalController.js";
 import { subscribeToPush, unsubscribeFromPush } from "../controllers/pushSubscriptionController.js";
-import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
+import { receiveCompressedCaseDocument, receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
 import { asyncHandler } from "../utils/http.js";
@@ -13,7 +13,7 @@ router.post("/push/subscribe", rateLimit({ windowMs: 60_000, max: 10 }), asyncHa
 router.post("/push/unsubscribe", rateLimit({ windowMs: 60_000, max: 10 }), asyncHandler(unsubscribeFromPush));
 router.get("/applications", permit("case_information.view", { resource: "allCases" }), asyncHandler(portalApplications));
 router.get("/documents", permit("documents.view"), asyncHandler(portalDocuments));
-router.post("/documents/:id/upload", permit("documents.upload", { resource: "document" }), rateLimit({ windowMs: 60_000, max: 10 }), receiveDocumentFile, asyncHandler(uploadPortalDocument));
+router.post("/documents/:id/upload", permit("documents.upload", { resource: "document" }), rateLimit({ windowMs: 60_000, max: 10 }), receiveCompressedCaseDocument, asyncHandler(uploadPortalDocument));
 router.get("/documents/:id/file", permit("documents.download_finalized", { resource: "document" }), asyncHandler(servePortalDocument));
 router.get("/appointments", permit("appointments.view", { resource: "allCases" }), asyncHandler(portalAppointments));
 router.get("/actions", permit("dashboard.view_next_action"), asyncHandler(portalActions));

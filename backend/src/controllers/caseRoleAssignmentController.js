@@ -72,7 +72,7 @@ export async function replaceCaseRoleAssignments(req, res) {
   }
 
   const [validRoles, validUsers, requiredOptions] = await Promise.all([
-    prisma.agencyCaseRole.findMany({ where: { agencyId: req.auth.agencyId, id: { in: deduped.map((pair) => pair.caseRoleId) }, isActive: true }, select: { id: true } }),
+    prisma.agencyCaseRole.findMany({ where: { agencyId: req.auth.agencyId, id: { in: deduped.map((pair) => pair.caseRoleId) }, isActive: true }, select: { id: true, code: true } }),
     prisma.user.findMany({ where: { agencyId: req.auth.agencyId, id: { in: deduped.map((pair) => pair.userId) }, status: "active" }, select: { id: true } }),
     requiredCaseTeamOptions(req.auth.agencyId),
   ]);
@@ -80,6 +80,10 @@ export async function replaceCaseRoleAssignments(req, res) {
   const validUserIds = new Set(validUsers.map((user) => user.id));
   if (deduped.some((pair) => !validRoleIds.has(pair.caseRoleId) || !validUserIds.has(pair.userId))) {
     throw createHttpError(400, "One or more selected roles or staff members are invalid.", "VALIDATION_ERROR");
+  }
+  const eventDerivedRoleIds = new Set(validRoles.filter((role) => role.code === "frontdesk").map((role) => role.id));
+  if (deduped.some((pair) => eventDerivedRoleIds.has(pair.caseRoleId))) {
+    throw createHttpError(400, "Frontdesk is attributed from the person who records each payment and cannot be assigned permanently to a case.", "EVENT_ATTRIBUTION_REQUIRED");
   }
   if (!requiredOptions.rcicUsers.some((user) => user.id === rcicPairs[0].userId)) {
     throw createHttpError(400, "The selected RCIC does not have the RCIC team role.", "INVALID_RCIC");

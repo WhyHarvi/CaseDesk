@@ -26,6 +26,7 @@ import CasePermissionsOverlay from "../components/case-profile/CasePermissionsOv
 import CaseRolesOverlay from "../components/case-profile/CaseRolesOverlay";
 import RestrictedCaseAccess from "../components/case-profile/RestrictedCaseAccess";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
+import { CaseFormDrawer, defaultCaseFormState, getDefaultNextAction } from "./Cases";
 import { useAuth } from "../auth/AuthContext";
 import { canAccessCaseTab, canAccessPage, hasCapability } from "../auth/portalAccess";
 import {
@@ -36,6 +37,8 @@ import {
 import PageContainer from "../components/layout/PageContainer";
 import useNow from "../hooks/useNow";
 import api from "../services/api";
+import { caseStagesForType } from "../constants/caseStages";
+import { isStudyPermitCaseType, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 
 const TERMINAL_CASE_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Inactive"]);
 const CASE_RECOVERY_DELAYS_MS = [1_000, 2_500, 5_000, 10_000, 30_000];
@@ -115,6 +118,13 @@ export default function CaseProfile() {
   const [eSignCenterOpen, setESignCenterOpen] = useState(false);
   const [permissionsOverlayOpen, setPermissionsOverlayOpen] = useState(false);
   const [caseRolesOverlayOpen, setCaseRolesOverlayOpen] = useState(false);
+  const [caseEditOpen, setCaseEditOpen] = useState(false);
+  const [caseEditForm, setCaseEditForm] = useState(defaultCaseFormState);
+  const [caseEditUsers, setCaseEditUsers] = useState([]);
+  const [caseEditTypeOptions, setCaseEditTypeOptions] = useState([]);
+  const [caseEditTypeAliases, setCaseEditTypeAliases] = useState({});
+  const [caseEditSaving, setCaseEditSaving] = useState(false);
+  const [caseEditError, setCaseEditError] = useState("");
   const [editingClient, setEditingClient] = useState(false);
   const [deleteCaseDialogOpen, setDeleteCaseDialogOpen] = useState(false);
   const [restoringCase, setRestoringCase] = useState(false);
@@ -376,6 +386,81 @@ export default function CaseProfile() {
       ),
     [documents],
   );
+
+  function caseDateInput(value) {
+    return value ? new Date(value).toISOString().slice(0, 10) : "";
+  }
+
+  async function openCaseEditor() {
+    setActiveToolbarTray("");
+    setCaseEditError("");
+    setCaseEditForm({
+      clientId: caseItem.client?.id || caseItem.clientId || "",
+      assignedUserId: caseItem.assignedUser?.id || caseItem.assignedUserId || "",
+      caseType: caseItem.caseType || "",
+      stage: caseItem.stage || "Lead",
+      status: caseItem.status || "Open",
+      priority: caseItem.priority || "Normal",
+      nextAction: caseItem.nextAction || "",
+      submittedAt: caseDateInput(caseItem.submittedAt),
+      decisionAt: caseDateInput(caseItem.decisionAt),
+      studyIntakeMonth: studyIntakeValue(caseItem.studyIntakeMonth),
+    });
+    setCaseEditUsers(caseItem.assignedUser ? [caseItem.assignedUser] : []);
+    setCaseEditTypeOptions(caseItem.caseType ? [caseItem.caseType] : []);
+    setCaseEditOpen(true);
+
+    const [staffResult, typesResult] = await Promise.allSettled([
+      api.getFresh("/leads/staff"),
+      api.getFresh("/cases/case-types"),
+    ]);
+    if (staffResult.status === "fulfilled") setCaseEditUsers(staffResult.value.data.data || []);
+    if (typesResult.status === "fulfilled") {
+      setCaseEditTypeOptions(typesResult.value.data.data || []);
+      setCaseEditTypeAliases(typesResult.value.data.aliases || {});
+    }
+  }
+
+  function changeCaseEditField(event) {
+    const { name, value } = event.target;
+    setCaseEditForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "caseType" && !isStudyPermitCaseType(value)) {
+        next.studyIntakeMonth = "";
+        if (!caseStagesForType(value).includes(current.stage)) next.stage = "Retainer Pending";
+      }
+      if (name === "stage" && !current.nextAction) next.nextAction = getDefaultNextAction(value);
+      return next;
+    });
+  }
+
+  async function saveCaseEdit(event) {
+    event.preventDefault();
+    try {
+      setCaseEditSaving(true);
+      setCaseEditError("");
+      const payload = {
+        assignedUserId: caseEditForm.assignedUserId || undefined,
+        caseType: caseEditForm.caseType,
+        stage: caseEditForm.stage,
+        status: caseEditForm.status,
+        priority: caseEditForm.priority,
+        nextAction: caseEditForm.nextAction.trim() || getDefaultNextAction(caseEditForm.stage),
+        submittedAt: caseEditForm.submittedAt || undefined,
+        decisionAt: caseEditForm.decisionAt || undefined,
+        studyIntakeMonth: isStudyPermitCaseType(caseEditForm.caseType)
+          ? studyIntakeApiValue(caseEditForm.studyIntakeMonth)
+          : null,
+      };
+      const response = await api.patch(`/cases/${caseItem.id}`, payload);
+      setCaseItem((current) => ({ ...current, ...(response.data.data || response.data) }));
+      setCaseEditOpen(false);
+    } catch (requestError) {
+      setCaseEditError(requestError.response?.data?.message || "Unable to update this case.");
+    } finally {
+      setCaseEditSaving(false);
+    }
+  }
 
   async function contactClient(channel) {
     const needsEmail = channel === "Email";
@@ -1025,10 +1110,8 @@ export default function CaseProfile() {
       );
       return updated;
     } catch (requestError) {
-      setCaseDocumentsError(
-        requestError.response?.data?.message ||
-          "Unable to update document status.",
-      );
+      // The document row owns upload feedback so the message stays beside
+      // the Upload button that triggered it.
       throw requestError;
     }
   }
@@ -1055,9 +1138,7 @@ export default function CaseProfile() {
       setDocuments((current) => [...current, created]);
       return created;
     } catch (requestError) {
-      setCaseDocumentsError(
-        requestError.response?.data?.message || "Unable to upload document.",
-      );
+      // The My Documents upload action renders this failure below its button.
       throw requestError;
     } finally {
       setCaseDocumentsSaving(false);
@@ -1875,9 +1956,11 @@ export default function CaseProfile() {
           showFinancials={canAccessFinancialData}
           showPortalAccess={canManageClientPortal}
           showCommunications={canAccessCaseCommunication}
+          showEditCase={canManageCase && !caseItem.deletedAt}
           showEditClient={canManageCase}
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
+          onEditCase={openCaseEditor}
           onEditClient={() => setEditingClient(true)}
           canManageCollaborators={canManageCase}
           onManageCollaborators={() => setCaseRolesOverlayOpen(true)}
@@ -1937,6 +2020,24 @@ export default function CaseProfile() {
             setDeleteCaseDialogOpen(true);
           }}
         />
+
+        {caseEditOpen ? (
+          <CaseFormDrawer
+            formState={caseEditForm}
+            onChange={changeCaseEditField}
+            onSubmit={saveCaseEdit}
+            onCancel={() => setCaseEditOpen(false)}
+            saving={caseEditSaving}
+            formError={caseEditError}
+            clients={[]}
+            users={caseEditUsers}
+            caseTypeOptions={caseEditTypeOptions}
+            caseTypeAliases={caseEditTypeAliases}
+            isEditing
+            editingClientName={caseItem.client?.fullName || "Unknown client"}
+            closing={false}
+          />
+        ) : null}
 
         {downloadApplicationOverlayOpen ? (
           <DownloadApplicationOverlay

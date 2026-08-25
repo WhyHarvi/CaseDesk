@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { createLeadRoutingRule, matchLeadRoutingRules, resolveRoutedOwner, updateLeadRoutingRule } from "../src/modules/leads/lead.routing.service.js";
+import { createLeadRoutingRule, listLeadRoutingBacklog, matchLeadRoutingRules, resolveRoutedOwner, updateLeadRoutingRule } from "../src/modules/leads/lead.routing.service.js";
 import { createLead } from "../src/modules/leads/lead.service.js";
 
 function rule(overrides = {}) {
@@ -32,11 +32,25 @@ test("an exact field requires the whole trimmed value to match, case-insensitive
   assert.equal(matchLeadRoutingRules(rules, { province: "Ontario, Canada" }).length, 0);
 });
 
-test("all conditions on a rule must match — it's an AND, not an OR", () => {
-  const rules = [rule({ conditions: [{ field: "province", value: "Ontario" }, { field: "priority", value: "HIGH" }] })];
+test("ALL mode requires every condition to match", () => {
+  const rules = [rule({ matchMode: "ALL", conditions: [{ field: "province", value: "Ontario" }, { field: "priority", value: "HIGH" }] })];
 
   assert.equal(matchLeadRoutingRules(rules, { province: "Ontario", priority: "HIGH" }).length, 1);
   assert.equal(matchLeadRoutingRules(rules, { province: "Ontario", priority: "NORMAL" }).length, 0);
+});
+
+test("ANY mode accepts a structured interest when the unstructured message does not match", () => {
+  const rules = [rule({ matchMode: "ANY", conditions: [{ field: "initialMessage", value: "study permit" }, { field: "immigrationInterest", value: "study permit" }] })];
+
+  assert.equal(matchLeadRoutingRules(rules, { initialMessage: "Website visit summary", immigrationInterest: "Study permit / PGWP" }).length, 1);
+});
+
+test("a structured PR interest is not overridden by generic study text in a website questionnaire", () => {
+  const rules = [rule({ matchMode: "ANY", conditions: [{ field: "initialMessage", value: "study, study permit" }, { field: "immigrationInterest", value: "study permit, study" }] })];
+
+  assert.equal(matchLeadRoutingRules(rules, { initialMessage: "Any Canadian study or work experience?", immigrationInterest: "PR (Express Entry / PNP)" }).length, 0);
+  assert.equal(matchLeadRoutingRules(rules, { initialMessage: "Any Canadian study or work experience?", immigrationInterest: "Study permit / PGWP" }).length, 1);
+  assert.equal(matchLeadRoutingRules(rules, { initialMessage: "I need a study permit", immigrationInterest: "" }).length, 1);
 });
 
 test("a rule with zero conditions never matches, so it can't silently catch every lead", () => {
@@ -65,6 +79,23 @@ test("matches come back ordered by sortOrder so the caller can walk them in prio
 
 test("no active rule matches returns an empty array, not null or undefined", () => {
   assert.deepEqual(matchLeadRoutingRules([rule({ conditions: [{ field: "province", value: "Ontario" }] })], { province: "Quebec" }), []);
+});
+
+test("routing backlog lists matching unreviewed leads and omits leads already owned by the target", async () => {
+  const createdAt = new Date("2026-08-20T00:00:00Z");
+  const matchingLead = { id: "lead-1", province: "Ontario", createdAt: new Date("2026-08-10T00:00:00Z"), inquiryDate: new Date("2026-08-10T00:00:00Z"), originalSource: { type: "WEBSITE" } };
+  const reviewedLead = { ...matchingLead, id: "lead-2" };
+  const alreadyAssignedLead = { ...matchingLead, id: "lead-4", ownerUserId: "target-1" };
+  const db = {
+    leadRoutingRule: { findFirst: async () => rule({ createdAt, conditions: [{ field: "province", value: "Ontario" }], targetUser: { id: "target-1", fullName: "Reviewer" } }) },
+    lead: { findMany: async () => [matchingLead, reviewedLead, alreadyAssignedLead, { ...matchingLead, id: "lead-3", province: "Quebec" }] },
+    leadRoutingBacklogReview: { findMany: async () => [{ leadId: "lead-2", decision: "SKIPPED" }] },
+  };
+
+  const result = await listLeadRoutingBacklog({ auth: { agencyId: "agency-1" }, params: { id: "rule-1" } }, db);
+
+  assert.deepEqual(result.candidates.map((lead) => lead.id), ["lead-1"]);
+  assert.deepEqual(result.totals, { matched: 3, pending: 1, assigned: 0, skipped: 1, alreadyAssigned: 1 });
 });
 
 function routingTx({ rules, activeUserIds }) {
@@ -286,4 +317,6 @@ test("the routing-rule CRUD routes are admin-only", async () => {
   assert.match(routes, /router\.post\("\/routing-rules", requireRole\("admin"\), asyncHandler\(createLeadRoutingRule\)\)/);
   assert.match(routes, /router\.patch\("\/routing-rules\/:id", requireRole\("admin"\), asyncHandler\(updateLeadRoutingRule\)\)/);
   assert.match(routes, /router\.delete\("\/routing-rules\/:id", requireRole\("admin"\), asyncHandler\(deleteLeadRoutingRule\)\)/);
+  assert.match(routes, /router\.get\("\/routing-rules\/:id\/backlog", requireRole\("admin"\), asyncHandler\(listLeadRoutingBacklog\)\)/);
+  assert.match(routes, /router\.post\("\/routing-rules\/:id\/backlog\/:leadId\/review", requireRole\("admin"\), asyncHandler\(reviewLeadRoutingBacklog\)\)/);
 });

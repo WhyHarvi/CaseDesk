@@ -171,8 +171,10 @@ export async function createInvoiceRecord(agencyId, {
         lines: {
           create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
         },
-        creditCursor: { create: { agencyId, lastCreditedBalance: total } },
-        incentiveSnapshot: { create: incentiveSnapshot },
+        ...(incentiveSnapshot ? {
+          creditCursor: { create: { agencyId, lastCreditedBalance: total } },
+          incentiveSnapshot: { create: incentiveSnapshot },
+        } : {}),
       },
       include: { lines: true },
     });
@@ -267,8 +269,10 @@ export async function createInvoiceRecord(agencyId, {
         lines: {
           create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
         },
-        creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },
-        incentiveSnapshot: { create: incentiveSnapshot },
+        ...(incentiveSnapshot ? {
+          creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },
+          incentiveSnapshot: { create: incentiveSnapshot },
+        } : {}),
       },
       include: { lines: true },
     }));
@@ -469,7 +473,7 @@ export async function assertManualPaymentReferenceAvailable(agencyId, paymentRef
   }
 }
 
-export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null }) {
+export async function recordManualPayment(agencyId, { caseId, invoiceId, amount, method = "Cash", transactionReference, paymentDate, note, idempotencyKey, actorUserId, actorRole = "admin", approvalId = null, paymentProcessorUserId = actorUserId }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   let row = await prisma.caseInvoice.findFirst({ where: { id: invoiceId, agencyId, caseId }, include: { refunds: { where: { status: "Completed" } } } });
   if (!row) throw createHttpError(404, "Invoice not found.", "NOT_FOUND");
@@ -558,6 +562,9 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
       metadata: { method: "Cash", quickBooksStored: false, approvalId, note: note || null },
     });
     await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: row.clientId, caseId }).catch(() => {});
+    await creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "MANUAL_PAYMENT", paymentProcessorUserId }).catch((error) => {
+      logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "MANUAL_PAYMENT", reason: error.message });
+    });
     return updated;
   }
 
@@ -614,7 +621,7 @@ export async function recordManualPayment(agencyId, { caseId, invoiceId, amount,
   // Best-effort, same as the notification above — the payment already
   // succeeded in QuickBooks by this point, so a crediting failure must
   // never surface as a failure to record the payment itself.
-  await creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "MANUAL_PAYMENT" }).catch((error) => {
+  await creditCaseInvoiceCollection(agencyId, { caseId, caseInvoiceId: updated.id, newBalance: updated.balance, trigger: "MANUAL_PAYMENT", paymentProcessorUserId }).catch((error) => {
     logger.warn("incentive.credit_failed", { agencyId, caseInvoiceId: updated.id, trigger: "MANUAL_PAYMENT", reason: error.message });
   });
 

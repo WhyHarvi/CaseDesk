@@ -1534,7 +1534,9 @@ export default function Cases() {
       const matchesStatus =
         filters.status === "all" || caseItem.status === filters.status;
       const matchesStaff =
-        filters.staff === "all" || caseItem.assignedTo === filters.staff;
+        filters.staff === "all" ||
+        caseItem.assignedUser?.id === filters.staff ||
+        caseItem.caseWorker?.id === filters.staff;
       const matchesPriority =
         filters.priority === "all" || caseItem.priority === filters.priority;
       const intakeKey = studyIntakeValue(caseItem.studyIntakeMonth);

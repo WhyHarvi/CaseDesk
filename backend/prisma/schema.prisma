@@ -433,6 +433,11 @@ enum LeadTransferRequestStatus {
   STALE
 }
 
+enum LeadRoutingBacklogReviewDecision {
+  ASSIGNED
+  SKIPPED
+}
+
 enum LeadLostReason {
   NO_RESPONSE
   NOT_INTERESTED
@@ -698,6 +703,7 @@ model Agency {
   leadAssignmentHistory           LeadAssignmentHistory[]
   leadTransferRequests            LeadTransferRequest[]
   leadRoutingRules                LeadRoutingRule[]
+  leadRoutingBacklogReviews       LeadRoutingBacklogReview[]
   leadFollowUps                   LeadFollowUp[]
   leadLostDetails                 LeadLostDetail[]
   leadConversions                 LeadConversion[]
@@ -1951,6 +1957,7 @@ model User {
   targetedLeadRoutingRules             LeadRoutingRule[]               @relation("LeadRoutingRuleTargetUser")
   createdLeadRoutingRules              LeadRoutingRule[]               @relation("CreatedLeadRoutingRuleUser")
   updatedLeadRoutingRules              LeadRoutingRule[]               @relation("UpdatedLeadRoutingRuleUser")
+  reviewedLeadRoutingBacklog           LeadRoutingBacklogReview[]      @relation("LeadRoutingBacklogReviewerUser")
   assignedLeadFollowUps                LeadFollowUp[]                  @relation("LeadFollowUpAssigneeUser")
   completedLeadFollowUps               LeadFollowUp[]                  @relation("LeadFollowUpCompleterUser")
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
@@ -4652,6 +4659,7 @@ model Lead {
   messageDeliveries        LeadMessageDelivery[]
   stageHistory             LeadStageHistory[]
   assignmentHistory        LeadAssignmentHistory[]
+  routingBacklogReviews    LeadRoutingBacklogReview[]
   transferRequests         LeadTransferRequest[]
   followUps                LeadFollowUp[]
   lostDetail               LeadLostDetail?
@@ -4812,7 +4820,8 @@ model LeadRoutingRule {
   // "province" | "preferredLanguage" | "priority" | "originalSourceType"
   // (exact match). See matchLeadRoutingRules() for exact semantics.
   conditions    Json      @default("[]")
-  targetUserId  String    @map("target_user_id")
+  matchMode     String    @default("ANY") @map("match_mode")
+  targetUserId  String?   @map("target_user_id")
   lastMatchedAt DateTime? @map("last_matched_at")
   matchCount    Int       @default(0) @map("match_count")
   createdById   String    @map("created_by_id")
@@ -4820,13 +4829,34 @@ model LeadRoutingRule {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   agency        Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  targetUser    User      @relation("LeadRoutingRuleTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  targetUser    User?     @relation("LeadRoutingRuleTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
   createdBy     User      @relation("CreatedLeadRoutingRuleUser", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy     User      @relation("UpdatedLeadRoutingRuleUser", fields: [updatedById], references: [id], onDelete: Restrict)
+  backlogReviews LeadRoutingBacklogReview[]
 
   @@unique([agencyId, name])
   @@index([agencyId, isActive, sortOrder])
   @@map("lead_routing_rules")
+}
+
+model LeadRoutingBacklogReview {
+  id           String                           @id @default(uuid())
+  agencyId     String                           @map("agency_id")
+  ruleId       String                           @map("rule_id")
+  leadId       String                           @map("lead_id")
+  decision     LeadRoutingBacklogReviewDecision
+  previousOwnerId String                        @map("previous_owner_id")
+  targetUserId String                           @map("target_user_id")
+  reviewedById String                           @map("reviewed_by_id")
+  reviewedAt   DateTime                         @default(now()) @map("reviewed_at")
+  agency       Agency                           @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  rule         LeadRoutingRule                  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  lead         Lead                             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  reviewedBy   User                             @relation("LeadRoutingBacklogReviewerUser", fields: [reviewedById], references: [id], onDelete: Restrict)
+
+  @@unique([ruleId, leadId])
+  @@index([agencyId, ruleId, decision, reviewedAt])
+  @@map("lead_routing_backlog_reviews")
 }
 
 model LeadFollowUp {

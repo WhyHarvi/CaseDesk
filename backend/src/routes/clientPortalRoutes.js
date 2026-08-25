@@ -18,7 +18,7 @@ import {
 } from "../controllers/clientPortalController.js";
 import { servePortalDocument, uploadPortalDocument } from "../controllers/portalController.js";
 import { getPortalCaseFormRequests, signPortalCaseFormRequest, submitPortalCaseFormRequest } from "../controllers/clientPortalCaseFormController.js";
-import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
+import { receiveCompressedCaseDocument } from "../middleware/documentUploadMiddleware.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { requireRole } from "../middleware/authorization.js";
 import { asyncHandler } from "../utils/http.js";
@@ -28,7 +28,7 @@ const router = Router();
 router.use(requireRole("client"));
 router.get("/me", permit("general.access"), asyncHandler(getPortalOverview));
 router.get("/documents", permit("documents.view"), asyncHandler(getPortalDocuments));
-router.post("/documents/:id/upload", permit("documents.upload", { resource: "document" }), rateLimit({ windowMs: 60_000, max: 10 }), receiveDocumentFile, asyncHandler(uploadPortalDocument));
+router.post("/documents/:id/upload", permit("documents.upload", { resource: "document" }), rateLimit({ windowMs: 60_000, max: 10 }), receiveCompressedCaseDocument, asyncHandler(uploadPortalDocument));
 router.get("/documents/:id/file", permit("documents.download_finalized", { resource: "document" }), asyncHandler(servePortalDocument));
 router.get("/payments", permit("payments.view_balance", { resource: "allCases" }), asyncHandler(getPortalPayments));
 router.get("/appointments", permit("appointments.view", { resource: "allCases" }), asyncHandler(getPortalAppointments));

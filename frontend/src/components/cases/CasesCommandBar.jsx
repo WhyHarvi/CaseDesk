@@ -47,12 +47,14 @@ export default function CasesCommandBar({
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const staffOptions = useMemo(() => {
-    const uniqueStaff = cases
-      .map((item) => item.assignedTo)
-      .filter(Boolean)
-      .filter((value, index, array) => array.indexOf(value) === index);
+    const staffById = new Map();
+    cases.forEach((item) => {
+      [item.assignedUser, item.caseWorker].filter(Boolean).forEach((staff) => {
+        if (staff.id && staff.fullName) staffById.set(staff.id, staff);
+      });
+    });
 
-    return uniqueStaff.length ? uniqueStaff : [];
+    return [...staffById.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
   }, [cases]);
 
   const visibleStudyIntakes = useMemo(() => [...new Set([
@@ -201,8 +203,8 @@ export default function CasesCommandBar({
             >
               <option value="all">All Staff</option>
               {staffOptions.map((staff) => (
-                <option key={staff} value={staff}>
-                  {staff}
+                <option key={staff.id} value={staff.id}>
+                  {staff.fullName}
                 </option>
               ))}
             </SelectControl>

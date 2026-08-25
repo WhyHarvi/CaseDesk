@@ -401,7 +401,7 @@ async function syncLeadNextAction(tx, leadId) {
   return next;
 }
 
-async function moveLeadOwnership(tx, { agencyId, lead, ownerUserId, actorId, reason, assignmentType = "REASSIGNMENT" }) {
+export async function moveLeadOwnership(tx, { agencyId, lead, ownerUserId, actorId, reason, assignmentType = "REASSIGNMENT" }) {
   const updated = await tx.lead.update({
     where: { id: lead.id },
     data: {

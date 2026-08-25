@@ -306,8 +306,8 @@ export async function inboundTwiML(agencyId, lineId, req) {
     if (line.routing === "FRONTDESK") roles = ["frontdesk"];
   }
   // Twilio's statusCallback on <Dial> reports on the leg it creates (the
-  // browser <Client> leg) with ParentCallSid pointing back to this inbound
-  // call — and that parent SID, not the client leg's own, is what
+  // browser <Client> leg). We map that event back to the inbound parent SID,
+  // rather than the client leg's own SID, because that parent is what
   // oomaCallSession ends up keyed by (providerCallId = parentCallSid ||
   // callSid). The browser's own incoming Call object only ever knows its
   // own (child) leg's SID, so transfer/recording — which need to find that
@@ -317,7 +317,14 @@ export async function inboundTwiML(agencyId, lineId, req) {
   const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
-  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
+  // A <Dial><Client> callback describes the browser child leg, where From is
+  // `client:casedesk:<userId>`. Twilio does not consistently include the
+  // parent SID on that callback, so carry the original inbound context in the
+  // callback URL. This lets every event update the parent call-history row and
+  // retain the external caller number instead of displaying "Private number".
+  const inboundCallerNumber = clean(req.body?.From, 80);
+  const inboundBusinessNumber = clean(req.body?.To, 80);
+  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?parentCallSid=${encodeURIComponent(parentCallSid)}&callerNumber=${encodeURIComponent(inboundCallerNumber)}&businessNumber=${encodeURIComponent(inboundBusinessNumber)}`;
   return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
 }
 
@@ -582,7 +589,9 @@ async function reconcileTwilioSession(session) {
 // for recordings. One (agencyId, providerCallId) chain maps to one session.
 export async function handleTwilioCallStatus({ agencyId, body }) {
   const callSid = clean(body.CallSid, 64);
-  const parentCallSid = clean(body.ParentCallSid, 64);
+  // Lower-camel fields are callback context deliberately threaded through the
+  // TwiML URL; Twilio's own webhook fields use upper camel case.
+  const parentCallSid = clean(body.parentCallSid || body.ParentCallSid, 64);
   if (!callSid && !parentCallSid) return { handled: false, reason: "no_call_sid" };
 
   // <Dial>'s action attribute always fires once the dial finishes — unlike
@@ -612,7 +621,8 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   // An action request's own To/From describe the leg executing the Dial
   // (the agent's Client→Application leg), not the number actually dialed —
   // outboundTwiML threads that through explicitly as `dialedNumber` instead.
-  const remoteRaw = isDialAction ? clean(body.dialedNumber, 80) : (direction === "OUTBOUND" ? body.To : body.From);
+  const explicitInboundCaller = direction === "INBOUND" ? clean(body.callerNumber, 80) : "";
+  const remoteRaw = isDialAction ? clean(body.dialedNumber, 80) : (direction === "OUTBOUND" ? body.To : (explicitInboundCaller || body.From));
   // A `client:casedesk:<userId>` value means the other end of this leg is
   // one of our own agents' softphones — a <Client> ring-everyone/transfer
   // target, or the browser's own Client-to-Application leg for an outbound
@@ -626,7 +636,7 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   const remoteIsInternalClient = clean(remoteRaw, 200).startsWith("client:");
   const remoteNumber = remoteIsInternalClient ? null : (clean(remoteRaw, 80).replace(/^client:/, "") || null);
   const remoteNumberNormalized = normalizeCommunicationPhone(remoteNumber);
-  const businessNumber = isDialAction ? null : clean(direction === "OUTBOUND" ? body.From : body.To, 80).replace(/^client:/, "") || null;
+  const businessNumber = isDialAction ? null : clean(direction === "OUTBOUND" ? body.From : (body.businessNumber || body.To), 80).replace(/^client:/, "") || null;
   const agentIdentity = identityFromClient(clean(body.agent, 200));
   const durationSeconds = number(isDialAction ? body.DialCallDuration : body.CallDuration);
   const recordingUrl = clean(body.RecordingUrl, 2000) || null;
@@ -815,11 +825,19 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
 export async function listTwilioAddressBook(agencyId, { search = "" } = {}) {
   const needle = clean(search, 120);
   const digits = needle.replace(/\D/g, "");
+  // Twilio supplies Canadian/US numbers as E.164 (+1...), while older CRM
+  // records may contain only the local ten digits. Search both shapes so an
+  // active call can resolve to its Lead/Client instead of leaving contextual
+  // controls such as Notes unavailable.
+  const phoneNeedles = [...new Set([digits, digits.length > 10 ? digits.slice(-10) : ""].filter(Boolean))];
   const matches = (fields) => [
     ...(needle
       ? fields.map((field) => ({ [field]: { contains: needle, mode: "insensitive" } }))
       : []),
-    ...(digits ? [{ phone: { contains: digits, mode: "insensitive" } }, { phoneNormalized: { contains: digits, mode: "insensitive" } }] : []),
+    ...phoneNeedles.flatMap((phoneNeedle) => [
+      { phone: { contains: phoneNeedle, mode: "insensitive" } },
+      { phoneNormalized: { contains: phoneNeedle, mode: "insensitive" } },
+    ]),
   ];
   const [clients, leads] = await Promise.all([
     prisma.client.findMany({

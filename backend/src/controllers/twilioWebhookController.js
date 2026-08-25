@@ -23,7 +23,11 @@ export async function twilioOutboundTwiML(req, res) {
 // failure is logged, never surfaced to Twilio as a retry loop for call audio.
 export async function twilioCallStatus(req, res) {
   try {
-    await handleTwilioCallStatus({ agencyId: req.params.agencyId, body: req.body || {} });
+    // TwiML callback URLs carry stable call context (such as the original
+    // inbound caller and parent SID) in their query string. Merge it after
+    // Twilio's POST fields so that child browser-leg values cannot erase it.
+    const callback = { ...(req.body || {}), ...(req.query || {}) };
+    await handleTwilioCallStatus({ agencyId: req.params.agencyId, body: callback });
   } catch (error) {
     logger.warn("twilio.status_callback_failed", { agencyId: req.params.agencyId, callSid: req.body?.CallSid, reason: error.message });
   }

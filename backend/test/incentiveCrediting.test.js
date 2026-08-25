@@ -12,7 +12,7 @@ test("crediting is wired into all 4 balance-mutating call sites, not just the tw
   ]);
 
   // 1. Manual cash/e-transfer payment.
-  assert.match(caseInvoiceService, /creditCaseInvoiceCollection\(agencyId, \{ caseId, caseInvoiceId: updated\.id, newBalance: updated\.balance, trigger: "MANUAL_PAYMENT" \}\)/);
+  assert.match(caseInvoiceService, /creditCaseInvoiceCollection\(agencyId, \{ caseId, caseInvoiceId: updated\.id, newBalance: updated\.balance, trigger: "MANUAL_PAYMENT", paymentProcessorUserId \}\)/);
   // 2. The read-path resync inside listCaseInvoices — easy to miss, but a
   // QuickBooks-side payment can be observed here before any webhook fires.
   assert.match(caseInvoiceService, /creditCaseInvoiceCollection\(agencyId, \{ caseId: updated\.caseId, caseInvoiceId: updated\.id, newBalance: updated\.balance, trigger: "LAZY_RESYNC" \}\)/);
@@ -95,6 +95,30 @@ test("the payout pool is computed per formulaType, and a share with no current h
   assert.match(service, /const caseTeamUserIds = new Set/);
   assert.match(service, /if \(!caseTeamUserIds\.has\(row\.userId\)\) continue;/);
   assert.match(service, /if \(!userIds\.length\) continue;/);
+  assert.match(service, /share\.attributionKind === "PAYMENT_PROCESSOR"/);
+  assert.match(service, /paymentProcessorUserId: verifiedPaymentProcessorId/);
+});
+
+test("payment-processor attribution follows the staff member who recorded the collection", async () => {
+  const [crediting, invoices, approvals] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/services/paymentApprovalService.js"),
+  ]);
+  assert.match(crediting, /roleName = "Payment processor"/);
+  assert.match(crediting, /id: paymentProcessorUserId, agencyId, status: "active"/);
+  assert.match(invoices, /paymentProcessorUserId = actorUserId/);
+  assert.match(approvals, /paymentProcessorUserId: row\.submittedById/);
+  const manualCreditCalls = invoices.match(/trigger: "MANUAL_PAYMENT", paymentProcessorUserId/g) || [];
+  assert.equal(manualCreditCalls.length, 2, "cash and non-cash manual payments must both credit their real processor");
+});
+
+test("the retry worker never recreates snapshots for an inactive workspace", async () => {
+  const service = await source("../src/services/incentiveCreditingService.js");
+  assert.match(service, /prisma\.incentivePlan\.findMany\(\{\s*where: \{ isActive: true \}/);
+  assert.match(service, /if \(!activePlans\.length\) return 0;/);
+  assert.match(service, /where: \{ incentiveSnapshot: null, OR: eligibleScopes \}/);
+  assert.match(service, /if \(!data\?\.incentivePlanId\) continue;/);
 });
 
 test("global incentive roles are stored on team members and existing case assignments are carried forward", async () => {

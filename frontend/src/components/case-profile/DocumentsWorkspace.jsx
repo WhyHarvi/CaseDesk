@@ -25,6 +25,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import InlineActionError from "../ui/inline-action-error";
 import api from "../../services/api";
 import { deduplicateDocuments, normalizeDocumentName } from "./documentNames";
 import { buildDocumentPreview, releaseDocumentPreview } from "./documentPreview";
@@ -35,6 +36,14 @@ const acceptedDocumentTypes = ".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.jpg,.
 const documentPageSize = 10;
 const sharedLibraryCategories = ["Templates", "IRCC Guides", "Checklists", "Letters & Agreements", "Sample Affidavits", "Internal Precedents", "General"];
 const lockedWrittenDocumentStatuses = new Set(["Issued", "Signed", "Finalized"]);
+const isPdfUpload = (file) => file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
+const exceedsCaseUploadLimit = (file) => isPdfUpload(file)
+  ? file.size > 5 * 1024 * 1024
+  : file.size > 25 * 1024 * 1024;
+const caseUploadLimitError = (file) => isPdfUpload(file)
+  ? `“${file.name}” is larger than 5 MB. Choose a smaller PDF, then press Upload again.`
+  : `“${file.name}” is larger than 25 MB. Choose a smaller file, then press Upload again.`;
+const requestErrorMessage = (reason, fallback) => reason?.response?.data?.message || fallback;
 const documentStatusOptions = [
   { value: "Requested", label: "Requested", message: "Waiting for client upload", requiresFile: false, pill: "border-slate-200 bg-slate-100/90 text-slate-700", dot: "bg-slate-400", icon: "bg-slate-100 text-slate-600" },
   { value: "Uploaded", label: "Uploaded", message: "Ready for initial review", requiresFile: true, pill: "border-sky-200 bg-sky-50 text-sky-700", dot: "bg-sky-500", icon: "bg-sky-50 text-sky-600" },
@@ -595,7 +604,7 @@ function NewFolderDialog({ name, saving, error, onChangeName, onClose, onSubmit 
   return createPortal(<div className="fixed inset-0 z-[390] flex items-center justify-center bg-slate-950/20 p-4 backdrop-blur-md"><button type="button" onClick={onClose} className="absolute inset-0" aria-label="Cancel new folder" /><motion.form initial={{ opacity: 0, y: 12, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} onSubmit={onSubmit} className="relative w-full max-w-sm overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.24)]"><div className="flex items-start justify-between px-6 pb-4 pt-6"><div><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-600">My Documents</p><h3 className="mt-1 text-lg font-semibold text-slate-950">New folder</h3></div><button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100"><X className="h-4 w-4" /></button></div><div className="space-y-3 px-6 pb-6"><label className="block text-sm font-semibold text-slate-800">Folder name<input autoFocus required maxLength={120} value={name} onChange={(event) => onChangeName(event.target.value)} className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-normal outline-none focus:border-sky-400" placeholder="e.g. Financial documents" /></label>{error ? <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}</div><div className="grid grid-cols-2 gap-3 border-t border-slate-100 bg-slate-50/70 p-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">Cancel</button><button type="submit" disabled={saving || !name.trim()} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating…" : "Create Folder"}</button></div></motion.form></div>, document.body);
 }
 
-function DocumentRow({ document, uploading, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, highlighted, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete, folderControl }) {
+function DocumentRow({ document, uploading, uploadError, updating, selectable, selected, internal, fileBusy, deletable, statusUpdating, highlighted, onToggleSelected, onUpload, onView, onChangeStatus, onRequestUnassign, onReassign, onDelete, folderControl }) {
   const fileInput = useRef(null);
   const [dragging, setDragging] = useState(false);
   const received = Boolean(document.storageKey);
@@ -631,20 +640,23 @@ function DocumentRow({ document, uploading, updating, selectable, selected, inte
         </div>
         {uploading !== undefined ? <div className="mt-2 ml-10"><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><motion.div animate={{ width: `${uploading}%` }} className="h-full rounded-full bg-sky-500" /></div><p className="mt-1 text-[10px] font-semibold text-slate-400">Uploading {uploading}%</p></div> : null}
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
-        <input ref={fileInput} type="file" accept={acceptedDocumentTypes} className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(document, file); event.target.value = ""; }} />
-        {internal ? (
-          <>{hasFile ? <span className="text-[11px] font-semibold text-slate-400">Click to open</span> : <button type="button" onClick={() => fileInput.current?.click()} disabled={uploading !== undefined} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />Attach File</button>}</>
-        ) : unassigned ? (
-          <button type="button" onClick={() => onReassign(document)} disabled={updating} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><RotateCcw className="h-3.5 w-3.5" />{updating ? "Restoring…" : "Reassign"}</button>
-        ) : (
-          <>
-            {!hasFile ? <button type="button" onClick={() => fileInput.current?.click()} disabled={uploading !== undefined || updating} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />Upload</button> : null}
-            <DocumentStatusPicker documentItem={document} value={document.status} onChange={(status) => onChangeStatus(document, status)} disabled={statusUpdating || updating} compact />
-          </>
-        )}
-        {folderControl}
-        {deletable ? <button type="button" onClick={() => onDelete(document)} disabled={updating || fileBusy || uploading !== undefined} aria-label={`Delete ${document.documentName}`} title="Delete document" className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}
+      <div className="flex min-w-0 max-w-md flex-col items-end gap-2" onClick={(event) => event.stopPropagation()}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <input ref={fileInput} type="file" accept={acceptedDocumentTypes} className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(document, file); event.target.value = ""; }} />
+          {internal ? (
+            <>{hasFile ? <span className="text-[11px] font-semibold text-slate-400">Click to open</span> : <button type="button" onClick={() => fileInput.current?.click()} disabled={uploading !== undefined} aria-describedby={uploadError ? `case-document-upload-error-${document.id}` : undefined} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />Attach File</button>}</>
+          ) : unassigned ? (
+            <button type="button" onClick={() => onReassign(document)} disabled={updating} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><RotateCcw className="h-3.5 w-3.5" />{updating ? "Restoring…" : "Reassign"}</button>
+          ) : (
+            <>
+              {!hasFile ? <button type="button" onClick={() => fileInput.current?.click()} disabled={uploading !== undefined || updating} aria-describedby={uploadError ? `case-document-upload-error-${document.id}` : undefined} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />Upload</button> : null}
+              <DocumentStatusPicker documentItem={document} value={document.status} onChange={(status) => onChangeStatus(document, status)} disabled={statusUpdating || updating} compact />
+            </>
+          )}
+          {folderControl}
+          {deletable ? <button type="button" onClick={() => onDelete(document)} disabled={updating || fileBusy || uploading !== undefined} aria-label={`Delete ${document.documentName}`} title="Delete document" className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}
+        </div>
+        <InlineActionError id={`case-document-upload-error-${document.id}`} message={uploadError} />
       </div>
       {dragging ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-sky-50/90 text-xs font-semibold text-sky-700 backdrop-blur-[1px]"><UploadCloud className="mr-2 h-4 w-4" />Drop to upload for “{document.documentName}”</div> : null}
     </div>
@@ -707,6 +719,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   const [movingDocumentId, setMovingDocumentId] = useState("");
   const [fileBusyId, setFileBusyId] = useState("");
   const [fileActionError, setFileActionError] = useState("");
+  const [documentUploadErrors, setDocumentUploadErrors] = useState({});
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -985,16 +998,19 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   }, [caseId, onRefreshDocuments]);
 
   async function upload(document, file) {
-    if (file.size > 25 * 1024 * 1024) {
-      setFileActionError("Files must be 25 MB or smaller.");
+    if (exceedsCaseUploadLimit(file)) {
+      setDocumentUploadErrors((current) => ({ ...current, [document.id]: caseUploadLimitError(file) }));
       return;
     }
-    setFileActionError("");
+    setDocumentUploadErrors((current) => ({ ...current, [document.id]: "" }));
     setUploading((current) => ({ ...current, [document.id]: 1 }));
     try {
       await onMarkReceived(document.id, file, (progress) => setUploading((current) => ({ ...current, [document.id]: progress })));
-    } catch {
-      // The shared workspace error banner displays the upload failure.
+    } catch (reason) {
+      setDocumentUploadErrors((current) => ({
+        ...current,
+        [document.id]: requestErrorMessage(reason, "The file could not be uploaded. Check your connection, then press Upload again."),
+      }));
     } finally {
       setUploading((current) => { const next = { ...current }; delete next[document.id]; return next; });
     }
@@ -1002,11 +1018,13 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
 
   async function uploadMyDocuments(files) {
     const queued = Array.from(files);
-    const oversized = queued.filter((file) => file.size > 25 * 1024 * 1024);
-    const toUpload = queued.filter((file) => file.size <= 25 * 1024 * 1024);
+    const oversized = queued.filter(exceedsCaseUploadLimit);
+    const toUpload = queued.filter((file) => !exceedsCaseUploadLimit(file));
     setFileActionError(
       oversized.length
-        ? `${oversized.length === 1 ? oversized[0].name : `${oversized.length} files`} over 25 MB and skipped: ${oversized.map((file) => file.name).join(", ")}.`
+        ? oversized.length === 1
+          ? caseUploadLimitError(oversized[0]).replace("press Upload again", "press Upload Documents again")
+          : `${oversized.length} files were not uploaded because PDFs must be 5 MB or smaller and other files must be 25 MB or smaller. Choose smaller files, then press Upload Documents again. Skipped: ${oversized.map((file) => file.name).join(", ")}.`
         : "",
     );
     if (!toUpload.length) return;
@@ -1022,9 +1040,8 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
         await onUploadMyDocument(file, setMyDocumentProgress, openWorkingFolder || undefined);
       }
       setOpenFolder("mine");
-    } catch {
-      // The workspace error banner displays the API failure. Files already
-      // uploaded before the failure stay uploaded — only the batch stops.
+    } catch (reason) {
+      setFileActionError(requestErrorMessage(reason, "The upload stopped. Check your connection, then press Upload Documents again. Files already uploaded were saved."));
     } finally {
       setMyDocumentUploading(false);
       setMyDocumentProgress(0);
@@ -1226,6 +1243,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             key={document.id}
             document={document}
             uploading={uploading[document.id]}
+            uploadError={documentUploadErrors[document.id]}
             updating={bulkUpdating || assignmentUpdatingId === document.id}
             selectable
             selected={selectedDocumentIds.has(document.id)}
@@ -1271,8 +1289,17 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             <span className="text-xs font-semibold text-slate-800">{currentFolder?.name}</span>
           </div>
         )}
-        {items.map((document) => document.draft ? <div key={document.id} className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 transition hover:bg-slate-50"><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex min-w-0 flex-1 items-center justify-between gap-4 text-left"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button>{canDeleteWrittenDocument(document.draft) ? <button type="button" onClick={() => requestWrittenDocumentDelete(document.draft)} disabled={writtenDeletingId === document.draft.id} aria-label={`Delete ${document.draft.title}`} title="Delete written document" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}</div> : <DocumentRow key={document.id} document={document} internal fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} deletable={Boolean(document.writtenDocument) && canDeleteWrittenDocument(document.writtenDocument)} onDelete={requestWrittenDocumentDelete} folderControl={workingFolders.length ? <select value={document.folderId || ""} disabled={movingDocumentId === document.id} onChange={(event) => moveDocumentToFolder(document, event.target.value)} className="h-8 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none focus:border-sky-300 disabled:opacity-50"><option value="">No folder</option>{workingFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select> : null} />)}
-        {!items.length && filteredEmptyMessage ? <p className="p-8 text-center text-sm text-slate-500">{filteredEmptyMessage}</p> : null}{!items.length && !filteredEmptyMessage ? <div className="flex flex-col items-center px-5 py-10 text-center"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UploadCloud className="h-5 w-5" /></span><p className="mt-3 text-sm font-semibold text-slate-800">{openWorkingFolder ? "No files in this folder yet" : "No internal documents yet"}</p><p className="mt-1 text-xs text-slate-500">Upload working files, drafts, or supporting material for this case.</p><button type="button" onClick={() => myDocumentInput.current?.click()} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Upload Documents</button></div> : null}
+        {items.map((document) => document.draft ? <div key={document.id} className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 transition hover:bg-slate-50"><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/${document.draft.id}/edit`, "_blank", "noopener,noreferrer")} className="flex min-w-0 flex-1 items-center justify-between gap-4 text-left"><span className="flex min-w-0 items-center gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><FilePenLine className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{document.draft.title}</span><span className="mt-0.5 block text-xs text-slate-500">Autosaved draft · Updated {new Date(document.draft.updatedAt).toLocaleString()}</span></span></span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700">Continue writing</span></button>{canDeleteWrittenDocument(document.draft) ? <button type="button" onClick={() => requestWrittenDocumentDelete(document.draft)} disabled={writtenDeletingId === document.draft.id} aria-label={`Delete ${document.draft.title}`} title="Delete written document" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button> : null}</div> : <DocumentRow key={document.id} document={document} internal uploadError={documentUploadErrors[document.id]} fileBusy={fileBusyId === document.id} onUpload={upload} onView={viewDocument} deletable={Boolean(document.writtenDocument) && canDeleteWrittenDocument(document.writtenDocument)} onDelete={requestWrittenDocumentDelete} folderControl={workingFolders.length ? <select value={document.folderId || ""} disabled={movingDocumentId === document.id} onChange={(event) => moveDocumentToFolder(document, event.target.value)} className="h-8 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none focus:border-sky-300 disabled:opacity-50"><option value="">No folder</option>{workingFolders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select> : null} />)}
+        {!items.length && filteredEmptyMessage ? <p className="p-8 text-center text-sm text-slate-500">{filteredEmptyMessage}</p> : null}
+        {!items.length && !filteredEmptyMessage ? (
+          <div className="flex flex-col items-center px-5 py-10 text-center">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UploadCloud className="h-5 w-5" /></span>
+            <p className="mt-3 text-sm font-semibold text-slate-800">{openWorkingFolder ? "No files in this folder yet" : "No internal documents yet"}</p>
+            <p className="mt-1 text-xs text-slate-500">Upload working files, drafts, or supporting material for this case.</p>
+            <button type="button" onClick={() => myDocumentInput.current?.click()} aria-describedby={fileActionError ? "empty-my-documents-upload-error" : undefined} className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white">Upload Documents</button>
+            <InlineActionError id="empty-my-documents-upload-error" message={fileActionError} className="mt-2 max-w-md" />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1291,7 +1318,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
       </header>
       <main className="p-4">
         <input ref={myDocumentInput} type="file" accept={acceptedDocumentTypes} multiple className="hidden" onChange={(event) => { const files = event.target.files; if (files?.length) uploadMyDocuments(files); event.target.value = ""; }} />
-        {error || fileActionError ? <div className="mb-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{fileActionError || error}</div> : null}
+        <InlineActionError message={error} className="mb-3" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {folders.map((folder) => {
             const active = openFolder === folder.id;
@@ -1309,11 +1336,14 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
             <motion.section key={openFolder} initial={{ opacity: 0, y: 8, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, y: -5, height: 0 }} transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }} className="mt-4 overflow-hidden rounded-[1.25rem] border border-white/80 bg-white shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
                 <div><p className="text-sm font-semibold text-slate-950">{folders.find((folder) => folder.id === openFolder)?.title}</p><p className="mt-0.5 text-xs text-slate-500">{openFolder === "mine" ? "Internal working files stay separate from client requests." : "Only the requirements assigned to this case appear here."}</p></div>
-                <div className="flex items-center gap-2">
+                <div className="flex max-w-md flex-col items-end gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                   {actionDocuments.length ? <button type="button" onClick={toggleSelectAll} disabled={bulkUpdating} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">{allVisibleSelected ? "Clear page" : "Select page"}</button> : null}
                   {openFolder === "client" ? <button type="button" onClick={() => setRequestOpen(true)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Add document</button> : null}
-                  {openFolder === "mine" ? <><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/new`, "_blank", "noopener,noreferrer")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"><FilePenLine className="h-3.5 w-3.5" />New Written Document</button><button type="button" onClick={() => myDocumentInput.current?.click()} disabled={myDocumentUploading} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />{myDocumentUploading ? (myDocumentTotal > 1 ? `Uploading ${myDocumentIndex} of ${myDocumentTotal} — ${myDocumentProgress}%` : `Uploading ${myDocumentProgress}%`) : "Upload Documents"}</button></> : null}
+                  {openFolder === "mine" ? <><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/new`, "_blank", "noopener,noreferrer")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"><FilePenLine className="h-3.5 w-3.5" />New Written Document</button><button type="button" onClick={() => myDocumentInput.current?.click()} disabled={myDocumentUploading} aria-describedby={fileActionError && myFolderItems.length ? "my-documents-upload-error" : undefined} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />{myDocumentUploading ? (myDocumentTotal > 1 ? `Uploading ${myDocumentIndex} of ${myDocumentTotal} — ${myDocumentProgress}%` : `Uploading ${myDocumentProgress}%`) : "Upload Documents"}</button></> : null}
                   {openFolder === "shared" && sharedCanManage ? <button type="button" onClick={() => setSharedUploadOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Add Resource</button> : null}
+                  </div>
+                  {openFolder === "mine" && myFolderItems.length ? <InlineActionError id="my-documents-upload-error" message={fileActionError} /> : null}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/45 px-4 py-2.5">
