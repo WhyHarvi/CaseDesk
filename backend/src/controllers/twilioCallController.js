@@ -13,6 +13,8 @@ import {
   listTwilioVoiceNumbers,
   provisionTwilioVoiceLine,
   resolveAgencyTwilioVoiceConfig,
+  startCallRecording,
+  stopCallRecording,
   syncTwilioCallHistory,
   transferTwilioCall,
   twilioVoiceConnectionStatus,
@@ -104,6 +106,21 @@ export async function transferCall(req, res) {
     action: "twilio.call_transferred",
     details: `Call transferred to ${data.target.fullName}`,
   });
+  res.json({ data });
+}
+
+// Recording is opt-in per call, started/stopped from the in-call screen —
+// see startCallRecording's own comment for why this isn't a Dial-verb
+// default anymore.
+export async function startRecording(req, res) {
+  const data = await startCallRecording(req.user.agencyId, { callSid: req.body?.callSid }, req);
+  await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "twilio.call_recording_started", details: "Started recording an active call" });
+  res.json({ data });
+}
+
+export async function stopRecording(req, res) {
+  const data = await stopCallRecording(req.user.agencyId, { callSid: req.body?.callSid, recordingSid: req.body?.recordingSid });
+  await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, action: "twilio.call_recording_stopped", details: "Stopped recording an active call" });
   res.json({ data });
 }
 

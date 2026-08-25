@@ -72,7 +72,10 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(service, /routing: "INTERNAL", enabled: true/);
   assert.match(service, /export async function transferTwilioCall/);
   assert.match(service, /\.calls\(session\.providerCallId\)\.update\(\{ twiml \}\)/);
-  assert.match(service, /<Client>\$\{escapeXml\(clientIdentity\(target\.id\)\)\}<\/Client>/);
+  // The transfer target's <Client> carries session.providerCallId through as
+  // a ParentCallSid parameter — the same hand-off inboundTwiML uses — so the
+  // person transferred to can themselves transfer or record afterward.
+  assert.match(service, /<Client>\$\{escapeXml\(clientIdentity\(target\.id\)\)\}<Parameter name="ParentCallSid" value="\$\{escapeXml\(session\.providerCallId\)\}"\/><\/Client>/);
   assert.match(service, /export async function listTwilioCallableStaff/);
   // The per-line webhook path is wired for Twilio to fetch.
   const webhookRoutes = await source("../src/routes/communicationWebhookRoutes.js");
@@ -202,7 +205,8 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
   // params, and remembers them so the ended-call popup can autofill + save.
   assert.match(provider, /const dial = useCallback\(async \(number, context = \{\}\) =>/);
   assert.match(provider, /leadId: context\.leadId/);
-  assert.match(provider, /setEndedCall\(\{ number: target, callSid: call\.parameters\?\.CallSid \|\| "", durationSeconds, \.\.\.dialContextRef\.current }/);
+  assert.match(provider, /const payload = \{ number: target, callSid: call\.parameters\?\.CallSid \|\| "", durationSeconds, \.\.\.dialContextRef\.current };/);
+  assert.match(provider, /setEndedCall\(payload\);/);
   // The popup itself: autofilled details, outcome + note, optional follow-up.
   assert.match(provider, /function EndedCallCard\(\{ ended, onClose }/);
   assert.match(provider, /api\.post\("\/twilio-calls\/outcome"/);

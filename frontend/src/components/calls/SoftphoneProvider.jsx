@@ -6,6 +6,32 @@ import api from "../../services/api";
 
 const SoftphoneContext = createContext(null);
 
+// Twilio Client identities can be registered from more than one browser
+// tab/window at once (every open CaseDesk tab runs this same provider), and
+// dialing an identity with multiple simultaneous registrations is exactly
+// what was causing inbound calls to fail fast as "busy" a few seconds in —
+// not every registered tab handled the incoming notification the same way.
+// The fix is structural: only ONE tab per logged-in user ever actually
+// registers a Twilio Device (the "leader", decided via the Web Locks API,
+// which hands leadership to the next open tab automatically and instantly
+// if the leader tab closes — no polling/heartbeat needed). Every other tab
+// ("followers") mirrors the leader's call state over a BroadcastChannel and
+// relays user actions (answer, hang up, dial, mute, DTMF) back to the
+// leader to actually execute — so incoming calls still ring, and can still
+// be answered, no matter which of the user's open tabs they're looking at.
+//
+// The one thing this can't fix: a call's actual audio lives in whichever
+// tab is hosting it (the leader) — closing THAT specific tab mid-call still
+// ends the call. Leadership only prevents the registration conflict that
+// was dropping calls before they were even answered.
+const LOCK_NAME = "casedesk-softphone-device";
+const CHANNEL_NAME = "casedesk-softphone";
+const ACTION_TIMEOUT_MS = 12_000;
+
+function randomId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function normalizeE164(value) {
   const digits = String(value || "").replace(/[^\d+]/g, "");
   if (!digits) return "";
@@ -78,23 +104,53 @@ function toLocalDateTimeInput(date) {
 
 export function SoftphoneProvider({ children }) {
   const { appUser } = useAuth();
+  const isLeaderRef = useRef(false);
   const deviceRef = useRef(null);
+  const incomingCallRef = useRef(null); // real Twilio Call — leader tab only
+  const activeCallRef = useRef(null); // real Twilio Call — leader tab only
   const tokenRefreshInFlight = useRef(false);
   const dialContextRef = useRef({}); // record context passed to dial(), read back when the call ends
   const callStartedAtRef = useRef(null);
+  const channelRef = useRef(null);
+  const pendingActionsRef = useRef(new Map()); // requestId -> { resolve, reject, timer } — follower tabs awaiting the leader's reply
+  const ringContextRef = useRef(null);
+  const ringTimerRef = useRef(null);
+
   const [status, setStatus] = useState("idle"); // idle | registering | ready | error | unconfigured
   const [error, setError] = useState("");
   const [registered, setRegistered] = useState(false);
-  const [incoming, setIncoming] = useState(null); // { call, from }
-  const [active, setActive] = useState(null); // { call, number, direction, leadId?, leadName? }
+  const [incoming, setIncoming] = useState(null); // { from, callSid }
+  const [active, setActive] = useState(null); // { callSid, number, direction, leadId?, leadName?, clientId?, clientName? }
   const [muted, setMuted] = useState(false);
   // { number, callSid, durationSeconds, leadId, leadName, clientId, clientName }
   // set when an OUTBOUND call we placed ends — the trigger for the follow-up
   // popup. Incoming calls never set it: their activity is recorded server-side
   // and the user only ever gets this popup for calls we placed.
   const [endedCall, setEndedCall] = useState(null);
-  const ringContextRef = useRef(null);
-  const ringTimerRef = useRef(null);
+
+  // Mirrors the state above for synchronous reads inside callbacks (avoids
+  // stale-closure bugs across the many interdependent handlers below) and is
+  // exactly what gets broadcast to follower tabs whenever it changes.
+  const stateRef = useRef({ status: "idle", error: "", registered: false, incoming: null, active: null, muted: false });
+
+  const broadcast = useCallback((message) => {
+    channelRef.current?.postMessage(message);
+  }, []);
+
+  // Applies a partial state update locally (always) and, only when this tab
+  // is the leader and the change originated here (not a message we just
+  // received FROM the leader), broadcasts the full merged state so every
+  // follower tab stays in sync.
+  const applyState = useCallback((partial, { fromRemote = false } = {}) => {
+    stateRef.current = { ...stateRef.current, ...partial };
+    if ("status" in partial) setStatus(partial.status);
+    if ("error" in partial) setError(partial.error);
+    if ("registered" in partial) setRegistered(partial.registered);
+    if ("incoming" in partial) setIncoming(partial.incoming);
+    if ("active" in partial) setActive(partial.active);
+    if ("muted" in partial) setMuted(partial.muted);
+    if (!fromRemote && isLeaderRef.current) broadcast({ type: "state", state: stateRef.current });
+  }, [broadcast]);
 
   const stopRingtone = useCallback(() => {
     if (ringTimerRef.current) {
@@ -109,7 +165,10 @@ export function SoftphoneProvider({ children }) {
   // Synthesizes the incoming-call ring instead of bundling an audio asset —
   // 440Hz + 480Hz is the actual North American ring-tone frequency pair,
   // played 2s on / 2s off, repeating until the call is accepted, declined,
-  // or the caller hangs up first.
+  // or the caller hangs up first. Every open tab (leader and followers
+  // alike) runs its own copy of this, triggered by the ring-start/ring-stop
+  // broadcast below, so the ring is audible regardless of which tab the
+  // leader happens to be or which tab currently has focus.
   const playRingtone = useCallback(() => {
     stopRingtone();
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -158,75 +217,18 @@ export function SoftphoneProvider({ children }) {
     }
   }, []);
 
-  useEffect(() => {
-    if (!appUser?.id) return undefined;
-    let disposed = false;
-    let device = null;
-    setStatus("registering");
-    setError("");
+  // ---- Leader-only real Twilio Voice SDK operations --------------------
+  // These touch deviceRef/incomingCallRef/activeCallRef directly and must
+  // only ever run in the tab that holds the lock. Follower tabs never call
+  // these — they call sendAction() instead, which the leader's message
+  // handler below routes back into this exact set of functions.
 
-    api
-      .post("/twilio-calls/token")
-      .then((response) => {
-        if (disposed) return null;
-        const token = response.data?.data?.token;
-        if (!token) return null;
-        device = new Device(token, { logLevel: 1, allowIncomingWhileBusy: true });
-        deviceRef.current = device;
-        device.on("registered", () => { if (!disposed) { setRegistered(true); setStatus("ready"); } });
-        device.on("unregistered", () => { if (!disposed) setRegistered(false); });
-        device.on("error", (deviceError) => {
-          if (disposed) return;
-          const message = deviceError?.message || String(deviceError || "Softphone error");
-          if (!message.toLowerCase().includes("token") || status !== "ready") {
-            setError(message);
-          }
-        });
-        device.on("tokenWillExpire", (target) => void refreshToken(target));
-        device.on("incoming", (call) => {
-          if (disposed) return;
-          const from = call.parameters?.From || call.customParameters?.From || "";
-          setIncoming({ call, from });
-          playRingtone();
-          call.on("cancel", () => { stopRingtone(); setIncoming((current) => (current?.call === call ? null : current)); });
-          call.on("reject", () => { stopRingtone(); setIncoming((current) => (current?.call === call ? null : current)); });
-          call.on("disconnect", () => {
-            stopRingtone();
-            setIncoming((current) => (current?.call === call ? null : current));
-            setActive((current) => (current?.call === call ? null : current));
-            setMuted(false);
-          });
-        });
-        return device.register();
-      })
-      .then(() => {
-        if (disposed) return;
-      })
-      .catch((reason) => {
-        if (disposed) return;
-        const message = reason?.response?.data?.message || reason?.message || "The softphone could not be started.";
-        const unconfigured = reason?.response?.status === 409;
-        setError(message);
-        setStatus(unconfigured ? "unconfigured" : "error");
-      });
-
-    return () => {
-      disposed = true;
-      deviceRef.current = null;
-      stopRingtone();
-      if (device) {
-        device.removeAllListeners();
-        device.destroy();
-      }
-    };
-  }, [appUser?.id, refreshToken, playRingtone, stopRingtone]);
-
-  const dial = useCallback(async (number, context = {}) => {
-    const target = normalizeE164(number);
+  const performDial = useCallback(async (numberValue, context = {}) => {
+    const target = normalizeE164(numberValue);
     if (!target) throw new Error("Enter a phone number to call.");
     const device = deviceRef.current;
-    if (!device || !registered) throw new Error("The softphone is not registered. Check the Twilio connection in Settings.");
-    if (active) throw new Error("A call is already in progress. Hang up first.");
+    if (!device || !stateRef.current.registered) throw new Error("The softphone is not registered. Check the Twilio connection in Settings.");
+    if (stateRef.current.active) throw new Error("A call is already in progress. Hang up first.");
     // The record ids ride as custom params to the TwiML Application, which
     // forwards them to the status callbacks so the session links to the
     // lead/client even before (or without) the outcome popup being saved.
@@ -237,60 +239,268 @@ export function SoftphoneProvider({ children }) {
         ...(context.clientId ? { clientId: context.clientId } : {}),
       },
     });
+    activeCallRef.current = call;
     dialContextRef.current = context || {};
     callStartedAtRef.current = Date.now();
-    setActive({ call, number: target, direction: "OUTBOUND", ...(context || {}) });
-    setMuted(false);
+    applyState({ active: { callSid: call.parameters?.CallSid || "", number: target, direction: "OUTBOUND", ...(context || {}) }, muted: false });
     const finish = (showPopup) => {
       const durationSeconds = callStartedAtRef.current ? Math.max(1, Math.round((Date.now() - callStartedAtRef.current) / 1000)) : 1;
       callStartedAtRef.current = null;
-      setActive((current) => (current?.call === call ? null : current));
-      setMuted(false);
+      activeCallRef.current = null;
+      applyState({ active: null, muted: false });
       if (showPopup) {
-        setEndedCall({ number: target, callSid: call.parameters?.CallSid || "", durationSeconds, ...dialContextRef.current });
+        const payload = { number: target, callSid: call.parameters?.CallSid || "", durationSeconds, ...dialContextRef.current };
+        setEndedCall(payload);
+        broadcast({ type: "ended-call", ended: payload });
         dialContextRef.current = {};
       }
     };
     call.on("disconnect", () => finish(true));
     call.on("cancel", () => finish(false));
-    return call;
-  }, [active, registered]);
+  }, [applyState, broadcast]);
+
+  const performAccept = useCallback(() => {
+    const call = incomingCallRef.current;
+    if (!call) return;
+    stopRingtone();
+    broadcast({ type: "ring-stop" });
+    // Reuse the callSid already resolved when "incoming" fired (it already
+    // preferred the ParentCallSid custom parameter over call.parameters —
+    // see that handler's comment) rather than re-deriving it here.
+    const callSid = stateRef.current.incoming?.callSid || call.parameters?.CallSid || "";
+    call.accept();
+    activeCallRef.current = call;
+    incomingCallRef.current = null;
+    applyState({ incoming: null, active: { callSid, number: stateRef.current.incoming?.from || "", direction: "INBOUND" }, muted: false });
+  }, [applyState, broadcast, stopRingtone]);
+
+  const performReject = useCallback(() => {
+    const call = incomingCallRef.current;
+    if (!call) return;
+    stopRingtone();
+    broadcast({ type: "ring-stop" });
+    call.reject();
+    incomingCallRef.current = null;
+    applyState({ incoming: null });
+  }, [applyState, broadcast, stopRingtone]);
+
+  const performHangup = useCallback(() => {
+    stopRingtone();
+    broadcast({ type: "ring-stop" });
+    if (activeCallRef.current) activeCallRef.current.disconnect();
+    if (incomingCallRef.current) incomingCallRef.current.disconnect();
+    activeCallRef.current = null;
+    incomingCallRef.current = null;
+    applyState({ active: null, incoming: null, muted: false });
+  }, [applyState, broadcast, stopRingtone]);
+
+  const performToggleMute = useCallback(() => {
+    if (!activeCallRef.current) return;
+    const next = !stateRef.current.muted;
+    try { activeCallRef.current.mute(next); } catch { /* muted state is cosmetic if the call rejects it */ }
+    applyState({ muted: next });
+  }, [applyState]);
+
+  const performSendDigits = useCallback((key) => {
+    try { activeCallRef.current?.sendDigits(key); } catch { /* DTMF is best-effort */ }
+  }, []);
+
+  // ---- Follower-tab action relay ----------------------------------------
+  // Posts an action to the channel and awaits the leader's action-result
+  // reply, so dial()/etc. keep behaving like the async functions callers
+  // already expect (throwing on failure) even when this tab isn't the one
+  // actually holding the Twilio connection.
+  const sendAction = useCallback((action, payload) => new Promise((resolve, reject) => {
+    const requestId = randomId();
+    const timer = window.setTimeout(() => {
+      pendingActionsRef.current.delete(requestId);
+      reject(new Error("The tab handling calls isn't responding. Try again or reload."));
+    }, ACTION_TIMEOUT_MS);
+    pendingActionsRef.current.set(requestId, { resolve, reject, timer });
+    broadcast({ type: "action", requestId, action, payload });
+  }), [broadcast]);
+
+  useEffect(() => {
+    if (!appUser?.id) return undefined;
+    let disposed = false;
+    let device = null;
+    let releaseLock;
+    const lockHoldPromise = new Promise((resolve) => { releaseLock = resolve; });
+
+    const channel = new BroadcastChannel(CHANNEL_NAME);
+    channelRef.current = channel;
+    channel.onmessage = (event) => {
+      const message = event.data || {};
+      if (message.type === "state") {
+        applyState(message.state, { fromRemote: true });
+        return;
+      }
+      if (message.type === "ring-start") { playRingtone(); return; }
+      if (message.type === "ring-stop") { stopRingtone(); return; }
+      if (message.type === "ended-call") { setEndedCall(message.ended); return; }
+      if (message.type === "ended-call-resolved") { setEndedCall(null); return; }
+      if (message.type === "request-state") {
+        if (isLeaderRef.current) broadcast({ type: "state", state: stateRef.current });
+        return;
+      }
+      if (message.type === "action-result") {
+        const pending = pendingActionsRef.current.get(message.requestId);
+        if (!pending) return;
+        window.clearTimeout(pending.timer);
+        pendingActionsRef.current.delete(message.requestId);
+        if (message.ok) pending.resolve();
+        else pending.reject(new Error(message.message || "The action could not be completed."));
+        return;
+      }
+      if (message.type === "action" && isLeaderRef.current) {
+        (async () => {
+          try {
+            if (message.action === "dial") await performDial(message.payload?.number, message.payload?.context || {});
+            else if (message.action === "accept") performAccept();
+            else if (message.action === "reject") performReject();
+            else if (message.action === "hangup") performHangup();
+            else if (message.action === "toggleMute") performToggleMute();
+            else if (message.action === "sendDigits") performSendDigits(message.payload?.key);
+            broadcast({ type: "action-result", requestId: message.requestId, ok: true });
+          } catch (reason) {
+            broadcast({ type: "action-result", requestId: message.requestId, ok: false, message: reason?.message || "The action could not be completed." });
+          }
+        })();
+      }
+    };
+    // A brand-new tab (e.g. opened after a call was already placed
+    // elsewhere) needs to catch up immediately rather than waiting for the
+    // next unrelated state change — ask whichever tab is currently leader
+    // (if any) to resend its full state.
+    channel.postMessage({ type: "request-state" });
+
+    const runAsLeader = async () => {
+      if (disposed) return;
+      isLeaderRef.current = true;
+      applyState({ status: "registering", error: "" });
+      try {
+        const response = await api.post("/twilio-calls/token");
+        if (disposed) return;
+        const token = response.data?.data?.token;
+        if (!token) return;
+        device = new Device(token, { logLevel: 1, allowIncomingWhileBusy: true });
+        deviceRef.current = device;
+        device.on("registered", () => { if (!disposed) applyState({ registered: true, status: "ready" }); });
+        device.on("unregistered", () => { if (!disposed) applyState({ registered: false }); });
+        device.on("error", (deviceError) => {
+          if (disposed) return;
+          const message = deviceError?.message || String(deviceError || "Softphone error");
+          if (!message.toLowerCase().includes("token") || stateRef.current.status !== "ready") applyState({ error: message });
+        });
+        device.on("tokenWillExpire", (target) => void refreshToken(target));
+        device.on("incoming", (call) => {
+          if (disposed) return;
+          const from = call.parameters?.From || call.customParameters?.get?.("From") || "";
+          // call.parameters.CallSid is this call's own (child) leg — the
+          // <Dial> that rang this browser reports call status/recording
+          // against the PARENT call instead (see inboundTwiML's comment),
+          // so transfer/recording need that parent SID, passed through as a
+          // custom TwiML <Parameter> since the SDK has no other way to know it.
+          const callSid = call.customParameters?.get?.("ParentCallSid") || call.parameters?.CallSid || "";
+          incomingCallRef.current = call;
+          applyState({ incoming: { from, callSid } });
+          playRingtone();
+          broadcast({ type: "ring-start" });
+          const clearIncoming = () => {
+            stopRingtone();
+            broadcast({ type: "ring-stop" });
+            incomingCallRef.current = null;
+            applyState({ incoming: null });
+          };
+          call.on("cancel", clearIncoming);
+          call.on("reject", clearIncoming);
+          call.on("disconnect", () => {
+            stopRingtone();
+            broadcast({ type: "ring-stop" });
+            incomingCallRef.current = null;
+            activeCallRef.current = null;
+            applyState({ incoming: null, active: null, muted: false });
+          });
+        });
+        await device.register();
+      } catch (reason) {
+        if (disposed) return;
+        const message = reason?.response?.data?.message || reason?.message || "The softphone could not be started.";
+        const unconfigured = reason?.response?.status === 409;
+        applyState({ error: message, status: unconfigured ? "unconfigured" : "error" });
+      }
+    };
+
+    if (typeof navigator.locks?.request === "function") {
+      navigator.locks.request(`${LOCK_NAME}-${appUser.id}`, { mode: "exclusive" }, async () => {
+        await runAsLeader();
+        // Held until this tab unmounts (or closes) — the browser then hands
+        // the lock to the next open tab's pending request automatically.
+        await lockHoldPromise;
+      }).catch(() => {});
+    } else {
+      // Web Locks unavailable (very old browser / insecure context) — no
+      // cross-tab coordination possible, so fall back to every tab
+      // registering its own Device, same as before this fix.
+      void runAsLeader();
+    }
+
+    return () => {
+      disposed = true;
+      isLeaderRef.current = false;
+      stopRingtone();
+      channel.close();
+      channelRef.current = null;
+      for (const pending of pendingActionsRef.current.values()) {
+        window.clearTimeout(pending.timer);
+        pending.reject(new Error("This tab closed."));
+      }
+      pendingActionsRef.current.clear();
+      deviceRef.current = null;
+      incomingCallRef.current = null;
+      activeCallRef.current = null;
+      if (device) {
+        device.removeAllListeners();
+        device.destroy();
+      }
+      releaseLock?.();
+    };
+  }, [appUser?.id, refreshToken, playRingtone, stopRingtone, applyState, broadcast, performDial, performAccept, performReject, performHangup, performToggleMute, performSendDigits]);
+
+  const dial = useCallback(async (number, context = {}) => {
+    if (isLeaderRef.current) { await performDial(number, context); return; }
+    await sendAction("dial", { number, context });
+  }, [performDial, sendAction]);
 
   const accept = useCallback(() => {
-    setIncoming((current) => {
-      if (!current) return null;
-      stopRingtone();
-      current.call.accept();
-      setActive({ call: current.call, number: current.from, direction: "INBOUND" });
-      setMuted(false);
-      return null;
-    });
-  }, [stopRingtone]);
+    if (isLeaderRef.current) { performAccept(); return; }
+    void sendAction("accept", {});
+  }, [performAccept, sendAction]);
 
   const reject = useCallback(() => {
-    setIncoming((current) => {
-      if (!current) return null;
-      stopRingtone();
-      current.call.reject();
-      return null;
-    });
-  }, [stopRingtone]);
+    if (isLeaderRef.current) { performReject(); return; }
+    void sendAction("reject", {});
+  }, [performReject, sendAction]);
 
   const hangup = useCallback(() => {
-    stopRingtone();
-    if (active?.call) active.call.disconnect();
-    if (incoming?.call) incoming.call.disconnect();
-    setActive(null);
-    setIncoming(null);
-    setMuted(false);
-  }, [active, incoming, stopRingtone]);
+    if (isLeaderRef.current) { performHangup(); return; }
+    void sendAction("hangup", {});
+  }, [performHangup, sendAction]);
 
   const toggleMute = useCallback(() => {
-    if (!active?.call) return;
-    const next = !muted;
-    try { active.call.mute(next); } catch { /* muted state is cosmetic if the call rejects it */ }
-    setMuted(next);
-  }, [active, muted]);
+    if (isLeaderRef.current) { performToggleMute(); return; }
+    void sendAction("toggleMute", {});
+  }, [performToggleMute, sendAction]);
+
+  const sendDigits = useCallback((key) => {
+    if (isLeaderRef.current) { performSendDigits(key); return; }
+    void sendAction("sendDigits", { key });
+  }, [performSendDigits, sendAction]);
+
+  const closeEndedCall = useCallback(() => {
+    setEndedCall(null);
+    broadcast({ type: "ended-call-resolved" });
+  }, [broadcast]);
 
   const value = useMemo(
     () => ({
@@ -305,18 +515,19 @@ export function SoftphoneProvider({ children }) {
       reject,
       hangup,
       toggleMute,
+      sendDigits,
       normalizeE164,
     }),
-    [status, error, registered, incoming, active, muted, dial, accept, reject, hangup, toggleMute],
+    [status, error, registered, incoming, active, muted, dial, accept, reject, hangup, toggleMute, sendDigits],
   );
 
   return (
     <SoftphoneContext.Provider value={value}>
       {children}
       {incoming ? (
-        <IncomingCallCard key={incoming.call?.parameters?.CallSid || incoming.from} incoming={incoming} onAccept={accept} onReject={reject} />
+        <IncomingCallCard key={incoming.callSid || incoming.from} incoming={incoming} onAccept={accept} onReject={reject} />
       ) : null}
-      {endedCall && !active && !incoming ? <EndedCallCard ended={endedCall} onClose={() => setEndedCall(null)} /> : null}
+      {endedCall && !active && !incoming ? <EndedCallCard ended={endedCall} onClose={closeEndedCall} /> : null}
     </SoftphoneContext.Provider>
   );
 }

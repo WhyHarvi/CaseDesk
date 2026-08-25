@@ -11,6 +11,8 @@ import {
   patchTwilioVoiceLine,
   recordOutboundCallOutcome,
   removeTwilioVoiceLine,
+  startRecording,
+  stopRecording,
   syncTwilioCallHistoryHandler,
   testTwilioCallVoice,
   transferCall,
@@ -26,6 +28,8 @@ router.post("/lines", asyncHandler(createTwilioVoiceLine));
 router.patch("/lines/:lineId", asyncHandler(patchTwilioVoiceLine));
 router.delete("/lines/:lineId", asyncHandler(removeTwilioVoiceLine));
 router.post("/transfer", asyncHandler(transferCall));
+router.post("/recording/start", asyncHandler(startRecording));
+router.post("/recording/stop", asyncHandler(stopRecording));
 router.post("/outcome", asyncHandler(recordOutboundCallOutcome));
 router.get("/staff", asyncHandler(listTwilioCallStaff));
 router.post("/test", asyncHandler(testTwilioCallVoice));

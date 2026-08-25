@@ -305,7 +305,16 @@ export async function inboundTwiML(agencyId, lineId, req) {
     if (!line) return unavailableTwiML;
     if (line.routing === "FRONTDESK") roles = ["frontdesk"];
   }
-  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}</Client>`).join("");
+  // Twilio's statusCallback on <Dial> reports on the leg it creates (the
+  // browser <Client> leg) with ParentCallSid pointing back to this inbound
+  // call — and that parent SID, not the client leg's own, is what
+  // oomaCallSession ends up keyed by (providerCallId = parentCallSid ||
+  // callSid). The browser's own incoming Call object only ever knows its
+  // own (child) leg's SID, so transfer/recording — which need to find that
+  // session row — would look up the wrong id and 409 as "no longer active"
+  // unless we hand the parent SID over explicitly as a custom parameter.
+  const parentCallSid = clean(req.body?.CallSid, 64);
+  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
@@ -325,7 +334,10 @@ export async function outboundTwiML(agencyId, req) {
 
   const internalLine = await prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } });
   if (internalLine && normalizeCommunicationPhone(toRaw) === normalizeCommunicationPhone(internalLine.phoneNumber)) {
-    const clients = (await staffClientIdentities(agencyId)).map((identity) => `<Client>${escapeXml(identity)}</Client>`).join("");
+    // Same ParentCallSid hand-off as inboundTwiML above — the staff being
+    // rung here only ever see their own (child) leg's SID otherwise.
+    const parentCallSid = clean(req.body?.CallSid, 64);
+    const clients = (await staffClientIdentities(agencyId)).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
     if (!clients) return unavailableTwiML;
     const base = twilioPublicBase(req);
     const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
@@ -379,10 +391,69 @@ export async function transferTwilioCall(agencyId, { toUserId, callSid }, req) {
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(target.id)}`;
   const internalLine = await prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } });
   const callerId = internalLine?.phoneNumber || config.voiceNumber;
-  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}</Client></Dial></Response>`;
+  // session.providerCallId is already the correct parent SID (that's how it
+  // was found above) — same ParentCallSid hand-off as inboundTwiML, so the
+  // person we're transferring to can transfer or record again themselves.
+  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
   await client.calls(session.providerCallId).update({ twiml });
   logger.info("twilio.call_transferred", { agencyId, providerCallId: session.providerCallId, fromAgent: session.handledByUserId, toAgent: target.id });
   return { transferred: true, callerId, target: { id: target.id, fullName: target.fullName } };
+}
+
+async function activeCallSessionForRecording(agencyId, callSid, actionLabel) {
+  const callSidClean = clean(callSid, 64);
+  if (!callSidClean) throw createHttpError(400, `No active call to ${actionLabel}.`);
+  const session = await prisma.oomaCallSession.findFirst({
+    where: {
+      agencyId,
+      provider: TWILIO_CALL_PROVIDER,
+      status: { in: ["RINGING", "ANSWERED"] },
+      lastEventAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+      OR: [{ providerCallId: callSidClean }, { rawPayload: { path: ["callSid"], equals: callSidClean } }],
+    },
+    orderBy: { lastEventAt: "desc" },
+  });
+  if (!session) throw createHttpError(409, `This call is no longer active and cannot be ${actionLabel === "record" ? "recorded" : "stopped"}.`);
+  return session;
+}
+
+// Recording is off by default (see inbound/outboundTwiML above) — staff opt
+// in per call from the in-call screen instead. Starting via this REST
+// endpoint (rather than declaring record="..." on the Dial verb) only
+// captures audio from this moment forward, which is the whole point: the
+// caller decides, mid-call, whether this particular conversation should be
+// recorded, not every call by default.
+export async function startCallRecording(agencyId, { callSid }, req) {
+  const config = await resolveAgencyTwilioVoiceConfig(agencyId);
+  const session = await activeCallSessionForRecording(agencyId, callSid, "record");
+  const client = twilioClient(config.settings);
+  const base = twilioPublicBase(req);
+  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?recording=1`;
+  try {
+    const recording = await client.calls(session.providerCallId).recordings.create({
+      recordingStatusCallback: statusBase,
+      recordingStatusCallbackEvent: ["completed"],
+    });
+    logger.info("twilio.call_recording_started", { agencyId, providerCallId: session.providerCallId, recordingSid: recording.sid });
+    return { recordingSid: recording.sid, status: recording.status };
+  } catch (error) {
+    throw createHttpError(502, friendlyTwilioVoiceError(error, "Twilio could not start recording this call."));
+  }
+}
+
+export async function stopCallRecording(agencyId, { callSid, recordingSid }) {
+  const config = await resolveAgencyTwilioVoiceConfig(agencyId);
+  const session = await activeCallSessionForRecording(agencyId, callSid, "stop recording on");
+  const recordingSidClean = clean(recordingSid, 64);
+  if (!recordingSidClean) throw createHttpError(400, "No active recording to stop.");
+  const client = twilioClient(config.settings);
+  try {
+    const recording = await client.calls(session.providerCallId).recordings(recordingSidClean).update({ status: "stopped" });
+    logger.info("twilio.call_recording_stopped", { agencyId, providerCallId: session.providerCallId, recordingSid: recordingSidClean });
+    return { recordingSid: recording.sid, status: recording.status };
+  } catch (error) {
+    throw createHttpError(502, friendlyTwilioVoiceError(error, "Twilio could not stop the recording."));
+  }
 }
 
 // Team members the softphone can ring — used by the transfer picker (and a

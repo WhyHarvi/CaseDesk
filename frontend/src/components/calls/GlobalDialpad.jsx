@@ -1,4 +1,4 @@
-import { ArrowLeftRight, BatteryFull, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowLeftRight, BatteryFull, Circle, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, Wifi, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import api from "../../services/api";
@@ -18,7 +18,7 @@ export function openGlobalDialpad(number = "") {
 }
 
 export default function GlobalDialpad() {
-  const { dial, active, status, muted, toggleMute, hangup } = useSoftphone();
+  const { dial, active, status, muted, toggleMute, hangup, sendDigits } = useSoftphone();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,6 +32,9 @@ export default function GlobalDialpad() {
   const [transferring, setTransferring] = useState(false);
   const [transferNotice, setTransferNotice] = useState("");
   const [transferError, setTransferError] = useState("");
+  const [recordingSid, setRecordingSid] = useState("");
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [recordingError, setRecordingError] = useState("");
   const panelRef = useRef(null);
   const audioRef = useRef(null);
   const deleteHoldTimerRef = useRef(null);
@@ -156,15 +159,15 @@ export default function GlobalDialpad() {
   // from the pre-call dial screen, even though it reuses the same key grid.
   const sendCallDigit = useCallback((key) => {
     playTone(key);
-    try { active?.call?.sendDigits?.(key); } catch { /* DTMF is best-effort */ }
-  }, [active, playTone]);
+    sendDigits(key);
+  }, [playTone, sendDigits]);
 
   const startTransfer = useCallback(async (targetId, targetName) => {
     try {
       setTransferring(true);
       setTransferError("");
       setTransferNotice("");
-      const callSid = active?.call?.parameters?.CallSid || "";
+      const callSid = active?.callSid || "";
       await api.post("/twilio-calls/transfer", { to: targetId, callSid });
       setTransferOpen(false);
       setTransferNotice(`Transferred to ${targetName}.`);
@@ -174,6 +177,29 @@ export default function GlobalDialpad() {
       setTransferring(false);
     }
   }, [active]);
+
+  // Recording is off by default — this is the opt-in the person on the call
+  // controls per call. Starting only captures audio from this point on, not
+  // retroactively, so toggling it mid-call is expected, not a limitation.
+  const toggleRecording = useCallback(async () => {
+    const callSid = active?.callSid || "";
+    if (!callSid) return;
+    try {
+      setRecordingBusy(true);
+      setRecordingError("");
+      if (recordingSid) {
+        await api.post("/twilio-calls/recording/stop", { callSid, recordingSid });
+        setRecordingSid("");
+      } else {
+        const response = await api.post("/twilio-calls/recording/start", { callSid });
+        setRecordingSid(response.data?.data?.recordingSid || "");
+      }
+    } catch (reason) {
+      setRecordingError(reason?.response?.data?.message || reason?.message || "The recording could not be updated.");
+    } finally {
+      setRecordingBusy(false);
+    }
+  }, [active, recordingSid]);
 
   // Collapses the panel back to the small idle pill the moment a call ends
   // (not on mount, and not if the panel was just opened to dial and never
@@ -189,6 +215,8 @@ export default function GlobalDialpad() {
     setTransferOpen(false);
     setTransferNotice("");
     setTransferError("");
+    setRecordingSid("");
+    setRecordingError("");
     if (wasActive) setOpen(false);
   }, [active]);
 
@@ -217,7 +245,7 @@ export default function GlobalDialpad() {
     if (!active) return undefined;
     const timer = window.setInterval(() => setCallSeconds((current) => current + 1), 1000);
     return () => window.clearInterval(timer);
-  }, [active?.call]);
+  }, [active?.callSid]);
 
   useEffect(() => {
     const handleOpen = (event) => {
@@ -361,9 +389,15 @@ export default function GlobalDialpad() {
             {active.direction === "INBOUND" ? "Incoming call" : "Calling"} · {callTime}
           </p>
           <p className="mt-3 w-full truncate text-[1.7rem] font-light tracking-[-0.02em] text-white">{activeNumber}</p>
+          {recordingSid ? (
+            <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-red-500/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-red-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500" style={{ animation: "pulse 1.6s ease-in-out infinite" }} />Recording
+            </span>
+          ) : null}
 
           {transferNotice ? <p className="mt-4 w-full rounded-2xl bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-400">{transferNotice}</p> : null}
           {transferError ? <p className="mt-4 w-full rounded-2xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-400">{transferError}</p> : null}
+          {recordingError ? <p className="mt-4 w-full rounded-2xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-400">{recordingError}</p> : null}
 
           {showCallKeypad ? (
             <>
@@ -377,8 +411,9 @@ export default function GlobalDialpad() {
               <button type="button" onClick={() => setShowCallKeypad(false)} className="mt-6 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff]">Hide keypad</button>
             </>
           ) : (
-            <div className="mx-auto mt-10 grid w-full max-w-[18rem] grid-cols-3 gap-x-5 gap-y-6">
+            <div className="mx-auto mt-10 grid w-full max-w-[15rem] grid-cols-2 gap-x-8 gap-y-6">
               <CallActionButton icon={muted ? MicOff : Mic} label={muted ? "Unmute" : "Mute"} active={muted} onClick={toggleMute} />
+              <CallActionButton icon={recordingBusy ? Loader2 : Circle} label={recordingSid ? "Stop recording" : "Record"} active={Boolean(recordingSid)} tone="record" onClick={toggleRecording} disabled={recordingBusy} spin={recordingBusy} fill={!recordingBusy} />
               <CallActionButton icon={Grid3x3} label="Keypad" onClick={() => setShowCallKeypad(true)} />
               <CallActionButton icon={ArrowLeftRight} label="Transfer" onClick={() => setTransferOpen(true)} disabled={transferring} />
             </div>
@@ -428,23 +463,24 @@ export default function GlobalDialpad() {
         )}
         <div className="mx-auto mt-auto h-1 w-28 shrink-0 rounded-full bg-white" aria-hidden="true" />
       </div>
-      {transferOpen ? <TransferPicker busy={transferring} onClose={() => setTransferOpen(false)} onPick={startTransfer} /> : null}
+      {transferOpen ? <TransferPicker busy={transferring} submitError={transferError} onClose={() => setTransferOpen(false)} onPick={startTransfer} /> : null}
     </aside>
   );
 }
 
-function CallActionButton({ icon: Icon, label, onClick, active = false, disabled = false }) {
+function CallActionButton({ icon: Icon, label, onClick, active = false, disabled = false, tone = "light", spin = false, fill = false }) {
+  const activeClass = tone === "record" ? "bg-red-500 text-white" : "bg-white text-black";
   return (
     <button type="button" onClick={onClick} disabled={disabled} className="mx-auto flex flex-col items-center gap-1.5 disabled:opacity-40">
-      <span className={`flex h-14 w-14 items-center justify-center rounded-full transition ${active ? "bg-white text-black" : "bg-white/12 text-white hover:bg-white/20"}`}>
-        <Icon className="h-5 w-5" />
+      <span className={`flex h-14 w-14 items-center justify-center rounded-full transition ${active ? activeClass : "bg-white/12 text-white hover:bg-white/20"}`}>
+        <Icon className={`h-5 w-5 ${spin ? "animate-spin" : ""} ${fill ? "fill-current" : ""}`} />
       </span>
       <span className="text-[10px] font-medium text-zinc-300">{label}</span>
     </button>
   );
 }
 
-function TransferPicker({ busy, onClose, onPick }) {
+function TransferPicker({ busy, submitError, onClose, onPick }) {
   const { appUser } = useAuth();
   const [staff, setStaff] = useState([]);
   const [search, setSearch] = useState("");
@@ -470,6 +506,11 @@ function TransferPicker({ busy, onClose, onPick }) {
         <p className="text-sm font-semibold text-white">Transfer to a team member</p>
         <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-zinc-300 hover:bg-white/20" aria-label="Close transfer picker"><X className="h-4 w-4" /></button>
       </div>
+      {/* This overlay covers the whole in-call screen, including the spot
+          where the parent renders transferError — a failed transfer attempt
+          was previously invisible because the picker stayed open right on
+          top of it. Shown here instead, inside the overlay itself. */}
+      {submitError ? <p className="mx-5 mt-3 rounded-xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-400">{submitError}</p> : null}
       <div className="relative px-5 py-3">
         <Search className="absolute left-8 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
         <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-[#0a84ff]/50" placeholder="Search by name or role" />
