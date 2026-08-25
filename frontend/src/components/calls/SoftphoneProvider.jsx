@@ -257,6 +257,19 @@ export function SoftphoneProvider({ children }) {
     };
     call.on("disconnect", () => finish(true));
     call.on("cancel", () => finish(false));
+    // For an outbound call, Twilio doesn't hand back the real CallSid until
+    // the callee actually picks up — call.parameters.CallSid right after
+    // connect() is reliably still empty, so the "active" state set above
+    // stores callSid: "". Transfer (and recording) send that empty string
+    // straight to the backend, which correctly rejects it as "No active
+    // call to transfer." The "accept" event is the guaranteed point
+    // call.parameters is populated, so backfill callSid here.
+    call.on("accept", () => {
+      const resolvedCallSid = call.parameters?.CallSid || "";
+      if (resolvedCallSid && stateRef.current.active) {
+        applyState({ active: { ...stateRef.current.active, callSid: resolvedCallSid } });
+      }
+    });
   }, [applyState, broadcast]);
 
   const performAccept = useCallback(() => {
