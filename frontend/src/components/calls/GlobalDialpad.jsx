@@ -1,6 +1,7 @@
-import { ArrowLeftRight, BatteryFull, Circle, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowLeftRight, BatteryFull, Circle, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, StickyNote, Wifi, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
+import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 import api from "../../services/api";
 import { useSoftphone } from "./SoftphoneProvider";
 
@@ -35,6 +36,13 @@ export default function GlobalDialpad() {
   const [recordingSid, setRecordingSid] = useState("");
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState("");
+  const [showCallNotes, setShowCallNotes] = useState(false);
+  const [linkedRecord, setLinkedRecord] = useState(null); // { type: "lead" | "client", id, name } | null
+  const [callNoteText, setCallNoteText] = useState("");
+  const [callNoteId, setCallNoteId] = useState("");
+  const [callNoteSavedText, setCallNoteSavedText] = useState("");
+  const [callNoteSaving, setCallNoteSaving] = useState(false);
+  const [callNoteError, setCallNoteError] = useState("");
   const panelRef = useRef(null);
   const audioRef = useRef(null);
   const deleteHoldTimerRef = useRef(null);
@@ -201,6 +209,70 @@ export default function GlobalDialpad() {
     }
   }, [active, recordingSid]);
 
+  // Who to save call notes against. A call placed from a Lead/Client record
+  // already carries that id in context; an inbound call doesn't, so it's
+  // resolved the same way the caller-name lookup already works — by
+  // matching the remote number against the address book. Re-resolves per
+  // call (keyed on callSid) rather than once, since a new call may be with
+  // someone different.
+  useEffect(() => {
+    if (!active) { setLinkedRecord(null); return undefined; }
+    if (active.leadId) { setLinkedRecord({ type: "lead", id: active.leadId, name: active.leadName || "" }); return undefined; }
+    if (active.clientId) { setLinkedRecord({ type: "client", id: active.clientId, name: active.clientName || "" }); return undefined; }
+    const digits = String(active.number || "").replace(/\D/g, "");
+    if (!digits) { setLinkedRecord(null); return undefined; }
+    let cancelled = false;
+    api.get(`/twilio-calls/address-book?search=${encodeURIComponent(digits)}`, { cache: false })
+      .then((response) => {
+        if (cancelled) return;
+        const data = response.data?.data || {};
+        const client = (data.clients || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
+        const lead = (data.leads || []).find((row) => String(row.phone || "").replace(/\D/g, "") === digits);
+        if (client) setLinkedRecord({ type: "client", id: client.id, name: client.fullName || "" });
+        else if (lead) setLinkedRecord({ type: "lead", id: lead.id, name: lead.fullName || "" });
+        else setLinkedRecord(null);
+      })
+      .catch(() => { if (!cancelled) setLinkedRecord(null); });
+    return () => { cancelled = true; };
+  }, [active?.callSid]);
+
+  // Saves straight to the lead's activity feed or the client's Notes — the
+  // same endpoints and shapes LeadDetailSheet.jsx / ClientProfile.jsx
+  // already use — so a note taken here shows up in the normal place, not a
+  // call-specific side channel only visible from the phone. Autosaving to
+  // the server (not just local state) is also what makes the draft survive
+  // a refresh: nothing about it depends on the call itself still existing.
+  const saveCallNote = useCallback(async () => {
+    if (!linkedRecord) return;
+    const content = callNoteText.trim();
+    if (!content) return;
+    try {
+      setCallNoteSaving(true);
+      setCallNoteError("");
+      const response = linkedRecord.type === "lead"
+        ? callNoteId
+          ? await api.patch(`/leads/${linkedRecord.id}/activities/${callNoteId}/note`, { description: content })
+          : await api.post(`/leads/${linkedRecord.id}/activities`, { activityType: "INTERNAL_NOTE", direction: "INTERNAL", channel: "SYSTEM", title: "Call note", description: content })
+        : callNoteId
+          ? await api.patch(`/notes/${callNoteId}`, { clientId: linkedRecord.id, content })
+          : await api.post("/notes", { clientId: linkedRecord.id, content });
+      setCallNoteId(response.data.data.id);
+      setCallNoteSavedText(content);
+    } catch (reason) {
+      setCallNoteError(reason?.response?.data?.message || reason?.message || "The note could not be saved.");
+    } finally {
+      setCallNoteSaving(false);
+    }
+  }, [linkedRecord, callNoteText, callNoteId]);
+
+  useDebouncedAutosave({
+    value: callNoteText,
+    savedValue: callNoteSavedText,
+    enabled: showCallNotes && Boolean(linkedRecord) && !callNoteSaving,
+    delay: 2000,
+    onSave: saveCallNote,
+  });
+
   // Collapses the panel back to the small idle pill the moment a call ends
   // (not on mount, and not if the panel was just opened to dial and never
   // connected — only a genuine active-to-inactive transition) so the
@@ -217,6 +289,11 @@ export default function GlobalDialpad() {
     setTransferError("");
     setRecordingSid("");
     setRecordingError("");
+    setShowCallNotes(false);
+    setCallNoteText("");
+    setCallNoteId("");
+    setCallNoteSavedText("");
+    setCallNoteError("");
     if (wasActive) setOpen(false);
   }, [active]);
 
@@ -410,16 +487,36 @@ export default function GlobalDialpad() {
               </div>
               <button type="button" onClick={() => setShowCallKeypad(false)} className="mt-6 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff]">Hide keypad</button>
             </>
+          ) : showCallNotes ? (
+            <div className="mt-6 flex w-full max-w-[19rem] min-h-0 flex-1 flex-col text-left">
+              <div className="flex items-center justify-between gap-2">
+                <p className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                  Note for {linkedRecord?.type === "lead" ? "lead" : "client"}{linkedRecord?.name ? ` · ${linkedRecord.name}` : ""}
+                </p>
+                <button type="button" onClick={() => setShowCallNotes(false)} className="shrink-0 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff]">Done</button>
+              </div>
+              <textarea
+                autoFocus
+                value={callNoteText}
+                onChange={(event) => setCallNoteText(event.target.value)}
+                placeholder="Jot down what's said on this call — saves automatically as you type."
+                className="mt-3 h-36 w-full flex-1 resize-none rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-[#0a84ff]/50"
+              />
+              <p className="mt-2 text-[10px] text-zinc-500">
+                {callNoteError ? <span className="text-red-400">{callNoteError}</span> : callNoteSaving ? "Saving…" : callNoteSavedText && callNoteSavedText === callNoteText.trim() ? "Saved" : callNoteSavedText ? "Unsaved changes" : "Not saved yet"}
+              </p>
+            </div>
           ) : (
-            <div className="mx-auto mt-10 grid w-full max-w-[15rem] grid-cols-2 gap-x-8 gap-y-6">
+            <div className="mx-auto mt-10 grid w-full max-w-[18rem] grid-cols-3 gap-x-6 gap-y-6">
               <CallActionButton icon={muted ? MicOff : Mic} label={muted ? "Unmute" : "Mute"} active={muted} onClick={toggleMute} />
               <CallActionButton icon={recordingBusy ? Loader2 : Circle} label={recordingSid ? "Stop recording" : "Record"} active={Boolean(recordingSid)} tone="record" onClick={toggleRecording} disabled={recordingBusy} spin={recordingBusy} fill={!recordingBusy} />
+              <CallActionButton icon={StickyNote} label="Notes" onClick={() => setShowCallNotes(true)} disabled={!linkedRecord} />
               <CallActionButton icon={Grid3x3} label="Keypad" onClick={() => setShowCallKeypad(true)} />
               <CallActionButton icon={ArrowLeftRight} label="Transfer" onClick={() => setTransferOpen(true)} disabled={transferring} />
             </div>
           )}
 
-          <button type="button" onClick={hangup} aria-label="End call" className="mx-auto mb-1 mt-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#ff3b30] text-white shadow-[0_12px_30px_rgba(255,59,48,0.32)] transition hover:bg-[#ff5147] active:scale-90">
+          <button type="button" onClick={hangup} aria-label="End call" className="mx-auto mb-1 mt-auto flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[#ff3b30] text-white shadow-[0_12px_30px_rgba(255,59,48,0.32)] transition hover:bg-[#ff5147] active:scale-90">
             <PhoneOff className="h-6 w-6 fill-current" />
           </button>
         </div>
