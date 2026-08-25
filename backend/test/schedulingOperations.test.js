@@ -231,8 +231,21 @@ test("the calendar grid gives appointments real room instead of cramming them in
   // day/today/next navigation instead of a separate dropdown, and the
   // bottom legend is visually de-emphasized (smaller, tinted) rather than
   // competing at the same weight as real appointment data.
-  assert.match(calendar, /\[\["day", "Day"\], \["week", "Week"\]\]\.map\(\(\[value, label\]\) => \(/);
+  assert.match(calendar, /\[\["day", "Day"\], \["week", "Week"\], \["month", "Month"\]\]\.map\(\(\[value, label\]\) => \(/);
   assert.match(calendar, /rounded-b-3xl border-t border-slate-100 bg-slate-50\/60/);
+});
+
+test("calendar month view shows a full responsive month with appointment drill-down", async () => {
+  const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
+
+  assert.match(calendar, /function MonthCalendar\(/);
+  assert.match(calendar, /Array\.from\(\{ length: 42 \}/);
+  assert.match(calendar, /view === "month"[\s\S]*?addMonthsClamped\(current, direction\)/);
+  assert.match(calendar, /hidden grid-cols-7 md:grid/);
+  assert.match(calendar, /md:hidden/);
+  assert.match(calendar, /Month appointments/);
+  assert.match(calendar, /\+\{dayItems\.length - visibleItems\.length\} more/);
+  assert.match(calendar, /aria-pressed=\{view === value\}/);
 });
 
 test("free consultations have a dedicated calendar color and visible legend", async () => {
