@@ -185,6 +185,13 @@ function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function addMonthsClamped(date, amount) {
+  const target = new Date(date.getFullYear(), date.getMonth() + amount, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(date.getDate(), lastDay));
+  return startOfDayLocal(target);
+}
+
 function formatTime(value) {
   return new Date(value).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
 }
@@ -309,6 +316,145 @@ function MiniMonth({ cursor, onCursor, selectedDate, onSelect, busyKeys }) {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function MonthCalendar({ cursor, items, selectedDate, todayKey, toneFor, onOpenDay, onSelectItem }) {
+  const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const gridStart = startOfWeek(monthStart);
+  const cells = Array.from({ length: 42 }, (_, index) => {
+    const cell = new Date(gridStart);
+    cell.setDate(gridStart.getDate() + index);
+    return cell;
+  });
+  const selectedKey = dateKey(selectedDate);
+  const itemsByDay = new Map();
+  for (const item of items) {
+    const key = dateKey(new Date(item.startsAt));
+    const dayItems = itemsByDay.get(key) || [];
+    dayItems.push(item);
+    itemsByDay.set(key, dayItems);
+  }
+  for (const dayItems of itemsByDay.values()) {
+    dayItems.sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt));
+  }
+  const monthItems = items
+    .filter((item) => {
+      const start = new Date(item.startsAt);
+      return start.getFullYear() === cursor.getFullYear() && start.getMonth() === cursor.getMonth();
+    })
+    .sort((left, right) => new Date(left.startsAt) - new Date(right.startsAt));
+
+  return (
+    <div role="region" aria-label={`${cursor.toLocaleDateString("en-CA", { month: "long", year: "numeric" })} calendar`}>
+      <div className="hidden grid-cols-7 border-b border-slate-100 bg-slate-50/60 text-center md:grid">
+        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((label) => (
+          <div key={label} className="border-l border-slate-100 px-3 py-2.5 first:border-l-0">
+            <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">{label.slice(0, 3)}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden grid-cols-7 md:grid">
+        {cells.map((cell) => {
+          const key = dateKey(cell);
+          const dayItems = itemsByDay.get(key) || [];
+          const inMonth = cell.getMonth() === cursor.getMonth();
+          const isToday = key === todayKey;
+          const isSelected = key === selectedKey;
+          const visibleItems = dayItems.slice(0, 3);
+          return (
+            <div key={key} className={`min-h-36 border-b border-l border-slate-100 p-2 first:border-l-0 ${inMonth ? "bg-white/60" : "bg-slate-50/50"} ${isSelected ? "ring-2 ring-inset ring-sky-200" : ""}`}>
+              <button
+                type="button"
+                onClick={() => onOpenDay(cell)}
+                aria-label={`Open ${cell.toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}`}
+                className={`flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-sm font-semibold transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${isToday ? "bg-sky-600 text-white shadow-sm hover:bg-sky-700" : inMonth ? "text-slate-800" : "text-slate-300"}`}
+              >
+                {cell.getDate()}
+              </button>
+              <div className="mt-1.5 space-y-1">
+                {visibleItems.map((item) => {
+                  const tone = toneFor(item);
+                  const name = item.client?.fullName || item.guestName || item.subject || "Appointment";
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onSelectItem(item)}
+                      aria-label={`${formatTime(item.startsAt)} ${name}`}
+                      className={`flex min-h-8 w-full items-center gap-1.5 rounded-lg border-l-2 px-2 py-1 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${tone.block}`}
+                    >
+                      <span className="shrink-0 text-[10px] font-bold tabular-nums text-slate-500">{formatTime(item.startsAt)}</span>
+                      <span className={`min-w-0 truncate text-[11px] font-semibold ${tone.title}`} title={name}>{name}</span>
+                    </button>
+                  );
+                })}
+                {dayItems.length > visibleItems.length ? (
+                  <button type="button" onClick={() => onOpenDay(cell)} className="flex min-h-8 w-full items-center px-2 text-left text-[11px] font-semibold text-sky-700 hover:text-sky-900">
+                    +{dayItems.length - visibleItems.length} more
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="p-3 md:hidden">
+        <div className="grid grid-cols-7 text-center">
+          {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((label) => (
+            <span key={label} className="pb-2 text-[10px] font-bold uppercase text-slate-400">{label}</span>
+          ))}
+          {cells.map((cell) => {
+            const key = dateKey(cell);
+            const count = (itemsByDay.get(key) || []).length;
+            const inMonth = cell.getMonth() === cursor.getMonth();
+            const isToday = key === todayKey;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onOpenDay(cell)}
+                aria-label={`${cell.toLocaleDateString("en-CA", { month: "long", day: "numeric" })}${count ? `, ${count} appointment${count === 1 ? "" : "s"}` : ""}`}
+                className="relative flex min-h-12 items-center justify-center rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+              >
+                <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${isToday ? "bg-sky-600 text-white" : inMonth ? "text-slate-700" : "text-slate-300"}`}>{cell.getDate()}</span>
+                {count ? <span className="absolute bottom-0.5 min-w-4 rounded-full bg-slate-950 px-1 text-[9px] font-bold leading-4 text-white">{count}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <h3 className="text-sm font-semibold text-slate-900">Month appointments</h3>
+          {monthItems.length ? (
+            <div className="mt-3 space-y-2">
+              {monthItems.map((item) => {
+                const start = new Date(item.startsAt);
+                const tone = toneFor(item);
+                const name = item.client?.fullName || item.guestName || item.subject || "Appointment";
+                return (
+                  <button key={item.id} type="button" onClick={() => onSelectItem(item)} className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-2 text-left shadow-sm transition hover:border-slate-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500">
+                    <span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                      <span className="text-[9px] font-bold uppercase">{start.toLocaleDateString("en-CA", { month: "short" })}</span>
+                      <span className="text-sm font-bold leading-4">{start.getDate()}</span>
+                    </span>
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.chip}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-slate-800">{name}</span>
+                      <span className="block text-xs text-slate-500">{start.toLocaleDateString("en-CA", { weekday: "short" })} · {formatTime(item.startsAt)}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-2 rounded-2xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No appointments scheduled this month.</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1912,12 +2058,15 @@ export default function CalendarPage() {
 
   const days = useMemo(() => {
     if (view === "day") return [selectedDate];
+    if (view === "month") return [];
     const weekStart = startOfWeek(selectedDate);
     return Array.from({ length: 7 }, (_, index) => new Date(weekStart.getTime() + index * DAY_MS));
   }, [view, selectedDate]);
 
   function shift(direction) {
-    setSelectedDate((current) => new Date(current.getTime() + direction * (view === "day" ? 1 : 7) * DAY_MS));
+    setSelectedDate((current) => view === "month"
+      ? addMonthsClamped(current, direction)
+      : new Date(current.getTime() + direction * (view === "day" ? 1 : 7) * DAY_MS));
   }
 
   function closeSelected() {
@@ -1996,12 +2145,20 @@ export default function CalendarPage() {
     [visible, now],
   );
 
-  const headerDate = view === "day"
-    ? selectedDate.toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" })
-    : `${days[0].toLocaleDateString("en-CA", { month: "short", day: "numeric" })} – ${days[days.length - 1].toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" })}`;
-  const headerSub = view === "day"
-    ? selectedDate.toLocaleDateString("en-CA", { weekday: "long" })
-    : `Week ${Math.ceil(((days[0] - new Date(days[0].getFullYear(), 0, 1)) / DAY_MS + 1) / 7)}`;
+  const monthAppointmentCount = useMemo(() => visible.filter((item) => {
+    const start = new Date(item.startsAt);
+    return start.getFullYear() === selectedDate.getFullYear() && start.getMonth() === selectedDate.getMonth();
+  }).length, [visible, selectedDate]);
+  const headerDate = view === "month"
+    ? selectedDate.toLocaleDateString("en-CA", { month: "long", year: "numeric" })
+    : view === "day"
+      ? selectedDate.toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" })
+      : `${days[0].toLocaleDateString("en-CA", { month: "short", day: "numeric" })} – ${days[days.length - 1].toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" })}`;
+  const headerSub = view === "month"
+    ? `${monthAppointmentCount} appointment${monthAppointmentCount === 1 ? "" : "s"}`
+    : view === "day"
+      ? selectedDate.toLocaleDateString("en-CA", { weekday: "long" })
+      : `Week ${Math.ceil(((days[0] - new Date(days[0].getFullYear(), 0, 1)) / DAY_MS + 1) / 7)}`;
 
   return (
     <PageContainer
@@ -2023,7 +2180,7 @@ export default function CalendarPage() {
                 </span>
                 <span className="flex-1 pt-0.5 text-base font-bold leading-none text-slate-900">{selectedDate.getDate()}</span>
               </div>
-              <div>
+              <div aria-live="polite" aria-atomic="true">
                 <h2 className="text-lg font-semibold leading-6 tracking-tight text-slate-950">{headerDate}</h2>
                 <p className="text-sm text-slate-400">{headerSub}</p>
               </div>
@@ -2045,11 +2202,12 @@ export default function CalendarPage() {
                 <button type="button" aria-label="Next" onClick={() => shift(1)} className="flex h-[42px] w-10 items-center justify-center text-slate-500 transition hover:bg-slate-50"><ChevronRight className="h-4 w-4" /></button>
               </div>
               <div className="flex items-center overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                {[["day", "Day"], ["week", "Week"]].map(([value, label]) => (
+                {[["day", "Day"], ["week", "Week"], ["month", "Month"]].map(([value, label]) => (
                   <button
                     key={value}
                     type="button"
                     onClick={() => setView(value)}
+                    aria-pressed={view === value}
                     className={`h-[42px] px-4 text-sm font-semibold transition ${view === value ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50"}`}
                   >
                     {label}
@@ -2069,6 +2227,17 @@ export default function CalendarPage() {
             </div>
           ) : null}
 
+          {view === "month" ? (
+            <MonthCalendar
+              cursor={monthCursor}
+              items={visible}
+              selectedDate={selectedDate}
+              todayKey={todayKey}
+              toneFor={toneFor}
+              onOpenDay={(day) => { setSelectedDate(startOfDayLocal(day)); setView("day"); }}
+              onSelectItem={(item) => { setSelected(item); setSelectedDate(startOfDayLocal(new Date(item.startsAt))); closeHoverPreview(); }}
+            />
+          ) : (
           <div className="overflow-x-auto">
             <div className={view === "week" ? "min-w-[820px]" : "min-w-[420px]"}>
               {view === "week" ? (
@@ -2155,6 +2324,7 @@ export default function CalendarPage() {
               </div>
             </div>
           </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-b-3xl border-t border-slate-100 bg-slate-50/60 px-6 py-2.5 text-[11px] text-slate-500">
             <div className="flex flex-wrap items-center gap-2.5">
