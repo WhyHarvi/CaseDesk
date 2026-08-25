@@ -248,6 +248,47 @@ export async function listUnlinkedCaseEasyImportCases(req, res) {
   res.json({ data: cases });
 }
 
+// Every real CaseDesk case ever produced by a Case Easy conversion, across
+// every contact and upload — the one place to confirm none of this
+// historical data quietly ended up active, and to find/reopen a specific
+// one if a client turns out to need it worked again.
+export async function listImportedCases(req, res) {
+  const agencyId = req.user.agencyId;
+  const search = cleanCaseEasySearch(req.query.search);
+  const terms = search.split(" ").filter(Boolean).slice(0, 8);
+  const cases = await prisma.case.findMany({
+    where: {
+      agencyId,
+      deletedAt: null,
+      caseEasyImportCases: { some: {} },
+      ...(terms.length
+        ? {
+            AND: terms.map((term) => ({
+              OR: [
+                { caseType: { contains: term, mode: "insensitive" } },
+                { client: { fullName: { contains: term, mode: "insensitive" } } },
+                { client: { clientNumber: { contains: term, mode: "insensitive" } } },
+              ],
+            })),
+          }
+        : {}),
+    },
+    select: {
+      id: true,
+      caseType: true,
+      stage: true,
+      status: true,
+      archivedAt: true,
+      updatedAt: true,
+      client: { select: { id: true, fullName: true, clientNumber: true } },
+      caseEasyImportCases: { select: { caseNumber: true, status: true }, take: 1 },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 500,
+  });
+  res.json({ data: cases });
+}
+
 async function readReportSheet(file) {
   if (!file) {
     throw createHttpError(

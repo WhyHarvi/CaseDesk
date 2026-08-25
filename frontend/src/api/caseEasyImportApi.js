@@ -28,6 +28,14 @@ export async function getUnlinkedCaseEasyImportCases(params) {
   return response.data.data;
 }
 
+export async function getImportedCases(params) {
+  const response = await api.get("/case-easy-import/imported-cases", {
+    params,
+    cache: false,
+  });
+  return response.data.data;
+}
+
 export async function getCaseEasyReportSummary() {
   const response = await api.get("/case-easy-import/reports/summary", {
     cache: false,

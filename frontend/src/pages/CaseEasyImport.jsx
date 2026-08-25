@@ -1,4 +1,4 @@
-import { AlertTriangle, BarChart3, ChevronDown, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
+import { AlertTriangle, Archive, BarChart3, ChevronDown, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "../services/api";
@@ -11,6 +11,7 @@ import {
 } from "../api/caseEasyImportApi";
 import Select from "../components/ui/Select";
 import CaseEasyReportsBrowser from "../components/case-easy/CaseEasyReportsBrowser";
+import ImportedCasesBrowser from "../components/case-easy/ImportedCasesBrowser";
 import CaseEasyImportSettingsPanel from "../components/settings/CaseEasyImportSettingsPanel";
 import { caseStagesForType } from "../constants/caseStages";
 
@@ -104,6 +105,9 @@ function PageHeader({ view, onViewChange, needsReviewTotal, totalContacts }) {
         </button>
         <button type="button" onClick={() => onViewChange("reports")} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${view === "reports" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-950"}`}>
           <BarChart3 className="h-4 w-4" /> Reports
+        </button>
+        <button type="button" onClick={() => onViewChange("imported")} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${view === "imported" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-950"}`}>
+          <Archive className="h-4 w-4" /> Imported cases
         </button>
       </div>
     </>
@@ -520,7 +524,7 @@ export default function CaseEasyImport() {
 
   useEffect(() => {
     const requestedView = searchParams.get("view");
-    if (["import", "contacts", "reports"].includes(requestedView)) {
+    if (["import", "contacts", "reports", "imported"].includes(requestedView)) {
       setView(requestedView);
     }
     const requestedContact = searchParams.get("contact");
@@ -658,6 +662,15 @@ export default function CaseEasyImport() {
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
         <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
         <CaseEasyReportsBrowser />
+      </div>
+    );
+  }
+
+  if (view === "imported") {
+    return (
+      <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
+        <ImportedCasesBrowser />
       </div>
     );
   }

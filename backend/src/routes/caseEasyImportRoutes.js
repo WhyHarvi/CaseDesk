@@ -9,6 +9,7 @@ import {
   getCaseEasyImportContact,
   listCaseEasyReportRows,
   listCaseEasyImportContacts,
+  listImportedCases,
   listUnlinkedCaseEasyImportCases,
   previewCaseEasyImportUpload,
   previewCaseEasyReportUpload,
@@ -36,6 +37,7 @@ router.post("/reports/upload", uploadLimiter, receiveCaseEasyReportFile, asyncHa
 
 router.get("/contacts", asyncHandler(listCaseEasyImportContacts));
 router.get("/unlinked-cases", asyncHandler(listUnlinkedCaseEasyImportCases));
+router.get("/imported-cases", asyncHandler(listImportedCases));
 router.get("/reports/summary", asyncHandler(getCaseEasyReportSummary));
 router.get("/reports", asyncHandler(listCaseEasyReportRows));
 router.get("/clients/:clientId/reports", asyncHandler(getCaseEasyReportsForClient));
