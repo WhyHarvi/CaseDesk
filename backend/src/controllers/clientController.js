@@ -68,6 +68,11 @@ const include = {
       nextAction: true,
       priority: true,
       updatedAt: true,
+      archivedAt: true,
+      // Same take:1-boolean pattern as caseEasyImportContacts above — the UI
+      // only needs "did this case come from a Case Easy import" to show the
+      // label, not the staging row itself.
+      caseEasyImportCases: { select: { id: true }, take: 1 },
       clientDocuments: { select: { status: true } },
       followUps: { select: { status: true, dueDate: true } },
       payments: {
@@ -304,6 +309,11 @@ export async function getClientById(req, res) {
       decisionAt: true,
       createdAt: true,
       updatedAt: true,
+      archivedAt: true,
+      // Same take:1-boolean pattern as caseEasyImportContacts below — the UI
+      // only needs "did this case come from a Case Easy import" to show the
+      // label, not the staging row itself.
+      caseEasyImportCases: { select: { id: true }, take: 1 },
       assignedUser: {
         select: { id: true, fullName: true, email: true, role: true },
       },

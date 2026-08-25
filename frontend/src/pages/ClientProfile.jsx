@@ -309,6 +309,7 @@ function NoteCard({ note, canManage, onEdit, onDelete, deletingId }) {
 function CaseRow({ item, isPrimary = false, canOpenCase = false }) {
   const assignedLabel = item.assignedUser?.fullName || "Unassigned";
   const updatedLabel = formatDate(item.updatedAt || item.createdAt);
+  const isImported = Boolean(item.caseEasyImportCases?.length);
   const Wrapper = canOpenCase ? Link : "div";
   const wrapperProps = canOpenCase
     ? { to: `/app/cases/${item.id}`, target: "_blank", rel: "noopener noreferrer" }
@@ -330,6 +331,14 @@ function CaseRow({ item, isPrimary = false, canOpenCase = false }) {
           {isPrimary ? (
             <span className="inline-flex rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-semibold text-white">
               Current
+            </span>
+          ) : null}
+          {isImported ? (
+            <span
+              title="Migrated from Case Easy as historical reference — closed by default, not part of active work"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200"
+            >
+              Imported
             </span>
           ) : null}
         </div>
