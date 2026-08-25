@@ -72,6 +72,13 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(service, /routing: "INTERNAL", enabled: true/);
   assert.match(service, /export async function transferTwilioCall/);
   assert.match(service, /\.calls\(session\.providerCallId\)\.update\(\{ twiml \}\)/);
+  // Live controls must not fail merely because the asynchronous history
+  // callback is late or a sibling leg made the stored status look stale.
+  assert.match(service, /const LIVE_TWILIO_CALL_STATUSES = new Set\(\["queued", "ringing", "in-progress"\]\)/);
+  assert.match(service, /await client\.calls\(candidate\)\.fetch\(\)/);
+  assert.match(service, /activeTwilioCall\(agencyId, callSid, "transfer", config\)/);
+  assert.match(service, /activeTwilioCall\(agencyId, callSid, "record", config\)/);
+  assert.match(service, /rawPayload: \{ path: \["parentCallSid"\], equals: callSidClean \}/);
   // The transfer target's <Client> carries session.providerCallId through as
   // a ParentCallSid parameter — the same hand-off inboundTwiML uses — so the
   // person transferred to can themselves transfer or record afterward.

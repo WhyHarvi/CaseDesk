@@ -191,7 +191,10 @@ export default function GlobalDialpad() {
   // retroactively, so toggling it mid-call is expected, not a limitation.
   const toggleRecording = useCallback(async () => {
     const callSid = active?.callSid || "";
-    if (!callSid) return;
+    if (!callSid) {
+      setRecordingError("The call is still connecting. Try recording again in a moment.");
+      return;
+    }
     try {
       setRecordingBusy(true);
       setRecordingError("");

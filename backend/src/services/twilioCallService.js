@@ -352,14 +352,29 @@ export async function outboundTwiML(agencyId, req) {
   const dialLeadId = clean(req.body?.leadId, 100);
   const dialClientId = clean(req.body?.clientId, 100);
   const base = twilioPublicBase(req);
-  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}${dialLeadId ? `&leadId=${encodeURIComponent(dialLeadId)}` : ""}${dialClientId ? `&clientId=${encodeURIComponent(dialClientId)}` : ""}`;
+  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}${dialLeadId ? `&leadId=${encodeURIComponent(dialLeadId)}` : ""}${dialClientId ? `&clientId=${encodeURIComponent(dialClientId)}` : ""}&dialedNumber=${encodeURIComponent(toRaw)}`;
   // statusBase's query string joins params with a raw "&" — correct for a
   // URL, but a bare "&" inside an XML attribute value starts what looks
   // like an unterminated entity reference, so this must be XML-escaped
   // (not just URL-encoded) here or Twilio's parser rejects the whole
   // document and the caller hears "an application error has occurred" —
   // exactly what was happening on every call that carried a leadId/clientId.
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
+  //
+  // Twilio's parser flags this Dial's statusCallback/statusCallbackEvent
+  // attributes with schema warning 12200 ("not allowed to appear in
+  // element 'Dial'") specifically for this Client-initiated outbound flow
+  // — confirmed against live Debugger alerts and call logs: every outbound
+  // call's remoteNumber only ever showed up via a manual history sync
+  // (sometimes hours later), while inbound calls, which don't depend on
+  // this attribute, stayed live the whole time. `action` is unaffected and
+  // always fires once the dial finishes, so it's the reliable mechanism
+  // here — handleTwilioCallStatus recognizes the DialCallStatus/
+  // DialCallSid shape action posts and treats it as the authoritative
+  // outbound outcome. The real dialed number rides along as `dialedNumber`
+  // since the action request's own To/From describe the leg executing the
+  // Dial (the agent's Client→Application leg), not the number actually
+  // dialed.
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" action="${escapeXml(statusBase)}" method="POST" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------
@@ -378,49 +393,69 @@ export async function transferTwilioCall(agencyId, { toUserId, callSid }, req) {
   });
   if (!target) throw createHttpError(404, "That team member is not available to take calls.");
 
-  const callSidClean = clean(callSid, 64);
-  if (!callSidClean) throw createHttpError(400, "No active call to transfer.");
-  const session = await prisma.oomaCallSession.findFirst({
-    where: {
-      agencyId,
-      provider: TWILIO_CALL_PROVIDER,
-      status: { in: ["RINGING", "ANSWERED"] },
-      lastEventAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
-      OR: [{ providerCallId: callSidClean }, { rawPayload: { path: ["callSid"], equals: callSidClean } }],
-    },
-    orderBy: { lastEventAt: "desc" },
-  });
-  if (!session) throw createHttpError(409, "This call is no longer active and cannot be transferred.");
+  const session = await activeTwilioCall(agencyId, callSid, "transfer", config);
 
   const client = twilioClient(config.settings);
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(target.id)}`;
   const internalLine = await prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } });
   const callerId = internalLine?.phoneNumber || config.voiceNumber;
-  // session.providerCallId is already the correct parent SID (that's how it
-  // was found above) — same ParentCallSid hand-off as inboundTwiML, so the
-  // person we're transferring to can transfer or record again themselves.
+  // activeTwilioCall resolves the controllable live leg (normally the parent
+  // SID). Hand that SID to the next browser so the transferred-to person can
+  // transfer or record again without depending on callback timing.
   const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
   await client.calls(session.providerCallId).update({ twiml });
   logger.info("twilio.call_transferred", { agencyId, providerCallId: session.providerCallId, fromAgent: session.handledByUserId, toAgent: target.id });
   return { transferred: true, callerId, target: { id: target.id, fullName: target.fullName } };
 }
 
-async function activeCallSessionForRecording(agencyId, callSid, actionLabel) {
+const LIVE_TWILIO_CALL_STATUSES = new Set(["queued", "ringing", "in-progress"]);
+
+// Status callbacks are call-history input, not a reliable lock on live call
+// controls. Twilio can deliver the browser's CallSid before the Dial-leg
+// callback has created its session row, and callbacks from sibling legs can
+// briefly make that row look completed while the parent call is still live.
+// Prefer the fast local lookup, but verify candidates against Twilio whenever
+// the history row is missing/stale so Record and Transfer follow the actual
+// call rather than webhook timing.
+async function activeTwilioCall(agencyId, callSid, actionLabel, config) {
   const callSidClean = clean(callSid, 64);
   if (!callSidClean) throw createHttpError(400, `No active call to ${actionLabel}.`);
   const session = await prisma.oomaCallSession.findFirst({
     where: {
       agencyId,
       provider: TWILIO_CALL_PROVIDER,
-      status: { in: ["RINGING", "ANSWERED"] },
       lastEventAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
-      OR: [{ providerCallId: callSidClean }, { rawPayload: { path: ["callSid"], equals: callSidClean } }],
+      OR: [
+        { providerCallId: callSidClean },
+        { rawPayload: { path: ["callSid"], equals: callSidClean } },
+        { rawPayload: { path: ["parentCallSid"], equals: callSidClean } },
+      ],
     },
     orderBy: { lastEventAt: "desc" },
   });
-  if (!session) throw createHttpError(409, `This call is no longer active and cannot be ${actionLabel === "record" ? "recorded" : "stopped"}.`);
-  return session;
+  if (session && ["RINGING", "ANSWERED"].includes(session.status)) return session;
+
+  const client = twilioClient(config.settings);
+  const candidates = [...new Set([session?.providerCallId, callSidClean].filter(Boolean))];
+  for (const candidate of candidates) {
+    try {
+      const liveCall = await client.calls(candidate).fetch();
+      if (LIVE_TWILIO_CALL_STATUSES.has(clean(liveCall.status).toLowerCase())) {
+        return session ? { ...session, providerCallId: liveCall.sid || candidate } : { providerCallId: liveCall.sid || candidate, handledByUserId: null };
+      }
+    } catch (error) {
+      // A SID from the browser may represent a short-lived child leg while
+      // the session stores its parent. Try every candidate before deciding
+      // the live call is gone; surface real credential/provider failures.
+      if (error?.status !== 404 && error?.code !== 20404) {
+        throw createHttpError(502, friendlyTwilioVoiceError(error, "Twilio could not verify the active call."));
+      }
+    }
+  }
+
+  const unavailableAction = actionLabel === "transfer" ? "transferred" : actionLabel === "record" ? "recorded" : "stopped";
+  throw createHttpError(409, `This call is no longer active and cannot be ${unavailableAction}.`);
 }
 
 // Recording is off by default (see inbound/outboundTwiML above) — staff opt
@@ -431,7 +466,7 @@ async function activeCallSessionForRecording(agencyId, callSid, actionLabel) {
 // recorded, not every call by default.
 export async function startCallRecording(agencyId, { callSid }, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId);
-  const session = await activeCallSessionForRecording(agencyId, callSid, "record");
+  const session = await activeTwilioCall(agencyId, callSid, "record", config);
   const client = twilioClient(config.settings);
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?recording=1`;
@@ -449,7 +484,7 @@ export async function startCallRecording(agencyId, { callSid }, req) {
 
 export async function stopCallRecording(agencyId, { callSid, recordingSid }) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId);
-  const session = await activeCallSessionForRecording(agencyId, callSid, "stop recording on");
+  const session = await activeTwilioCall(agencyId, callSid, "stop recording on", config);
   const recordingSidClean = clean(recordingSid, 64);
   if (!recordingSidClean) throw createHttpError(400, "No active recording to stop.");
   const client = twilioClient(config.settings);
@@ -550,12 +585,21 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   const parentCallSid = clean(body.ParentCallSid, 64);
   if (!callSid && !parentCallSid) return { handled: false, reason: "no_call_sid" };
 
-  const status = twilioCallStatus(body.CallStatus, body.DialCallStatus);
+  // <Dial>'s action attribute always fires once the dial finishes — unlike
+  // its statusCallback/statusCallbackEvent attributes, which Twilio's
+  // parser rejects for the outbound Client-initiated flow (see
+  // outboundTwiML) and which then never reliably fire at all. An action
+  // request is identifiable by DialCallStatus/DialCallSid, params that
+  // never appear on a regular per-leg status callback, and it's treated as
+  // the authoritative outbound outcome below rather than the parent leg's
+  // own (irrelevant) status.
+  const isDialAction = body.DialCallStatus !== undefined;
+  const status = isDialAction ? twilioCallStatus("completed", body.DialCallStatus) : twilioCallStatus(body.CallStatus, body.DialCallStatus);
   const isRecording = body.recording === "1" || Boolean(clean(body.RecordingSid, 64));
   const occurredAt = new Date();
 
   // Recording callbacks carry only the media — never create a session from one.
-  if (isRecording && !status) {
+  if (!isDialAction && isRecording && !status) {
     const session = await twilioSessionByCallIds(prisma, agencyId, callSid, parentCallSid);
     if (session && !session.recordingUrl) {
       const recordingUrl = clean(body.RecordingUrl, 2000) || null;
@@ -564,8 +608,11 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
     return { handled: true, reason: "recording" };
   }
 
-  const direction = twilioDirection(body.Direction);
-  const remoteRaw = direction === "OUTBOUND" ? body.To : body.From;
+  const direction = isDialAction ? "OUTBOUND" : twilioDirection(body.Direction);
+  // An action request's own To/From describe the leg executing the Dial
+  // (the agent's Client→Application leg), not the number actually dialed —
+  // outboundTwiML threads that through explicitly as `dialedNumber` instead.
+  const remoteRaw = isDialAction ? clean(body.dialedNumber, 80) : (direction === "OUTBOUND" ? body.To : body.From);
   // A `client:casedesk:<userId>` value means the other end of this leg is
   // one of our own agents' softphones — a <Client> ring-everyone/transfer
   // target, or the browser's own Client-to-Application leg for an outbound
@@ -579,9 +626,9 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   const remoteIsInternalClient = clean(remoteRaw, 200).startsWith("client:");
   const remoteNumber = remoteIsInternalClient ? null : (clean(remoteRaw, 80).replace(/^client:/, "") || null);
   const remoteNumberNormalized = normalizeCommunicationPhone(remoteNumber);
-  const businessNumber = clean(direction === "OUTBOUND" ? body.From : body.To, 80).replace(/^client:/, "") || null;
+  const businessNumber = isDialAction ? null : clean(direction === "OUTBOUND" ? body.From : body.To, 80).replace(/^client:/, "") || null;
   const agentIdentity = identityFromClient(clean(body.agent, 200));
-  const durationSeconds = number(body.CallDuration);
+  const durationSeconds = number(isDialAction ? body.DialCallDuration : body.CallDuration);
   const recordingUrl = clean(body.RecordingUrl, 2000) || null;
   // Dial context threaded through the softphone → TwiML → status callback
   // chain (see outboundTwiML). Verified against the agency so a stray or
