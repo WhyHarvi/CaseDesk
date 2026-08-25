@@ -64,6 +64,7 @@ test("status callbacks ingest into the shared call history and distinguish misse
   // so inboundTwiML explicitly threads the stable context through the URL.
   assert.match(service, /parentCallSid=\$\{encodeURIComponent\(parentCallSid\)\}/);
   assert.match(service, /callerNumber=\$\{encodeURIComponent\(inboundCallerNumber\)\}/);
+  assert.match(service, /<Parameter name="CallerNumber" value="\$\{escapeXml\(inboundCallerNumber\)\}"\/>/);
   assert.match(service, /body\.parentCallSid \|\| body\.ParentCallSid/);
   assert.match(service, /explicitInboundCaller \|\| body\.From/);
   assert.match(webhookController, /\{ \.\.\.\(req\.body \|\| \{\}\), \.\.\.\(req\.query \|\| \{\}\) \}/);
@@ -274,6 +275,7 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   ]);
   assert.match(provider, /import \{ Device \} from "@twilio\/voice-sdk";/);
   assert.match(provider, /device\.on\("incoming"/);
+  assert.match(provider, /call\.customParameters\?\.get\?\.\("CallerNumber"\) \|\| call\.parameters\?\.From/);
   assert.match(provider, /device\.connect\(\{\s*params: \{\s*To: target/);
   assert.match(provider, /device\.updateToken\(response\.data\?\.data\?\.token\)/);
   assert.match(provider, /export function useSoftphone\(\)/);

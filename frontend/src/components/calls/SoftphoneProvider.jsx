@@ -408,7 +408,11 @@ export function SoftphoneProvider({ children }) {
         device.on("tokenWillExpire", (target) => void refreshToken(target));
         device.on("incoming", (call) => {
           if (disposed) return;
-          const from = call.parameters?.From || call.customParameters?.get?.("From") || "";
+          // The browser leg's ordinary From value is often an internal
+          // `client:casedesk:<userId>` identity. inboundTwiML passes the real
+          // external caller explicitly so the Answer / Decline banner can
+          // identify who is ringing before the call is accepted.
+          const from = call.customParameters?.get?.("CallerNumber") || call.parameters?.From || call.customParameters?.get?.("From") || "";
           // call.parameters.CallSid is this call's own (child) leg — the
           // <Dial> that rang this browser reports call status/recording
           // against the PARENT call instead (see inboundTwiML's comment),

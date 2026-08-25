@@ -314,7 +314,8 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // session row — would look up the wrong id and 409 as "no longer active"
   // unless we hand the parent SID over explicitly as a custom parameter.
   const parentCallSid = clean(req.body?.CallSid, 64);
-  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
+  const inboundCallerNumber = clean(req.body?.From, 80);
+  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
   // A <Dial><Client> callback describes the browser child leg, where From is
@@ -322,7 +323,6 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // parent SID on that callback, so carry the original inbound context in the
   // callback URL. This lets every event update the parent call-history row and
   // retain the external caller number instead of displaying "Private number".
-  const inboundCallerNumber = clean(req.body?.From, 80);
   const inboundBusinessNumber = clean(req.body?.To, 80);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?parentCallSid=${encodeURIComponent(parentCallSid)}&callerNumber=${encodeURIComponent(inboundCallerNumber)}&businessNumber=${encodeURIComponent(inboundBusinessNumber)}`;
   return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
