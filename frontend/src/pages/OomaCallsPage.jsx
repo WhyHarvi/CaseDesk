@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
+import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import api from "../services/api";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
@@ -66,23 +67,41 @@ function EmptyCalls({ unresolved, provider }) {
   );
 }
 
-function MobileCallCard({ call, onOpen, provider }) {
+function MobileCallCard({ call, onOpen, provider, onCall }) {
   const name = personName(call) || call.remoteNumber || "Private number";
   const detail = personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched";
   return (
-    <button
-      type="button"
+    // A <div> here, not a <button> — the Call button below needs to nest
+    // inside the same card without landing inside another interactive
+    // element, so "open this call" moves to a role="button" div instead.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="block w-full border-b border-slate-100 px-4 py-4 text-left transition hover:bg-slate-50/80 active:bg-slate-100 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }}
+      className="block w-full cursor-pointer border-b border-slate-100 px-4 py-4 text-left transition hover:bg-slate-50/80 active:bg-slate-100 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
       aria-label={`Open ${humanize(call.direction)} call with ${name}`}
     >
       <span className="flex items-start gap-3">
         <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span>
         <span className="min-w-0 flex-1">
           <span className="flex items-start justify-between gap-3">
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold text-slate-950">{name}</span>
-              <span className="mt-0.5 block truncate text-xs text-slate-500">{detail}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-slate-950">{name}</span>
+                <span className="mt-0.5 block truncate text-xs text-slate-500">{detail}</span>
+              </span>
+              {onCall && call.remoteNumber ? (
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); onCall(call.remoteNumber); }}
+                  aria-label={`Call ${name}`}
+                  title="Call"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+                >
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : null}
             </span>
             <CallStatus value={call.status} />
           </span>
@@ -96,7 +115,7 @@ function MobileCallCard({ call, onOpen, provider }) {
           </span>
         </span>
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -256,6 +275,21 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
 
 export function CallHistorySection({ provider = "OOMA" }) {
   const { acknowledgeDestination } = useNotifications();
+  // A direct call-back next to the caller's name, from the browser softphone
+  // — works regardless of whether this history entry itself came from Ooma
+  // or Twilio, since the callback always goes out over Twilio either way.
+  const { dial, status: softphoneStatus, active: activeCall } = useSoftphone();
+  const [callBackError, setCallBackError] = useState("");
+  const callBack = useCallback(async (numberValue) => {
+    if (!numberValue) return;
+    setCallBackError("");
+    try {
+      await dial(numberValue);
+    } catch (reason) {
+      setCallBackError(reason?.message || "The call could not be placed.");
+    }
+  }, [dial]);
+  const canCallBack = softphoneStatus === "ready" && !activeCall;
   const [params, setParams] = useSearchParams();
   const [calls, setCalls] = useState([]);
   const [meta, setMeta] = useState({ page: 1, total: 0, unresolved: 0, hasMore: false });
@@ -354,15 +388,16 @@ export function CallHistorySection({ provider = "OOMA" }) {
         </div>
 
         {error ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}<button type="button" onClick={() => load()} className="ml-2 font-semibold underline">Try again</button></div> : null}
+        {callBackError ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{callBackError}<button type="button" onClick={() => setCallBackError("")} className="ml-2 font-semibold underline">Dismiss</button></div> : null}
         {loading ? <div className="space-y-3 p-5">{Array.from({ length: 7 }, (_, index) => <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)}</div> : !calls.length ? <EmptyCalls unresolved={view === "unresolved"} provider={provider} /> : (
           <>
           <div className="divide-y divide-slate-200 md:hidden">
-            {calls.map((call) => <MobileCallCard key={call.id} call={call} provider={provider} onOpen={() => openCall(call)} />)}
+            {calls.map((call) => <MobileCallCard key={call.id} call={call} provider={provider} onOpen={() => openCall(call)} onCall={canCallBack ? callBack : null} />)}
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] border-collapse text-left">
               <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">{provider === "TWILIO" ? "Team member" : "Ooma user"}</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{humanize(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></td><td className="px-4 py-4"><CallStatus value={call.status} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
+              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{humanize(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
             </table>
           </div>
           </>
