@@ -402,18 +402,21 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                 <p className="mt-1 text-sm text-slate-500">{lead.leadNumber} · {lead.phone}</p>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-4">
               <button
                 type="button"
                 disabled={!lead.phone || softphoneStatus !== "ready" || Boolean(activeCall) || calling}
-                onClick={startCall}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  startCall();
+                }}
                 title={!lead.phone ? "Add a phone number to call this lead" : softphoneStatus !== "ready" ? "Twilio calling is not ready" : activeCall ? "Finish the current call first" : "Call this lead with Twilio"}
-                className="relative z-0 inline-flex h-9 items-center gap-2 overflow-visible rounded-full bg-[#34c759] px-3.5 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(52,199,89,0.25)] transition hover:-translate-y-0.5 hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
+                className="relative z-0 inline-flex h-11 items-center gap-2 overflow-visible rounded-full bg-[#34c759] px-4 text-xs font-semibold text-white shadow-[0_8px_20px_rgba(52,199,89,0.25)] transition hover:-translate-y-0.5 hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none"
               >
-                {lead.phone && softphoneStatus === "ready" && !activeCall && !calling ? <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.4s" }} aria-hidden="true" /> : null}
+                {lead.phone && softphoneStatus === "ready" && !activeCall && !calling ? <span className="pointer-events-none absolute -inset-1 -z-10 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.4s" }} aria-hidden="true" /> : null}
                 <Phone className="h-3.5 w-3.5 fill-current" />{calling ? "Calling…" : "Call"}
               </button>
-              <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); onClose(); }} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900" aria-label="Close"><X className="h-4 w-4" /></button>
             </div>
           </div>
 

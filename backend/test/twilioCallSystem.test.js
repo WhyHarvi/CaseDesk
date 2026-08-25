@@ -234,6 +234,11 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
   assert.match(leadsPage, /stopPropagation\(\); startCall\(lead\)/);
   assert.match(detailSheet, /useSoftphone\(\)/);
   assert.match(detailSheet, /await dial\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+  // Adjacent call and close controls remain distinct touch targets, and the
+  // decorative call pulse cannot intercept a close tap.
+  assert.match(detailSheet, /flex shrink-0 items-center gap-4/);
+  assert.match(detailSheet, /pointer-events-none absolute -inset-1/);
+  assert.match(detailSheet, /className="flex h-11 w-11 shrink-0/);
 });
 
 test("the frontend mounts a real softphone provider and a Call center page", async () => {
