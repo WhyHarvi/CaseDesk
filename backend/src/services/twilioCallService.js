@@ -566,7 +566,18 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
 
   const direction = twilioDirection(body.Direction);
   const remoteRaw = direction === "OUTBOUND" ? body.To : body.From;
-  const remoteNumber = clean(remoteRaw, 80).replace(/^client:/, "") || null;
+  // A `client:casedesk:<userId>` value means the other end of this leg is
+  // one of our own agents' softphones — a <Client> ring-everyone/transfer
+  // target, or the browser's own Client-to-Application leg for an outbound
+  // call — never a real phone number. It must never be stored/displayed as
+  // the caller's number, and Twilio doesn't reliably stamp ParentCallSid on
+  // these particular legs (confirmed against live call logs), so a
+  // standalone one with no existing session to attach to is pure noise: the
+  // real call is tracked separately by its own top-level status callback,
+  // and creating a session here would only add a phantom duplicate row
+  // whose "caller" is a raw internal identity string.
+  const remoteIsInternalClient = clean(remoteRaw, 200).startsWith("client:");
+  const remoteNumber = remoteIsInternalClient ? null : (clean(remoteRaw, 80).replace(/^client:/, "") || null);
   const remoteNumberNormalized = normalizeCommunicationPhone(remoteNumber);
   const businessNumber = clean(direction === "OUTBOUND" ? body.From : body.To, 80).replace(/^client:/, "") || null;
   const agentIdentity = identityFromClient(clean(body.agent, 200));
@@ -577,6 +588,11 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   // stale id can never link a call to another agency's record.
   const explicitLeadId = clean(body.leadId, 100) || null;
   const explicitClientId = clean(body.clientId, 100) || null;
+
+  if (remoteIsInternalClient) {
+    const existingForInternalLeg = await twilioSessionByCallIds(prisma, agencyId, callSid, parentCallSid);
+    if (!existingForInternalLeg) return { handled: false, reason: "internal_client_leg_no_session" };
+  }
 
   let result;
   try {
@@ -701,7 +717,12 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
   for (const call of calls) {
     const direction = twilioDirection(call.direction);
     const remoteRaw = direction === "OUTBOUND" ? call.to : call.from;
-    const remoteNumber = clean(remoteRaw, 80).replace(/^client:/, "") || null;
+    // Same internal-<Client>-leg noise as handleTwilioCallStatus above —
+    // this backstop pulls every call resource from the account, including
+    // bare <Client> ring/transfer legs, so it needs the identical guard to
+    // avoid seeding a phantom session keyed to that leg's own SID.
+    const remoteIsInternalClient = clean(remoteRaw, 200).startsWith("client:");
+    const remoteNumber = remoteIsInternalClient ? null : (clean(remoteRaw, 80).replace(/^client:/, "") || null);
     const remoteNumberNormalized = normalizeCommunicationPhone(remoteNumber);
     const businessNumber = clean(direction === "OUTBOUND" ? call.from : call.to, 80).replace(/^client:/, "") || null;
     const recording = (recordingByCall.get(call.sid) || [])[0];
@@ -724,8 +745,9 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
       rawPayload: { callSid: call.sid, direction: call.direction, status: call.status },
     };
     try {
+      const existing = await prisma.oomaCallSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
+      if (remoteIsInternalClient && !existing) continue;
       await prisma.$transaction(async (tx) => {
-        const existing = await tx.oomaCallSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
         if (existing) {
           await tx.oomaCallSession.update({ where: { id: existing.id }, data: { ...data, startedAt: existing.startedAt } });
         } else {
