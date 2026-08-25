@@ -346,6 +346,28 @@ export async function notifyUsers({
     .filter((id) => includeActor || id !== actorUserId);
   if (!uniqueRecipients.length) return [];
 
+  // For non-aggregate notifications the upsert below has an empty `update`
+  // clause, so once a (agencyId, recipientUserId, dedupeKey) row exists,
+  // calling this again for that same recipient is a guaranteed no-op.
+  // Background schedulers re-scan their "still due/overdue" backlog on a
+  // fixed interval and call notifyUsers() for the same row+recipient on
+  // every single pass, which was driving eligibility/preference/push-token
+  // lookups (and a wasted upsert round trip) millions of times for work
+  // that could never change the stored notification. Skip already-notified
+  // recipients before doing any of that work.
+  let candidateRecipients = uniqueRecipients;
+  if (!aggregate && dedupeKey) {
+    const alreadyNotified = await prisma.notification.findMany({
+      where: { agencyId, dedupeKey, recipientUserId: { in: uniqueRecipients } },
+      select: { recipientUserId: true },
+    });
+    if (alreadyNotified.length) {
+      const notifiedIds = new Set(alreadyNotified.map((item) => item.recipientUserId));
+      candidateRecipients = uniqueRecipients.filter((id) => !notifiedIds.has(id));
+    }
+    if (!candidateRecipients.length) return [];
+  }
+
   const resolvedDestinationKey = destinationFromNotification({
     destinationKey,
     actionUrl,
@@ -362,7 +384,7 @@ export async function notifyUsers({
   });
   const validIds = await eligibleNotificationRecipientIds({
     agencyId,
-    recipientIds: uniqueRecipients,
+    recipientIds: candidateRecipients,
     notification: {
       audienceKey: resolvedAudienceKey,
       type,
