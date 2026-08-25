@@ -126,6 +126,10 @@ test("Ooma calls have a durable event ledger, secured staff API, and working cal
   assert.match(sidebar, /label: "Calls"/);
   assert.match(page, /Create a lead from this caller/);
   assert.match(page, /href={`tel:/);
+  assert.match(page, /value === "INBOUND" \? "Incoming"/);
+  assert.match(page, /direction === "OUTBOUND" \? "No answer" : "Missed call"/);
+  assert.match(page, /return "Call failed"/);
+  assert.match(page, /\["missed", "Missed calls"\]/);
   assert.match(settings, /New Incoming Call/);
   assert.match(settings, /call_started/);
   assert.match(settings, /Call Ended/);

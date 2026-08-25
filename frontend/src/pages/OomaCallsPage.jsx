@@ -31,6 +31,12 @@ const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white
 const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70";
 
 const humanize = (value) => String(value || "").toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const callDirectionLabel = (value) => value === "INBOUND" ? "Incoming" : value === "OUTBOUND" ? "Outgoing" : humanize(value);
+const callStatusLabel = (value, direction) => {
+  if (value === "MISSED") return direction === "OUTBOUND" ? "No answer" : "Missed call";
+  if (value === "FAILED") return "Call failed";
+  return humanize(value);
+};
 const personName = (call) => call.client?.fullName || [call.lead?.firstName, call.lead?.lastName].filter(Boolean).join(" ") || null;
 const when = (value) => value ? new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
 const duration = (seconds) => {
@@ -48,8 +54,8 @@ const statusTone = {
   FAILED: "bg-amber-50 text-amber-700 ring-amber-200",
 };
 
-function CallStatus({ value }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${statusTone[value] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{humanize(value)}</span>;
+function CallStatus({ value, direction }) {
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${statusTone[value] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>{callStatusLabel(value, direction)}</span>;
 }
 
 function DirectionIcon({ value, className = "h-4 w-4" }) {
@@ -80,7 +86,7 @@ function MobileCallCard({ call, onOpen, provider, onCall }) {
       onClick={onOpen}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }}
       className="block w-full cursor-pointer border-b border-slate-100 px-4 py-4 text-left transition hover:bg-slate-50/80 active:bg-slate-100 last:border-b-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-      aria-label={`Open ${humanize(call.direction)} call with ${name}`}
+      aria-label={`Open ${callDirectionLabel(call.direction)} call with ${name}`}
     >
       <span className="flex items-start gap-3">
         <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span>
@@ -103,10 +109,10 @@ function MobileCallCard({ call, onOpen, provider, onCall }) {
                 </button>
               ) : null}
             </span>
-            <CallStatus value={call.status} />
+            <CallStatus value={call.status} direction={call.direction} />
           </span>
           <span className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-            <span><span className="block text-slate-400">Call</span><span className="mt-0.5 block font-medium text-slate-700">{humanize(call.direction)} · {duration(call.durationSeconds)}</span></span>
+            <span><span className="block text-slate-400">Call</span><span className="mt-0.5 block font-medium text-slate-700">{callDirectionLabel(call.direction)} · {duration(call.durationSeconds)}</span></span>
             <span><span className="block text-slate-400">{provider === "TWILIO" ? "Team member" : "Ooma user"}</span><span className="mt-0.5 block truncate font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</span></span>
           </span>
           <span className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
@@ -207,7 +213,7 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
               <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${call.status === "MISSED" ? "bg-rose-50 text-rose-600" : "bg-sky-50 text-sky-600"}`}><DirectionIcon value={call.direction} className="h-5 w-5" /></span>
-              <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{personName(call) || call.remoteNumber || "Unknown caller"}</h2><CallStatus value={call.status} /></div><p className="mt-1 text-sm text-slate-500">{humanize(call.direction)} · {when(call.startedAt)}</p></div>
+              <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{personName(call) || call.remoteNumber || "Unknown caller"}</h2><CallStatus value={call.status} direction={call.direction} /></div><p className="mt-1 text-sm text-slate-500">{callDirectionLabel(call.direction)} · {when(call.startedAt)}</p></div>
             </div>
             <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" aria-label="Close"><X className="h-4 w-4" /></button>
           </div>
@@ -379,7 +385,7 @@ export function CallHistorySection({ provider = "OOMA" }) {
         <div className="grid gap-4 border-b border-slate-200 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,28rem)] lg:items-end lg:p-5">
           <div>
             <p className="mb-2 text-xs font-semibold text-slate-600">Filter calls</p>
-            <div className="flex flex-wrap gap-2">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}</div>
+            <div className="flex flex-wrap gap-2">{[["all", "All"], ["unresolved", `Needs matching${meta.unresolved ? ` (${meta.unresolved})` : ""}`], ["missed", "Missed calls"], ["outbound", "Outgoing"]].map(([value, label]) => <button key={value} type="button" aria-pressed={view === value} onClick={() => update({ view: value === "all" ? "" : value })} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${view === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>)}</div>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); update({ search: searchDraft.trim() }); }}>
             <label className="block text-xs font-semibold text-slate-600">Search history</label>
@@ -397,7 +403,7 @@ export function CallHistorySection({ provider = "OOMA" }) {
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] border-collapse text-left">
               <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">{provider === "TWILIO" ? "Team member" : "Ooma user"}</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{humanize(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
+              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
             </table>
           </div>
           </>
