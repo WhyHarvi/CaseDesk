@@ -1009,6 +1009,7 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
     // Second, parallel pass: supporting/reviewer consultants get their own
     // visible credit for real, scheduled case involvement, distinct from
     // the single accountable owner resolved above.
+    const countedCollaboratorIds = new Set();
     (item.assignments || [])
       .filter(
         (assignment) =>
@@ -1016,6 +1017,8 @@ export async function loadAgencyWorkloads(agencyId, { sliceLimit = 10 } = {}) {
           activeConsultantIds.has(assignment.consultant.id),
       )
       .forEach((assignment) => {
+        if (countedCollaboratorIds.has(assignment.consultant.id)) return;
+        countedCollaboratorIds.add(assignment.consultant.id);
         const bucket = buckets.get(assignment.consultant.id);
         bucket.collaboratingCases += 1;
         bucket.collaboratingCaseItems.push({

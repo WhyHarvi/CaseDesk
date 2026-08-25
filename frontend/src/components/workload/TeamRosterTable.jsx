@@ -25,11 +25,31 @@ function CasesCell({ member }) {
   // Hook must run unconditionally (rules of hooks) — it's simply a no-op
   // when there's no bar to animate (barRef never attaches to the DOM).
   useAnimatedWidth(barRef, Math.min(100, pct));
+  const collaborating = member.collaboratingCases || 0;
+
+  // A Case Worker is never the accountable owner (activeCases), so this
+  // column would flatly read "0" for their entire real caseload — the
+  // capacity bar is an ownership concept and doesn't apply to them either.
+  // Their collaboratingCases count becomes the headline number instead of
+  // being buried a click away in the drawer.
+  if (!member.activeCases && collaborating > 0) {
+    return (
+      <div>
+        <p className="text-sm font-semibold text-slate-800">{collaborating}</p>
+        <p className="text-xs font-medium text-sky-700">collaborating</p>
+      </div>
+    );
+  }
 
   if (!hasCapacity) {
     // Admins/front desk don't carry a case-capacity target — show the raw
     // count, no bar implying a limit they were never assigned.
-    return <span className="text-sm font-semibold text-slate-800">{member.activeCases}</span>;
+    return (
+      <div>
+        <span className="text-sm font-semibold text-slate-800">{member.activeCases}</span>
+        {collaborating > 0 ? <p className="mt-0.5 text-xs text-slate-500">+{collaborating} collaborating</p> : null}
+      </div>
+    );
   }
   const barTone = pct >= 100 ? "bg-rose-500" : pct >= 75 ? "bg-amber-400" : "bg-emerald-500";
   return (
@@ -40,6 +60,7 @@ function CasesCell({ member }) {
       <div className="mt-1.5 h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
         <div ref={barRef} className={`h-full rounded-full ${barTone}`} />
       </div>
+      {collaborating > 0 ? <p className="mt-1 text-xs text-slate-500">+{collaborating} collaborating</p> : null}
     </div>
   );
 }
@@ -68,6 +89,10 @@ export default function TeamRosterTable({ members, currency, onSelect, compareId
           right.overdueLeadActions - left.overdueLeadActions ||
           (right.caseCapacityPercentage ?? -1) - (left.caseCapacityPercentage ?? -1) ||
           right.activeCases - left.activeCases ||
+          // A Case Worker never carries activeCases/capacity (they're never
+          // the accountable owner), so without this tiebreak they'd always
+          // sink to the bottom regardless of real collaboratingCases load.
+          (right.collaboratingCases || 0) - (left.collaboratingCases || 0) ||
           left.consultant.fullName.localeCompare(right.consultant.fullName),
       );
   }, [members, query]);
