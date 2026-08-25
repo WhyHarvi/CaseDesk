@@ -318,7 +318,7 @@ export async function inboundTwiML(agencyId, lineId, req) {
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
 }
 
 // Outbound call from a softphone client (the TwiML Application's Voice URL).
@@ -341,7 +341,7 @@ export async function outboundTwiML(agencyId, req) {
     if (!clients) return unavailableTwiML;
     const base = twilioPublicBase(req);
     const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
-    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
+    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
   }
 
   const agentIdentity = identityFromClient(req.body?.From);
@@ -353,7 +353,13 @@ export async function outboundTwiML(agencyId, req) {
   const dialClientId = clean(req.body?.clientId, 100);
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}${dialLeadId ? `&leadId=${encodeURIComponent(dialLeadId)}` : ""}${dialClientId ? `&clientId=${encodeURIComponent(dialClientId)}` : ""}`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
+  // statusBase's query string joins params with a raw "&" — correct for a
+  // URL, but a bare "&" inside an XML attribute value starts what looks
+  // like an unterminated entity reference, so this must be XML-escaped
+  // (not just URL-encoded) here or Twilio's parser rejects the whole
+  // document and the caller hears "an application error has occurred" —
+  // exactly what was happening on every call that carried a leadId/clientId.
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------
@@ -394,7 +400,7 @@ export async function transferTwilioCall(agencyId, { toUserId, callSid }, req) {
   // session.providerCallId is already the correct parent SID (that's how it
   // was found above) — same ParentCallSid hand-off as inboundTwiML, so the
   // person we're transferring to can transfer or record again themselves.
-  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
+  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
   await client.calls(session.providerCallId).update({ twiml });
   logger.info("twilio.call_transferred", { agencyId, providerCallId: session.providerCallId, fromAgent: session.handledByUserId, toAgent: target.id });
   return { transferred: true, callerId, target: { id: target.id, fullName: target.fullName } };
@@ -520,7 +526,12 @@ async function notifyTwilioCall(session, isNew, becameMissed) {
     entityId: session.id,
     actionUrl: `/calls?call=${encodeURIComponent(session.id)}`,
     dedupeKey: `twilio-call:${session.id}:${session.status === "MISSED" ? "missed" : "incoming"}`,
-    attentionLevel: session.resolution === "UNRESOLVED" || session.status === "MISSED" ? "action_required" : "informational",
+    // Every fresh session starts "UNRESOLVED" by default (see schema), so
+    // gating on that too meant essentially every single incoming call —
+    // dozens a day — got flagged action_required, burying notifications
+    // that actually need attention. A ringing/answered/completed call
+    // isn't itself something to act on; a missed one is.
+    attentionLevel: session.status === "MISSED" ? "action_required" : "informational",
   });
 }
 

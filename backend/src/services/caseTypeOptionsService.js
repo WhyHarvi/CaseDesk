@@ -10,6 +10,7 @@ import { GLOBAL_CASE_TYPE_PROGRAMS } from "./documentProgramCatalog.js";
 export function isCaseTypeOption(value) {
   const label = String(value || "").trim().replace(/\s+/g, " ");
   if (!label) return false;
+  if (/^unassigned case type$/i.test(label)) return false;
 
   // Intake answers occasionally land in legacy caseType fields. They describe
   // what the person wants to discuss, but are not reusable case categories.

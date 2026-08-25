@@ -8,7 +8,12 @@ import { parseCsv } from "../modules/leads/lead.csv.js";
 import { CASE_STAGES, isCaseStageAllowedForType } from "../constants/caseStages.js";
 import { nextClientNumber } from "../services/clientNumberService.js";
 import { mapCaseEasyStatus } from "../services/caseEasyStatusMapping.js";
-import { classifyWorkbookHeaders, importCaseEasyExports, readSheetRowsFromWorkbook } from "../services/caseEasyImportService.js";
+import {
+  classifyWorkbookHeaders,
+  importCaseEasyExports,
+  isUsableCaseEasyCaseType,
+  readSheetRowsFromWorkbook,
+} from "../services/caseEasyImportService.js";
 import {
   CASE_EASY_REPORT_DEFINITIONS,
   inferCaseEasyReportTypeFromFileName,
@@ -18,6 +23,10 @@ import {
 import { calculateCrsScore } from "./caseAssessmentController.js";
 import { normalizeMaritalStatus } from "../services/clientProfileSyncService.js";
 import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
+import {
+  assignDefaultWorkflowToCase,
+  canonicalCaseType,
+} from "../services/workflowService.js";
 import {
   buildCaseEasyContactSearchWhere,
   cleanCaseEasySearch,
@@ -459,6 +468,16 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function resolveImportedCaseType(caseInputType, stagingCaseType) {
+  const selected = isUsableCaseEasyCaseType(caseInputType)
+    ? String(caseInputType).trim()
+    : "";
+  const imported = isUsableCaseEasyCaseType(stagingCaseType)
+    ? String(stagingCaseType).trim()
+    : "";
+  return canonicalCaseType(selected || imported);
+}
+
 // Deliberately more lenient than contactDuplicateService.js's
 // normalizeContact(), which is meant for staff typing in a *new* lead and
 // should reject a malformed number outright. Case Easy's historical data
@@ -540,9 +559,10 @@ export async function convertCaseEasyImportContact(req, res) {
     const stagingCase = linkedCaseById.get(caseInput.caseEasyImportCaseId);
     if (!stagingCase || stagingCase.importStatus === "converted") continue;
     const suggested = mapCaseEasyStatus(stagingCase.status);
-    const caseType = String(
-      caseInput.caseType || stagingCase.caseType || "",
-    ).trim();
+    const caseType = resolveImportedCaseType(
+      caseInput.caseType,
+      stagingCase.caseType,
+    );
     if (!caseType) {
       throw createHttpError(
         400,
@@ -699,7 +719,7 @@ export async function convertCaseEasyImportContact(req, res) {
           select: { importStatus: true },
         });
         if (lockedStagingCase?.importStatus === "converted") continue;
-        const caseType = String(caseInput.caseType || stagingCase.caseType || "").trim();
+        const caseType = resolveImportedCaseType(caseInput.caseType, stagingCase.caseType);
         if (!caseType) continue;
 
         const suggested = mapCaseEasyStatus(stagingCase.status);
@@ -733,6 +753,11 @@ export async function convertCaseEasyImportContact(req, res) {
         const { score, breakdown } = calculateCrsScore(formData);
         await tx.caseAssessment.create({
           data: { agencyId, clientId: client.id, caseId: newCase.id, formData, crsScore: score, crsBreakdown: breakdown },
+        });
+        await assignDefaultWorkflowToCase(tx, {
+          agencyId,
+          caseId: newCase.id,
+          caseType: newCase.caseType,
         });
 
         await tx.caseEasyImportCase.update({ where: { id: stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id } });
@@ -825,12 +850,22 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
     const unconvertedCases = contact.linkedCases.filter((stagingCase) => stagingCase.importStatus !== "converted");
     const plannedCases = unconvertedCases
       .map((stagingCase) => {
-        const caseType = String(stagingCase.caseType || "").trim();
+        const caseType = resolveImportedCaseType(null, stagingCase.caseType);
         const suggested = mapCaseEasyStatus(stagingCase.status);
         return { stagingCase, caseType, stage: suggested.stage, status: suggested.status, archived: suggested.archived };
       })
       .filter((planned) => planned.caseType && CASE_STAGES.includes(planned.stage) && isCaseStageAllowedForType(planned.caseType, planned.stage) && CASE_STATUSES.has(planned.status));
     const skippedCaseCount = unconvertedCases.length - plannedCases.length;
+
+    if (unconvertedCases.length > 0 && plannedCases.length === 0) {
+      results.push({
+        contactId: contact.id,
+        name,
+        status: "failed",
+        message: "No imported cases have a valid case type — review this contact and choose the correct type manually.",
+      });
+      continue;
+    }
 
     if (!name.trim()) {
       results.push({ contactId: contact.id, name, status: "failed", message: "No name on file — needs manual review before conversion." });
@@ -901,6 +936,11 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
           if (maritalStatus) formData.profile = { maritalStatus };
           const { score, breakdown } = calculateCrsScore(formData);
           await tx.caseAssessment.create({ data: { agencyId, clientId: client.id, caseId: newCase.id, formData, crsScore: score, crsBreakdown: breakdown } });
+          await assignDefaultWorkflowToCase(tx, {
+            agencyId,
+            caseId: newCase.id,
+            caseType: newCase.caseType,
+          });
 
           await tx.caseEasyImportCase.update({ where: { id: planned.stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id } });
           await tx.caseEasyImportReportRow.updateMany({

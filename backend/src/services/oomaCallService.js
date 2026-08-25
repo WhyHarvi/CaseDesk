@@ -562,7 +562,12 @@ async function notifyCall(session, isNew) {
     entityId: session.id,
     actionUrl: `/calls?call=${encodeURIComponent(session.id)}`,
     dedupeKey: `ooma-call:${session.id}:incoming`,
-    attentionLevel: session.resolution === "UNRESOLVED" || session.status === "MISSED" ? "action_required" : "informational",
+    // Every fresh session starts "UNRESOLVED" by default (see schema), so
+    // gating on that too meant essentially every single incoming call got
+    // flagged action_required, burying notifications that actually need
+    // attention. A ringing/answered/completed call isn't itself something
+    // to act on; a missed one is.
+    attentionLevel: session.status === "MISSED" ? "action_required" : "informational",
   });
 }
 

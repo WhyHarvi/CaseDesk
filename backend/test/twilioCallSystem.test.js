@@ -149,6 +149,17 @@ test("lead calls auto-record: the softphone dial threads the lead id through Twi
   // an unlinked session — it never overrides a match the number produced.
   assert.match(service, /tx\.lead\.findFirst\(\{ where: \{ id: explicitLeadId, agencyId, deletedAt: null }/);
   assert.match(service, /linkLeadId && !existing\.leadId \? \{ leadId: linkLeadId, resolution: "LINKED_LEAD"/);
+  // statusBase's query string joins agent=/leadId=/clientId= with a raw "&"
+  // — correct for a URL, but a bare "&" inside an XML attribute value reads
+  // as an unterminated entity reference and Twilio's TwiML parser rejects
+  // the whole document (confirmed via Twilio's own debugger: "the reference
+  // to entity 'leadId' must end with the ';' delimiter"), so every call
+  // carrying a lead/client id failed outright with a generic "application
+  // error" and never got dialed or logged. Every statusCallback attribute
+  // built from a multi-param URL must XML-escape it, not just URL-encode
+  // the individual param values.
+  const escapedStatusCallbackCount = (service.match(/statusCallback="\$\{escapeXml\(statusBase\)\}"/g) || []).length;
+  assert.equal(escapedStatusCallbackCount, 4, "every statusBase-built statusCallback attribute (inboundTwiML, outboundTwiML's internal-line branch, outboundTwiML's external-number branch, and transferTwilioCall) must be XML-escaped");
 });
 
 test("the 'call ended' popup saves the outcome through a shared applyCallOutcome path", async () => {

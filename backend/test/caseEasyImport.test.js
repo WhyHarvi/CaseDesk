@@ -8,6 +8,7 @@ import {
   CONTACT_HEADER_MAP,
   caseEasyAssigneeNameMatches,
   classifyWorkbookHeaders,
+  isUsableCaseEasyCaseType,
   linkImportedContactsToExistingClients,
   mapRow,
   resolveCaseEasyAssigneeUserId,
@@ -25,6 +26,13 @@ test("Case Easy contacts and cases exports are classified from their real header
   );
   assert.equal(classifyWorkbookHeaders(contactHeaders).type, "contacts");
   assert.equal(classifyWorkbookHeaders(caseHeaders).type, "cases");
+});
+
+test("Case Easy placeholder case types are treated as missing", () => {
+  assert.equal(isUsableCaseEasyCaseType("Unassigned Case Type"), false);
+  assert.equal(isUsableCaseEasyCaseType("  unassigned   case type "), false);
+  assert.equal(isUsableCaseEasyCaseType(""), false);
+  assert.equal(isUsableCaseEasyCaseType("Study Permit: Application"), true);
 });
 
 test("late Case Easy imports link to one exact existing client without guessing", async () => {
@@ -157,7 +165,23 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   assert.match(controller, /Next action is required/);
   assert.match(controller, /FOR UPDATE/);
   assert.match(controller, /lockedStagingCase/);
+  assert.match(controller, /resolveImportedCaseType/);
+  assert.match(controller, /canonicalCaseType/);
+  assert.equal((controller.match(/assignDefaultWorkflowToCase\(tx/g) || []).length, 2);
   assert.doesNotMatch(controller, /identificationNumber:\s*(contact\.uci|uci)/);
+});
+
+test("Case Easy conversion requires a real type instead of accepting its unassigned sentinel", async () => {
+  const [controller, page] = await Promise.all([
+    source("../src/controllers/caseEasyImportController.js"),
+    source("../../frontend/src/pages/CaseEasyImport.jsx"),
+  ]);
+  assert.match(controller, /isUsableCaseEasyCaseType/);
+  assert.match(controller, /Case type is required for every selected imported case/);
+  assert.match(controller, /No imported cases have a valid case type/);
+  assert.match(page, /Case Easy did not provide a real case type/);
+  assert.match(page, /Case type needs review/);
+  assert.match(page, /caseType: isUsableImportedCaseType\(kase\.caseType\) \? kase\.caseType : ""/);
 });
 
 test("Case Easy conversion notifies each assigned consultant", async () => {

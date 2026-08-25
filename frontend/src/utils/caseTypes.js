@@ -53,7 +53,9 @@ export function caseTypeMatchesQuery(value, query) {
 
 export function isReusableCaseType(value) {
   const label = String(value || "").trim().replace(/\s+/g, " ");
-  return Boolean(label) && !/^(?:i|we)\s+(?:am|are|have|need|want|would|wish)\b/i.test(label);
+  return Boolean(label)
+    && !/^unassigned case type$/i.test(label)
+    && !/^(?:i|we)\s+(?:am|are|have|need|want|would|wish)\b/i.test(label);
 }
 
 export function buildCaseTypeFilterOptions(cases = [], configuredOptions = []) {

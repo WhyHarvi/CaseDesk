@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isCaseTypeOption, listAgencyCaseTypeOptions } from "../src/services/caseTypeOptionsService.js";
 import { canonicalCaseType } from "../src/services/workflowService.js";
+import { isReusableCaseType } from "../../frontend/src/utils/caseTypes.js";
 
 test("case type options reject intake answers while retaining custom legal categories", () => {
   assert.equal(isCaseTypeOption("I want to discuss my spousal pr application process"), false);
   assert.equal(isCaseTypeOption("We need help with a refused application"), false);
+  assert.equal(isCaseTypeOption("Unassigned Case Type"), false);
+  assert.equal(isReusableCaseType("Unassigned Case Type"), false);
   assert.equal(isCaseTypeOption("Judicial Review"), true);
   assert.equal(isCaseTypeOption("Humanitarian and Compassionate Application"), true);
 });
@@ -42,6 +45,7 @@ test("lead immigration interests include defaults and agency-specific case types
         { caseType: "I want to discuss my spousal pr application process" },
         { caseType: "SOWP" },
         { caseType: "spousal open work permit" },
+        { caseType: "Unassigned Case Type" },
       ],
     },
     documentTemplate: {
@@ -69,6 +73,7 @@ test("lead immigration interests include defaults and agency-specific case types
   assert.equal(options.filter((value) => value === "Spousal Open Work Permit").length, 1);
   assert.ok(!options.includes("SOWP"));
   assert.ok(!options.includes("I want to discuss my spousal pr application process"));
+  assert.ok(!options.includes("Unassigned Case Type"));
   assert.equal(
     options.filter((value) => value.toLowerCase() === "study permit").length,
     1,

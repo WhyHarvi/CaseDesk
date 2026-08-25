@@ -28,6 +28,11 @@ const IMPORT_STATUS_FILTERS = [
 ];
 const CASE_STATUSES = ["Open", "Active", "On Hold", "Completed", "Closed", "Cancelled", "Inactive"];
 
+function isUsableImportedCaseType(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return Boolean(normalized) && normalized !== "unassigned case type";
+}
+
 const REVIEW_REASON_LABEL = {
   unlinked_contact: "Couldn't match a contact",
   assignee_mismatch: "Assignee needs review",
@@ -109,6 +114,9 @@ function CaseBadge({ kase }) {
   if (kase.importStatus === "converted") {
     return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Converted</span>;
   }
+  if (!isUsableImportedCaseType(kase.caseType)) {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><AlertTriangle className="h-3 w-3" /> Case type needs review</span>;
+  }
   if (kase.needsReviewReason) {
     const labels = (kase.needsReviewReasons?.length
       ? kase.needsReviewReasons
@@ -124,7 +132,7 @@ function CaseBadge({ kase }) {
 }
 
 function ContactRow({ contact, expanded, onToggle, onConvert, selected, onToggleSelect }) {
-  const needsReviewCount = contact.linkedCases.filter((kase) => kase.needsReviewReason && kase.importStatus !== "converted").length;
+  const needsReviewCount = contact.linkedCases.filter((kase) => (kase.needsReviewReason || !isUsableImportedCaseType(kase.caseType)) && kase.importStatus !== "converted").length;
   const converted = contact.importStatus === "converted";
   // A contact converted in an earlier import can still gain new cases from
   // a later Cases file — resolveLinks links them to the contact right away,
@@ -210,7 +218,7 @@ function ContactRow({ contact, expanded, onToggle, onConvert, selected, onToggle
               {contact.linkedCases.map((kase) => (
                 <div key={kase.id} className="rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-800">{kase.caseNumber || "(no case number)"} · {kase.caseType || "Unknown type"}</span>
+                    <span className="font-semibold text-slate-800">{kase.caseNumber || "(no case number)"} · {isUsableImportedCaseType(kase.caseType) ? kase.caseType : "Case type required"}</span>
                     <CaseBadge kase={kase} />
                   </div>
                   <p className="mt-1 text-slate-500">
@@ -278,7 +286,8 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
           caseNumber: kase.caseNumber,
           include: kase.importStatus !== "converted",
           alreadyConverted: kase.importStatus === "converted",
-          caseType: kase.caseType || "",
+          caseType: isUsableImportedCaseType(kase.caseType) ? kase.caseType : "",
+          caseTypeNeedsReview: !isUsableImportedCaseType(kase.caseType),
           stage: suggested.stage || "Lead",
           status: suggested.status || "Open",
           statusRecognized: suggested.recognized !== false,
@@ -301,6 +310,9 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
     setCaseForms((current) => current.map((form, i) => {
       if (i !== index) return form;
       const next = { ...form, ...patch };
+      if (Object.hasOwn(patch, "caseType")) {
+        next.caseTypeNeedsReview = !isUsableImportedCaseType(patch.caseType);
+      }
       if (
         Object.hasOwn(patch, "caseType") &&
         !caseStagesForType(next.caseType).includes(next.stage)
@@ -418,6 +430,11 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
                           {!form.statusRecognized ? (
                             <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:col-span-2">
                               Case Easy status was not recognized. Confirm the CaseDesk stage and status before converting.
+                            </div>
+                          ) : null}
+                          {form.caseTypeNeedsReview ? (
+                            <div className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:col-span-2">
+                              Case Easy did not provide a real case type. Choose the correct CaseDesk case type before converting.
                             </div>
                           ) : null}
                           <label className="text-xs font-medium text-slate-600">

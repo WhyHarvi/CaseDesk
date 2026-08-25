@@ -58,6 +58,18 @@ export function normalizeKey(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+const CASE_EASY_PLACEHOLDER_CASE_TYPES = new Set([
+  "unassigned case type",
+]);
+
+// Case Easy exports this sentinel as if it were a real case type. Treat it
+// like a blank value everywhere that decides whether a case can be converted,
+// while still retaining the original text in staging for audit purposes.
+export function isUsableCaseEasyCaseType(value) {
+  const normalized = normalizeKey(value).replace(/\s+/g, " ");
+  return Boolean(normalized) && !CASE_EASY_PLACEHOLDER_CASE_TYPES.has(normalized);
+}
+
 function normalizePhoneKey(value) {
   const digits = String(value || "").replace(/\D/g, "");
   return digits.length === 11 && digits.startsWith("1")
@@ -891,12 +903,12 @@ export async function importCaseEasyExports({ agencyId, contactsWorkbook, casesW
             message: "Case Number is missing; fallback deduplication will be used.",
           });
         }
-        if (!mapped.caseType) {
+        if (!isUsableCaseEasyCaseType(mapped.caseType)) {
           errors.push({
             sheet: "cases",
             row: row.rowNumber,
             field: "caseType",
-            message: "Case Type is missing and must be supplied during conversion.",
+            message: "Case Type is missing or unassigned and must be supplied during conversion.",
           });
         }
         return {
