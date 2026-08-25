@@ -1,5 +1,7 @@
-import { BatteryFull, Clipboard, Delete, Keyboard, Loader2, Phone, PhoneCall, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowLeftRight, BatteryFull, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, Wifi, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "../../auth/AuthContext";
+import api from "../../services/api";
 import { useSoftphone } from "./SoftphoneProvider";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -16,7 +18,7 @@ export function openGlobalDialpad(number = "") {
 }
 
 export default function GlobalDialpad() {
-  const { dial, active, status } = useSoftphone();
+  const { dial, active, status, muted, toggleMute, hangup } = useSoftphone();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState("");
   const [busy, setBusy] = useState(false);
@@ -25,10 +27,17 @@ export default function GlobalDialpad() {
   const [online, setOnline] = useState(() => navigator.onLine);
   const [battery, setBattery] = useState(null);
   const [callSeconds, setCallSeconds] = useState(0);
+  const [showCallKeypad, setShowCallKeypad] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [transferNotice, setTransferNotice] = useState("");
+  const [transferError, setTransferError] = useState("");
   const panelRef = useRef(null);
   const audioRef = useRef(null);
   const deleteHoldTimerRef = useRef(null);
   const deleteHoldTriggeredRef = useRef(false);
+  const zeroHoldTimerRef = useRef(null);
+  const zeroHoldTriggeredRef = useRef(false);
 
   const close = useCallback(() => setOpen(false), []);
   const digits = number.replace(/\D/g, "");
@@ -56,7 +65,10 @@ export default function GlobalDialpad() {
       setBusy(true);
       setError("");
       await dial(number);
-      setOpen(false);
+      // Stay open (rather than collapsing back to the pill) so placing a
+      // call flows straight into the in-call screen below — the "active
+      // call should also be visible" ask, not just reachable by re-opening.
+      setNumber("");
     } catch (reason) {
       setError(reason?.message || "The call could not be placed.");
     } finally {
@@ -108,6 +120,77 @@ export default function GlobalDialpad() {
     playTone(key);
     setNumber((current) => current.length < 20 ? current + key : current);
   }, [playTone]);
+
+  // Standard phone-dialer behavior: a quick tap on 0 enters "0"; holding it
+  // enters "+" instead (never both) — decided at release/threshold like the
+  // delete key's hold-to-clear below, not on press, so a tap doesn't add "0"
+  // before a hold has a chance to turn it into "+".
+  const startZeroHold = useCallback(() => {
+    zeroHoldTriggeredRef.current = false;
+    if (zeroHoldTimerRef.current) window.clearTimeout(zeroHoldTimerRef.current);
+    zeroHoldTimerRef.current = window.setTimeout(() => {
+      zeroHoldTriggeredRef.current = true;
+      zeroHoldTimerRef.current = null;
+      playTone("0");
+      setNumber((current) => (current.length < 20 ? `${current}+` : current));
+    }, 550);
+  }, [playTone]);
+
+  const stopZeroHold = useCallback(() => {
+    if (!zeroHoldTimerRef.current) return;
+    window.clearTimeout(zeroHoldTimerRef.current);
+    zeroHoldTimerRef.current = null;
+  }, []);
+
+  const releaseZero = useCallback(() => {
+    stopZeroHold();
+    if (zeroHoldTriggeredRef.current) {
+      zeroHoldTriggeredRef.current = false;
+      return;
+    }
+    pressKey("0");
+  }, [pressKey, stopZeroHold]);
+
+  // Sends a DTMF tone into the live call (e.g. for an IVR menu) instead of
+  // building up the number-to-dial — the in-call keypad is a different mode
+  // from the pre-call dial screen, even though it reuses the same key grid.
+  const sendCallDigit = useCallback((key) => {
+    playTone(key);
+    try { active?.call?.sendDigits?.(key); } catch { /* DTMF is best-effort */ }
+  }, [active, playTone]);
+
+  const startTransfer = useCallback(async (targetId, targetName) => {
+    try {
+      setTransferring(true);
+      setTransferError("");
+      setTransferNotice("");
+      const callSid = active?.call?.parameters?.CallSid || "";
+      await api.post("/twilio-calls/transfer", { to: targetId, callSid });
+      setTransferOpen(false);
+      setTransferNotice(`Transferred to ${targetName}.`);
+    } catch (reason) {
+      setTransferError(reason?.response?.data?.message || reason?.message || "The transfer could not be completed.");
+    } finally {
+      setTransferring(false);
+    }
+  }, [active]);
+
+  // Collapses the panel back to the small idle pill the moment a call ends
+  // (not on mount, and not if the panel was just opened to dial and never
+  // connected — only a genuine active-to-inactive transition) so the
+  // full-height dial screen doesn't sit open competing for the same corner
+  // right when the call-outcome popup needs to appear.
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = Boolean(active);
+    if (active) return;
+    setShowCallKeypad(false);
+    setTransferOpen(false);
+    setTransferNotice("");
+    setTransferError("");
+    if (wasActive) setOpen(false);
+  }, [active]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 15_000);
@@ -161,8 +244,9 @@ export default function GlobalDialpad() {
       if (!open || editing) return;
       if (/^[0-9*#]$/.test(event.key)) {
         event.preventDefault();
-        pressKey(event.key);
-      } else if (event.key === "Backspace") {
+        if (active) { if (showCallKeypad) sendCallDigit(event.key); }
+        else pressKey(event.key);
+      } else if (event.key === "Backspace" && !active) {
         event.preventDefault();
         setNumber((current) => current.slice(0, -1));
       } else if (event.key === "Escape" || event.key.toLowerCase() === "d") {
@@ -175,7 +259,7 @@ export default function GlobalDialpad() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [canCall, close, open, pressKey, startCall, warmAudio]);
+  }, [active, canCall, close, open, pressKey, sendCallDigit, showCallKeypad, startCall, warmAudio]);
 
   useEffect(() => () => {
     const context = audioRef.current;
@@ -271,25 +355,139 @@ export default function GlobalDialpad() {
           <X className="h-4 w-4" />
         </button>
 
+        {active ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center px-2 pb-4 pt-8 text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#34c759]">
+            {active.direction === "INBOUND" ? "Incoming call" : "Calling"} · {callTime}
+          </p>
+          <p className="mt-3 w-full truncate text-[1.7rem] font-light tracking-[-0.02em] text-white">{activeNumber}</p>
+
+          {transferNotice ? <p className="mt-4 w-full rounded-2xl bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-400">{transferNotice}</p> : null}
+          {transferError ? <p className="mt-4 w-full rounded-2xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-400">{transferError}</p> : null}
+
+          {showCallKeypad ? (
+            <>
+              <div className="mx-auto mt-8 grid max-w-[18rem] grid-cols-3 gap-x-5 gap-y-4">
+                {KEYS.map((key) => (
+                  <button key={key} type="button" onPointerDown={(event) => { if (event.button === 0) sendCallDigit(key); }} onClick={(event) => { if (event.detail === 0) sendCallDigit(key); }} className="mx-auto flex h-[4.35rem] w-[4.35rem] touch-manipulation items-center justify-center rounded-full bg-[#333336] text-[1.85rem] font-normal text-white transition duration-150 hover:bg-[#4a4a4e] active:scale-90 active:bg-[#737377]">
+                    {key}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setShowCallKeypad(false)} className="mt-6 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff]">Hide keypad</button>
+            </>
+          ) : (
+            <div className="mx-auto mt-10 grid w-full max-w-[18rem] grid-cols-3 gap-x-5 gap-y-6">
+              <CallActionButton icon={muted ? MicOff : Mic} label={muted ? "Unmute" : "Mute"} active={muted} onClick={toggleMute} />
+              <CallActionButton icon={Grid3x3} label="Keypad" onClick={() => setShowCallKeypad(true)} />
+              <CallActionButton icon={ArrowLeftRight} label="Transfer" onClick={() => setTransferOpen(true)} disabled={transferring} />
+            </div>
+          )}
+
+          <button type="button" onClick={hangup} aria-label="End call" className="mx-auto mb-1 mt-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#ff3b30] text-white shadow-[0_12px_30px_rgba(255,59,48,0.32)] transition hover:bg-[#ff5147] active:scale-90">
+            <PhoneOff className="h-6 w-6 fill-current" />
+          </button>
+        </div>
+        ) : (
+        <>
         <div className="flex h-32 shrink-0 translate-y-2 flex-col items-center justify-end px-2 pb-4 text-center">
           <p className={`w-full truncate font-light tracking-[-0.04em] ${display ? "text-[2rem] text-white" : "text-xl text-zinc-500"}`}>{display || "Enter a number"}</p>
-          <button type="button" disabled={Boolean(active)} onClick={paste} className="mt-1 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff] disabled:opacity-40">Paste number</button>
+          <button type="button" onClick={paste} className="mt-1 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff] disabled:opacity-40">Paste number</button>
         </div>
         {error ? <p className="mb-2 rounded-xl bg-red-500/15 px-3 py-2 text-center text-xs font-medium text-red-400">{error}</p> : null}
 
         <div className="mx-auto grid max-w-[18rem] grid-cols-3 gap-x-5 gap-y-4">
-          {KEYS.map((key) => <button key={key} type="button" disabled={Boolean(active)} onPointerDown={(event) => { if (event.button === 0) pressKey(key); }} onClick={(event) => { if (event.detail === 0) pressKey(key); }} className="mx-auto flex h-[4.35rem] w-[4.35rem] touch-manipulation flex-col items-center justify-center rounded-full bg-[#333336] text-white transition duration-150 hover:bg-[#4a4a4e] active:scale-90 active:bg-[#737377] disabled:opacity-40"><span className="text-[1.85rem] font-normal leading-7">{key}</span><span className="min-h-2.5 text-[8px] font-semibold tracking-[0.22em] text-white">{key === "0" ? "+" : LETTERS[key] || " "}</span></button>)}
+          {KEYS.map((key) => key === "0" ? (
+            <button
+              key={key}
+              type="button"
+              onPointerDown={(event) => { if (event.button === 0) startZeroHold(); }}
+              onPointerUp={(event) => { if (event.button === 0) releaseZero(); }}
+              onPointerCancel={stopZeroHold}
+              onPointerLeave={stopZeroHold}
+              onClick={(event) => { if (event.detail === 0) pressKey("0"); }}
+              onContextMenu={(event) => event.preventDefault()}
+              className="mx-auto flex h-[4.35rem] w-[4.35rem] touch-manipulation flex-col items-center justify-center rounded-full bg-[#333336] text-white transition duration-150 hover:bg-[#4a4a4e] active:scale-90 active:bg-[#737377]"
+            >
+              <span className="text-[1.85rem] font-normal leading-7">0</span>
+              <span className="min-h-2.5 text-[8px] font-semibold tracking-[0.22em] text-white">+</span>
+            </button>
+          ) : (
+            <button key={key} type="button" onPointerDown={(event) => { if (event.button === 0) pressKey(key); }} onClick={(event) => { if (event.detail === 0) pressKey(key); }} className="mx-auto flex h-[4.35rem] w-[4.35rem] touch-manipulation flex-col items-center justify-center rounded-full bg-[#333336] text-white transition duration-150 hover:bg-[#4a4a4e] active:scale-90 active:bg-[#737377]"><span className="text-[1.85rem] font-normal leading-7">{key}</span><span className="min-h-2.5 text-[8px] font-semibold tracking-[0.22em] text-white">{LETTERS[key] || " "}</span></button>
+          ))}
         </div>
 
         <div className="mx-auto mt-4 grid max-w-[17rem] grid-cols-3 items-center">
-          <button type="button" disabled={Boolean(active)} onClick={paste} aria-label="Paste number" className="mx-auto flex h-12 w-12 flex-col items-center justify-center text-zinc-400 transition hover:text-white disabled:opacity-30"><Clipboard className="h-4 w-4" /><span className="mt-1 text-[9px]">Paste</span></button>
+          <button type="button" onClick={paste} aria-label="Paste number" className="mx-auto flex h-12 w-12 flex-col items-center justify-center text-zinc-400 transition hover:text-white disabled:opacity-30"><Clipboard className="h-4 w-4" /><span className="mt-1 text-[9px]">Paste</span></button>
           <button type="button" disabled={!canCall} onClick={startCall} aria-label="Call" className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#34c759] text-white shadow-[0_12px_30px_rgba(52,199,89,0.28)] transition hover:bg-[#42d866] active:scale-90 disabled:bg-zinc-700 disabled:text-zinc-500 disabled:shadow-none">{busy ? <Loader2 className="h-6 w-6 animate-spin" /> : <PhoneCall className="h-6 w-6 fill-current" />}</button>
-          <button type="button" disabled={Boolean(active) || !number} onPointerDown={startDeleteHold} onPointerUp={stopDeleteHold} onPointerCancel={stopDeleteHold} onPointerLeave={stopDeleteHold} onClick={deleteDigit} onContextMenu={(event) => event.preventDefault()} aria-label="Delete digit; hold to clear number" title="Delete digit · Hold to clear" className="mx-auto flex h-12 w-12 touch-manipulation items-center justify-center text-zinc-300 transition hover:text-white disabled:opacity-0"><Delete className="h-6 w-6" /></button>
+          <button type="button" disabled={!number} onPointerDown={startDeleteHold} onPointerUp={stopDeleteHold} onPointerCancel={stopDeleteHold} onPointerLeave={stopDeleteHold} onClick={deleteDigit} onContextMenu={(event) => event.preventDefault()} aria-label="Delete digit; hold to clear number" title="Delete digit · Hold to clear" className="mx-auto flex h-12 w-12 touch-manipulation items-center justify-center text-zinc-300 transition hover:text-white disabled:opacity-0"><Delete className="h-6 w-6" /></button>
         </div>
 
-        {status !== "ready" && !active ? <p className="mt-3 text-center text-[10px] font-medium text-amber-400">Softphone is not ready to place calls</p> : <p className="mt-3 flex items-center justify-center gap-1.5 text-[9px] text-zinc-600"><Keyboard className="h-3 w-3" />Type · Enter to call · Esc to close</p>}
+        {status !== "ready" ? <p className="mt-3 text-center text-[10px] font-medium text-amber-400">Softphone is not ready to place calls</p> : <p className="mt-3 flex items-center justify-center gap-1.5 text-[9px] text-zinc-600"><Keyboard className="h-3 w-3" />Type · Enter to call · Esc to close</p>}
+        </>
+        )}
         <div className="mx-auto mt-auto h-1 w-28 shrink-0 rounded-full bg-white" aria-hidden="true" />
       </div>
+      {transferOpen ? <TransferPicker busy={transferring} onClose={() => setTransferOpen(false)} onPick={startTransfer} /> : null}
     </aside>
+  );
+}
+
+function CallActionButton({ icon: Icon, label, onClick, active = false, disabled = false }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className="mx-auto flex flex-col items-center gap-1.5 disabled:opacity-40">
+      <span className={`flex h-14 w-14 items-center justify-center rounded-full transition ${active ? "bg-white text-black" : "bg-white/12 text-white hover:bg-white/20"}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <span className="text-[10px] font-medium text-zinc-300">{label}</span>
+    </button>
+  );
+}
+
+function TransferPicker({ busy, onClose, onPick }) {
+  const { appUser } = useAuth();
+  const [staff, setStaff] = useState([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get("/twilio-calls/staff", { cache: false })
+      .then((response) => { if (active) setStaff(response.data?.data || []); })
+      .catch((reason) => { if (active) setError(reason?.response?.data?.message || "Team members could not be loaded."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const needle = search.trim().toLowerCase();
+  const options = staff.filter((person) => person.id !== appUser?.id && (!needle || person.fullName?.toLowerCase().includes(needle) || person.role?.toLowerCase().includes(needle)));
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col rounded-[2.5rem] bg-zinc-900/98 backdrop-blur-xl">
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-5 py-4 pt-8">
+        <p className="text-sm font-semibold text-white">Transfer to a team member</p>
+        <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-zinc-300 hover:bg-white/20" aria-label="Close transfer picker"><X className="h-4 w-4" /></button>
+      </div>
+      <div className="relative px-5 py-3">
+        <Search className="absolute left-8 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+        <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} className="h-10 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-[#0a84ff]/50" placeholder="Search by name or role" />
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 pb-4">
+        {error ? <p className="px-3 py-2 text-xs text-red-400">{error}</p> : null}
+        {loading ? (
+          <div className="space-y-2 p-2">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-12 animate-pulse rounded-xl bg-white/5" />)}</div>
+        ) : !options.length ? (
+          <p className="px-3 py-6 text-center text-xs text-zinc-500">{staff.length ? "No matching team members." : "No other team members available."}</p>
+        ) : options.map((person) => (
+          <button key={person.id} type="button" disabled={busy} onClick={() => onPick(person.id, person.fullName)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/10 disabled:opacity-50">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#0a84ff]/20 text-[11px] font-bold uppercase text-[#5eafff]">{person.fullName?.slice(0, 1) || "?"}</span>
+            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-white">{person.fullName}</span><span className="block text-xs capitalize text-zinc-500">{person.role}</span></span>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin text-[#5eafff]" /> : <ArrowLeftRight className="h-4 w-4 text-[#5eafff]" />}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

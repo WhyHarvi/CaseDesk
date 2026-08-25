@@ -309,7 +309,7 @@ export async function inboundTwiML(agencyId, lineId, req) {
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" record="record-from-answer" recordingStatusCallback="${statusBase}?recording=1" recordingStatusCallbackEvent="completed" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
 }
 
 // Outbound call from a softphone client (the TwiML Application's Voice URL).
@@ -341,7 +341,7 @@ export async function outboundTwiML(agencyId, req) {
   const dialClientId = clean(req.body?.clientId, 100);
   const base = twilioPublicBase(req);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(agentIdentity)}${dialLeadId ? `&leadId=${encodeURIComponent(dialLeadId)}` : ""}${dialClientId ? `&clientId=${encodeURIComponent(dialClientId)}` : ""}`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" record="record-from-answer" recordingStatusCallback="${statusBase}&amp;recording=1" recordingStatusCallbackEvent="completed" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------
@@ -379,7 +379,7 @@ export async function transferTwilioCall(agencyId, { toUserId, callSid }, req) {
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?agent=${encodeURIComponent(target.id)}`;
   const internalLine = await prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } });
   const callerId = internalLine?.phoneNumber || config.voiceNumber;
-  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" record="record-from-answer" recordingStatusCallback="${statusBase}&amp;recording=1" recordingStatusCallbackEvent="completed" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}</Client></Dial></Response>`;
+  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${statusBase}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}</Client></Dial></Response>`;
   await client.calls(session.providerCallId).update({ twiml });
   logger.info("twilio.call_transferred", { agencyId, providerCallId: session.providerCallId, fromAgent: session.handledByUserId, toAgent: target.id });
   return { transferred: true, callerId, target: { id: target.id, fullName: target.fullName } };

@@ -1,5 +1,5 @@
 import { Device } from "@twilio/voice-sdk";
-import { ArrowLeftRight, CheckCircle2, CircleAlert, Clock3, Loader2, Phone, PhoneCall, PhoneIncoming, PhoneOff, Search, UserRoundSearch, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock3, Loader2, Phone, PhoneIncoming, PhoneOff, UserRoundSearch, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import api from "../../services/api";
@@ -64,6 +64,13 @@ const OUTCOMES = [
 
 const input = "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100";
 
+// Bottom-right, same corner as the global dialpad (z-[390]) and chat widget
+// (z-[410]) — but stacked above both (z-[420]) and offset high enough
+// (bottom-24) to clear their ~80px collapsed footprint, instead of hiding
+// underneath them (the original bug) or living on the left over page
+// content (tried once, was in the way of whatever the page was showing).
+const FLOATING_CALL_CARD_POSITION = "fixed bottom-24 right-5 z-[420] w-[calc(100%-2.5rem)] max-w-sm";
+
 function toLocalDateTimeInput(date) {
   const pad = (value) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -86,6 +93,56 @@ export function SoftphoneProvider({ children }) {
   // popup. Incoming calls never set it: their activity is recorded server-side
   // and the user only ever gets this popup for calls we placed.
   const [endedCall, setEndedCall] = useState(null);
+  const ringContextRef = useRef(null);
+  const ringTimerRef = useRef(null);
+
+  const stopRingtone = useCallback(() => {
+    if (ringTimerRef.current) {
+      window.clearTimeout(ringTimerRef.current);
+      ringTimerRef.current = null;
+    }
+    const context = ringContextRef.current;
+    ringContextRef.current = null;
+    if (context && context.state !== "closed") void context.close().catch(() => {});
+  }, []);
+
+  // Synthesizes the incoming-call ring instead of bundling an audio asset —
+  // 440Hz + 480Hz is the actual North American ring-tone frequency pair,
+  // played 2s on / 2s off, repeating until the call is accepted, declined,
+  // or the caller hangs up first.
+  const playRingtone = useCallback(() => {
+    stopRingtone();
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    let context;
+    try {
+      context = new AudioContextClass();
+    } catch {
+      return;
+    }
+    ringContextRef.current = context;
+    const ringCycle = () => {
+      if (ringContextRef.current !== context || context.state === "closed") return;
+      if (context.state === "suspended") void context.resume().catch(() => {});
+      const startAt = context.currentTime + 0.02;
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.11, startAt + 0.06);
+      gain.gain.setValueAtTime(0.11, startAt + 1.85);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 2);
+      gain.connect(context.destination);
+      [440, 480].forEach((frequency) => {
+        const oscillator = context.createOscillator();
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        oscillator.connect(gain);
+        oscillator.start(startAt);
+        oscillator.stop(startAt + 2);
+      });
+      ringTimerRef.current = window.setTimeout(ringCycle, 4000);
+    };
+    ringCycle();
+  }, [stopRingtone]);
 
   const refreshToken = useCallback(async (device) => {
     if (tokenRefreshInFlight.current || !device) return;
@@ -130,9 +187,11 @@ export function SoftphoneProvider({ children }) {
           if (disposed) return;
           const from = call.parameters?.From || call.customParameters?.From || "";
           setIncoming({ call, from });
-          call.on("cancel", () => setIncoming((current) => (current?.call === call ? null : current)));
-          call.on("reject", () => setIncoming((current) => (current?.call === call ? null : current)));
+          playRingtone();
+          call.on("cancel", () => { stopRingtone(); setIncoming((current) => (current?.call === call ? null : current)); });
+          call.on("reject", () => { stopRingtone(); setIncoming((current) => (current?.call === call ? null : current)); });
           call.on("disconnect", () => {
+            stopRingtone();
             setIncoming((current) => (current?.call === call ? null : current));
             setActive((current) => (current?.call === call ? null : current));
             setMuted(false);
@@ -154,12 +213,13 @@ export function SoftphoneProvider({ children }) {
     return () => {
       disposed = true;
       deviceRef.current = null;
+      stopRingtone();
       if (device) {
         device.removeAllListeners();
         device.destroy();
       }
     };
-  }, [appUser?.id, refreshToken]);
+  }, [appUser?.id, refreshToken, playRingtone, stopRingtone]);
 
   const dial = useCallback(async (number, context = {}) => {
     const target = normalizeE164(number);
@@ -199,28 +259,31 @@ export function SoftphoneProvider({ children }) {
   const accept = useCallback(() => {
     setIncoming((current) => {
       if (!current) return null;
+      stopRingtone();
       current.call.accept();
       setActive({ call: current.call, number: current.from, direction: "INBOUND" });
       setMuted(false);
       return null;
     });
-  }, []);
+  }, [stopRingtone]);
 
   const reject = useCallback(() => {
     setIncoming((current) => {
       if (!current) return null;
+      stopRingtone();
       current.call.reject();
       return null;
     });
-  }, []);
+  }, [stopRingtone]);
 
   const hangup = useCallback(() => {
+    stopRingtone();
     if (active?.call) active.call.disconnect();
     if (incoming?.call) incoming.call.disconnect();
     setActive(null);
     setIncoming(null);
     setMuted(false);
-  }, [active, incoming]);
+  }, [active, incoming, stopRingtone]);
 
   const toggleMute = useCallback(() => {
     if (!active?.call) return;
@@ -253,7 +316,6 @@ export function SoftphoneProvider({ children }) {
       {incoming ? (
         <IncomingCallCard key={incoming.call?.parameters?.CallSid || incoming.from} incoming={incoming} onAccept={accept} onReject={reject} />
       ) : null}
-      {active && !incoming ? <ActiveCallBar active={active} muted={muted} onHangup={hangup} onToggleMute={toggleMute} /> : null}
       {endedCall && !active && !incoming ? <EndedCallCard ended={endedCall} onClose={() => setEndedCall(null)} /> : null}
     </SoftphoneContext.Provider>
   );
@@ -263,7 +325,7 @@ function IncomingCallCard({ incoming, onAccept, onReject }) {
   const [callerName, setCallerName] = useState("");
   const from = incoming.from;
   return (
-    <aside className="fixed bottom-5 right-5 z-[90] w-[calc(100%-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-emerald-200/80 bg-white/95 shadow-[0_24px_80px_rgba(5,150,105,0.24)] backdrop-blur-xl" role="dialog" aria-modal="true" aria-label="Incoming call">
+    <aside className={`${FLOATING_CALL_CARD_POSITION} overflow-hidden rounded-3xl border border-emerald-200/80 bg-white/95 shadow-[0_24px_80px_rgba(5,150,105,0.24)] backdrop-blur-xl`} role="dialog" aria-modal="true" aria-label="Incoming call">
       <div className="h-1 bg-gradient-to-r from-emerald-400 via-teal-400 to-sky-400" />
       <div className="p-4">
         <div className="flex items-start gap-3">
@@ -285,103 +347,6 @@ function IncomingCallCard({ incoming, onAccept, onReject }) {
         <div className="mt-3 flex items-center gap-2 rounded-2xl bg-sky-50 px-3 py-2 text-xs font-medium text-sky-800"><UserRoundSearch className="h-4 w-4 shrink-0" />Answering will ring your microphone and speaker through the browser.</div>
       </div>
     </aside>
-  );
-}
-
-function ActiveCallBar({ active, muted, onHangup, onToggleMute }) {
-  const [elapsed, setElapsed] = useState(0);
-  const [transferring, setTransferring] = useState(false);
-  const [transferNotice, setTransferNotice] = useState("");
-  const [transferError, setTransferError] = useState("");
-  const [pickerOpen, setPickerOpen] = useState(false);
-  useEffect(() => {
-    const timer = window.setInterval(() => setElapsed((current) => current + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const minutes = Math.floor(elapsed / 60);
-  const seconds = String(elapsed % 60).padStart(2, "0");
-
-  const startTransfer = async (targetId, targetName) => {
-    try {
-      setTransferring(true);
-      setTransferError("");
-      setTransferNotice("");
-      const callSid = active.call?.parameters?.CallSid || "";
-      await api.post("/twilio-calls/transfer", { to: targetId, callSid });
-      setPickerOpen(false);
-      setTransferNotice(`Transferred to ${targetName}.`);
-    } catch (reason) {
-      setTransferError(reason?.response?.data?.message || reason?.message || "The transfer could not be completed.");
-    } finally {
-      setTransferring(false);
-    }
-  };
-
-  return (
-    <aside className="fixed bottom-5 right-5 z-[90] w-[calc(100%-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-slate-200 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.2)] backdrop-blur-xl" role="status" aria-live="polite">
-      <div className="h-1 bg-gradient-to-r from-sky-400 via-indigo-400 to-emerald-400" />
-      <div className="p-4">
-        <div className="flex items-center gap-3">
-          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white ${active.direction === "INBOUND" ? "bg-emerald-600" : "bg-sky-600"}`}><PhoneCall className="h-5 w-5" /></span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Call in progress · {active.direction === "INBOUND" ? "incoming" : "outgoing"}</p>
-            <p className="mt-0.5 truncate text-base font-semibold text-slate-950">{formatNumber(active.number) || "Calling…"}</p>
-            <p className="mt-0.5 text-xs font-semibold tabular-nums text-slate-500">{minutes}:{seconds}{muted ? " · Muted" : ""}</p>
-          </div>
-        </div>
-        {transferNotice ? <p className="mt-3 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{transferNotice}</p> : null}
-        {transferError ? <p className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{transferError}</p> : null}
-        <div className="mt-4 flex gap-2">
-          <button type="button" onClick={() => setPickerOpen(true)} disabled={transferring} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-indigo-600 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(99,102,241,0.28)] transition hover:bg-indigo-500 active:scale-[0.98] disabled:opacity-50"><ArrowLeftRight className="h-4 w-4" />Transfer</button>
-          <button type="button" onClick={onToggleMute} className={`inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl text-sm font-semibold transition active:scale-[0.98] ${muted ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>{muted ? "Unmute" : "Mute"}</button>
-          <button type="button" onClick={onHangup} className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-600 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(225,29,72,0.28)] transition hover:bg-rose-500 active:scale-[0.98]"><PhoneOff className="h-4 w-4" />Hang up</button>
-        </div>
-      </div>
-      {pickerOpen ? <TransferPicker busy={transferring} onClose={() => setPickerOpen(false)} onPick={startTransfer} /> : null}
-    </aside>
-  );
-}
-
-function TransferPicker({ busy, onClose, onPick }) {
-  const { appUser } = useAuth();
-  const [staff, setStaff] = useState([]);
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    api
-      .get("/twilio-calls/staff", { cache: false })
-      .then((response) => { if (active) setStaff(response.data?.data || []); })
-      .catch((reason) => { if (active) setError(reason?.response?.data?.message || "Team members could not be loaded."); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
-
-  const needle = search.trim().toLowerCase();
-  const options = staff.filter((person) => person.id !== appUser?.id && (!needle || person.fullName?.toLowerCase().includes(needle) || person.role?.toLowerCase().includes(needle)));
-
-  return (
-    <div className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3.5 py-2.5">
-        <p className="text-xs font-semibold text-slate-900">Transfer to a team member</p>
-        <button type="button" onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" aria-label="Close transfer picker"><X className="h-3.5 w-3.5" /></button>
-      </div>
-      <div className="relative px-3.5 py-2"><Search className="absolute left-5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 pl-8 pr-3 text-xs outline-none focus:border-sky-300 focus:ring-4 focus:ring-sky-100" placeholder="Search by name or role" /></div>
-      <div className="max-h-56 overflow-y-auto p-1.5">
-        {error ? <p className="px-3 py-2 text-xs text-rose-600">{error}</p> : null}
-        {loading ? <div className="space-y-1.5 p-1.5">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-10 animate-pulse rounded-xl bg-slate-100" />)}</div> : !options.length ? (
-          <p className="px-3 py-3 text-center text-xs text-slate-500">{staff.length ? "No matching team members." : "No other team members available."}</p>
-        ) : options.map((person) => (
-          <button key={person.id} type="button" disabled={busy} onClick={() => onPick(person.id, person.fullName)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-sky-50 disabled:opacity-50">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-[10px] font-bold uppercase text-indigo-600">{person.fullName?.slice(0, 1) || "?"}</span>
-            <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900">{person.fullName}</span><span className="block text-xs capitalize text-slate-500">{person.role}</span></span>
-            {busy ? <Loader2 className="ml-auto h-4 w-4 animate-spin text-indigo-500" /> : <ArrowLeftRight className="ml-auto h-4 w-4 text-indigo-500" />}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -453,7 +418,7 @@ function EndedCallCard({ ended, onClose }) {
   };
 
   return (
-    <aside className="fixed bottom-5 right-5 z-[90] w-[calc(100%-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-slate-200 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.22)] backdrop-blur-xl" role="dialog" aria-modal="true" aria-label="Call ended — record outcome">
+    <aside className={`${FLOATING_CALL_CARD_POSITION} overflow-hidden rounded-3xl border border-slate-200 bg-white/95 shadow-[0_24px_80px_rgba(15,23,42,0.22)] backdrop-blur-xl`} role="dialog" aria-modal="true" aria-label="Call ended — record outcome">
       <div className="h-1 bg-gradient-to-r from-indigo-400 via-sky-400 to-emerald-400" />
       <div className="p-4">
         <div className="flex items-start gap-3">
@@ -466,10 +431,7 @@ function EndedCallCard({ ended, onClose }) {
           <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" aria-label="Dismiss"><X className="h-3.5 w-3.5" /></button>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Duration</p><p className="mt-1 flex items-center gap-1.5 text-sm font-semibold tabular-nums text-slate-800"><Clock3 className="h-3.5 w-3.5 text-slate-400" />{formatDuration(ended.durationSeconds)}</p></div>
-          <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Recorded</p><p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Auto</p></div>
-        </div>
+        <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Duration</p><p className="mt-1 flex items-center gap-1.5 text-sm font-semibold tabular-nums text-slate-800"><Clock3 className="h-3.5 w-3.5 text-slate-400" />{formatDuration(ended.durationSeconds)}</p></div>
 
         <div className="mt-3">
           <label className="text-xs font-semibold text-slate-600">Outcome<select value={outcome} onChange={(event) => setOutcome(event.target.value)} className={`${input} mt-1.5`}>{OUTCOMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

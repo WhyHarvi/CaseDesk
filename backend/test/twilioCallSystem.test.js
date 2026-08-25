@@ -222,8 +222,9 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
 });
 
 test("the frontend mounts a real softphone provider and a Call center page", async () => {
-  const [provider, callsPage, main, routes, panel] = await Promise.all([
+  const [provider, dialpad, callsPage, main, routes, panel] = await Promise.all([
     source("../../frontend/src/components/calls/SoftphoneProvider.jsx"),
+    source("../../frontend/src/components/calls/GlobalDialpad.jsx"),
     source("../../frontend/src/pages/CallsPage.jsx"),
     source("../../frontend/src/main.jsx"),
     source("../../frontend/src/routes/AppRoutes.jsx"),
@@ -250,8 +251,11 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(panel, /Enable calling for this workspace/);
   assert.match(panel, /FRONTDESK/);
   assert.match(panel, /Internal line/);
-  // The call bar exposes transfer and the picker fetches transferable staff.
-  assert.match(provider, /twilio-calls\/transfer/);
-  assert.match(provider, /twilio-calls\/staff/);
-  assert.match(provider, /Transfer/);
+  // The global dialpad's in-call screen exposes transfer and the picker
+  // fetches transferable staff — the active-call UI lives there, not on the
+  // softphone provider, so it shares one phone surface instead of two
+  // competing floating widgets.
+  assert.match(dialpad, /twilio-calls\/transfer/);
+  assert.match(dialpad, /twilio-calls\/staff/);
+  assert.match(dialpad, /function TransferPicker\(/);
 });
