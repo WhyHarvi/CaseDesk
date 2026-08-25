@@ -4,30 +4,35 @@
 // access, so both the review-step preview and the actual conversion write
 // path can share one definition instead of drifting apart.
 //
+// Imported cases are historical reference data, not live work handed to a
+// consultant today — every one lands Closed and archived by default,
+// regardless of what Case Easy's own status said, so the import never
+// silently drops old records into someone's active pipeline. Stage is kept
+// as a purely informational marker of where the case last sat; the
+// reviewer can still override status/stage/archived per case before
+// confirming the import.
+//
 // `stage: null` entries have no confident pipeline-position signal in Case
 // Easy's vocabulary — left for the reviewer to set explicitly rather than
 // guessed, per the import prompt's "flag back rather than guess" rule.
-const STATUS_MAP = {
-  "prospect": { stage: "Lead", status: "Open", archived: false },
-  "active": { stage: null, status: "Active", archived: false },
-  "follow up": { stage: null, status: "Active", archived: false },
-  "in progress": { stage: null, status: "Active", archived: false },
-  "submitted": { stage: "Submitted", status: "Active", archived: false },
-  "ita received": { stage: null, status: "Active", archived: false },
-  "approved": { stage: "Decision Received", status: "Completed", archived: false },
-  "denied": { stage: "Decision Received", status: "Closed", archived: false },
-  "cancelled": { stage: null, status: "Cancelled", archived: false },
-  "closed": { stage: "Closed", status: "Closed", archived: false },
-  "archived": { stage: "Closed", status: "Closed", archived: true },
+const STAGE_MAP = {
+  "prospect": "Lead",
+  "active": null,
+  "follow up": null,
+  "in progress": null,
+  "submitted": "Submitted",
+  "ita received": null,
+  "approved": "Decision Received",
+  "denied": "Decision Received",
+  "cancelled": null,
+  "closed": "Closed",
+  "archived": "Closed",
 };
 
 const DEFAULT_STAGE = "Lead";
 
 export function mapCaseEasyStatus(rawStatus) {
   const key = String(rawStatus || "").trim().toLowerCase();
-  const match = STATUS_MAP[key];
-  if (!match) {
-    return { stage: DEFAULT_STAGE, status: "Open", archived: false, recognized: false };
-  }
-  return { stage: match.stage || DEFAULT_STAGE, status: match.status, archived: match.archived, recognized: true };
+  const recognized = Object.prototype.hasOwnProperty.call(STAGE_MAP, key);
+  return { stage: (recognized && STAGE_MAP[key]) || DEFAULT_STAGE, status: "Closed", archived: true, recognized };
 }
