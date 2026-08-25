@@ -66,14 +66,23 @@ test("the team workload report's raw SQL scopes to active staff and the settled 
   assert.match(service, /"case_workflow_steps" cws/);
 });
 
-test("the workload routes expose the heartbeat to any staff member and the team report to admins only", async () => {
-  const [routes, server] = await Promise.all([
+test("the workload routes expose the heartbeat to any staff member and the team report to admins or the teamWorkload capability", async () => {
+  const [routes, server, portalAccessService] = await Promise.all([
     source("../src/modules/workload/workload.routes.js"),
     source("../src/server.js"),
+    source("../src/services/portalAccessService.js"),
   ]);
   assert.match(routes, /router\.post\("\/activity-ping", asyncHandler\(pingPortalActivity\)\)/);
-  assert.match(routes, /router\.get\("\/team", requireRole\("admin"\), asyncHandler\(getTeamWorkload\)\)/);
+  assert.match(routes, /router\.get\("\/team", requirePortalCapability\("teamWorkload"\), asyncHandler\(getTeamWorkload\)\)/);
+  assert.match(routes, /router\.get\("\/team\/daily-trend", requirePortalCapability\("teamWorkload"\), asyncHandler\(getDailyTrend\)\)/);
   assert.match(server, /app\.use\("\/api\/workload", requireAuth, staffUser, workloadRoutes\)/);
+  // requirePortalCapability auto-passes for admins (defaultPortalAccess
+  // grants every capability), so this is additive — it lets a specific
+  // staff member be granted the same team-wide view without becoming an
+  // admin, without changing admin access at all.
+  assert.match(portalAccessService, /"teamWorkload"/);
+  assert.match(portalAccessService, /export function hasPortalCapability\(req, capability\)/);
+  assert.match(portalAccessService, /req\.auth\?\.role === "admin" \|\|/);
 });
 
 test("the frontend heartbeat hook pings while visible/active and the workload page fetches the new team endpoint", async () => {

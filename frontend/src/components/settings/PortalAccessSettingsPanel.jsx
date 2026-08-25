@@ -70,6 +70,7 @@ const capabilityCopy = {
   internalNotes: ["Internal notes", "View and add private staff notes"],
   financialData: ["Financial information", "View client billing, invoices, and payment totals"],
   manageClientPortal: ["Client portal invitations", "Create and manage client portal access"],
+  teamWorkload: ["Team workload visibility", "See every teammate's workload, the same view an admin gets — not just their own"],
 };
 
 const humanize = (key) => key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());

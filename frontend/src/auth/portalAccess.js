@@ -28,6 +28,7 @@ export const portalCapabilityKeys = [
   "internalNotes",
   "financialData",
   "manageClientPortal",
+  "teamWorkload",
 ];
 export const portalDataKeys = ["leads", "clients", "cases"];
 

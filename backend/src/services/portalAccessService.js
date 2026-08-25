@@ -32,6 +32,7 @@ export const portalCapabilityKeys = Object.freeze([
   "internalNotes",
   "financialData",
   "manageClientPortal",
+  "teamWorkload",
 ]);
 
 export const portalDataKeys = Object.freeze(["leads", "clients", "cases"]);

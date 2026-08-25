@@ -137,9 +137,11 @@ test("admin workload shows agency consultants, assignments, and unassigned work"
   assert.match(controller, /upcomingAppointments: appointments\.length/);
   assert.match(controller, /activeCases: cases\.length/);
   // Admins get the new team activity report; the personal per-consultant
-  // view (out of scope for this redesign) is unchanged.
-  assert.match(page, /isAdmin \? `\/workload\/team\?period=\$\{period\}` : "\/consultants\/me\/workload"/);
-  assert.match(page, />\{isAdmin \? "Team Workload" : "My Workload"\}<\/h1>/);
+  // view (out of scope for this redesign) is unchanged. A staff member
+  // granted the teamWorkload capability reaches the same team view without
+  // being an admin (see workloadReport.test.js).
+  assert.match(page, /canViewTeamWorkload \? `\/workload\/team\?period=\$\{period\}` : "\/consultants\/me\/workload"/);
+  assert.match(page, />\{canViewTeamWorkload \? "Team Workload" : "My Workload"\}<\/h1>/);
   assert.match(page, /Unassigned work needs an owner/);
   assert.match(rosterTable, /Your team/);
   assert.match(page, /Open Leads/);

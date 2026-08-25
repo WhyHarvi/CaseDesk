@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { hasCapability } from "../auth/portalAccess";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import TeamRosterTable from "../components/workload/TeamRosterTable";
 import TeamMemberDrawer from "../components/workload/TeamMemberDrawer";
@@ -607,8 +608,13 @@ function PersonalWorkload({ data, onOpenAppointment }) {
 }
 
 export default function Workload() {
-  const { role } = useAuth();
+  const { role, membership } = useAuth();
   const isAdmin = role === "admin";
+  // A staff member can be granted the same team-wide view as an admin
+  // (Settings > Portal Access > Team workload visibility) without becoming
+  // an admin — reassigning work between teammates stays admin-only below,
+  // this only widens who can see the aggregate view.
+  const canViewTeamWorkload = isAdmin || hasCapability(role, membership?.permissions, "teamWorkload");
   const [openAppointmentId, setOpenAppointmentId] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -619,7 +625,7 @@ export default function Workload() {
     setLoading(true);
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const url = isAdmin ? `/workload/team?period=${period}` : "/consultants/me/workload";
+        const url = canViewTeamWorkload ? `/workload/team?period=${period}` : "/consultants/me/workload";
         const response = await (fresh ? api.getFresh : api.get)(url);
         setData(response.data.data);
         setError("");
@@ -632,11 +638,11 @@ export default function Workload() {
           await new Promise((resolve) => setTimeout(resolve, 1200));
           continue;
         }
-        setError(requestError.response?.data?.message || (isAdmin ? "Unable to load the team workload." : "Unable to load your workload."));
+        setError(requestError.response?.data?.message || (canViewTeamWorkload ? "Unable to load the team workload." : "Unable to load your workload."));
       }
     }
     setLoading(false);
-  }, [isAdmin, period]);
+  }, [canViewTeamWorkload, period]);
 
   useEffect(() => { loadWorkload(); }, [loadWorkload]);
 
@@ -651,9 +657,9 @@ export default function Workload() {
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={spring} className={cx(glass, "p-5 sm:p-7 lg:p-8")}>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{isAdmin ? "Team Workload" : "My Workload"}</h1>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{canViewTeamWorkload ? "Team Workload" : "My Workload"}</h1>
               <p className="mt-2 max-w-2xl text-sm text-slate-500 sm:text-base">
-                {isAdmin
+                {canViewTeamWorkload
                   ? "Every admin, consultant, and front-desk teammate — what they're carrying, what they've gotten done, and how close they are to their deadlines."
                   : "Your assigned leads, cases, deadlines, and documents requiring review."}
               </p>
@@ -678,10 +684,10 @@ export default function Workload() {
         ) : null}
         {loading && !data ? (
           <div className={cx(glass, "flex items-center justify-center p-16 text-sm text-slate-500")}>
-            Loading {isAdmin ? "team" : "your"} workload…
+            Loading {canViewTeamWorkload ? "team" : "your"} workload…
           </div>
         ) : null}
-        {data ? (isAdmin ? <TeamWorkload data={data} period={period} onPeriodChange={setPeriod} onOpenAppointment={setOpenAppointmentId} onReassign={reassign} onWorkloadChanged={() => loadWorkload({ fresh: true })} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
+        {data ? (canViewTeamWorkload ? <TeamWorkload data={data} period={period} onPeriodChange={setPeriod} onOpenAppointment={setOpenAppointmentId} onReassign={isAdmin ? reassign : undefined} onWorkloadChanged={() => loadWorkload({ fresh: true })} /> : <PersonalWorkload data={data} onOpenAppointment={setOpenAppointmentId} />) : null}
         {openAppointmentId ? (
           <AppointmentProfileOverlay
             appointmentId={openAppointmentId}
