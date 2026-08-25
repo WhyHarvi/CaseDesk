@@ -73,27 +73,27 @@ const controller = createCrudController({
       : {}),
     ...(req.query.userId ? { userId: req.query.userId } : {}),
   }),
-  activityEntity: "note",
   afterCreate: async ({ req, data }) => {
-    if (!data.appointmentId) return;
-    await recordAppointmentEvent(prisma, {
+    if (data.appointmentId) {
+      await recordAppointmentEvent(prisma, {
+        agencyId: req.auth.agencyId,
+        appointmentId: data.appointmentId,
+        actorUserId: req.auth.userId,
+        type: "NOTE_ADDED",
+        summary: "Internal appointment note added",
+        metadata: { noteId: data.id },
+      });
+    }
+    await recordActivity({
       agencyId: req.auth.agencyId,
-      appointmentId: data.appointmentId,
-      actorUserId: req.auth.userId,
-      type: "NOTE_ADDED",
-      summary: "Internal appointment note added",
-      metadata: { noteId: data.id },
-    });
-  },
-  afterUpdate: async ({ req, data }) => {
-    if (!data.appointmentId) return;
-    await recordAppointmentEvent(prisma, {
-      agencyId: req.auth.agencyId,
-      appointmentId: data.appointmentId,
-      actorUserId: req.auth.userId,
-      type: "NOTE_UPDATED",
-      summary: "Internal appointment note updated",
-      metadata: { noteId: data.id },
+      userId: req.auth.userId,
+      clientId: data.clientId,
+      caseId: data.caseId,
+      action: "note.created",
+      details: "Note added",
+      entityType: "note",
+      entityId: data.id,
+      metadata: { appointmentId: data.appointmentId },
     });
   },
 });

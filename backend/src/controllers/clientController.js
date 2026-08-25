@@ -561,10 +561,16 @@ export async function getClientById(req, res) {
       createdAt: appointment.createdAt,
       user: appointment.createdBy,
     }));
+  // Note editing is debounced autosave. Older versions emitted one audit row
+  // for every PATCH, flooding this human-readable timeline with repeated
+  // "note updated" entries. The Note record's updatedAt remains the source of
+  // truth for edits; activity focuses on meaningful lifecycle events (added /
+  // archived), so suppress the legacy autosave noise here as well.
+  const meaningfulActivityLogs = activityLogs.filter((item) => item.action !== "note.updated");
   const clientActivityLogs = [
-    ...activityLogs,
+    ...meaningfulActivityLogs,
     ...synthesizedAppointmentActivity,
-    ...(activityLogs.some((item) => item.action === "client.created")
+    ...(meaningfulActivityLogs.some((item) => item.action === "client.created")
       ? []
       : [
         {
