@@ -6,6 +6,7 @@ import {
   Loader2,
   Save,
   Search,
+  ShieldAlert,
   ShieldCheck,
   UserRound,
   Users,
@@ -14,59 +15,64 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../../services/api";
 import PortalPolicyEditor from "../portal-access/PortalPolicyEditor";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const pageOptions = [
-  ["dashboard", "Dashboard", "Work summary and upcoming priorities"],
-  ["leads", "Leads", "Lead pipeline and inquiry records"],
-  ["leadIntake", "Lead intake settings", "Intake forms and incoming lead tools inside Settings"],
-  ["clients", "Clients", "Client list and profile pages"],
-  ["cases", "Cases", "Case list and case workspaces"],
-  ["followUps", "Follow-ups", "Tasks and follow-up queue"],
-  ["calendar", "Calendar", "Appointments and scheduling"],
-  ["documents", "Documents", "Agency-wide document workspace"],
-  ["payments", "Payments", "Agency-wide billing and transaction report"],
-  ["workload", "Workload", "Team capacity and assignments"],
-  ["caseEasyImport", "Case Easy Import", "Import and review migrated records"],
-  ["incentives", "Incentives", "Earnings, incentive ledger, and pipeline"],
-];
+// Labels/descriptions for the page/tab/capability keys this settings screen
+// exposes. The *set* of keys itself is not hardcoded here — it comes from
+// the API's meta.catalog (see load() below), which is generated from the
+// same portalPageKeys/portalCaseTabKeys/portalCapabilityKeys arrays the
+// backend actually enforces (backend/src/services/portalAccessService.js).
+// That way a key added on the backend shows up here automatically (with a
+// humanized fallback label) instead of silently being uneditable from the
+// UI until someone remembers to update a second, disconnected list.
+const pageCopy = {
+  dashboard: ["Dashboard", "Work summary and upcoming priorities"],
+  leads: ["Leads", "Lead pipeline and inquiry records"],
+  leadIntake: ["Lead intake settings", "Intake forms and incoming lead tools inside Settings"],
+  clients: ["Clients", "Client list and profile pages"],
+  cases: ["Cases", "Case list and case workspaces"],
+  followUps: ["Follow-ups", "Tasks and follow-up queue"],
+  calendar: ["Calendar", "Appointments and scheduling"],
+  documents: ["Documents", "Agency-wide document workspace"],
+  payments: ["Payments", "Agency-wide billing and transaction report"],
+  workload: ["Workload", "Team capacity and assignments"],
+  caseEasyImport: ["Case Easy Import", "Import and review migrated records"],
+  incentives: ["Incentives", "Earnings, incentive ledger, and pipeline"],
+};
 
-const caseTabOptions = [
-  ["profile", "Profile"],
-  ["reminders", "Reminders"],
-  ["questionnaires", "Questionnaires"],
-  ["documents", "Documents"],
-  ["forms", "Forms"],
-  ["tasks", "Tasks"],
-  ["agreementsLetters", "Agreements & Letters"],
-  ["appointments", "Appointments"],
-  ["communication", "Communication"],
-  ["billing", "Billing"],
-];
+const caseTabCopy = {
+  profile: "Profile",
+  reminders: "Reminders",
+  questionnaires: "Questionnaires",
+  documents: "Documents",
+  forms: "Forms",
+  tasks: "Tasks",
+  agreementsLetters: "Agreements & Letters",
+  appointments: "Appointments",
+  communication: "Communication",
+  billing: "Billing",
+};
 
-const dataOptions = [
-  ["leads", "Lead records", "Controls which inquiries appear"],
-  [
-    "clients",
-    "Client access",
-    "Assigned includes direct profile assignments and clients connected to an assigned case",
-  ],
-  ["cases", "Case records", "Controls which case files appear"],
-];
+const dataCopy = {
+  leads: ["Lead records", "Controls which inquiries appear"],
+  clients: ["Client access", "Assigned includes direct profile assignments and clients connected to an assigned case"],
+  cases: ["Case records", "Controls which case files appear"],
+};
 
-const capabilityOptions = [
-  ["internalNotes", "Internal notes", "View and add private staff notes"],
-  [
-    "financialData",
-    "Financial information",
-    "View client billing, invoices, and payment totals",
-  ],
-  [
-    "manageClientPortal",
-    "Client portal invitations",
-    "Create and manage client portal access",
-  ],
-];
+const capabilityCopy = {
+  internalNotes: ["Internal notes", "View and add private staff notes"],
+  financialData: ["Financial information", "View client billing, invoices, and payment totals"],
+  manageClientPortal: ["Client portal invitations", "Create and manage client portal access"],
+};
+
+const humanize = (key) => key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const initials = (name) =>
@@ -85,12 +91,12 @@ function Switch({ checked, onChange, label }) {
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full p-0.5 transition ${checked ? "bg-slate-950" : "bg-slate-200"}`}
+      className={`relative h-6 w-11 shrink-0 rounded-full p-0.5 outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${checked ? "bg-primary" : "bg-muted"}`}
     >
       <motion.span
         layout
         transition={{ type: "spring", stiffness: 560, damping: 36 }}
-        className={`block h-6 w-6 rounded-full bg-white shadow-sm ${checked ? "ml-5" : "ml-0"}`}
+        className={`block h-5 w-5 rounded-full bg-background shadow-sm ${checked ? "ml-5" : "ml-0"}`}
       />
     </button>
   );
@@ -98,14 +104,14 @@ function Switch({ checked, onChange, label }) {
 
 function Section({ icon: Icon, title, detail, children }) {
   return (
-    <section className="overflow-hidden rounded-[1.6rem] border border-slate-200/80 bg-white shadow-[0_12px_35px_rgba(15,23,42,0.05)]">
-      <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4">
-        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-600">
-          <Icon className="h-4.5 w-4.5" />
+    <section className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+      <div className="flex items-start gap-3 border-b border-border px-5 py-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" />
         </span>
         <div>
-          <h3 className="text-sm font-semibold text-slate-950">{title}</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">{detail}</p>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
         </div>
       </div>
       {children}
@@ -115,6 +121,7 @@ function Section({ icon: Icon, title, detail, children }) {
 
 function StaffPortalAccessSettingsPanel() {
   const [members, setMembers] = useState([]);
+  const [catalog, setCatalog] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -130,6 +137,7 @@ function StaffPortalAccessSettingsPanel() {
       const response = await api.get("/admin/portal-access");
       const next = response.data.data || [];
       setMembers(next);
+      setCatalog(response.data.meta?.catalog || null);
       setSelectedId((current) =>
         next.some((item) => item.id === current) ? current : next[0]?.id || "",
       );
@@ -153,6 +161,23 @@ function StaffPortalAccessSettingsPanel() {
     setDraft(member ? clone(member.portalAccess) : null);
     setNotice("");
   }, [selectedId]);
+
+  const pageOptions = useMemo(
+    () => (catalog?.pages || Object.keys(pageCopy)).map((key) => [key, ...(pageCopy[key] || [humanize(key), ""])]),
+    [catalog],
+  );
+  const caseTabOptions = useMemo(
+    () => (catalog?.caseTabs || Object.keys(caseTabCopy)).map((key) => [key, caseTabCopy[key] || humanize(key)]),
+    [catalog],
+  );
+  const dataOptions = useMemo(
+    () => (catalog?.data || Object.keys(dataCopy)).map((key) => [key, ...(dataCopy[key] || [humanize(key), ""])]),
+    [catalog],
+  );
+  const capabilityOptions = useMemo(
+    () => (catalog?.capabilities || Object.keys(capabilityCopy)).map((key) => [key, ...(capabilityCopy[key] || [humanize(key), ""])]),
+    [catalog],
+  );
 
   const filtered = useMemo(
     () =>
@@ -216,58 +241,56 @@ function StaffPortalAccessSettingsPanel() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <ShieldCheck className="h-5 w-5" />
           </span>
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-              Portal Access
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+              Staff workspace access
             </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               Choose exactly which workspace areas, case tabs, and client
               information each consultant or front-desk member can access.
             </p>
           </div>
         </div>
         {dirty ? (
-          <button
-            type="button"
-            disabled={saving}
-            onClick={save}
-            className="inline-flex h-11 items-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)] disabled:opacity-50"
-          >
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
+          <Button size="lg" disabled={saving} onClick={save} className="gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Save access
-          </button>
+          </Button>
         ) : null}
       </div>
       {notice ? (
-        <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-          <Check className="mr-2 inline h-4 w-4" />
-          {notice}
-        </p>
+        <Alert>
+          <Check aria-hidden="true" />
+          <AlertTitle>Saved</AlertTitle>
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
       ) : null}
       {error ? (
-        <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </p>
+        <Alert variant="destructive">
+          <ShieldAlert aria-hidden="true" />
+          <AlertTitle>Unable to continue</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
-      <div className="grid min-h-[650px] overflow-hidden rounded-[2rem] border border-slate-200/80 bg-slate-50/70 shadow-[0_20px_60px_rgba(15,23,42,0.07)] lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="border-b border-slate-200/80 bg-white/80 p-4 lg:border-b-0 lg:border-r">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Find team member"
-              className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-3 text-sm outline-none focus:border-sky-300"
-            />
-          </div>
-          <div className="mt-3 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
+      <div className="grid min-h-[650px] overflow-hidden rounded-3xl border border-border bg-muted/40 shadow-sm lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="border-b border-border bg-background p-4 lg:border-b-0 lg:border-r">
+          <Field>
+            <FieldLabel htmlFor="portal-access-search" className="sr-only">Find team member</FieldLabel>
+            <div className="relative">
+              <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="portal-access-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Find team member"
+                className="h-10 pl-9"
+              />
+            </div>
+          </Field>
+          <div className="mt-3 grid grid-cols-3 rounded-2xl bg-muted p-1">
             {[
               ["all", "All"],
               ["consultant", "Consultants"],
@@ -277,7 +300,7 @@ function StaffPortalAccessSettingsPanel() {
                 key={id}
                 type="button"
                 onClick={() => setFilter(id)}
-                className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition ${filter === id ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}
+                className={`rounded-xl px-2 py-2 text-[11px] font-semibold outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${filter === id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {label}
               </button>
@@ -285,28 +308,32 @@ function StaffPortalAccessSettingsPanel() {
           </div>
           <div className="scrollbar-hidden mt-4 max-h-[540px] space-y-1 overflow-y-auto">
             {loading ? (
-              <div className="flex justify-center py-16">
-                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              <div className="space-y-2 py-1">
+                <Skeleton className="h-14 w-full rounded-2xl" />
+                <Skeleton className="h-14 w-full rounded-2xl" />
+                <Skeleton className="h-14 w-full rounded-2xl" />
               </div>
+            ) : filtered.length === 0 ? (
+              <p className="px-2 py-8 text-center text-xs text-muted-foreground">No team members match.</p>
             ) : (
               filtered.map((item) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => setSelectedId(item.id)}
-                  className={`flex w-full items-center gap-3 rounded-2xl p-3 text-left transition ${selectedId === item.id ? "bg-slate-950 text-white shadow-lg" : "hover:bg-slate-100"}`}
+                  className={`flex w-full items-center gap-3 rounded-2xl p-3 text-left outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${selectedId === item.id ? "bg-primary text-primary-foreground shadow-sm" : "hover:bg-muted"}`}
                 >
-                  <span
-                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${selectedId === item.id ? "bg-white/15 text-white" : "bg-slate-200 text-slate-600"}`}
-                  >
-                    {initials(item.fullName)}
-                  </span>
+                  <Avatar size="lg" className={selectedId === item.id ? "ring-2 ring-primary-foreground/30" : ""}>
+                    <AvatarFallback className={selectedId === item.id ? "bg-primary-foreground/15 text-primary-foreground" : ""}>
+                      {initials(item.fullName)}
+                    </AvatarFallback>
+                  </Avatar>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold">
                       {item.fullName}
                     </span>
                     <span
-                      className={`mt-0.5 block truncate text-xs capitalize ${selectedId === item.id ? "text-slate-300" : "text-slate-400"}`}
+                      className={`mt-0.5 block truncate text-xs capitalize ${selectedId === item.id ? "text-primary-foreground/70" : "text-muted-foreground"}`}
                     >
                       {item.role} · {item.status}
                     </span>
@@ -327,41 +354,41 @@ function StaffPortalAccessSettingsPanel() {
                 exit={{ opacity: 0, y: -6 }}
                 className="space-y-5"
               >
-                <div className="flex items-center gap-3 rounded-[1.5rem] border border-white bg-white/90 p-4 shadow-sm">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
-                    {initials(selected.fullName)}
-                  </span>
+                <div className="flex items-center gap-3 rounded-2xl border border-border bg-background p-4 shadow-sm">
+                  <Avatar size="lg" className="h-12 w-12">
+                    <AvatarFallback className="bg-primary/10 text-sm font-bold text-primary">
+                      {initials(selected.fullName)}
+                    </AvatarFallback>
+                  </Avatar>
                   <div className="min-w-0">
-                    <h3 className="truncate text-base font-semibold text-slate-950">
+                    <h3 className="truncate text-base font-semibold text-foreground">
                       {selected.fullName}
                     </h3>
-                    <p className="mt-1 truncate text-xs text-slate-500">
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
                       {selected.email} ·{" "}
                       <span className="capitalize">{selected.role}</span>
                     </p>
                   </div>
-                  <span
-                    className={`ml-auto rounded-full px-2.5 py-1 text-[10px] font-semibold ${selected.isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
-                  >
+                  <Badge variant={selected.isActive ? "default" : "secondary"} className="ml-auto rounded-full">
                     {selected.isActive ? "Active" : "Inactive"}
-                  </span>
+                  </Badge>
                 </div>
                 <Section
                   icon={Eye}
                   title="Workspace pages"
                   detail="These controls change both the sidebar and direct page access."
                 >
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-border">
                     {pageOptions.map(([key, label, detail]) => (
                       <div
                         key={key}
                         className="flex items-center justify-between gap-4 px-5 py-3.5"
                       >
                         <div>
-                          <p className="text-sm font-semibold text-slate-800">
+                          <p className="text-sm font-semibold text-foreground">
                             {label}
                           </p>
-                          <p className="mt-0.5 text-xs text-slate-400">
+                          <p className="mt-0.5 text-xs text-muted-foreground">
                             {detail}
                           </p>
                         </div>
@@ -387,11 +414,11 @@ function StaffPortalAccessSettingsPanel() {
                         onClick={() =>
                           setBoolean("caseTabs", key, !draft.caseTabs[key])
                         }
-                        className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${draft.caseTabs[key] ? "border-sky-200 bg-sky-50 text-sky-800" : "border-slate-200 bg-white text-slate-500"}`}
+                        className={`flex items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${draft.caseTabs[key] ? "border-primary/25 bg-primary/5 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted"}`}
                       >
                         <span>{label}</span>
                         <span
-                          className={`flex h-5 w-5 items-center justify-center rounded-full ${draft.caseTabs[key] ? "bg-sky-600 text-white" : "bg-slate-100"}`}
+                          className={`flex h-5 w-5 items-center justify-center rounded-full ${draft.caseTabs[key] ? "bg-primary text-primary-foreground" : "bg-muted"}`}
                         >
                           {draft.caseTabs[key] ? (
                             <Check className="h-3 w-3" />
@@ -406,21 +433,21 @@ function StaffPortalAccessSettingsPanel() {
                   title="Client and record access"
                   detail="Assigned clients are inherited from case access or an intentional direct profile assignment. A client without either stays private to administrators."
                 >
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-border">
                     {dataOptions.map(([key, label, detail]) => (
                       <div
                         key={key}
                         className="px-5 py-4 sm:flex sm:items-center sm:justify-between sm:gap-4"
                       >
                         <div>
-                          <p className="text-sm font-semibold text-slate-800">
+                          <p className="text-sm font-semibold text-foreground">
                             {label}
                           </p>
-                          <p className="mt-0.5 text-xs text-slate-400">
+                          <p className="mt-0.5 text-xs text-muted-foreground">
                             {detail}
                           </p>
                         </div>
-                        <div className="mt-3 grid grid-cols-3 rounded-xl bg-slate-100 p-1 sm:mt-0">
+                        <div className="mt-3 grid grid-cols-3 rounded-2xl bg-muted p-1 sm:mt-0">
                           {[
                             ["none", "None"],
                             ["assigned", "Assigned"],
@@ -430,7 +457,7 @@ function StaffPortalAccessSettingsPanel() {
                               key={value}
                               type="button"
                               onClick={() => setData(key, value)}
-                              className={`rounded-lg px-3 py-2 text-[11px] font-semibold transition ${draft.data[key] === value ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}
+                              className={`rounded-xl px-3 py-2 text-[11px] font-semibold outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${draft.data[key] === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                             >
                               {labelText}
                             </button>
@@ -445,17 +472,17 @@ function StaffPortalAccessSettingsPanel() {
                   title="Sensitive access"
                   detail="Extra controls for private or higher-risk information."
                 >
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-border">
                     {capabilityOptions.map(([key, label, detail]) => (
                       <div
                         key={key}
                         className="flex items-center justify-between gap-4 px-5 py-3.5"
                       >
                         <div>
-                          <p className="text-sm font-semibold text-slate-800">
+                          <p className="text-sm font-semibold text-foreground">
                             {label}
                           </p>
-                          <p className="mt-0.5 text-xs text-slate-400">
+                          <p className="mt-0.5 text-xs text-muted-foreground">
                             {detail}
                           </p>
                         </div>
@@ -470,35 +497,26 @@ function StaffPortalAccessSettingsPanel() {
                     ))}
                   </div>
                 </Section>
-                <div className="sticky bottom-0 flex items-center justify-between gap-4 rounded-[1.4rem] border border-white/80 bg-white/90 p-3 shadow-[0_16px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl">
-                  <p className="pl-2 text-xs text-slate-500">
+                <div className="sticky bottom-0 flex items-center justify-between gap-4 rounded-2xl border border-border bg-background/95 p-3 shadow-sm backdrop-blur-xl">
+                  <p className="pl-2 text-xs text-muted-foreground">
                     {dirty
                       ? "You have unsaved access changes."
                       : "Access is up to date."}
                   </p>
-                  <button
-                    type="button"
-                    disabled={!dirty || saving}
-                    onClick={save}
-                    className="inline-flex h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white disabled:bg-slate-200 disabled:text-slate-400"
-                  >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
+                  <Button size="sm" disabled={!dirty || saving} onClick={save} className="gap-2">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     Save changes
-                  </button>
+                  </Button>
                 </div>
               </motion.div>
             ) : !loading ? (
               <div className="flex min-h-[500px] items-center justify-center text-center">
                 <div>
-                  <UserRound className="mx-auto h-7 w-7 text-slate-300" />
-                  <p className="mt-3 text-sm font-semibold text-slate-700">
+                  <UserRound className="mx-auto h-7 w-7 text-muted-foreground/60" />
+                  <p className="mt-3 text-sm font-semibold text-foreground">
                     Select a team member
                   </p>
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     Their access controls will appear here.
                   </p>
                 </div>
@@ -513,8 +531,8 @@ function StaffPortalAccessSettingsPanel() {
 
 export default function PortalAccessSettingsPanel() {
   return (
-    <Tabs defaultValue="clients" className="flex flex-col gap-6">
-      <div className="border-b px-1">
+    <Tabs defaultValue="clients" className="portal-policy-theme flex flex-col gap-6">
+      <div className="border-b border-border px-1">
         <TabsList variant="line" aria-label="Portal access settings" className="grid h-auto w-full grid-cols-2 p-0 sm:w-fit">
           <TabsTrigger value="clients" className="min-h-12 px-3 sm:px-5">Client portal</TabsTrigger>
           <TabsTrigger value="staff" className="min-h-12 px-3 sm:px-5">Staff workspace</TabsTrigger>

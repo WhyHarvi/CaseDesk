@@ -184,6 +184,22 @@ app.use(
     },
   }),
 );
+// Twilio's voice webhooks (TwiML fetches, status/recording callbacks) POST
+// application/x-www-form-urlencoded, never JSON — with only express.json()
+// mounted, req.body was always {} for every one of these requests, so every
+// outbound call read `req.body.To` as undefined and immediately spoke "No
+// destination number was provided" before hanging up (the ~4s call-drop
+// this was added to fix). json() and urlencoded() only ever act on their
+// own matching Content-Type, so mounting both is the standard, safe setup.
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: process.env.URLENCODED_BODY_LIMIT || "1mb",
+    verify: (req, _res, buffer) => {
+      req.rawBody = Buffer.from(buffer);
+    },
+  }),
+);
 
 app.use((req, res, next) => {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();

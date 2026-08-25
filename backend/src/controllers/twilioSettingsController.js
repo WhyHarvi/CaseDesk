@@ -50,26 +50,36 @@ function publicSettings(settings, canManage) {
 // Ooma's validate() — an agency should be able to save real Twilio
 // credentials today and add a number once they have one, without CaseDesk
 // rejecting the save.
-function validate(body) {
-  const accountSid = clean(body.accountSid, 64);
+//
+// The frontend saves this settings object from two separate forms — the
+// account credentials card (accountSid/authToken/fromNumber/
+// messagingServiceSid) and the voice card (apiKeySid/apiKeySecret/
+// callsEnabled/voiceNumber) — and each PUT only sends its own fields, not
+// the other card's. Every field here therefore falls back to the existing
+// saved value when the request omits it (key not present in body), so
+// saving one card can't blank out or reject on the other card's fields.
+// A field is only cleared when the request explicitly sends an empty
+// value for it (key present, value falsy) — that's still honored below.
+function validate(body, existing) {
+  const accountSid = body.accountSid !== undefined ? clean(body.accountSid, 64) : existing?.accountSid || "";
   if (!/^AC[a-f0-9]{32}$/i.test(accountSid)) throw createHttpError(400, "Enter a valid Twilio Account SID (starts with AC).");
-  const fromNumber = normalizePhone(body.fromNumber);
+  const fromNumber = body.fromNumber !== undefined ? normalizePhone(body.fromNumber) : existing?.fromNumber || "";
   if (fromNumber && !/^\+\d{8,15}$/.test(fromNumber)) throw createHttpError(400, "Enter the Twilio phone number including country code, such as +14165550100.");
-  const messagingServiceSid = clean(body.messagingServiceSid, 64);
+  const messagingServiceSid = body.messagingServiceSid !== undefined ? clean(body.messagingServiceSid, 64) : existing?.messagingServiceSid || "";
   if (messagingServiceSid && !/^MG[a-f0-9]{32}$/i.test(messagingServiceSid)) throw createHttpError(400, "Enter a valid Twilio Messaging Service SID (starts with MG).");
-  const apiKeySid = clean(body.apiKeySid, 64);
+  const apiKeySid = body.apiKeySid !== undefined ? clean(body.apiKeySid, 64) : existing?.apiKeySid || "";
   if (apiKeySid && !/^SK[a-f0-9]{32}$/i.test(apiKeySid)) throw createHttpError(400, "Enter a valid Twilio API Key SID (starts with SK).");
-  const voiceNumber = normalizePhone(body.voiceNumber);
+  const voiceNumber = body.voiceNumber !== undefined ? normalizePhone(body.voiceNumber) : existing?.voiceNumber || "";
   if (voiceNumber && !/^\+\d{8,15}$/.test(voiceNumber)) throw createHttpError(400, "Enter the Twilio voice number including country code, such as +14165550100.");
   return {
     accountSid,
     fromNumber: fromNumber || null,
     messagingServiceSid: messagingServiceSid || null,
     apiKeySid: apiKeySid || null,
-    callsEnabled: body.callsEnabled === true,
+    callsEnabled: body.callsEnabled !== undefined ? body.callsEnabled === true : Boolean(existing?.callsEnabled),
     voiceNumber: voiceNumber || null,
-    enabled: body.enabled !== false,
-    smsEnabled: body.smsEnabled !== false,
+    enabled: body.enabled !== undefined ? body.enabled !== false : existing?.enabled ?? true,
+    smsEnabled: body.smsEnabled !== undefined ? body.smsEnabled !== false : existing?.smsEnabled ?? true,
   };
 }
 
@@ -82,7 +92,7 @@ export async function saveTwilioSettings(req, res) {
   requireAdmin(req);
   if (!secretEncryptionReady()) throw createHttpError(503, "Secure integration storage is not configured on this CaseDesk server");
   const existing = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.user.agencyId } });
-  const values = validate(req.body);
+  const values = validate(req.body, existing);
   const suppliedToken = clean(req.body.authToken, 300);
   if (!existing?.authTokenEncrypted && !suppliedToken) throw createHttpError(400, "Enter the Auth Token from the Twilio Console.");
   const authTokenEncrypted = suppliedToken ? encryptSecret(suppliedToken) : existing.authTokenEncrypted;

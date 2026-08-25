@@ -101,8 +101,19 @@ export default function AgencyTwilioSettingsPanel() {
   const [verifying, setVerifying] = useState(false);
   const [testing, setTesting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  // Each action group gets its own notice/error pair, rendered right below
+  // that group's own button, instead of one shared banner at the top of the
+  // panel that scrolls out of view once the Voice section (further down)
+  // is where the actual click happened.
+  const [credentialsNotice, setCredentialsNotice] = useState("");
+  const [credentialsError, setCredentialsError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState("");
+  const [voiceError, setVoiceError] = useState("");
+  const [linesNotice, setLinesNotice] = useState("");
+  const [linesError, setLinesError] = useState("");
+  const [voiceTestNotice, setVoiceTestNotice] = useState("");
+  const [voiceTestError, setVoiceTestError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   const mergeSettings = (data) => {
     setForm((current) => ({ ...current, ...data }));
@@ -124,7 +135,7 @@ export default function AgencyTwilioSettingsPanel() {
         }
       })
       .catch((reason) => {
-        if (active) setError(errorMessage(reason, "Twilio settings could not be loaded."));
+        if (active) setLoadError(errorMessage(reason, "Twilio settings could not be loaded."));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -138,8 +149,8 @@ export default function AgencyTwilioSettingsPanel() {
     event.preventDefault();
     try {
       setSaving(true);
-      setError("");
-      setNotice("");
+      setCredentialsError("");
+      setCredentialsNotice("");
       const response = await api.put("/settings/twilio", {
         accountSid: accountSidInput || form.accountSid,
         authToken: authTokenInput,
@@ -150,9 +161,9 @@ export default function AgencyTwilioSettingsPanel() {
       setEditing(false);
       setAccountSidInput("");
       setAuthTokenInput("");
-      setNotice("Twilio credentials saved. Verify them, then add a phone number or Messaging Service when you have one.");
+      setCredentialsNotice("Twilio credentials saved. Verify them, then add a phone number or Messaging Service when you have one.");
     } catch (reason) {
-      setError(errorMessage(reason, "Twilio settings could not be saved."));
+      setCredentialsError(errorMessage(reason, "Twilio settings could not be saved."));
     } finally {
       setSaving(false);
     }
@@ -161,14 +172,14 @@ export default function AgencyTwilioSettingsPanel() {
   const verify = async () => {
     try {
       setVerifying(true);
-      setError("");
-      setNotice("");
+      setCredentialsError("");
+      setCredentialsNotice("");
       const response = await api.post("/settings/twilio/verify");
       mergeSettings(response.data.data);
-      setNotice("Twilio confirmed these credentials are valid.");
+      setCredentialsNotice("Twilio confirmed these credentials are valid.");
     } catch (reason) {
       if (reason?.response?.data?.data) mergeSettings(reason.response.data.data);
-      setError(errorMessage(reason, "Twilio credentials could not be verified."));
+      setCredentialsError(errorMessage(reason, "Twilio credentials could not be verified."));
     } finally {
       setVerifying(false);
     }
@@ -177,14 +188,14 @@ export default function AgencyTwilioSettingsPanel() {
   const test = async () => {
     try {
       setTesting(true);
-      setError("");
-      setNotice("");
+      setCredentialsError("");
+      setCredentialsNotice("");
       const response = await api.post("/settings/twilio/test-sms", { to: testNumber });
       mergeSettings(response.data.data);
-      setNotice("Twilio accepted the test message. Confirm the phone received the text.");
+      setCredentialsNotice("Twilio accepted the test message. Confirm the phone received the text.");
     } catch (reason) {
       if (reason?.response?.data?.data) mergeSettings(reason.response.data.data);
-      setError(errorMessage(reason, "The Twilio test message failed."));
+      setCredentialsError(errorMessage(reason, "The Twilio test message failed."));
     } finally {
       setTesting(false);
     }
@@ -193,13 +204,13 @@ export default function AgencyTwilioSettingsPanel() {
   const disconnect = async () => {
     try {
       setDisconnecting(true);
-      setError("");
+      setCredentialsError("");
       await api.delete("/settings/twilio");
       setForm(blank);
       setEditing(true);
-      setNotice("Twilio has been disconnected. Outbound texts will use Ooma until Twilio is reconnected.");
+      setCredentialsNotice("Twilio has been disconnected. Outbound texts will use Ooma until Twilio is reconnected.");
     } catch (reason) {
-      setError(errorMessage(reason, "Twilio could not be disconnected."));
+      setCredentialsError(errorMessage(reason, "Twilio could not be disconnected."));
     } finally {
       setDisconnecting(false);
     }
@@ -209,8 +220,8 @@ export default function AgencyTwilioSettingsPanel() {
     event.preventDefault();
     try {
       setVoiceSaving(true);
-      setError("");
-      setNotice("");
+      setVoiceError("");
+      setVoiceNotice("");
       const response = await api.put("/settings/twilio", {
         apiKeySid: apiKeySidInput || form.apiKeySid,
         apiKeySecret: apiKeySecretInput,
@@ -220,9 +231,9 @@ export default function AgencyTwilioSettingsPanel() {
       mergeSettings(response.data.data);
       setApiKeySidInput("");
       setApiKeySecretInput("");
-      setNotice("Voice settings saved. Choose the number to answer and call from to finish setup.");
+      setVoiceNotice("Voice settings saved. Choose the number to answer and call from to finish setup.");
     } catch (reason) {
-      setError(errorMessage(reason, "Voice settings could not be saved."));
+      setVoiceError(errorMessage(reason, "Voice settings could not be saved."));
     } finally {
       setVoiceSaving(false);
     }
@@ -231,11 +242,11 @@ export default function AgencyTwilioSettingsPanel() {
   const loadLines = async () => {
     try {
       setLinesLoading(true);
-      setError("");
+      setLinesError("");
       const response = await api.get("/twilio-calls/lines");
       setLines(response.data.data || []);
     } catch (reason) {
-      setError(errorMessage(reason, "Voice lines could not be loaded."));
+      setLinesError(errorMessage(reason, "Voice lines could not be loaded."));
     } finally {
       setLinesLoading(false);
     }
@@ -244,11 +255,11 @@ export default function AgencyTwilioSettingsPanel() {
   const loadNumbers = async () => {
     try {
       setNumbersLoading(true);
-      setError("");
+      setLinesError("");
       const response = await api.get("/twilio-calls/numbers");
       setNumbers(response.data.data || []);
     } catch (reason) {
-      setError(errorMessage(reason, "Twilio numbers could not be loaded."));
+      setLinesError(errorMessage(reason, "Twilio numbers could not be loaded."));
     } finally {
       setNumbersLoading(false);
     }
@@ -257,16 +268,16 @@ export default function AgencyTwilioSettingsPanel() {
   const addLine = async (numberSid) => {
     try {
       setAddingSid(numberSid);
-      setError("");
-      setNotice("");
+      setLinesError("");
+      setLinesNotice("");
       const response = await api.post("/twilio-calls/lines", { numberSid, label: addLabel, routing: addRouting });
       const data = response.data.data;
       mergeSettings({ ...form, callsEnabled: true, voiceNumber: data.line.phoneNumber, twimlAppSid: data.twimlAppSid, lastCallTestStatus: "Connected" });
-      setNotice(`${data.line.label} line is live on ${data.line.phoneNumber}.`);
+      setLinesNotice(`${data.line.label} line is live on ${data.line.phoneNumber}.`);
       setNumbers((current) => current.filter((item) => item.sid !== numberSid));
       await loadLines();
     } catch (reason) {
-      setError(errorMessage(reason, "The number could not be configured as a line."));
+      setLinesError(errorMessage(reason, "The number could not be configured as a line."));
     } finally {
       setAddingSid("");
     }
@@ -274,37 +285,37 @@ export default function AgencyTwilioSettingsPanel() {
 
   const toggleLine = async (line, enabled) => {
     try {
-      setError("");
+      setLinesError("");
       await api.patch(`/twilio-calls/lines/${line.id}`, { enabled });
       await loadLines();
     } catch (reason) {
-      setError(errorMessage(reason, "The line could not be updated."));
+      setLinesError(errorMessage(reason, "The line could not be updated."));
     }
   };
 
   const removeLine = async (line) => {
     try {
-      setError("");
-      setNotice("");
+      setLinesError("");
+      setLinesNotice("");
       await api.delete(`/twilio-calls/lines/${line.id}`);
-      setNotice(`${line.label} line removed.`);
+      setLinesNotice(`${line.label} line removed.`);
       await loadLines();
     } catch (reason) {
-      setError(errorMessage(reason, "The line could not be removed."));
+      setLinesError(errorMessage(reason, "The line could not be removed."));
     }
   };
 
   const testVoice = async () => {
     try {
       setVoiceTesting(true);
-      setError("");
-      setNotice("");
+      setVoiceTestError("");
+      setVoiceTestNotice("");
       const response = await api.post("/twilio-calls/test");
       mergeSettings({ ...form, ...response.data.data });
-      setNotice("Voice is ready — the browser softphone can place and receive calls.");
+      setVoiceTestNotice("Voice is ready — the browser softphone can place and receive calls.");
     } catch (reason) {
       if (reason?.response?.data?.data) mergeSettings({ ...form, ...reason.response.data.data });
-      setError(errorMessage(reason, "The voice test failed."));
+      setVoiceTestError(errorMessage(reason, "The voice test failed."));
     } finally {
       setVoiceTesting(false);
     }
@@ -347,8 +358,7 @@ export default function AgencyTwilioSettingsPanel() {
         {!form.secureStorageReady ? (
           <StatusNotice type="error">Secure integration storage is unavailable. Configure the server encryption key first.</StatusNotice>
         ) : null}
-        {notice ? <StatusNotice>{notice}</StatusNotice> : null}
-        {error ? <StatusNotice type="error">{error}</StatusNotice> : null}
+        {loadError ? <StatusNotice type="error">{loadError}</StatusNotice> : null}
 
         <section className={glassCard}>
           <div className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-violet-200/35 blur-3xl" aria-hidden="true" />
@@ -504,6 +514,8 @@ export default function AgencyTwilioSettingsPanel() {
               ) : null}
             </div>
           )}
+          {credentialsNotice ? <div className="mt-4"><StatusNotice>{credentialsNotice}</StatusNotice></div> : null}
+          {credentialsError ? <div className="mt-4"><StatusNotice type="error">{credentialsError}</StatusNotice></div> : null}
         </section>
 
         <section className={glassCard}>
@@ -569,6 +581,8 @@ export default function AgencyTwilioSettingsPanel() {
                     {voiceSaving ? "Saving…" : "Save voice settings"}
                   </button>
                 </div>
+                {voiceNotice ? <div className="mt-4"><StatusNotice>{voiceNotice}</StatusNotice></div> : null}
+                {voiceError ? <div className="mt-4"><StatusNotice type="error">{voiceError}</StatusNotice></div> : null}
               </form>
 
               {!form.callsEnabled ? (
@@ -590,6 +604,8 @@ export default function AgencyTwilioSettingsPanel() {
                         <RefreshCw className={`h-3.5 w-3.5 ${numbersLoading ? "animate-spin" : ""}`} />Load my numbers
                       </button>
                     </div>
+                    {linesNotice ? <div className="mt-3"><StatusNotice>{linesNotice}</StatusNotice></div> : null}
+                    {linesError ? <div className="mt-3"><StatusNotice type="error">{linesError}</StatusNotice></div> : null}
 
                     {lines.length ? (
                       <div className="mt-3 space-y-2">
@@ -659,6 +675,8 @@ export default function AgencyTwilioSettingsPanel() {
                       </div>
                     ) : null}
                     {voiceConnected && form.lastCallTestMessage ? <p className="text-xs text-slate-500">{form.lastCallTestMessage}</p> : null}
+                    {voiceTestNotice ? <div className="mt-3"><StatusNotice>{voiceTestNotice}</StatusNotice></div> : null}
+                    {voiceTestError ? <div className="mt-3"><StatusNotice type="error">{voiceTestError}</StatusNotice></div> : null}
                   </div>
                 </div>
               )}

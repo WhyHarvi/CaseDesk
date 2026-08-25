@@ -119,12 +119,19 @@ test("auth routes and public webhooks are both wired into the server", async () 
 
 test("settings saves and reports the voice fields (API key, calls toggle, test status)", async () => {
   const controller = await source("../src/controllers/twilioSettingsController.js");
-  assert.match(controller, /const apiKeySid = clean\(body\.apiKeySid, 64\);/);
-  assert.match(controller, /callsEnabled: body\.callsEnabled === true/);
+  assert.match(controller, /const apiKeySid = body\.apiKeySid !== undefined \? clean\(body\.apiKeySid, 64\) : existing\?\.apiKeySid \|\| "";/);
+  // The account-credentials card and the voice card are two separate forms
+  // that each PUT only their own fields — saving one must not blank out or
+  // reject on the fields only the other form sends. A field falls back to
+  // its existing saved value when the request omits it entirely, and is
+  // only cleared when the request explicitly sends a falsy value for it.
+  assert.match(controller, /callsEnabled: body\.callsEnabled !== undefined \? body\.callsEnabled === true : Boolean\(existing\?\.callsEnabled\)/);
   assert.match(controller, /voiceNumber: voiceNumber \|\| null/);
   assert.match(controller, /if \(values\.callsEnabled && !existing\?\.apiKeySecretEncrypted && !suppliedApiKeySecret\)/);
   assert.match(controller, /apiKeySecretEncrypted/);
   assert.match(controller, /lastCallTestStatus/);
+  assert.match(controller, /function validate\(body, existing\)/);
+  assert.match(controller, /const values = validate\(req\.body, existing\);/);
 });
 
 test("lead calls auto-record: the softphone dial threads the lead id through TwiML into the status callback", async () => {

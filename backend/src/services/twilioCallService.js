@@ -174,6 +174,17 @@ export async function listAgencyTwilioVoiceLines(agencyId) {
   });
 }
 
+// Twilio's REST errors carry a specific, human-readable .message (e.g. "The
+// requested resource ... was not found", "Authenticate") — surfacing that
+// (rather than letting the raw SDK error bubble up as an uncaught
+// exception) is what keeps a real provisioning failure from being masked
+// as "An unexpected error occurred" by the global error handler.
+function friendlyTwilioVoiceError(error, fallback) {
+  if (error?.status === 401 || error?.code === 20003) return "Twilio rejected the Account SID or Auth Token. Verify credentials in Settings, then try again.";
+  const detail = clean(error?.message, 300);
+  return detail ? `Twilio rejected this request: ${detail}` : fallback;
+}
+
 // Configures a Twilio number as a voice line: creates/reuses the shared TwiML
 // Application (outbound), points the number's Voice webhook at the line's own
 // inbound endpoint, and records the routing rule. The first line becomes the
@@ -192,12 +203,16 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   const base = twilioPublicBase(req);
   let appSid = config.twimlAppSid;
   if (!appSid) {
-    const app = await client.applications.create({
-      friendlyName: "CaseDesk Voice",
-      voiceMethod: "POST",
-      voiceUrl: `${base}/api/communications/webhooks/twilio/outbound/${agencyId}`,
-    });
-    appSid = app.sid;
+    try {
+      const app = await client.applications.create({
+        friendlyName: "CaseDesk Voice",
+        voiceMethod: "POST",
+        voiceUrl: `${base}/api/communications/webhooks/twilio/outbound/${agencyId}`,
+      });
+      appSid = app.sid;
+    } catch (error) {
+      throw createHttpError(502, friendlyTwilioVoiceError(error, "Twilio could not create the calling application for this number."));
+    }
   } else {
     // Keep the app's Voice URL pointed at CaseDesk even if the public origin
     // changed since provisioning.
@@ -207,12 +222,21 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   const line = await prisma.agencyTwilioVoiceLine.create({
     data: { agencyId, numberSid: numberSidClean, phoneNumber: "pending", label: labelClean, routing: routingClean },
   });
-  const updated = await client.incomingPhoneNumbers(numberSidClean).update({
-    voiceMethod: "POST",
-    voiceUrl: `${base}/api/communications/webhooks/twilio/inbound/${agencyId}/${line.id}`,
-    statusCallbackMethod: "POST",
-    statusCallback: `${base}/api/communications/webhooks/twilio/status/${agencyId}`,
-  });
+  let updated;
+  try {
+    updated = await client.incomingPhoneNumbers(numberSidClean).update({
+      voiceMethod: "POST",
+      voiceUrl: `${base}/api/communications/webhooks/twilio/inbound/${agencyId}/${line.id}`,
+      statusCallbackMethod: "POST",
+      statusCallback: `${base}/api/communications/webhooks/twilio/status/${agencyId}`,
+    });
+  } catch (error) {
+    // The line row exists only to be filled in below — undo it on failure so
+    // numberSid's unique constraint doesn't permanently block retrying this
+    // same number after a failed provisioning attempt.
+    await prisma.agencyTwilioVoiceLine.delete({ where: { id: line.id } }).catch(() => {});
+    throw createHttpError(502, friendlyTwilioVoiceError(error, "Twilio could not configure this number for calling."));
+  }
 
   const total = await prisma.agencyTwilioVoiceLine.count({ where: { agencyId } });
   const isPrimary = total === 1;
