@@ -13,6 +13,12 @@ export const DEFAULT_WORKING_HOURS = [
   { day: 0, enabled: false, start: "10:00", end: "14:00" },
 ];
 
+const INTERNAL_ROLES_ALLOWED_TO_BOOK_PAST = new Set(["admin", "frontdesk"]);
+
+export function canBookPastInternalSlot(role) {
+  return INTERNAL_ROLES_ALLOWED_TO_BOOK_PAST.has(role);
+}
+
 export async function getOrCreateBookingSettings(agencyId) {
   const existing = await prisma.bookingSettings.findUnique({ where: { agencyId } });
   if (existing) return existing;

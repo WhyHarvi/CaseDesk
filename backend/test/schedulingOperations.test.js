@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { intersectWorkingHours, localDateTimeToUtc, mergeStaffAvailability, slotsForDay, validateAvailabilityRange } from "../src/services/bookingAvailabilityService.js";
+import { canBookPastInternalSlot, intersectWorkingHours, localDateTimeToUtc, mergeStaffAvailability, slotsForDay, validateAvailabilityRange } from "../src/services/bookingAvailabilityService.js";
 import { chooseAppointmentAssignee } from "../src/services/schedulingAssignmentService.js";
 import {
   bookingDeliveryIsCurrent,
@@ -128,19 +128,17 @@ test("frontdesk's ignorePastCutoff reveals today's already-passed slots too", ()
   assert.equal(frontdeskSlots[0].startsAt, "2026-08-03T13:00:00.000Z", "the day's grid should start at the office's opening time, not now");
 });
 
-test("every internal staff role — not just frontdesk — sees today's already-passed slots when booking or rescheduling", async () => {
+test("only admins and frontdesk can book or reschedule today's already-passed slots", async () => {
   const controller = await readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8");
+  const leadService = await readFile(new URL("../src/modules/leads/lead.service.js", import.meta.url), "utf8");
 
-  // Any staff member managing the calendar directly (logging a walk-in, an
-  // earlier call, or adjusting the day's schedule to match what actually
-  // happened) needs this, not just frontdesk — a client picking a slot on
-  // the public page is the one flow that should never see the past.
-  assert.match(controller, /const STAFF_ROLES_SEEING_PAST_SLOTS = new Set\(\["admin", "consultant", "frontdesk"\]\);/);
-  const usages = controller.match(/ignorePastCutoff: STAFF_ROLES_SEEING_PAST_SLOTS\.has\(req\.auth\.role\)/g) || [];
-  // getAvailability, createBookingAppointment's per-occurrence check, and
-  // both reschedule paths (series + single) — four call sites total.
+  assert.equal(canBookPastInternalSlot("admin"), true);
+  assert.equal(canBookPastInternalSlot("frontdesk"), true);
+  assert.equal(canBookPastInternalSlot("consultant"), false);
+  assert.equal(canBookPastInternalSlot("client"), false);
+  const usages = controller.match(/ignorePastCutoff: canBookPastInternalSlot\(req\.auth\.role\)/g) || [];
   assert.equal(usages.length, 4);
-  assert.doesNotMatch(controller, /ignorePastCutoff: req\.auth\.role === "frontdesk"/);
+  assert.match(leadService, /ignorePastCutoff: canBookPastInternalSlot\(req\.auth\.role\)/);
 });
 
 // A real report: an office's own hours had specific days turned off (e.g.
@@ -177,7 +175,7 @@ test("availabilityForRange only skips the office's own hours override when ignor
   assert.match(service, /ignoreLocationClosure = false/);
   assert.match(service, /location\?\.useCustomHours && !ignoreLocationClosure \?/);
 
-  const usages = controller.match(/ignoreLocationClosure: STAFF_ROLES_SEEING_PAST_SLOTS\.has\(req\.auth\.role\)/g) || [];
+  const usages = controller.match(/ignoreLocationClosure: STAFF_ROLES_IGNORING_LOCATION_CLOSURE\.has\(req\.auth\.role\)/g) || [];
   assert.equal(usages.length, 4, "same four call sites as ignorePastCutoff — getAvailability, create, and both reschedule paths");
 });
 

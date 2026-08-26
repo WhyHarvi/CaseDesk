@@ -14,6 +14,7 @@ import { adminRecipientIds, notifyUsers, resolveNotifications } from "../../serv
 import {
   assertSlotAvailable,
   availabilityForRange,
+  canBookPastInternalSlot,
   getOrCreateBookingSettings,
   localDateKey,
 } from "../../services/bookingAvailabilityService.js";
@@ -1104,6 +1105,7 @@ export async function createConsultation(req, db = prisma) {
       minNoticeOverrideMinutes: 0,
       locationId: preflightLocation?.id || null,
       meetingMode,
+      ignorePastCutoff: canBookPastInternalSlot(req.auth.role),
     });
     if (!(offered.days[dayKey] || []).some((slot) => slot.startsAt === values.startAt.toISOString())) {
       throw createHttpError(409, "That time is outside the consultant’s bookable hours or is no longer available.", "SLOT_TAKEN");
