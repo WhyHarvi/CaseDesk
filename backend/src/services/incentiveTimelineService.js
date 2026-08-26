@@ -42,6 +42,126 @@ async function resolveCheckpointTimestamp(agencyId, caseId, checkpointType, chec
   return null;
 }
 
+// Batched form of resolveCheckpointTimestamp — one query per checkpoint
+// TYPE actually referenced (at most 4), instead of one query per leg per
+// case. requests: [{ caseId, checkpointType, checkpointValue }]. Returns a
+// Map keyed by `${caseId}:${checkpointType}:${checkpointValue ?? ""}`.
+async function resolveCheckpointTimestampsBatch(agencyId, requests) {
+  const results = new Map();
+  const key = (caseId, type, value) => `${caseId}:${type}:${value ?? ""}`;
+
+  const caseIdsFor = (type) => [...new Set(requests.filter((row) => row.checkpointType === type).map((row) => row.caseId))];
+  const leadCreatedCaseIds = caseIdsFor("LEAD_CREATED");
+  const leadStageCaseIds = caseIdsFor("LEAD_STAGE_REACHED");
+  const caseStageCaseIds = caseIdsFor("CASE_STAGE_REACHED");
+  const firstPaymentCaseIds = caseIdsFor("FIRST_PAYMENT_COLLECTED");
+
+  const [leadCreatedRows, leadsForStage, caseStageRows, firstPaymentRows] = await Promise.all([
+    leadCreatedCaseIds.length
+      ? prisma.lead.findMany({ where: { convertedCaseId: { in: leadCreatedCaseIds }, agencyId }, select: { convertedCaseId: true, createdAt: true } })
+      : [],
+    leadStageCaseIds.length
+      ? prisma.lead.findMany({ where: { convertedCaseId: { in: leadStageCaseIds }, agencyId }, select: { convertedCaseId: true, id: true } })
+      : [],
+    caseStageCaseIds.length
+      ? prisma.caseStageHistory.groupBy({ by: ["caseId", "newStage"], where: { agencyId, caseId: { in: caseStageCaseIds } }, _min: { createdAt: true } })
+      : [],
+    firstPaymentCaseIds.length
+      ? prisma.incentiveLedgerEntry.groupBy({ by: ["caseId"], where: { agencyId, caseId: { in: firstPaymentCaseIds }, entryType: "CREDIT" }, _min: { creditedAt: true } })
+      : [],
+  ]);
+
+  for (const row of leadCreatedRows) results.set(key(row.convertedCaseId, "LEAD_CREATED", ""), row.createdAt);
+
+  if (leadStageCaseIds.length) {
+    const leadIdByCaseId = new Map(leadsForStage.map((row) => [row.convertedCaseId, row.id]));
+    const caseIdByLeadId = new Map([...leadIdByCaseId.entries()].map(([caseId, leadId]) => [leadId, caseId]));
+    const leadIds = [...leadIdByCaseId.values()];
+    const stageRows = leadIds.length
+      ? await prisma.leadStageHistory.groupBy({ by: ["leadId", "newStage"], where: { agencyId, leadId: { in: leadIds } }, _min: { createdAt: true } })
+      : [];
+    for (const row of stageRows) {
+      const caseId = caseIdByLeadId.get(row.leadId);
+      if (caseId) results.set(key(caseId, "LEAD_STAGE_REACHED", row.newStage), row._min.createdAt);
+    }
+  }
+
+  for (const row of caseStageRows) results.set(key(row.caseId, "CASE_STAGE_REACHED", row.newStage), row._min.createdAt);
+  for (const row of firstPaymentRows) results.set(key(row.caseId, "FIRST_PAYMENT_COLLECTED", ""), row._min.creditedAt);
+
+  return results;
+}
+
+// Batched form of projectCaseTimelineLegs for list endpoints (getActiveTimelines)
+// that project many cases in one request — same per-case output, but the
+// evaluations/ledger/checkpoint lookups each run once across every case
+// instead of once per case. casesWithLegs: [{ caseId, legs }]. Returns a
+// Map keyed by caseId.
+export async function projectCaseTimelineLegsBatch(agencyId, casesWithLegs) {
+  const caseIds = casesWithLegs.map((row) => row.caseId);
+  const evaluations = caseIds.length
+    ? await prisma.incentiveTimelineLegEvaluation.findMany({ where: { agencyId, caseId: { in: caseIds } } })
+    : [];
+  const evaluationsByCaseId = new Map();
+  for (const row of evaluations) {
+    const bucket = evaluationsByCaseId.get(row.caseId) || [];
+    bucket.push(row);
+    evaluationsByCaseId.set(row.caseId, bucket);
+  }
+
+  const creditedEvaluationIds = evaluations.filter((row) => row.outcome === "CREDITED").map((row) => row.id);
+  const ledgerRows = creditedEvaluationIds.length
+    ? await prisma.incentiveLedgerEntry.findMany({
+        where: { timelineLegEvaluationId: { in: creditedEvaluationIds }, entryType: "TIMELINE_BONUS" },
+        select: { timelineLegEvaluationId: true, userId: true, roleNameSnapshot: true, creditedAmount: true, user: { select: { fullName: true } } },
+      })
+    : [];
+  const recipientsByEvaluationId = new Map();
+  for (const row of ledgerRows) {
+    const bucket = recipientsByEvaluationId.get(row.timelineLegEvaluationId) || [];
+    bucket.push({ userId: row.userId, fullName: row.user.fullName, roleNameSnapshot: row.roleNameSnapshot, creditedAmount: Number(row.creditedAmount) });
+    recipientsByEvaluationId.set(row.timelineLegEvaluationId, bucket);
+  }
+
+  const checkpointRequests = [];
+  for (const { caseId, legs } of casesWithLegs) {
+    const evaluationByLegId = new Map((evaluationsByCaseId.get(caseId) || []).map((row) => [row.legId, row]));
+    for (const leg of legs) {
+      if (evaluationByLegId.has(leg.id)) continue;
+      checkpointRequests.push({ caseId, checkpointType: leg.fromCheckpointType, checkpointValue: leg.fromCheckpointValue });
+    }
+  }
+  const checkpointTimestamps = await resolveCheckpointTimestampsBatch(agencyId, checkpointRequests);
+
+  const resultByCaseId = new Map();
+  for (const { caseId, legs } of casesWithLegs) {
+    const evaluationByLegId = new Map((evaluationsByCaseId.get(caseId) || []).map((row) => [row.legId, row]));
+    const result = [];
+    const consumedLegIds = new Set();
+    for (const leg of legs) {
+      const evaluation = evaluationByLegId.get(leg.id);
+      if (evaluation) {
+        consumedLegIds.add(leg.id);
+        result.push(resolvedLegEntry(evaluation, recipientsByEvaluationId));
+        continue;
+      }
+      const fromAt = checkpointTimestamps.get(`${caseId}:${leg.fromCheckpointType}:${leg.fromCheckpointValue ?? ""}`) || null;
+      const tiers = leg.tiers.map((tier) => ({ id: tier.id, thresholdDays: Number(tier.thresholdDays), multiplierPercent: Number(tier.multiplierPercent) }));
+      if (!fromAt) {
+        result.push({ legId: leg.id, name: leg.name, sortOrder: leg.sortOrder, state: "NOT_STARTED", fromCheckpointType: leg.fromCheckpointType, fromCheckpointValue: leg.fromCheckpointValue, baseBonusAmount: Number(leg.baseBonusAmount), tiers });
+        continue;
+      }
+      result.push({ legId: leg.id, name: leg.name, sortOrder: leg.sortOrder, state: "IN_PROGRESS", fromCheckpointAt: fromAt, baseBonusAmount: Number(leg.baseBonusAmount), tiers });
+    }
+    for (const evaluation of evaluationsByCaseId.get(caseId) || []) {
+      if (consumedLegIds.has(evaluation.legId)) continue;
+      result.push(resolvedLegEntry(evaluation, recipientsByEvaluationId));
+    }
+    resultByCaseId.set(caseId, result);
+  }
+  return resultByCaseId;
+}
+
 // Mirror image of tierRateFor (incentiveCreditingService.js): the SMALLEST
 // thresholdDays that still covers the actual elapsed time wins (the loosest
 // tier the case qualified for), not the largest threshold cleared. Tiers

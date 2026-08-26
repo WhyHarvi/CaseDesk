@@ -112,6 +112,75 @@ export async function resolveHolders(agencyId, caseId) {
   };
 }
 
+// Same result as calling resolveHolders() once per case, but as a handful
+// of bulk queries instead of one round trip per case — teamIncentiveRoleAssignment
+// especially, since it's agency-wide, not case-scoped, and was being
+// re-fetched identically for every single case. Built for list endpoints
+// (getActiveTimelines, getPipeline) that resolve holders for many cases in
+// one request; resolveHolders itself is untouched for the single-case call
+// sites (retroactive approval, plan recalculation, required-team checks).
+export async function resolveHoldersBatch(agencyId, cases) {
+  const caseIds = cases.map((row) => row.id);
+  const [leads, roleAssignments, caseRoleAssignments] = await Promise.all([
+    prisma.lead.findMany({
+      where: { convertedCaseId: { in: caseIds }, agencyId },
+      select: { convertedCaseId: true, ownerUserId: true, conversion: { select: { convertedById: true } } },
+    }),
+    prisma.teamIncentiveRoleAssignment.findMany({
+      where: { agencyId, user: { status: "active", memberships: { some: { agencyId, isActive: true } } } },
+      select: { caseRoleId: true, userId: true, caseRole: { select: { name: true } } },
+    }),
+    prisma.caseRoleAssignment.findMany({
+      where: { agencyId, caseId: { in: caseIds }, status: "active", user: { status: "active", memberships: { some: { agencyId, isActive: true } } } },
+      select: { caseId: true, caseRoleId: true, userId: true, caseRole: { select: { name: true } } },
+    }),
+  ]);
+  const leadByCaseId = new Map(leads.map((lead) => [lead.convertedCaseId, lead]));
+  const caseRoleAssignmentsByCaseId = new Map();
+  for (const row of caseRoleAssignments) {
+    const bucket = caseRoleAssignmentsByCaseId.get(row.caseId) || [];
+    bucket.push(row);
+    caseRoleAssignmentsByCaseId.set(row.caseId, bucket);
+  }
+
+  const holdersByCaseId = new Map();
+  for (const caseItem of cases) {
+    const caseTeamUserIds = new Set([
+      caseItem.assignedUserId,
+      ...(caseItem.assignments || []).map((assignment) => assignment.consultantUserId),
+    ].filter(Boolean));
+
+    const globalByCaseRoleId = new Map();
+    for (const row of roleAssignments) {
+      if (!caseTeamUserIds.has(row.userId)) continue;
+      const bucket = globalByCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
+      if (!bucket.userIds.includes(row.userId)) bucket.userIds.push(row.userId);
+      globalByCaseRoleId.set(row.caseRoleId, bucket);
+    }
+
+    const overlayByCaseRoleId = new Map();
+    for (const row of caseRoleAssignmentsByCaseId.get(caseItem.id) || []) {
+      const bucket = overlayByCaseRoleId.get(row.caseRoleId) || { name: row.caseRole.name, userIds: [] };
+      if (!bucket.userIds.includes(row.userId)) bucket.userIds.push(row.userId);
+      overlayByCaseRoleId.set(row.caseRoleId, bucket);
+    }
+
+    const byCaseRoleId = new Map();
+    for (const caseRoleId of new Set([...globalByCaseRoleId.keys(), ...overlayByCaseRoleId.keys()])) {
+      const overlay = overlayByCaseRoleId.get(caseRoleId);
+      byCaseRoleId.set(caseRoleId, overlay?.userIds.length ? overlay : globalByCaseRoleId.get(caseRoleId));
+    }
+
+    const lead = leadByCaseId.get(caseItem.id);
+    holdersByCaseId.set(caseItem.id, {
+      leadOwnerUserId: lead?.ownerUserId || null,
+      leadConverterUserId: lead?.conversion?.convertedById || null,
+      caseRoleHolders: byCaseRoleId,
+    });
+  }
+  return holdersByCaseId;
+}
+
 function snapshotRecipients(plan, holders) {
   return plan.roleShares.map((share) => {
     let userIds = [];
@@ -484,6 +553,29 @@ export async function estimateInvoicePotentialCredit(agencyId, { caseInvoiceId, 
     tiers: Array.isArray(snapshot.tiers) ? snapshot.tiers : [],
     matchedRate,
     entries: computeSnapshotSplits(snapshot, pool),
+  };
+}
+
+// Same as estimateInvoicePotentialCredit, but for a caller (getPipeline)
+// that already has caseId/incentiveSnapshot from its own bulk invoice
+// query — skips the redundant per-invoice findFirst that was re-fetching
+// the exact same row the caller already had in hand. Only
+// TIERED_PERCENT_OF_REVENUE still hits the database (via computeSnapshotPool
+// -> getCasePaymentSummary); FLAT_PER_PAYMENT/PERCENT_OF_PAYMENT are pure.
+export async function estimateInvoicePotentialCreditFromRow(agencyId, { caseId, incentiveSnapshot, outstandingBalance }) {
+  const balance = Number(outstandingBalance);
+  if (!(balance > 0) || !incentiveSnapshot?.incentivePlanId) return null;
+  const { pool, matchedRate } = await computeSnapshotPool(incentiveSnapshot, { agencyId, caseId, delta: balance });
+  if (!(pool > 0)) return null;
+  return {
+    planId: incentiveSnapshot.incentivePlanId,
+    planName: incentiveSnapshot.planName,
+    formulaType: incentiveSnapshot.formulaType,
+    flatAmount: incentiveSnapshot.flatAmount != null ? Number(incentiveSnapshot.flatAmount) : null,
+    percentRate: incentiveSnapshot.percentRate != null ? Number(incentiveSnapshot.percentRate) : null,
+    tiers: Array.isArray(incentiveSnapshot.tiers) ? incentiveSnapshot.tiers : [],
+    matchedRate,
+    entries: computeSnapshotSplits(incentiveSnapshot, pool),
   };
 }
 

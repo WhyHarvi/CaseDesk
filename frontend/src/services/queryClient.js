@@ -52,6 +52,13 @@ export function shouldCacheGet(url, config = {}) {
 export function staleTimeFor(url) {
   const path = pathOnly(url);
   if (path.includes("/settings") || path.includes("/staff") || path.includes("/team")) return 5 * 60_000;
+  // Incentive figures are expensive to compute (per-case attribution and
+  // timeline projection) and don't need to track real-time activity —
+  // explicit invalidation below (payments/cases/incentive-plans mutating)
+  // already refreshes them promptly when something that actually changes
+  // the numbers happens, so this mainly protects against recomputing on
+  // every plain page revisit.
+  if (path.includes("/incentives") || path.includes("/incentive-plans")) return 2 * 60_000;
   if (path.includes("/dashboard") || path.includes("/workload") || path.includes("/reports")) return 30_000;
   if (path.includes("/calendar") || path.includes("/appointments")) return 30_000;
   if (path.includes("/clients") || path.includes("/cases") || path.includes("/documents") || path.includes("/follow-ups") || path.includes("/payments") || path.includes("/leads")) return 90_000;
@@ -72,12 +79,19 @@ const RELATED_PATHS = {
   appointments: ["appointments", "calendar", "booking", "dashboard", "workload", "cases"],
   booking: ["appointments", "calendar", "booking", "dashboard", "workload"],
   clients: ["clients", "cases", "dashboard", "workload", "documents", "follow-ups", "payments"],
-  cases: ["cases", "clients", "dashboard", "workload", "documents", "follow-ups", "payments", "appointments"],
+  // Case mutations cover role-assignment changes (RCIC/Case Worker/Frontdesk)
+  // and case creation/reassignment, both of which change who incentive
+  // credit follows — "incentives" rides along the same way "workload"
+  // already does for the same reason.
+  cases: ["cases", "clients", "dashboard", "workload", "documents", "follow-ups", "payments", "appointments", "incentives"],
   "follow-ups": ["follow-ups", "cases", "clients", "dashboard", "workload"],
   documents: ["documents", "client-documents", "written-documents", "cases", "clients", "dashboard", "workload"],
   "client-documents": ["documents", "client-documents", "written-documents", "cases", "clients", "dashboard", "workload"],
   "written-documents": ["documents", "client-documents", "written-documents", "cases", "clients", "dashboard", "workload"],
-  payments: ["payments", "cases", "clients", "dashboard"],
+  // Recording/voiding a payment is exactly what moves the incentive ledger
+  // and pipeline numbers — without this, a just-recorded payment wouldn't
+  // show up until the 2-minute stale time lapsed on its own.
+  payments: ["payments", "cases", "clients", "dashboard", "incentives"],
   leads: ["leads", "dashboard", "workload", "clients", "cases"],
   "ooma-calls": ["ooma-calls", "leads", "clients", "communications", "follow-ups", "dashboard", "workload"],
   "twilio-calls": ["twilio-calls", "ooma-calls", "leads", "clients", "communications", "follow-ups"],
@@ -88,6 +102,12 @@ const RELATED_PATHS = {
   // fallback below, which would otherwise blow away every cached query in
   // the app on every ping.
   workload: [],
+  incentives: ["incentives"],
+  // Saving/activating/deactivating a plan changes future attribution and
+  // formulas — scoped to incentives/settings rather than falling through to
+  // "no related list = invalidate everything" (the pre-existing default for
+  // any resource prefix not listed here).
+  "incentive-plans": ["incentives", "incentive-plans", "settings"],
 };
 
 function resourceFor(url) {

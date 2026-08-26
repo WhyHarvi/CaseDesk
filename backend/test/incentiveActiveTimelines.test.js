@@ -51,7 +51,16 @@ test("the /incentives/timelines route is wired and mounted the same way /pipelin
 
 test("in-progress legs are enriched with the requesting user's own current-tier potential amount, reusing tierMultiplierFor and computeSplits rather than re-deriving the math", async () => {
   const controller = await source("../src/controllers/incentiveLedgerController.js");
-  assert.match(controller, /import \{ fetchPlanTimelineLegs, projectCaseTimelineLegs, tierMultiplierFor \} from "\.\.\/services\/incentiveTimelineService\.js";/);
+  // Holders/legs are resolved in one batch across every eligible case, not
+  // per case — resolveHoldersBatch/projectCaseTimelineLegsBatch replaced
+  // resolveHolders/projectCaseTimelineLegs here specifically because the
+  // sequential per-case awaits measured ~6s for a full caseload; see
+  // incentiveCreditingService.js/incentiveTimelineService.js for the batch
+  // implementations (the single-case originals are unchanged, still used
+  // by the case-profile widget and retroactive-approval/recalculation flows).
+  assert.match(controller, /import \{ fetchPlanTimelineLegs, projectCaseTimelineLegsBatch, tierMultiplierFor \} from "\.\.\/services\/incentiveTimelineService\.js";/);
+  assert.match(controller, /const holdersByCaseId = await resolveHoldersBatch\(agencyId, eligibleCases\);/);
+  assert.match(controller, /const projectedLegsByCaseId = await projectCaseTimelineLegsBatch\(/);
 
   const fnStart = controller.indexOf("export async function getActiveTimelines(");
   const fnBody = controller.slice(fnStart, controller.indexOf("\n}\n", fnStart));

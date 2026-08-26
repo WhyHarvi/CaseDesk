@@ -1,6 +1,6 @@
 import prisma from "../services/prisma/client.js";
-import { estimateInvoicePotentialCredit, resolvePlan, resolveHolders, computeSplits } from "../services/incentiveCreditingService.js";
-import { fetchPlanTimelineLegs, projectCaseTimelineLegs, tierMultiplierFor } from "../services/incentiveTimelineService.js";
+import { estimateInvoicePotentialCreditFromRow, resolvePlan, resolveHoldersBatch, computeSplits } from "../services/incentiveCreditingService.js";
+import { fetchPlanTimelineLegs, projectCaseTimelineLegsBatch, tierMultiplierFor } from "../services/incentiveTimelineService.js";
 
 // Incentive figures are personal financial data, not general case
 // visibility — admins can look at anyone's, everyone else only ever sees
@@ -129,15 +129,19 @@ export async function getPipeline(req, res) {
   const userId = targetUserId(req);
   if (!userId) return res.json({ data: [] });
 
+  // incentiveSnapshot is fetched here (not via a per-invoice lookup) so the
+  // estimate loop below never re-queries a row this call already has —
+  // that redundant fetch was the entire per-invoice DB cost for every
+  // formula type except TIERED_PERCENT_OF_REVENUE.
   const invoices = await prisma.caseInvoice.findMany({
     where: { agencyId, balance: { gt: 0 }, status: { notIn: ["Void", "Voided"] }, case: { archivedAt: null, deletedAt: null } },
-    select: { id: true, caseId: true, balance: true, invoiceNumber: true, description: true,
+    select: { id: true, caseId: true, balance: true, invoiceNumber: true, description: true, incentiveSnapshot: true,
       case: { select: { caseType: true, stage: true, client: { select: { id: true, fullName: true } } } } },
   });
   const byCase = new Map();
   for (const invoice of invoices) {
     const outstandingBalance = Number(invoice.balance);
-    const estimate = await estimateInvoicePotentialCredit(agencyId, { caseInvoiceId: invoice.id, outstandingBalance });
+    const estimate = await estimateInvoicePotentialCreditFromRow(agencyId, { caseId: invoice.caseId, incentiveSnapshot: invoice.incentiveSnapshot, outstandingBalance });
     if (!estimate) continue;
     const mine = estimate.entries.filter((entry) => entry.userId === userId);
     const myTotal = mine.reduce((sum, entry) => sum + entry.amount, 0);
@@ -204,7 +208,13 @@ export async function getActiveTimelines(req, res) {
         ...(leadDerivedCaseIds.length ? [{ id: { in: leadDerivedCaseIds } }] : []),
       ],
     },
-    select: { id: true, caseType: true, stage: true, client: { select: { id: true, fullName: true } } },
+    select: {
+      id: true, caseType: true, stage: true, client: { select: { id: true, fullName: true } },
+      // Feeds resolveHoldersBatch directly — the same fields resolveHolders
+      // would otherwise re-fetch with its own query, once per case.
+      assignedUserId: true,
+      assignments: { where: { status: "active" }, select: { consultantUserId: true } },
+    },
   });
   if (!candidateCases.length) return res.json({ data: [] });
 
@@ -220,21 +230,33 @@ export async function getActiveTimelines(req, res) {
     if (legs.length) resolvedByCaseType.set(caseType, { plan, legs });
   }
 
+  // Only cases whose type actually has a plan+legs need holders/projections
+  // resolved at all — and now that's done once, batched across this whole
+  // set, instead of two extra round trips per case (what made this endpoint
+  // take ~6s for a full caseload; see the perf investigation this replaces).
+  const eligibleCases = candidateCases.filter((row) => resolvedByCaseType.has(row.caseType));
+  if (!eligibleCases.length) return res.json({ data: [] });
+
+  const holdersByCaseId = await resolveHoldersBatch(agencyId, eligibleCases);
+  const projectedLegsByCaseId = await projectCaseTimelineLegsBatch(
+    agencyId,
+    eligibleCases.map((row) => ({ caseId: row.id, legs: resolvedByCaseType.get(row.caseType).legs })),
+  );
+
   const rows = [];
-  for (const caseItem of candidateCases) {
+  const now = new Date();
+  for (const caseItem of eligibleCases) {
     const resolved = resolvedByCaseType.get(caseItem.caseType);
-    if (!resolved) continue;
+    const holders = holdersByCaseId.get(caseItem.id);
 
     // Confirm this user is actually a holder on this case before doing any
     // per-leg work — reuses computeSplits (already-tested attribution
     // logic) with a large nominal pool so a small sharePercent doesn't
     // round to 0 cents and produce a false negative.
-    const holders = await resolveHolders(agencyId, caseItem.id);
     const splits = computeSplits(resolved.plan, 10000, holders);
     if (!splits.some((entry) => entry.userId === userId)) continue;
 
-    const projectedLegs = await projectCaseTimelineLegs(agencyId, caseItem.id, resolved.legs);
-    const now = new Date();
+    const projectedLegs = projectedLegsByCaseId.get(caseItem.id) || [];
     for (const leg of projectedLegs) {
       if (leg.state !== "IN_PROGRESS") continue;
       const elapsedDays = (now.getTime() - new Date(leg.fromCheckpointAt).getTime()) / 86_400_000;
