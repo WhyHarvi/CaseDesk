@@ -45,6 +45,30 @@ test("client management stores searchable identity fields and archives without d
   assert.match(profile, /Identification/);
 });
 
+test("creating a case from an older client profile keeps that client selected after the Cases page loads", async () => {
+  const casesPage = await source("../../frontend/src/pages/Cases.jsx");
+  assert.match(casesPage, /handledCreateRequestRef\.current = createClientId/);
+  assert.match(casesPage, /const requestedClient = current\.find\(\s*\(item\) => item\.id === handledCreateRequestRef\.current/);
+  assert.match(casesPage, /return \[requestedClient, \.\.\.loadedClients\]/);
+});
+
+test("creating a case from a client profile stays in place until creation succeeds", async () => {
+  const [profile, casesPage] = await Promise.all([
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+    source("../../frontend/src/pages/Cases.jsx"),
+  ]);
+
+  assert.match(profile, /onClick=\{openCaseCreate\}[\s\S]*Create case/);
+  assert.doesNotMatch(profile, /\/app\/cases\?action=create&clientId/);
+  assert.match(profile, /<CaseFormDrawer[\s\S]*fixedClient=\{client\}/);
+  assert.match(profile, /const response = await api\.post\("\/cases", payload\)/);
+  assert.ok(
+    profile.indexOf('await api.post("/cases", payload)') <
+      profile.indexOf("navigate(`/app/cases/${savedCase.id}`)"),
+  );
+  assert.match(casesPage, /isEditing \|\| fixedClient/);
+});
+
 test("the duplicate-client check also searches unconverted Case Easy import data, with an import action right from the Add Client form", async () => {
   const [controller, routes, clientsPage, curtains] = await Promise.all([
     source("../src/controllers/clientController.js"),

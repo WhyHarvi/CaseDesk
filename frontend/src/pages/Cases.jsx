@@ -923,6 +923,7 @@ export function CaseFormDrawer({
   caseTypeAliases = {},
   isEditing,
   editingClientName,
+  fixedClient = null,
   caseTeam = null,
   newCaseTeamOptions = emptyNewCaseTeamOptions,
   onManageCaseTeam,
@@ -972,9 +973,9 @@ export function CaseFormDrawer({
               <span className="mb-2 block text-sm font-medium text-slate-700">
                 Client
               </span>
-              {isEditing ? (
+              {isEditing || fixedClient ? (
                 <div className="flex h-12 w-full items-center rounded-2xl border border-slate-200/90 bg-slate-50 px-4 text-sm font-semibold text-slate-900">
-                  {editingClientName || "Unknown client"}
+                  {fixedClient?.fullName || editingClientName || "Unknown client"}
                 </div>
               ) : (
                 <select
@@ -1563,11 +1564,24 @@ export default function Cases() {
       }
 
       setCases(casesResult.value.data.data || []);
-      setClients(
-        clientsResult.status === "fulfilled"
-          ? clientsResult.value.data.data || []
-          : [],
-      );
+      const loadedClients = clientsResult.status === "fulfilled"
+        ? clientsResult.value.data.data || []
+        : [];
+      // A client-profile deep link can target someone outside the first
+      // page returned by GET /clients (Jaideep/CL-2026-000039 exposed this).
+      // The targeted GET above adds that exact client, but this workspace
+      // request may finish later and used to overwrite it, leaving the New
+      // Case drawer with a clientId that had no matching option. Preserve
+      // the explicitly selected client across that request race.
+      setClients((current) => {
+        const requestedClient = current.find(
+          (item) => item.id === handledCreateRequestRef.current,
+        );
+        if (!requestedClient || loadedClients.some((item) => item.id === requestedClient.id)) {
+          return loadedClients;
+        }
+        return [requestedClient, ...loadedClients];
+      });
       setUsers(
         usersResult.status === "fulfilled"
           ? usersResult.value.data.data || []

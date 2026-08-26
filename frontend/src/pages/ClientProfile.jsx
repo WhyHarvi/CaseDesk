@@ -42,6 +42,14 @@ import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverla
 import { canAccessPage, hasCapability } from "../auth/portalAccess";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 import useDebouncedAutosave from "../hooks/useDebouncedAutosave";
+import {
+  CaseFormDrawer,
+  defaultCaseFormState,
+  getDefaultNextAction,
+  newCaseOperationKey,
+} from "./Cases";
+import { caseStagesForType } from "../constants/caseStages";
+import { isStudyPermitCaseType, studyIntakeApiValue } from "../utils/studyIntake";
 
 const glass = "rounded-[1.9rem] border border-slate-200/90 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.07)]";
 const spring = { type: "spring", stiffness: 320, damping: 30 };
@@ -426,6 +434,20 @@ export default function ClientProfile() {
   const [assignmentFeedback, setAssignmentFeedback] = useState(null);
   const initialChatConversationId = new URLSearchParams(location.search).get("conversation");
   const [chatOpen, setChatOpen] = useState(Boolean(initialChatConversationId));
+  const [caseCreateOpen, setCaseCreateOpen] = useState(false);
+  const [caseCreateClosing, setCaseCreateClosing] = useState(false);
+  const [caseCreateSaving, setCaseCreateSaving] = useState(false);
+  const [caseCreateError, setCaseCreateError] = useState("");
+  const [caseCreateKey, setCaseCreateKey] = useState(newCaseOperationKey);
+  const [caseCreateForm, setCaseCreateForm] = useState(defaultCaseFormState);
+  const [caseTypeOptions, setCaseTypeOptions] = useState([]);
+  const [caseTypeAliases, setCaseTypeAliases] = useState({});
+  const [caseTeamOptions, setCaseTeamOptions] = useState({
+    rcicUsers: [],
+    caseWorkerUsers: [],
+    ready: false,
+    missing: [],
+  });
 
   useEffect(() => {
     if (initialChatConversationId) setChatOpen(true);
@@ -516,6 +538,39 @@ export default function ClientProfile() {
   useEffect(() => {
     loadClient();
   }, [id]);
+
+  useEffect(() => {
+    if (!client?.id || !canOpenCases || cases.length) return;
+
+    Promise.all([
+      api.get("/cases/case-types"),
+      api.get("/cases/collaboration-options"),
+    ])
+      .then(([caseTypesResponse, collaborationResponse]) => {
+        setCaseTypeOptions(caseTypesResponse.data.data || []);
+        setCaseTypeAliases(caseTypesResponse.data.aliases || {});
+        const options = collaborationResponse.data.data || {
+          rcicUsers: [], caseWorkerUsers: [], ready: false, missing: ["RCIC", "Case Worker"],
+        };
+        setCaseTeamOptions(options);
+        setCaseCreateForm((current) => {
+          const rcicUserId = current.rcicUserId || (options.rcicUsers?.length === 1 ? options.rcicUsers[0].id : "");
+          const caseWorkerUserId = current.caseWorkerUserId || (options.caseWorkerUsers?.length === 1 ? options.caseWorkerUsers[0].id : "");
+          return {
+            ...current,
+            clientId: client.id,
+            rcicUserId,
+            assignedUserId: current.assignedUserId || rcicUserId,
+            caseWorkerUserId,
+          };
+        });
+      })
+      .catch(() => {
+        setCaseTeamOptions({
+          rcicUsers: [], caseWorkerUsers: [], ready: false, missing: ["RCIC", "Case Worker"],
+        });
+      });
+  }, [client?.id, canOpenCases, cases.length]);
 
   useEffect(() => {
     let active = true;
@@ -707,6 +762,89 @@ export default function ClientProfile() {
     }
   }
 
+  function openCaseCreate() {
+    const rcicUserId = caseTeamOptions.rcicUsers?.length === 1
+      ? caseTeamOptions.rcicUsers[0].id
+      : "";
+    const caseWorkerUserId = caseTeamOptions.caseWorkerUsers?.length === 1
+      ? caseTeamOptions.caseWorkerUsers[0].id
+      : "";
+
+    setCaseCreateForm({
+      ...defaultCaseFormState,
+      clientId: client.id,
+      rcicUserId,
+      assignedUserId: rcicUserId,
+      caseWorkerUserId,
+    });
+    setCaseCreateKey(newCaseOperationKey());
+    setCaseCreateError("");
+    setCaseCreateClosing(false);
+    setCaseCreateOpen(true);
+  }
+
+  function closeCaseCreate() {
+    if (caseCreateSaving) return;
+    setCaseCreateClosing(true);
+    window.setTimeout(() => {
+      setCaseCreateOpen(false);
+      setCaseCreateClosing(false);
+      setCaseCreateError("");
+    }, 220);
+  }
+
+  function handleCaseCreateChange(event) {
+    const { name, value } = event.target;
+    setCaseCreateForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "caseType" && !isStudyPermitCaseType(value)) {
+        next.studyIntakeMonth = "";
+        if (!caseStagesForType(value).includes(current.stage)) {
+          next.stage = "Retainer Pending";
+          next.nextAction = getDefaultNextAction("Retainer Pending");
+        }
+      }
+      if (name === "stage" && !current.nextAction) {
+        next.nextAction = getDefaultNextAction(value);
+      }
+      if (name === "rcicUserId") next.assignedUserId = value;
+      return next;
+    });
+  }
+
+  async function handleCaseCreateSubmit(event) {
+    event.preventDefault();
+    try {
+      setCaseCreateSaving(true);
+      setCaseCreateError("");
+      const payload = {
+        ...caseCreateForm,
+        idempotencyKey: caseCreateKey,
+        studyIntakeMonth: isStudyPermitCaseType(caseCreateForm.caseType)
+          ? studyIntakeApiValue(caseCreateForm.studyIntakeMonth)
+          : null,
+        nextAction: caseCreateForm.nextAction.trim() || getDefaultNextAction(caseCreateForm.stage),
+      };
+      if (!payload.rcicUserId || !payload.caseWorkerUserId) {
+        throw new Error("Choose both an RCIC and a Case Worker before creating the case.");
+      }
+      delete payload.assignedUserId;
+      if (!payload.submittedAt) delete payload.submittedAt;
+      if (!payload.decisionAt) delete payload.decisionAt;
+
+      const response = await api.post("/cases", payload);
+      const savedCase = response.data.data || response.data;
+      setCaseCreateOpen(false);
+      navigate(`/app/cases/${savedCase.id}`);
+    } catch (requestError) {
+      setCaseCreateError(
+        requestError.response?.data?.message || requestError.message || "Unable to create case.",
+      );
+    } finally {
+      setCaseCreateSaving(false);
+    }
+  }
+
   const shellBg = "min-h-full min-w-0 px-3 py-4 sm:px-5 lg:px-6";
 
   if (loading) {
@@ -758,6 +896,24 @@ export default function ClientProfile() {
               setEditingClient(false);
               await loadClient();
             }}
+          />
+        ) : null}
+        {caseCreateOpen ? (
+          <CaseFormDrawer
+            formState={caseCreateForm}
+            onChange={handleCaseCreateChange}
+            onSubmit={handleCaseCreateSubmit}
+            onCancel={closeCaseCreate}
+            saving={caseCreateSaving}
+            formError={caseCreateError}
+            clients={[client]}
+            users={[]}
+            caseTypeOptions={caseTypeOptions}
+            caseTypeAliases={caseTypeAliases}
+            isEditing={false}
+            fixedClient={client}
+            newCaseTeamOptions={caseTeamOptions}
+            closing={caseCreateClosing}
           />
         ) : null}
         <ClientCommunicationCard
@@ -915,13 +1071,14 @@ export default function ClientProfile() {
                   <ArrowUpRight className="h-4 w-4" />
                 </Link>
               ) : !cases.length && canOpenCases ? (
-                <Link
-                  to={`/app/cases?action=create&clientId=${encodeURIComponent(client.id)}`}
+                <button
+                  type="button"
+                  onClick={openCaseCreate}
                   className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
                 >
                   <Plus className="h-4 w-4" />
                   Create case
-                </Link>
+                </button>
               ) : null}
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
