@@ -12,7 +12,7 @@ import { adminRecipientIds, caseNotificationActionUrl, internalCaseRecipientIds,
 import { caseAccessWhere } from "../middleware/authorization.js";
 import { caseFormAccessWhere, caseFormChildAccessWhere } from "../services/caseFormAccessService.js";
 import { imm5476RepresentativeSignatureName, rebuildImm5476FromOriginal, stampXfaPdfFormValues } from "../services/pdfFormRenderService.js";
-import { resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
+import { MAX_SIGNATURE_FILL_FRACTION, MIN_SIGNATURE_FILL_FRACTION, REPRESENTATIVE_SIGNATURE, resolveSignatureFillFraction } from "../services/imm5476SignatureFields.js";
 import { isTracedImageSignature, traceSignatureImageToStrokes } from "../services/signatureImageTrace.js";
 
 const maxFileSize = 25 * 1024 * 1024;
@@ -416,6 +416,10 @@ export async function serveCaseFormFile(req, res) {
       formNumber: true,
       id: true,
       currentCopyType: true,
+      lockedAt: true,
+      signatureScale: true,
+      signatureScaleX: true,
+      signatureScaleY: true,
       representativeUser: { select: { fullName: true, firstName: true, lastName: true, licenseNumber: true, formSignatureImage: true, formSignatureStrokes: true } },
     },
   });
@@ -432,19 +436,31 @@ export async function serveCaseFormFile(req, res) {
   // as stored — a representative change after signing never touches it.
   const isImm5476 = String(data.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === "IMM5476";
   const isSignedCopy = data.currentCopyType === "ClientSigned" || data.currentCopyType === "Finalized";
+  const signatureEditor = req.query.signatureEditor === "1";
+  if (signatureEditor) {
+    await requireFormPermission(req, "canEdit");
+    assertFormUnlocked(data);
+    if (!isImm5476) throw createHttpError(409, "Signature resizing is currently available for IMM 5476 forms");
+    if (isSignedCopy) throw createHttpError(423, "A signed or finalized form cannot be changed");
+  }
   const representative = data.representativeUser;
   const hasSavedSignature = representative?.formSignatureImage && Array.isArray(representative.formSignatureStrokes) && representative.formSignatureStrokes.length;
   const signatureStrokes = hasSavedSignature && isTracedImageSignature(representative.formSignatureStrokes)
     ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
     : representative?.formSignatureStrokes;
-  const signatureFillFraction = hasSavedSignature
-    ? resolveSignatureFillFraction((await prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } }))?.governmentFormSignatureScale)
+  const agencySignatureScale = hasSavedSignature
+    ? (await prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } }))?.governmentFormSignatureScale
     : undefined;
+  const fallbackSignatureScale = data.signatureScale ?? agencySignatureScale;
+  const signatureFillFraction = hasSavedSignature ? {
+    x: resolveSignatureFillFraction(data.signatureScaleX ?? fallbackSignatureScale),
+    y: resolveSignatureFillFraction(data.signatureScaleY ?? fallbackSignatureScale),
+  } : undefined;
   let preparedBuffer = storedBuffer;
   if (isImm5476 && !isSignedCopy) {
     const embeddedSigner = await imm5476RepresentativeSignatureName(storedBuffer);
     const selectedSigner = hasSavedSignature ? representative.fullName.trim() : null;
-    if (embeddedSigner && embeddedSigner.localeCompare(selectedSigner || "", undefined, { sensitivity: "base" }) !== 0) {
+    if (signatureEditor || (embeddedSigner && embeddedSigner.localeCompare(selectedSigner || "", undefined, { sensitivity: "base" }) !== 0)) {
       const originalVersion = await prisma.caseFormVersion.findFirst({
         where: { caseFormId: data.id, agencyId: req.user.agencyId, copyType: "Original" },
         select: { storageKey: true },
@@ -452,7 +468,7 @@ export async function serveCaseFormFile(req, res) {
       });
       const originalBuffer = originalVersion?.storageKey
         ? await downloadStorageFile(DOCUMENT_BUCKET, originalVersion.storageKey, { allowMissing: true })
-        : null;
+        : data.currentCopyType === "Original" ? storedBuffer : null;
       if (!originalBuffer) throw createHttpError(409, "The original IMM 5476 is unavailable, so the previous representative signature could not be cleared. Import the official form again.");
       preparedBuffer = await rebuildImm5476FromOriginal(storedBuffer, originalBuffer);
     }
@@ -483,13 +499,53 @@ export async function serveCaseFormFile(req, res) {
           "95R": false,
           "94R": representative?.licenseNumber?.trim() || "",
         },
-        hasSavedSignature ? { strokes: signatureStrokes, name: representative.fullName, fillFraction: signatureFillFraction } : null,
+        hasSavedSignature && !signatureEditor ? { strokes: signatureStrokes, name: representative.fullName, fillFractionX: signatureFillFraction.x, fillFractionY: signatureFillFraction.y } : null,
       )
     : preparedBuffer;
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(data.originalFilename || "form")}`);
   res.type(data.mimeType || "application/octet-stream");
   res.send(buffer);
+}
+
+export async function getCaseFormSignatureEditor(req, res) {
+  await requireFormPermission(req, "canEdit");
+  const form = await prisma.caseForm.findFirst({
+    where: caseFormAccessWhere(req, { id: req.params.id }),
+    select: {
+      id: true,
+      formNumber: true,
+      currentCopyType: true,
+      lockedAt: true,
+      signatureScale: true,
+      signatureScaleX: true,
+      signatureScaleY: true,
+      representativeUser: { select: { fullName: true, formSignatureImage: true, formSignatureStrokes: true } },
+    },
+  });
+  if (!form) throw createHttpError(404, "Case form not found");
+  assertFormUnlocked(form);
+  if (String(form.formNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== "IMM5476") throw createHttpError(409, "Signature resizing is currently available for IMM 5476 forms");
+  if (["ClientSigned", "Finalized"].includes(form.currentCopyType)) throw createHttpError(423, "A signed or finalized form cannot be changed");
+  const representative = form.representativeUser;
+  if (!representative || !Array.isArray(representative.formSignatureStrokes) || !representative.formSignatureStrokes.length) {
+    throw createHttpError(409, "The selected representative must save a signature before it can be resized on the form");
+  }
+  const strokes = representative.formSignatureImage && isTracedImageSignature(representative.formSignatureStrokes)
+    ? await traceSignatureImageToStrokes(Buffer.from(representative.formSignatureImage.split(",")[1], "base64"))
+    : representative.formSignatureStrokes;
+  const agency = await prisma.agency.findUnique({ where: { id: req.user.agencyId }, select: { governmentFormSignatureScale: true } });
+  const fallbackScale = form.signatureScale ?? agency?.governmentFormSignatureScale;
+  res.json({ data: {
+    strokes,
+    signerName: representative.fullName,
+    pageIndex: REPRESENTATIVE_SIGNATURE.pageIndex,
+    rect: REPRESENTATIVE_SIGNATURE.rect,
+    scaleX: resolveSignatureFillFraction(form.signatureScaleX ?? fallbackScale),
+    scaleY: resolveSignatureFillFraction(form.signatureScaleY ?? fallbackScale),
+    minScale: MIN_SIGNATURE_FILL_FRACTION,
+    maxScale: MAX_SIGNATURE_FILL_FRACTION,
+  } });
 }
 
 export async function updateCaseForm(req, res) {
@@ -509,8 +565,25 @@ export async function updateCaseForm(req, res) {
   const title = req.body.title !== undefined ? String(req.body.title).trim() : existing.title;
   if (!title) throw createHttpError(400, "Form title is required");
   const formNumber = req.body.formNumber !== undefined ? String(req.body.formNumber).trim() || null : existing.formNumber;
+  let signatureScale;
+  if (req.body.signatureScale !== undefined) {
+    signatureScale = Number(req.body.signatureScale);
+    if (!Number.isFinite(signatureScale) || signatureScale < MIN_SIGNATURE_FILL_FRACTION || signatureScale > MAX_SIGNATURE_FILL_FRACTION) {
+      throw createHttpError(400, `Signature size must be between ${Math.round(MIN_SIGNATURE_FILL_FRACTION * 100)}% and ${Math.round(MAX_SIGNATURE_FILL_FRACTION * 100)}%`);
+    }
+  }
+  const signatureDimensions = {};
+  for (const key of ["signatureScaleX", "signatureScaleY"]) {
+    if (req.body[key] === undefined) continue;
+    const value = Number(req.body[key]);
+    if (!Number.isFinite(value) || value < MIN_SIGNATURE_FILL_FRACTION || value > MAX_SIGNATURE_FILL_FRACTION) {
+      throw createHttpError(400, `Signature dimensions must be between ${Math.round(MIN_SIGNATURE_FILL_FRACTION * 100)}% and ${Math.round(MAX_SIGNATURE_FILL_FRACTION * 100)}%`);
+    }
+    signatureDimensions[key] = value;
+  }
   try {
-    const data = await prisma.caseForm.update({ where: { id: existing.id }, data: { ...(status !== undefined ? { status } : {}), ...(requirement !== undefined ? { requirement } : {}), ...(req.body.title !== undefined ? { title } : {}), ...(req.body.formNumber !== undefined ? { formNumber } : {}), ...(req.body.selectionReason !== undefined ? { selectionReason: String(req.body.selectionReason).trim() || null } : {}), normalizedName: normalizedFormName(formNumber, title) }, include });
+    const data = await prisma.caseForm.update({ where: { id: existing.id }, data: { ...(status !== undefined ? { status } : {}), ...(requirement !== undefined ? { requirement } : {}), ...(signatureScale !== undefined ? { signatureScale } : {}), ...signatureDimensions, ...(req.body.title !== undefined ? { title } : {}), ...(req.body.formNumber !== undefined ? { formNumber } : {}), ...(req.body.selectionReason !== undefined ? { selectionReason: String(req.body.selectionReason).trim() || null } : {}), normalizedName: normalizedFormName(formNumber, title) }, include });
+    if (signatureScale !== undefined || Object.keys(signatureDimensions).length) await recordFormAudit({ form: data, event: "SignatureResized", details: `Representative signature resized to ${Math.round((data.signatureScaleX ?? data.signatureScale ?? 0.8) * 100)}% wide × ${Math.round((data.signatureScaleY ?? data.signatureScale ?? 0.8) * 100)}% high`, metadata: { signatureScale, ...signatureDimensions }, userId: req.user.id });
     if (status !== undefined && status !== existing.status) { await recordActivity({ agencyId: req.user.agencyId, userId: req.user.id, clientId: existing.clientId, caseId: existing.caseId, action: "case_form.status_changed", details: `${existing.title} moved from ${existing.status} to ${status}` }); await recordFormAudit({ form: data, event: status, details: `Status changed from ${existing.status} to ${status}`, metadata: { from: existing.status, to: status }, userId: req.user.id }); }
     res.json({ data });
   } catch (error) { if (error.code === "P2002") throw createHttpError(409, "This form is already assigned to the case"); throw error; }

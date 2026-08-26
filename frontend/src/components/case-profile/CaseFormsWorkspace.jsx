@@ -2276,8 +2276,25 @@ export default function CaseFormsWorkspace({
       const latestForms = formsResponse.data.data || [];
       const currentItem = latestForms.find((entry) => entry.id === item.id) || item;
       setForms(latestForms);
+      const canResizeSignature =
+        !download &&
+        permissions.canEdit &&
+        !currentItem.lockedAt &&
+        !["ClientSigned", "Finalized"].includes(currentItem.currentCopyType) &&
+        String(currentItem.formNumber || "").replace(/[^a-z0-9]/gi, "").toUpperCase() === "IMM5476";
+      let signatureEditor = null;
+      if (canResizeSignature) {
+        try {
+          const editorResponse = await api.get(`/case-forms/${currentItem.id}/signature-editor`);
+          signatureEditor = editorResponse.data.data;
+        } catch (editorError) {
+          // A representative without a saved signature should not prevent the
+          // form itself from opening; it simply has nothing to resize yet.
+          if (editorError.response?.status !== 409) throw editorError;
+        }
+      }
       const response = await api.get(
-        `/case-forms/${currentItem.id}/file${download ? "?download=1" : ""}`,
+        `/case-forms/${currentItem.id}/file${download ? "?download=1" : signatureEditor ? "?signatureEditor=1" : ""}`,
         { responseType: "blob", timeout: 60000 },
       );
       const isPdf = response.data.type === "application/pdf" || likelyPdf;
@@ -2287,7 +2304,7 @@ export default function CaseFormsWorkspace({
           representative: representativeFor(currentItem),
           agency: agencyProfile,
         });
-        setPdfPreview({ item: currentItem, blob: response.data, autofill });
+        setPdfPreview({ item: currentItem, blob: response.data, autofill, signatureEditor });
         if (
           !currentItem.lockedAt &&
           permissions.canEdit &&
@@ -2657,8 +2674,10 @@ export default function CaseFormsWorkspace({
       </AnimatePresence>
       {pdfPreview ? (
         <XfaPdfPreviewOverlay
+          key={pdfPreview.item.id}
           item={pdfPreview.item}
           blob={pdfPreview.blob}
+          signatureEditor={pdfPreview.signatureEditor}
           autofill={
             pdfPreview.autofill ||
             buildCaseFormAutofill(pdfPreview.item, caseItem, assessment, {
@@ -2672,6 +2691,16 @@ export default function CaseFormsWorkspace({
               ? null
               : (blob, filename, copyType) =>
                   saveBrowserCopy(pdfPreview.item, blob, filename, copyType)
+          }
+          onSignatureTransformChange={
+            pdfPreview.signatureEditor
+              ? async ({ x, y }) => {
+                  const response = await api.patch(`/case-forms/${pdfPreview.item.id}`, { signatureScaleX: x, signatureScaleY: y });
+                  const updated = response.data.data;
+                  setForms((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+                  setPdfPreview((current) => current ? { ...current, item: updated } : current);
+                }
+              : null
           }
           onClose={() => setPdfPreview(null)}
         />

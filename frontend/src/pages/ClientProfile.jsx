@@ -42,7 +42,7 @@ import { canAccessPage, hasCapability } from "../auth/portalAccess";
 import { fadingHighlightClass, useFadingHighlight } from "../hooks/useFadingHighlight";
 import useDebouncedAutosave from "../hooks/useDebouncedAutosave";
 
-const glass = "rounded-[1.9rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl";
+const glass = "rounded-[1.9rem] border border-slate-200/90 bg-white shadow-[0_14px_38px_rgba(15,23,42,0.07)]";
 const spring = { type: "spring", stiffness: 320, damping: 30 };
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -269,7 +269,7 @@ function NoteForm({
 
 function NoteCard({ note, canManage, onEdit, onDelete, deletingId }) {
   return (
-    <div className="rounded-[1.5rem] border border-slate-100 bg-slate-50/90 p-4">
+    <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/80 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-slate-800">
@@ -320,8 +320,13 @@ function CaseRow({ item, isPrimary = false, canOpenCase = false }) {
     <Wrapper
       {...wrapperProps}
       className={cx(
-        "flex flex-col gap-3 rounded-2xl border border-slate-100 px-4 py-3.5 transition md:flex-row md:items-center md:justify-between",
-        canOpenCase ? "hover:border-slate-200 hover:bg-slate-50/80" : "",
+        "flex flex-col gap-3 rounded-2xl border px-4 py-3.5 transition md:flex-row md:items-center md:justify-between",
+        isPrimary ? "border-sky-200 border-l-[3px] border-l-sky-500 bg-sky-50/70" : "border-slate-200 bg-slate-50/45",
+        canOpenCase
+          ? isPrimary
+            ? "hover:border-sky-300 hover:bg-sky-50/80"
+            : "hover:border-slate-300 hover:bg-slate-100/70"
+          : "",
       )}
     >
       <div className="min-w-0">
@@ -374,11 +379,11 @@ function CaseRow({ item, isPrimary = false, canOpenCase = false }) {
 function DetailRow({ icon: Icon, label, value, hint }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-400">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
         <p className="mt-0.5 text-sm font-medium text-slate-800">{value}</p>
         {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
       </div>
@@ -676,7 +681,7 @@ export default function ClientProfile() {
     }
   }
 
-  const shellBg = "min-w-0 px-3 py-4 sm:px-5 lg:px-6";
+  const shellBg = "min-h-full min-w-0 bg-slate-100/65 px-3 py-4 sm:px-5 lg:px-6";
 
   if (loading) {
     return (
@@ -865,7 +870,7 @@ export default function ClientProfile() {
                 <button
                   type="button"
                   onClick={() => setEditingClient(true)}
-                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
                 >
                   <Pencil className="h-4 w-4" />
                   Edit profile
@@ -876,7 +881,7 @@ export default function ClientProfile() {
                   to={`/app/cases/${currentCase.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
                 >
                   Open active case
                   <ArrowUpRight className="h-4 w-4" />
@@ -884,7 +889,7 @@ export default function ClientProfile() {
               ) : !cases.length && canOpenCases ? (
                 <Link
                   to={`/app/cases?action=create&clientId=${encodeURIComponent(client.id)}`}
-                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
                 >
                   <Plus className="h-4 w-4" />
                   Create case
@@ -965,7 +970,7 @@ export default function ClientProfile() {
                   <button
                     type="button"
                     onClick={openCreateNoteForm}
-                    className="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                    className="inline-flex shrink-0 items-center gap-2 rounded-full border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
                   >
                     <Plus className="h-4 w-4" />
                     Add
@@ -1029,7 +1034,7 @@ export default function ClientProfile() {
               </div>
 
               <div className="mt-5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Assigned consultant</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Assigned consultant</p>
                 {canReassignClient ? (
                   <div className="mt-1.5 flex items-center gap-2.5">
                     {client.assignedUser ? <StaffAvatar user={client.assignedUser} alt={`${client.assignedUser.fullName} profile`} className="h-9 w-9 shrink-0" /> : null}
@@ -1070,14 +1075,14 @@ export default function ClientProfile() {
                 )}
               </div>
 
-              <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 sm:grid-cols-2">
+              <div className="mt-5 grid gap-4 border-t border-slate-200 pt-5 sm:grid-cols-2">
                 <DetailRow icon={Calendar} label="Joined" value={formatDate(client.createdAt)} />
                 <DetailRow icon={Calendar} label="Date of birth" value={formatDate(client.dateOfBirth)} />
                 <DetailRow icon={UserRoundCheck} label="Marital status" value={client.maritalStatus || "Not set"} />
                 <DetailRow icon={Languages} label="Preferred language" value={client.preferredLanguage || "Not set"} />
               </div>
 
-              <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+              <div className="mt-4 space-y-4 border-t border-slate-200 pt-4">
                 <DetailRow
                   icon={IdCard}
                   label="Identification"
@@ -1142,7 +1147,7 @@ export default function ClientProfile() {
                     <div className="min-w-0 pb-5">
                       <p className="text-sm font-semibold text-slate-900">{clientActivityTitle(activity)}</p>
                       {activity.details ? <p className="mt-1 text-xs leading-5 text-slate-500">{activity.details}</p> : null}
-                      <p className="mt-1.5 text-[11px] font-medium text-slate-400">{formatDateTime(activity.createdAt)}</p>
+                      <p className="mt-1.5 text-[11px] font-medium text-slate-500">{formatDateTime(activity.createdAt)}</p>
                     </div>
                   </div>
                 )) : <EmptyState message="No client activity recorded yet." />}

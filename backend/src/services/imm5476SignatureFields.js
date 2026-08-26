@@ -57,8 +57,10 @@ export function signatureAnnotation(strokes, { pageIndex, rect }, user, fillFrac
   // regardless of what was drawn. fillFraction is agency-configurable
   // (Settings -> Government forms) for exactly this reason — what reads as
   // "right-sized" varies by the actual signature.
-  const targetWidth = boxWidth * fillFraction;
-  const targetHeight = boxHeight * fillFraction;
+  const fillFractionX = resolveSignatureFillFraction(typeof fillFraction === "object" ? fillFraction.x : fillFraction);
+  const fillFractionY = resolveSignatureFillFraction(typeof fillFraction === "object" ? fillFraction.y : fillFraction);
+  const targetWidth = boxWidth * fillFractionX;
+  const targetHeight = boxHeight * fillFractionY;
   const containedLeft = left + paddingX + (boxWidth - targetWidth) / 2;
   const containedTop = top - paddingY - (boxHeight - targetHeight) / 2;
 

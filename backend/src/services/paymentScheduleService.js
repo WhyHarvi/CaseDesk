@@ -439,7 +439,13 @@ export async function updateCaseInstallments(agencyId, caseId, { installments, d
       if (id) {
         await tx.casePaymentInstallment.update({
           where: { id },
-          data: { ...fields, sortOrder: index, triggerDate },
+          data: {
+            ...fields,
+            sortOrder: index,
+            triggerDate,
+            lastInvoiceError: null,
+            lastInvoiceAttemptedAt: null,
+          },
         });
       } else {
         await tx.casePaymentInstallment.create({
@@ -488,7 +494,13 @@ export async function voidRemainingInstallments(agencyId, caseId, { reason, acto
   const now = new Date();
   await prisma.casePaymentInstallment.updateMany({
     where: { id: { in: targets.map((item) => item.id) } },
-    data: { status: "Void", voidedAt: now, voidedById: actorUserId, voidReason: trimmedReason || null },
+    data: {
+      status: "Void",
+      voidedAt: now,
+      voidedById: actorUserId,
+      voidReason: trimmedReason || null,
+      lastInvoiceError: null,
+    },
   });
 
   await recordActivity({
@@ -675,7 +687,7 @@ export async function getCasePaymentSummariesByCase(agencyId) {
 async function claimInstallment(installmentId) {
   const result = await prisma.casePaymentInstallment.updateMany({
     where: { id: installmentId, status: "Scheduled" },
-    data: { status: "Invoicing" },
+    data: { status: "Invoicing", lastInvoiceAttemptedAt: new Date() },
   });
   return result.count === 1;
 }
@@ -718,7 +730,12 @@ async function fireInstallment(agencyId, installment, actorUserId) {
     });
     const updated = await prisma.casePaymentInstallment.update({
       where: { id: installment.id },
-      data: { status: "Invoiced", caseInvoiceId: invoiceRow.id, invoicedAt: new Date() },
+      data: {
+        status: "Invoiced",
+        caseInvoiceId: invoiceRow.id,
+        invoicedAt: new Date(),
+        lastInvoiceError: null,
+      },
     });
 
     await recordActivity({
@@ -738,7 +755,15 @@ async function fireInstallment(agencyId, installment, actorUserId) {
     // Release the claim so this installment is retried on the next trigger
     // check rather than getting stuck in limbo because of a transient
     // QuickBooks failure.
-    await prisma.casePaymentInstallment.update({ where: { id: installment.id }, data: { status: "Scheduled" } }).catch(() => {});
+    const failureMessage = String(error?.message || "The invoice could not be created.").trim().slice(0, 1000);
+    await prisma.casePaymentInstallment.update({
+      where: { id: installment.id },
+      data: {
+        status: "Scheduled",
+        lastInvoiceError: failureMessage,
+        lastInvoiceAttemptedAt: new Date(),
+      },
+    }).catch(() => {});
     logger.warn("payment_schedule.fire_failed", { agencyId, installmentId: installment.id, reason: error.message });
     throw error;
   }
@@ -814,7 +839,13 @@ export async function voidInvoicedInstallment(agencyId, caseId, installmentId, {
       prisma.caseInvoice.update({ where: { id: invoice.id }, data: { status: "Void", balance: 0 } }),
       prisma.casePaymentInstallment.update({
         where: { id: installment.id },
-        data: { status: "Scheduled", caseInvoiceId: null, invoicedAt: null },
+        data: {
+          status: "Scheduled",
+          caseInvoiceId: null,
+          invoicedAt: null,
+          lastInvoiceError: null,
+          lastInvoiceAttemptedAt: null,
+        },
       }),
     ]);
 
@@ -879,6 +910,36 @@ async function catchUpDueInstallments(agencyId, caseId, actorUserId) {
     }
   }
   return results;
+}
+
+export async function retryScheduledInstallment(agencyId, caseId, installmentId, actorUserId) {
+  const [caseItem, installment] = await Promise.all([
+    prisma.case.findFirst({ where: { id: caseId, agencyId, deletedAt: null }, select: { stage: true } }),
+    prisma.casePaymentInstallment.findFirst({
+      where: { id: installmentId, agencyId, caseId },
+    }),
+  ]);
+  if (!caseItem || !installment) throw createHttpError(404, "Installment not found.", "NOT_FOUND");
+  if (installment.status !== "Scheduled") {
+    throw createHttpError(409, "Only a scheduled installment can be retried.", "INSTALLMENT_NOT_SCHEDULED");
+  }
+
+  const now = new Date();
+  const stageIndex = CASE_STAGES.indexOf(installment.triggerStage);
+  const currentIndex = CASE_STAGES.indexOf(caseItem.stage);
+  const isDue = installment.triggerType === "Date"
+    ? Boolean(installment.triggerDate) && installment.triggerDate <= now
+    : stageIndex !== -1 && currentIndex !== -1 && stageIndex <= currentIndex;
+  if (!isDue) {
+    throw createHttpError(409, "This installment has not reached its invoice trigger yet.", "INSTALLMENT_NOT_DUE");
+  }
+  if (await retainerBlocksInvoicing(agencyId, caseId)) {
+    throw createHttpError(409, "Finalize the retainer before retrying this invoice.", "RETAINER_NOT_FINALIZED");
+  }
+
+  const fired = await fireInstallment(agencyId, installment, actorUserId);
+  if (!fired) throw createHttpError(409, "This installment is already being processed. Reload and try again.", "INSTALLMENT_BUSY");
+  return getCaseSchedule(agencyId, caseId);
 }
 
 // Called once a retainer reaches Finalized — releases whatever

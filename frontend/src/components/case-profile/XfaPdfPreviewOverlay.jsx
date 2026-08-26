@@ -15,6 +15,124 @@ import { createPortal } from "react-dom";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 
+const SIGNATURE_ANNOTATION_ID = "pdfjs_internal_editor_casedesk-resizable-representative";
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function signatureAnnotation(pdfjs, editor, scales) {
+  const [left, bottom, right, top] = editor.rect;
+  const paddingX = 8;
+  const paddingY = 4;
+  const boxWidth = Math.max(1, right - left - paddingX * 2);
+  const boxHeight = Math.max(1, top - bottom - paddingY * 2);
+  const targetWidth = boxWidth * scales.x;
+  const targetHeight = boxHeight * scales.y;
+  const containedLeft = left + paddingX + (boxWidth - targetWidth) / 2;
+  const containedTop = top - paddingY - (boxHeight - targetHeight) / 2;
+  const allPoints = editor.strokes.flat();
+  const xs = allPoints.map(([x]) => x);
+  const ys = allPoints.map(([, y]) => y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const scaleX = targetWidth / Math.max(maxX - minX, 0.02);
+  const scaleY = targetHeight / Math.max(maxY - minY, 0.02);
+  const points = editor.strokes.map((stroke) => stroke.flatMap(([x, y]) => [containedLeft + (x - minX) * scaleX, containedTop - (y - minY) * scaleY]));
+  const lines = points.map((stroke) => {
+    const line = [];
+    for (let index = 0; index < stroke.length; index += 2) line.push(Number.NaN, Number.NaN, Number.NaN, Number.NaN, stroke[index], stroke[index + 1]);
+    return line;
+  });
+  return { annotationType: pdfjs.AnnotationEditorType.INK, pageIndex: editor.pageIndex, rect: editor.rect, rotation: 0, color: [15, 23, 42], thickness: 1.2, opacity: 1, paths: { lines, points }, date: new Date().toISOString(), user: editor.signerName };
+}
+
+function SignatureResizeLayer({ editor, pageSize, scales, onScales, onCommit }) {
+  const dragRef = useRef(null);
+  const [left, bottom, right, top] = editor.rect;
+  const innerLeft = left + 8;
+  const innerBottom = bottom + 4;
+  const innerRight = right - 8;
+  const innerTop = top - 4;
+  const field = {
+    left: `${(innerLeft / pageSize.width) * 100}%`,
+    top: `${((pageSize.height - innerTop) / pageSize.height) * 100}%`,
+    width: `${((innerRight - innerLeft) / pageSize.width) * 100}%`,
+    height: `${((innerTop - innerBottom) / pageSize.height) * 100}%`,
+  };
+  const points = editor.strokes.flat();
+  const minX = Math.min(...points.map(([x]) => x));
+  const maxX = Math.max(...points.map(([x]) => x));
+  const minY = Math.min(...points.map(([, y]) => y));
+  const maxY = Math.max(...points.map(([, y]) => y));
+  const width = Math.max(maxX - minX, 0.02);
+  const height = Math.max(maxY - minY, 0.02);
+
+  useEffect(() => {
+    const move = (event) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const horizontal = drag.xDirection === 0 ? 0 : ((event.clientX - drag.x) * drag.xDirection * 2) / Math.max(drag.width, 1);
+      const vertical = drag.yDirection === 0 ? 0 : ((event.clientY - drag.y) * drag.yDirection * 2) / Math.max(drag.height, 1);
+      let nextX = drag.xDirection === 0 ? drag.scales.x : clamp(drag.scales.x + horizontal, editor.minScale, editor.maxScale);
+      let nextY = drag.yDirection === 0 ? drag.scales.y : clamp(drag.scales.y + vertical, editor.minScale, editor.maxScale);
+      if (event.shiftKey && drag.xDirection !== 0 && drag.yDirection !== 0) {
+        const change = Math.abs(horizontal) >= Math.abs(vertical) ? horizontal : vertical;
+        nextX = clamp(drag.scales.x + change, editor.minScale, editor.maxScale);
+        nextY = clamp(drag.scales.y + change, editor.minScale, editor.maxScale);
+      }
+      onScales({ x: nextX, y: nextY });
+    };
+    const up = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      onCommit();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [editor.maxScale, editor.minScale, onCommit, onScales]);
+
+  const begin = (event, xDirection, yDirection) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const box = event.currentTarget.parentElement.getBoundingClientRect();
+    dragRef.current = { x: event.clientX, y: event.clientY, width: box.width, height: box.height, scales, xDirection, yDirection };
+  };
+  const handles = [
+    { position: "-left-1.5 -top-1.5", x: -1, y: -1, cursor: "cursor-nwse-resize", label: "Resize signature from top left" },
+    { position: "left-1/2 -top-1.5 -translate-x-1/2", x: 0, y: -1, cursor: "cursor-ns-resize", label: "Resize signature height from top" },
+    { position: "-right-1.5 -top-1.5", x: 1, y: -1, cursor: "cursor-nesw-resize", label: "Resize signature from top right" },
+    { position: "-left-1.5 top-1/2 -translate-y-1/2", x: -1, y: 0, cursor: "cursor-ew-resize", label: "Resize signature width from left" },
+    { position: "-right-1.5 top-1/2 -translate-y-1/2", x: 1, y: 0, cursor: "cursor-ew-resize", label: "Resize signature width from right" },
+    { position: "-bottom-1.5 -left-1.5", x: -1, y: 1, cursor: "cursor-nesw-resize", label: "Resize signature from bottom left" },
+    { position: "-bottom-1.5 left-1/2 -translate-x-1/2", x: 0, y: 1, cursor: "cursor-ns-resize", label: "Resize signature height from bottom" },
+    { position: "-bottom-1.5 -right-1.5", x: 1, y: 1, cursor: "cursor-nwse-resize", label: "Resize signature from bottom right" },
+  ];
+  return (
+    <div className="pointer-events-none absolute z-30" style={field}>
+      <div
+        className="pointer-events-auto absolute border-2 border-sky-500 bg-sky-50/10 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]"
+        style={{ left: `${(1 - scales.x) * 50}%`, top: `${(1 - scales.y) * 50}%`, width: `${scales.x * 100}%`, height: `${scales.y * 100}%` }}
+        aria-label={`Resizable signature, ${Math.round(scales.x * 100)} percent wide and ${Math.round(scales.y * 100)} percent high`}
+      >
+        <svg className="h-full w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+          {editor.strokes.map((stroke, index) => <polyline key={index} points={stroke.map(([x, y]) => `${x - minX},${y - minY}`).join(" ")} fill="none" stroke="#0f172a" strokeWidth={Math.max(width, height) / 180} strokeLinecap="round" strokeLinejoin="round" />)}
+        </svg>
+        <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950 px-2 py-1 text-[10px] font-semibold tabular-nums text-white shadow-lg">W {Math.round(scales.x * 100)}% · H {Math.round(scales.y * 100)}%</span>
+        {handles.map(({ position, x, y, cursor, label }) => (
+          <button key={position} type="button" aria-label={label} onPointerDown={(event) => begin(event, x, y)} className={`absolute h-3 w-3 touch-none rounded-[2px] border border-white bg-sky-600 shadow ${position} ${cursor}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function downloadBytes(bytes, filename, type = "application/pdf") {
   const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type });
   const url = URL.createObjectURL(blob);
@@ -29,8 +147,10 @@ export default function XfaPdfPreviewOverlay({
   item,
   blob,
   autofill,
+  signatureEditor = null,
   readOnly = false,
   onSaveToCase,
+  onSignatureTransformChange,
   onClose,
 }) {
   const containerRef = useRef(null);
@@ -38,6 +158,7 @@ export default function XfaPdfPreviewOverlay({
   const pdfViewerRef = useRef(null);
   const pdfDocumentRef = useRef(null);
   const loadingTaskRef = useRef(null);
+  const pdfjsRef = useRef(null);
   const changeCounterRef = useRef(0);
   const saveCaseCopyRef = useRef(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +174,28 @@ export default function XfaPdfPreviewOverlay({
   const [autosaveLabel, setAutosaveLabel] = useState("All changes saved");
   const [saveDialog, setSaveDialog] = useState(null);
   const [closeConfirm, setCloseConfirm] = useState(false);
+  const [signaturePageElement, setSignaturePageElement] = useState(null);
+  const [signaturePageSize, setSignaturePageSize] = useState(null);
+  const [signatureScales, setSignatureScales] = useState({ x: signatureEditor?.scaleX || 0.8, y: signatureEditor?.scaleY || 0.8 });
+  const [signatureSizeStatus, setSignatureSizeStatus] = useState("");
+  const signatureScalesRef = useRef({ x: signatureEditor?.scaleX || 0.8, y: signatureEditor?.scaleY || 0.8 });
+
+  function changeSignatureScales(value) {
+    signatureScalesRef.current = value;
+    setSignatureScales(value);
+  }
+
+  async function commitSignatureTransform() {
+    if (!onSignatureTransformChange) return;
+    try {
+      setSignatureSizeStatus("Saving size…");
+      await onSignatureTransformChange(signatureScalesRef.current);
+      setSignatureSizeStatus("Size saved");
+    } catch (saveError) {
+      setSignatureSizeStatus("");
+      setError(saveError.response?.data?.message || saveError.message || "The signature size could not be saved.");
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -61,6 +204,7 @@ export default function XfaPdfPreviewOverlay({
       try {
         setLoading(true);
         const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
+        pdfjsRef.current = pdfjs;
         globalThis.pdfjsLib = pdfjs;
         const viewerModule = await import("pdfjs-dist/web/pdf_viewer.mjs");
         if (!active) return;
@@ -85,6 +229,15 @@ export default function XfaPdfPreviewOverlay({
           setLoading(false);
         });
         eventBus.on("pagechanging", ({ pageNumber }) => setPage(pageNumber));
+        eventBus.on("pagerendered", async ({ pageNumber }) => {
+          if (!signatureEditor || pageNumber !== signatureEditor.pageIndex + 1) return;
+          const pageView = pdfViewer.getPageView(signatureEditor.pageIndex);
+          const pdfPage = await pdfDocumentRef.current?.getPage(pageNumber);
+          if (!active || !pageView?.div || !pdfPage) return;
+          const [, , width, height] = pdfPage.view;
+          setSignaturePageSize({ width, height });
+          setSignaturePageElement(pageView.div);
+        });
         const loadingTask = pdfjs.getDocument({
           data: new Uint8Array(await blob.arrayBuffer()),
           enableXfa: true,
@@ -105,6 +258,9 @@ export default function XfaPdfPreviewOverlay({
             value: typeof value === "boolean" ? value : String(value),
           });
           applied += 1;
+        }
+        if (signatureEditor) {
+          pdfDocument.annotationStorage.setValue(SIGNATURE_ANNOTATION_ID, signatureAnnotation(pdfjs, signatureEditor, signatureScalesRef.current));
         }
         pdfDocument.annotationStorage.resetModified();
         pdfDocument.annotationStorage.onSetModified = readOnly
@@ -137,8 +293,19 @@ export default function XfaPdfPreviewOverlay({
       loadingTaskRef.current?.destroy?.();
       pdfViewerRef.current = null;
       pdfDocumentRef.current = null;
+      pdfjsRef.current = null;
+      setSignaturePageElement(null);
+      setSignaturePageSize(null);
     };
-  }, [blob, readOnly]);
+  }, [blob, readOnly, signatureEditor]);
+
+  useEffect(() => {
+    if (!signatureEditor || !pdfDocumentRef.current || !pdfjsRef.current) return;
+    pdfDocumentRef.current.annotationStorage.setValue(
+      SIGNATURE_ANNOTATION_ID,
+      signatureAnnotation(pdfjsRef.current, signatureEditor, signatureScales),
+    );
+  }, [signatureEditor, signatureScales]);
 
   function changePage(offset) {
     const viewer = pdfViewerRef.current;
@@ -388,6 +555,12 @@ export default function XfaPdfPreviewOverlay({
           {autofill.warnings.join(" ")}
         </div>
       ) : null}
+      {signatureEditor ? (
+        <div className="flex items-center justify-between gap-3 border-b border-sky-100 bg-sky-50 px-4 py-2 text-[11px] text-sky-900">
+          <span><strong>Resize signature:</strong> drag side handles for width, top or bottom handles for height, or a corner for both. Hold Shift on a corner to keep proportions.</span>
+          <span className="shrink-0 font-semibold tabular-nums text-sky-700">{signatureSizeStatus || `W ${Math.round(signatureScales.x * 100)}% · H ${Math.round(signatureScales.y * 100)}%`}</span>
+        </div>
+      ) : null}
       {savedMessage ? (
         <div className="border-b border-emerald-100 bg-emerald-50 px-4 py-2 text-[11px] font-semibold text-emerald-700">
           {savedMessage}
@@ -425,6 +598,18 @@ export default function XfaPdfPreviewOverlay({
         <div ref={containerRef} className="absolute inset-0 overflow-auto">
           <div ref={viewerRef} className="pdfViewer" />
         </div>
+        {signatureEditor && signaturePageElement && signaturePageSize
+          ? createPortal(
+              <SignatureResizeLayer
+                editor={signatureEditor}
+                pageSize={signaturePageSize}
+                scales={signatureScales}
+                onScales={changeSignatureScales}
+                onCommit={commitSignatureTransform}
+              />,
+              signaturePageElement,
+            )
+          : null}
       </div>
       {saveDialog ? (
         <div className="absolute inset-0 z-20 grid place-items-center bg-slate-950/25 p-4 backdrop-blur-sm">

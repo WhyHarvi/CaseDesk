@@ -52,7 +52,12 @@ export async function generateFilledCaseFormPdf(req, res) {
   // saved signature + today's date into Section B right away rather than
   // leaving it blank until the applicant also signs in Section E.
   const representativeSignature = representativeUser?.formSignatureImage && Array.isArray(representativeUser.formSignatureStrokes) && representativeUser.formSignatureStrokes.length
-    ? { strokes: representativeUser.formSignatureStrokes, name: representativeUser.fullName, fillFraction: resolveSignatureFillFraction(agency?.governmentFormSignatureScale) }
+    ? {
+        strokes: representativeUser.formSignatureStrokes,
+        name: representativeUser.fullName,
+        fillFractionX: resolveSignatureFillFraction(existing.signatureScaleX ?? existing.signatureScale ?? agency?.governmentFormSignatureScale),
+        fillFractionY: resolveSignatureFillFraction(existing.signatureScaleY ?? existing.signatureScale ?? agency?.governmentFormSignatureScale),
+      }
     : null;
   const filledBuffer = isImm5476
     ? await stampXfaPdfFormValues(sourceBuffer, fields, { "547R": true }, representativeSignature)

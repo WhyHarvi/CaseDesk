@@ -271,10 +271,10 @@ export default function PortalAccessCard({ clientId, clientEmail, clientName, ca
   }
 
   return (
-    <article id="client-portal-access" className="scroll-mt-24 rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+    <article id="client-portal-access" className="scroll-mt-24 rounded-[1.9rem] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_38px_rgba(15,23,42,0.07)]">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Portal</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Portal</p>
           <h3 className="mt-1 text-base font-semibold text-slate-950">Client access</h3>
           {loading ? (
             <div className="mt-2 h-4 w-40 animate-pulse rounded bg-slate-100" />

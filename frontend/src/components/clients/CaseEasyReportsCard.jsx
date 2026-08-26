@@ -55,7 +55,7 @@ export default function CaseEasyReportsCard({ clientId }) {
   if (!loading && !rows.length) return null;
 
   return (
-    <article className="rounded-[1.9rem] border border-white/80 bg-white/88 p-6 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+    <article className="rounded-[1.9rem] border border-slate-200/90 bg-white p-6 shadow-[0_14px_38px_rgba(15,23,42,0.07)]">
       <button type="button" onClick={() => setExpanded((value) => !value)} className="flex w-full items-center justify-between gap-4 text-left">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-50 text-violet-600">

@@ -40,14 +40,14 @@ export default function QuickBooksSyncCard({ clientId, qbCustomerId, qbSyncStatu
   }
 
   return (
-    <article className="rounded-[1.9rem] border border-white/80 bg-white/88 px-5 py-4 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+    <article className="rounded-[1.9rem] border border-slate-200/90 bg-white px-5 py-4 shadow-[0_14px_38px_rgba(15,23,42,0.07)]">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${linked ? "bg-emerald-50 text-emerald-600" : failed ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-slate-500"}`}>
             <Landmark className="h-[18px] w-[18px]" />
           </span>
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Billing</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Billing</p>
             <h3 className="mt-0.5 text-base font-semibold text-slate-950">QuickBooks</h3>
             {linked ? (
               <p className="mt-0.5 text-sm text-slate-500">

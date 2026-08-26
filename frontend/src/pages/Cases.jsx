@@ -25,6 +25,7 @@ import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
 import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
 import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { formatStudyIntake, isStudyPermitCaseType, stageRequiresStudyIntake, studyIntakeApiValue, studyIntakeValue } from "../utils/studyIntake";
 import { CASE_STAGES, caseStagesForType } from "../constants/caseStages";
 import { normalizeCaseType } from "../utils/caseTypes";
@@ -43,6 +44,8 @@ const REGISTER_VIEWS = [
 export const defaultCaseFormState = {
   clientId: "",
   assignedUserId: "",
+  rcicUserId: "",
+  caseWorkerUserId: "",
   caseType: "",
   stage: "Lead",
   status: "Open",
@@ -52,6 +55,25 @@ export const defaultCaseFormState = {
   decisionAt: "",
   studyIntakeMonth: "",
 };
+
+const emptyNewCaseTeamOptions = {
+  rcicUsers: [],
+  caseWorkerUsers: [],
+  ready: true,
+  missing: [],
+};
+
+function newCaseFormState(clientId = "", options = emptyNewCaseTeamOptions) {
+  const rcicUserId = options.rcicUsers?.length === 1 ? options.rcicUsers[0].id : "";
+  const caseWorkerUserId = options.caseWorkerUsers?.length === 1 ? options.caseWorkerUsers[0].id : "";
+  return {
+    ...defaultCaseFormState,
+    clientId,
+    rcicUserId,
+    caseWorkerUserId,
+    assignedUserId: rcicUserId,
+  };
+}
 
 const cardClassName =
   "rounded-3xl border border-slate-200/80 bg-transparent shadow-none";
@@ -308,14 +330,14 @@ function buildCaseViewModel(item, clients, users, documents, payments) {
 function createOptimisticCase(formState, clients, users) {
   const optimisticId = `optimistic-${Date.now()}`;
   const client = clients.find((item) => item.id === formState.clientId) || null;
-  const assignedUser =
-    users.find((item) => item.id === formState.assignedUserId) || null;
+  const assignedUserId = formState.rcicUserId || formState.assignedUserId;
+  const assignedUser = users.find((item) => item.id === assignedUserId) || null;
   const stage = formState.stage || "Lead";
 
   return {
     id: optimisticId,
     clientId: formState.clientId,
-    assignedUserId: formState.assignedUserId || null,
+    assignedUserId: assignedUserId || null,
     caseType: formState.caseType,
     stage,
     status: formState.status || "Open",
@@ -901,6 +923,10 @@ export function CaseFormDrawer({
   caseTypeAliases = {},
   isEditing,
   editingClientName,
+  caseTeam = null,
+  newCaseTeamOptions = emptyNewCaseTeamOptions,
+  onManageCaseTeam,
+  caseTeamHref,
   closing,
 }) {
   const submitLabel = saving
@@ -1047,24 +1073,79 @@ export function CaseFormDrawer({
               </select>
             </label>
 
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-slate-700">
-                Assigned staff
-              </span>
-              <select
-                name="assignedUserId"
-                value={formState.assignedUserId}
-                onChange={onChange}
-                className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-              >
-                <option value="">Unassigned</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.fullName}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {isEditing && caseTeam ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:col-span-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Case team</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">RCIC, Case Worker, collaborators, and additional roles are managed together to keep ownership and access consistent.</p>
+                  </div>
+                  {onManageCaseTeam ? (
+                    <button type="button" onClick={onManageCaseTeam} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+                      Manage case team
+                    </button>
+                  ) : caseTeamHref ? (
+                    <Link to={caseTeamHref} target="_blank" rel="noopener noreferrer" className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950">
+                      Open case team
+                    </Link>
+                  ) : null}
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-violet-100 bg-white px-3.5 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-600">RCIC</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-900">{caseTeam.rcic?.fullName || "Unassigned"}</p>
+                  </div>
+                  <div className="rounded-xl border border-sky-100 bg-white px-3.5 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-600">Case Worker</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-900">{caseTeam.caseWorker?.fullName || "Unassigned"}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!newCaseTeamOptions.ready ? (
+                  <Alert variant="destructive" className="sm:col-span-2">
+                    <CircleAlert aria-hidden="true" />
+                    <AlertTitle>Case team setup is incomplete</AlertTitle>
+                    <AlertDescription>
+                      Assign the {newCaseTeamOptions.missing.join(" and ")} role to an active team member in Team Members before creating a case.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Initial RCIC</span>
+                  <select
+                    required
+                    name="rcicUserId"
+                    value={formState.rcicUserId}
+                    onChange={onChange}
+                    disabled={!newCaseTeamOptions.rcicUsers.length}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  >
+                    <option value="">Select RCIC</option>
+                    {newCaseTeamOptions.rcicUsers.map((user) => (
+                      <option key={user.id} value={user.id}>{user.fullName}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm font-medium text-slate-700">Initial Case Worker</span>
+                  <select
+                    required
+                    name="caseWorkerUserId"
+                    value={formState.caseWorkerUserId}
+                    onChange={onChange}
+                    disabled={!newCaseTeamOptions.caseWorkerUsers.length}
+                    className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  >
+                    <option value="">Select Case Worker</option>
+                    {newCaseTeamOptions.caseWorkerUsers.map((user) => (
+                      <option key={user.id} value={user.id}>{user.fullName}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
           </div>
         </section>
 
@@ -1277,6 +1358,7 @@ export default function Cases() {
   const [payments, setPayments] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
   const [caseTypeAliases, setCaseTypeAliases] = useState({});
+  const [newCaseTeamOptions, setNewCaseTeamOptions] = useState(emptyNewCaseTeamOptions);
   const [studyIntakeOptions, setStudyIntakeOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1324,6 +1406,20 @@ export default function Cases() {
       setCaseTypeOptions(response.data.data || []);
       setCaseTypeAliases(response.data.aliases || {});
     }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    api.get("/cases/collaboration-options")
+      .then((response) => {
+        const options = response.data.data || emptyNewCaseTeamOptions;
+        setNewCaseTeamOptions(options);
+        setFormState((current) => {
+          const rcicUserId = current.rcicUserId || (options.rcicUsers?.length === 1 ? options.rcicUsers[0].id : "");
+          const caseWorkerUserId = current.caseWorkerUserId || (options.caseWorkerUsers?.length === 1 ? options.caseWorkerUsers[0].id : "");
+          return { ...current, rcicUserId, caseWorkerUserId, assignedUserId: current.assignedUserId || rcicUserId };
+        });
+      })
+      .catch(() => setNewCaseTeamOptions({ ...emptyNewCaseTeamOptions, ready: false, missing: ["RCIC", "Case Worker"] }));
   }, []);
 
   useEffect(() => {
@@ -1581,7 +1677,7 @@ export default function Cases() {
   }, [enrichedCases]);
 
   function resetFormState() {
-    setFormState(defaultCaseFormState);
+    setFormState(newCaseFormState("", newCaseTeamOptions));
     setFormError("");
     setEditingCase(null);
   }
@@ -1592,7 +1688,7 @@ export default function Cases() {
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(null);
-    setFormState(defaultCaseFormState);
+    setFormState(newCaseFormState("", newCaseTeamOptions));
     setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
@@ -1603,7 +1699,7 @@ export default function Cases() {
     setActiveActionMenuId(null);
     setViewingCase(null);
     setEditingCase(null);
-    setFormState({ ...defaultCaseFormState, clientId });
+    setFormState(newCaseFormState(clientId, newCaseTeamOptions));
     setCaseCreateIdempotencyKey(newCaseOperationKey());
     setFormError("");
     setDrawerClosing(false);
@@ -1627,6 +1723,8 @@ export default function Cases() {
       submittedAt: formatDateForInput(item.submittedAt),
       decisionAt: formatDateForInput(item.decisionAt),
       studyIntakeMonth: studyIntakeValue(item.studyIntakeMonth),
+      rcicUserId: "",
+      caseWorkerUserId: "",
     });
     setFormError("");
     setDrawerClosing(false);
@@ -1678,6 +1776,8 @@ export default function Cases() {
         nextState.nextAction = getDefaultNextAction(value);
       }
 
+      if (name === "rcicUserId") nextState.assignedUserId = value;
+
       return nextState;
     });
   }
@@ -1705,6 +1805,8 @@ export default function Cases() {
         ...formState,
         ...(!isEditing ? { idempotencyKey: caseCreateIdempotencyKey } : {}),
         assignedUserId: formState.assignedUserId || "",
+        rcicUserId: formState.rcicUserId || "",
+        caseWorkerUserId: formState.caseWorkerUserId || "",
         studyIntakeMonth: isStudyPermitCaseType(formState.caseType)
           ? studyIntakeApiValue(formState.studyIntakeMonth)
           : null,
@@ -1729,6 +1831,12 @@ export default function Cases() {
         // A case belongs to the client it was created for. Client selection is
         // available only in the new-case flow and is never submitted on edit.
         delete payload.clientId;
+        // RCIC is represented by both Case.assignedUserId and the required
+        // role assignment. Team changes must go through Collaboration so the
+        // owner, Case Worker, optional roles, and access never drift apart.
+        delete payload.assignedUserId;
+        delete payload.rcicUserId;
+        delete payload.caseWorkerUserId;
         const response = await api.patch(`/cases/${editingCase.id}`, payload);
         const savedCase = response.data.data || response.data;
         setCases((current) =>
@@ -1740,6 +1848,12 @@ export default function Cases() {
         closeDrawers();
         return;
       }
+
+
+      if (!payload.rcicUserId || !payload.caseWorkerUserId) {
+        throw new Error("Choose both an RCIC and a Case Worker before creating the case.");
+      }
+      delete payload.assignedUserId;
 
       const optimisticCase = createOptimisticCase(formState, clients, users);
       setCases((current) => [optimisticCase, ...current]);
@@ -2298,6 +2412,9 @@ export default function Cases() {
             clients.find((client) => client.id === formState.clientId)?.fullName ||
             "Unknown client"
           }
+          caseTeam={isEditing ? { rcic: editingCase?.assignedUser || null, caseWorker: editingCase?.caseWorker || null } : null}
+          newCaseTeamOptions={newCaseTeamOptions}
+          caseTeamHref={editingCase?.id ? `/app/cases/${editingCase.id}` : undefined}
           closing={drawerClosing}
         />
       ) : null}

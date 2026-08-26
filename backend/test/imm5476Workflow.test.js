@@ -69,7 +69,8 @@ test("agencies can set their own government-form signature size instead of a sin
   assert.match(service, /governmentFormSignatureScale: true/);
   assert.match(service, /resolveSignatureFillFraction\(agency\?\.governmentFormSignatureScale\)/);
   assert.match(renderer, /governmentFormSignatureScale: true/);
-  assert.match(renderer, /fillFraction: resolveSignatureFillFraction\(agency\?\.governmentFormSignatureScale\)/);
+  assert.match(renderer, /fillFractionX: resolveSignatureFillFraction\(existing\.signatureScaleX \?\? existing\.signatureScale \?\? agency\?\.governmentFormSignatureScale\)/);
+  assert.match(renderer, /fillFractionY: resolveSignatureFillFraction\(existing\.signatureScaleY \?\? existing\.signatureScale \?\? agency\?\.governmentFormSignatureScale\)/);
 });
 
 test("representatives with a saved legal first/last name skip the guess-from-full-name fallback on IMM 5476", async () => {
@@ -246,7 +247,30 @@ test("opening a form reloads the authoritative representative and overwrites sta
   assert.match(controller, /"562R": representativeGivenNames/);
   assert.match(controller, /"94R": representative\?\.licenseNumber\?\.trim\(\) \|\| ""/);
   assert.match(controller, /"102R": false,[\s\S]*"101R": false,[\s\S]*"100R": false,[\s\S]*"97R": true,[\s\S]*"96R": false,[\s\S]*"95R": false/);
-  assert.match(controller, /hasSavedSignature \? \{ strokes: signatureStrokes, name: representative\.fullName, fillFraction: signatureFillFraction \} : null/);
+  assert.match(controller, /hasSavedSignature && !signatureEditor \? \{ strokes: signatureStrokes, name: representative\.fullName, fillFractionX: signatureFillFraction\.x, fillFractionY: signatureFillFraction\.y \} : null/);
+});
+
+test("editable IMM 5476 signatures can be resized directly on the PDF while signed copies stay immutable", async () => {
+  const [schema, controller, routes, workspace, viewer] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../src/controllers/caseFormController.js"),
+    source("../src/routes/caseFormRoutes.js"),
+    source("../../frontend/src/components/case-profile/CaseFormsWorkspace.jsx"),
+    source("../../frontend/src/components/case-profile/XfaPdfPreviewOverlay.jsx"),
+  ]);
+  assert.match(schema, /signatureScale\s+Float\?\s+@map\("signature_scale"\)/);
+  assert.match(schema, /signatureScaleX\s+Float\?\s+@map\("signature_scale_x"\)/);
+  assert.match(schema, /signatureScaleY\s+Float\?\s+@map\("signature_scale_y"\)/);
+  assert.match(routes, /router\.get\("\/:id\/signature-editor", asyncHandler\(getCaseFormSignatureEditor\)\)/);
+  assert.match(controller, /export async function getCaseFormSignatureEditor/);
+  assert.match(controller, /\["ClientSigned", "Finalized"\]\.includes\(form\.currentCopyType\)/);
+  assert.match(controller, /event: "SignatureResized"/);
+  assert.match(workspace, /\?signatureEditor=1/);
+  assert.match(workspace, /onSignatureTransformChange/);
+  assert.match(viewer, /SignatureResizeLayer/);
+  assert.match(viewer, /drag side handles for width/);
+  assert.match(viewer, /W \{Math\.round\(scales\.x \* 100\)\}% · H \{Math\.round\(scales\.y \* 100\)\}%/);
+  assert.match(viewer, /SIGNATURE_ANNOTATION_ID/);
 });
 
 test("client IMM 5476 signing is draw-only and the backend creates the signed PDF", async () => {

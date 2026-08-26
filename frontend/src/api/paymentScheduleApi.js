@@ -55,3 +55,8 @@ export async function voidInstallmentInvoice(caseId, installmentId, reason) {
   const response = await api.post(`/cases/${caseId}/payment-schedule/installments/${installmentId}/void`, { reason });
   return response.data.data;
 }
+
+export async function retryInstallmentInvoice(caseId, installmentId) {
+  const response = await api.post(`/cases/${caseId}/payment-schedule/installments/${installmentId}/retry`);
+  return response.data.data;
+}

@@ -422,6 +422,48 @@ export async function resolveNonTaxableTaxCodeId(agencyId) {
   return null;
 }
 
+export function buildQuickBooksInvoiceLines({
+  invoiceLines,
+  taxableTaxCodeId,
+  nonTaxableTaxCodeId,
+  discountAmount = 0,
+}) {
+  const fixedDiscount = Math.max(0, Number(discountAmount) || 0);
+  const discountItem = invoiceLines.find((line) => line.taxable) || invoiceLines[0];
+  return [
+    ...invoiceLines.map((line) => {
+      const lineAmount = Number(line.amount);
+      const taxCodeId = line.taxable && taxableTaxCodeId ? taxableTaxCodeId : nonTaxableTaxCodeId;
+      return {
+        Amount: lineAmount,
+        DetailType: "SalesItemLineDetail",
+        Description: line.description,
+        SalesItemLineDetail: {
+          ItemRef: { value: line.itemId },
+          Qty: Number(line.quantity || 1),
+          UnitPrice: Number(line.unitAmount ?? lineAmount),
+          ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
+        },
+      };
+    }),
+    ...(fixedDiscount > 0 && discountItem ? [{
+      // Canadian Automated Sales Tax has been observed applying a native
+      // DiscountLineDetail before HST even when ApplyTaxAfterDiscount=false.
+      // A negative, explicitly non-taxable professional-fee line removes
+      // that ambiguity: $500 taxable + $65 HST - $65 non-taxable = $500.
+      Amount: -fixedDiscount,
+      DetailType: "SalesItemLineDetail",
+      Description: "Agreed fee discount",
+      SalesItemLineDetail: {
+        ItemRef: { value: discountItem.itemId },
+        Qty: 1,
+        UnitPrice: -fixedDiscount,
+        ...(nonTaxableTaxCodeId ? { TaxCodeRef: { value: nonTaxableTaxCodeId } } : {}),
+      },
+    }] : []),
+  ];
+}
+
 export async function createQuickBooksInvoice(agencyId, {
   customerId,
   itemId,
@@ -439,9 +481,9 @@ export async function createQuickBooksInvoice(agencyId, {
   const invoiceLines = Array.isArray(lines) && lines.length
     ? lines
     : [{ itemId, description, amount, taxable: false }];
-  const needsNonTaxableCode = invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
-  const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
   const fixedDiscount = Math.max(0, Number(discountAmount) || 0);
+  const needsNonTaxableCode = fixedDiscount > 0 || invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
+  const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",
@@ -454,26 +496,12 @@ export async function createQuickBooksInvoice(agencyId, {
       ...(fixedDiscount > 0 ? { ApplyTaxAfterDiscount: false } : {}),
       AllowOnlineCreditCardPayment: true,
       AllowOnlineACHPayment: true,
-      Line: [...invoiceLines.map((line) => {
-        const lineAmount = Number(line.amount);
-        const taxCodeId = line.taxable && taxableTaxCodeId ? taxableTaxCodeId : nonTaxableCodeId;
-        return {
-          Amount: lineAmount,
-          DetailType: "SalesItemLineDetail",
-          Description: line.description,
-          SalesItemLineDetail: {
-            ItemRef: { value: line.itemId },
-            Qty: Number(line.quantity || 1),
-            UnitPrice: Number(line.unitAmount ?? lineAmount),
-            ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
-          },
-        };
-      }), ...(fixedDiscount > 0 ? [{
-        Amount: fixedDiscount,
-        DetailType: "DiscountLineDetail",
-        Description: "Agreed fee discount",
-        DiscountLineDetail: { PercentBased: false },
-      }] : [])],
+      Line: buildQuickBooksInvoiceLines({
+        invoiceLines,
+        taxableTaxCodeId,
+        nonTaxableTaxCodeId: nonTaxableCodeId,
+        discountAmount: fixedDiscount,
+      }),
     },
   });
   const invoice = payload.Invoice;

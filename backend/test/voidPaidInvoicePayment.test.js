@@ -42,7 +42,7 @@ test("a mistakenly-recorded payment can be reversed without a refund — deleted
   // resetting the installment back to Scheduled so the schedule doesn't
   // stay pointed at a voided invoice.
   assert.match(scheduleService, /await deleteQuickBooksPayment\(agencyId, \{ id: invoice\.lastQbPaymentId \}\);/);
-  assert.match(scheduleService, /status: "Scheduled", caseInvoiceId: null, invoicedAt: null/);
+  assert.match(scheduleService, /status: "Scheduled",[\s\S]*caseInvoiceId: null,[\s\S]*invoicedAt: null,[\s\S]*lastInvoiceError: null/);
 
   assert.match(billingWorkspace, /Void payment \(mistaken entry\)/);
   assert.match(billingWorkspace, /voidCaseInvoicePayment/);

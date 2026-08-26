@@ -83,7 +83,14 @@ export async function stampXfaPdfFormValues(sourceBuffer, fields, forcedValues =
       if (!alreadySigned) {
         document.annotationStorage.setValue(
           `pdfjs_internal_editor_casedesk-representative-${randomUUID()}`,
-          signatureAnnotation(representativeSignature.strokes, REPRESENTATIVE_SIGNATURE, representativeSignature.name, resolveSignatureFillFraction(representativeSignature.fillFraction)),
+          signatureAnnotation(
+            representativeSignature.strokes,
+            REPRESENTATIVE_SIGNATURE,
+            representativeSignature.name,
+            representativeSignature.fillFractionX !== undefined || representativeSignature.fillFractionY !== undefined
+              ? { x: representativeSignature.fillFractionX, y: representativeSignature.fillFractionY }
+              : resolveSignatureFillFraction(representativeSignature.fillFraction),
+          ),
         );
       }
     }

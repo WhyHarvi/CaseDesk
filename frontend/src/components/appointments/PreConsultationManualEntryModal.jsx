@@ -2,6 +2,7 @@ import { CheckCircle2, Loader2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { saveStaffPreConsultationIntake } from "../../api/preConsultationApi";
+import { preConsultationQuestion } from "./preConsultationQuestions";
 
 const inputClass = "mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100";
 const textareaClass = "mt-1.5 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-4 focus:ring-sky-100";
@@ -91,19 +92,22 @@ function flattenAnswers(rawAnswers) {
 }
 
 function Field({ label, value, onChange, type = "text", required = false, placeholder = "" }) {
-  return <label className={labelClass}>{label}<input className={inputClass} type={type} value={value || ""} required={required} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></label>;
+  return <label className={labelClass}>{preConsultationQuestion(label)}<input className={inputClass} type={type} value={value || ""} required={required} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 function Select({ label, value, onChange, options, required = false }) {
-  return <label className={labelClass}>{label}<select className={inputClass} value={value || ""} required={required} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{options.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>;
+  return <label className={labelClass}>{preConsultationQuestion(label)}<select className={inputClass} value={value || ""} required={required} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{options.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>;
 }
 
 function YesNo({ label, value, onChange }) {
-  return <fieldset className="sm:col-span-2"><legend className={labelClass}>{label}</legend><div className="mt-2 flex gap-2">{[["true", "Yes"], ["false", "No"]].map(([item, text]) => <label key={item} className={`cursor-pointer rounded-full border px-3.5 py-2 text-xs font-semibold ${String(value) === item ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"}`}><input className="sr-only" type="radio" checked={String(value) === item} onChange={() => onChange(item)} />{text}</label>)}</div></fieldset>;
+  return <fieldset className="sm:col-span-2"><legend className={labelClass}>{preConsultationQuestion(label)}</legend><div className="mt-2 flex gap-2">{[["true", "Yes"], ["false", "No"]].map(([item, text]) => {
+    const selected = String(value) === item;
+    return <button key={item} type="button" value={item} aria-pressed={selected} onClick={() => onChange(item)} className={`h-11 min-w-20 touch-manipulation select-none rounded-full border px-4 text-sm font-semibold outline-none transition-colors focus-visible:ring-4 focus-visible:ring-sky-100 ${selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}>{text}</button>;
+  })}</div></fieldset>;
 }
 
 function TextArea({ label, value, onChange, rows = 3 }) {
-  return <label className={`${labelClass} sm:col-span-2`}>{label}<textarea className={textareaClass} rows={rows} value={value || ""} onChange={(event) => onChange(event.target.value)} /></label>;
+  return <label className={`${labelClass} sm:col-span-2`}>{preConsultationQuestion(label)}<textarea className={textareaClass} rows={rows} value={value || ""} onChange={(event) => onChange(event.target.value)} /></label>;
 }
 
 function Section({ title, children }) {

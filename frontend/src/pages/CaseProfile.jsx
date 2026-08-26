@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, ArrowUpRight, FolderCheck, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowUpRight, FolderCheck, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import AssessmentOverlay from "../components/case-profile/AssessmentOverlay";
@@ -120,7 +120,6 @@ export default function CaseProfile() {
   const [caseRolesOverlayOpen, setCaseRolesOverlayOpen] = useState(false);
   const [caseEditOpen, setCaseEditOpen] = useState(false);
   const [caseEditForm, setCaseEditForm] = useState(defaultCaseFormState);
-  const [caseEditUsers, setCaseEditUsers] = useState([]);
   const [caseEditTypeOptions, setCaseEditTypeOptions] = useState([]);
   const [caseEditTypeAliases, setCaseEditTypeAliases] = useState({});
   const [caseEditSaving, setCaseEditSaving] = useState(false);
@@ -406,18 +405,13 @@ export default function CaseProfile() {
       decisionAt: caseDateInput(caseItem.decisionAt),
       studyIntakeMonth: studyIntakeValue(caseItem.studyIntakeMonth),
     });
-    setCaseEditUsers(caseItem.assignedUser ? [caseItem.assignedUser] : []);
     setCaseEditTypeOptions(caseItem.caseType ? [caseItem.caseType] : []);
     setCaseEditOpen(true);
 
-    const [staffResult, typesResult] = await Promise.allSettled([
-      api.getFresh("/leads/staff"),
-      api.getFresh("/cases/case-types"),
-    ]);
-    if (staffResult.status === "fulfilled") setCaseEditUsers(staffResult.value.data.data || []);
-    if (typesResult.status === "fulfilled") {
-      setCaseEditTypeOptions(typesResult.value.data.data || []);
-      setCaseEditTypeAliases(typesResult.value.data.aliases || {});
+    const typesResult = await api.getFresh("/cases/case-types").catch(() => null);
+    if (typesResult) {
+      setCaseEditTypeOptions(typesResult.data.data || []);
+      setCaseEditTypeAliases(typesResult.data.aliases || {});
     }
   }
 
@@ -440,7 +434,6 @@ export default function CaseProfile() {
       setCaseEditSaving(true);
       setCaseEditError("");
       const payload = {
-        assignedUserId: caseEditForm.assignedUserId || undefined,
         caseType: caseEditForm.caseType,
         stage: caseEditForm.stage,
         status: caseEditForm.status,
@@ -1712,15 +1705,37 @@ export default function CaseProfile() {
       title="Case file"
       description="Manage this case, communication, and access from one place."
       actions={
-        caseItem.client?.id ? (
-          <Link
-            to={`/clients/${caseItem.client.id}`}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-          >
-            Client profile
-            <ArrowUpRight className="h-4 w-4" />
-          </Link>
-        ) : null
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {canManageCase && !caseItem.deletedAt ? (
+            <button
+              type="button"
+              onClick={openCaseEditor}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit case
+            </button>
+          ) : null}
+          {canManageCase && caseItem.client?.id ? (
+            <button
+              type="button"
+              onClick={() => setEditingClient(true)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit client
+            </button>
+          ) : null}
+          {caseItem.client?.id ? (
+            <Link
+              to={`/clients/${caseItem.client.id}`}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+            >
+              Client profile
+              <ArrowUpRight className="h-4 w-4" />
+            </Link>
+          ) : null}
+        </div>
       }
     >
       {error ? (
@@ -1956,8 +1971,8 @@ export default function CaseProfile() {
           showFinancials={canAccessFinancialData}
           showPortalAccess={canManageClientPortal}
           showCommunications={canAccessCaseCommunication}
-          showEditCase={canManageCase && !caseItem.deletedAt}
-          showEditClient={canManageCase}
+          showEditCase={false}
+          showEditClient={false}
           outstandingDocuments={outstandingDocuments}
           onContactClient={contactClient}
           onEditCase={openCaseEditor}
@@ -2030,11 +2045,16 @@ export default function CaseProfile() {
             saving={caseEditSaving}
             formError={caseEditError}
             clients={[]}
-            users={caseEditUsers}
+            users={[]}
             caseTypeOptions={caseEditTypeOptions}
             caseTypeAliases={caseEditTypeAliases}
             isEditing
             editingClientName={caseItem.client?.fullName || "Unknown client"}
+            caseTeam={{
+              rcic: caseItem.assignedUser || null,
+              caseWorker: caseItem.roleAssignments?.find((assignment) => assignment.caseRole?.code === "case-worker")?.user || null,
+            }}
+            onManageCaseTeam={() => setCaseRolesOverlayOpen(true)}
             closing={false}
           />
         ) : null}

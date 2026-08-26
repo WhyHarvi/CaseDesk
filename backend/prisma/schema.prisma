@@ -1304,6 +1304,8 @@ model CasePaymentInstallment {
   status                  String              @default("Scheduled")
   caseInvoiceId           String?             @map("case_invoice_id")
   invoicedAt              DateTime?           @map("invoiced_at")
+  lastInvoiceError        String?             @map("last_invoice_error")
+  lastInvoiceAttemptedAt  DateTime?           @map("last_invoice_attempted_at")
   voidedAt                DateTime?           @map("voided_at")
   voidedById              String?             @map("voided_by_id")
   voidReason              String?             @map("void_reason")
@@ -3776,6 +3778,11 @@ model CaseForm {
   // derived from Case.assignedUserId. Defaults to the assigned consultant
   // when left unset by the caller.
   representativeUserId       String?                    @map("representative_user_id")
+  // Per-form override set by the in-document signature resize handles.
+  // Null keeps using the agency-wide government-form default.
+  signatureScale             Float?                     @map("signature_scale")
+  signatureScaleX            Float?                     @map("signature_scale_x")
+  signatureScaleY            Float?                     @map("signature_scale_y")
   formNumber                 String?                    @map("form_number")
   title                      String
   normalizedName             String                     @map("normalized_name")

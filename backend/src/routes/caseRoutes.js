@@ -76,6 +76,7 @@ import {
   getPaymentSummaries,
   getPaymentSummary,
   getSchedule,
+  retryInstallmentInvoice,
   updateSchedule,
   voidInstallmentInvoice,
   voidSchedule,
@@ -316,6 +317,14 @@ router.patch(
   requireRole("admin", "consultant"),
   rateLimit({ windowMs: 60_000, max: 20 }),
   asyncHandler(updateSchedule),
+);
+router.post(
+  "/:id/payment-schedule/installments/:installmentId/retry",
+  requirePortalCaseTab("billing"),
+  requirePortalCapability("financialData"),
+  requireRole("admin", "consultant"),
+  rateLimit({ windowMs: 60_000, max: 10 }),
+  asyncHandler(retryInstallmentInvoice),
 );
 router.post(
   "/:id/payment-schedule/void",

@@ -254,6 +254,21 @@ test("free consultations have a dedicated calendar color and visible legend", as
   assert.match(calendar, /FREE_CONSULTATION_TONE\.chip[\s\S]*Free consultation/);
 });
 
+test("calendar roster and colors use the booking engine's eligible scheduling staff", async () => {
+  const [calendar, controller] = await Promise.all([
+    readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/controllers/bookingController.js", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(controller, /eligibleSchedulingStaff\(\{ agencyId: req\.auth\.agencyId \}\)/);
+  assert.match(controller, /settings, sessionTypes, staff, eligibleStaff/);
+  assert.match(calendar, /setStaff\(settings\.eligibleStaff \|\| \(settings\.staff \|\| \[\]\)\.filter/);
+  assert.match(calendar, /staff\.forEach\(\(member, index\) => map\.set\(member\.id, EVENT_TONES/);
+  assert.match(calendar, /staff\.map\(\(member\) => <option/);
+  assert.match(calendar, /staffTone\.get\(member\.id\)\?\.chip \|\| NEUTRAL_TONE\.chip/);
+  assert.doesNotMatch(calendar, /api\.get\("\/leads\/staff"\)/);
+});
+
 test("the New Appointment sheet survives a reload the same way the Add Client drawer does", async () => {
   const calendar = await readFile(new URL("../../frontend/src/pages/CalendarPage.jsx", import.meta.url), "utf8");
   assert.match(calendar, /const APPOINTMENT_DRAFT_STORAGE_KEY = "casedesk:appointment-drawer-draft"/);

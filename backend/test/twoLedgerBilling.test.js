@@ -52,7 +52,7 @@ test("a non-taxable invoice line still carries an explicit QuickBooks tax code o
   assert.match(quickBooks, /export async function resolveNonTaxableTaxCodeId\(agencyId\)/);
   assert.match(quickBooks, /"Out of Scope", "Zero-rated", "Exempt"/);
   assert.match(quickBooks, /const nonTaxableCodeId = needsNonTaxableCode \? await resolveNonTaxableTaxCodeId\(agencyId\) : null;/);
-  assert.match(quickBooks, /const taxCodeId = line\.taxable && taxableTaxCodeId \? taxableTaxCodeId : nonTaxableCodeId;/);
+  assert.match(quickBooks, /const taxCodeId = line\.taxable && taxableTaxCodeId \? taxableTaxCodeId : nonTaxableTaxCodeId;/);
   assert.match(quickBooks, /\.\.\.\(taxCodeId \? \{ TaxCodeRef: \{ value: taxCodeId \} \} : \{\}\),/);
   // A company with sales tax never configured at all has no TaxCode rows to
   // resolve — resolveNonTaxableTaxCodeId returns null and TaxCodeRef is

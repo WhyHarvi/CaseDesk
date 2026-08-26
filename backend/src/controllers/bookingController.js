@@ -249,7 +249,7 @@ function optionalPublicCopy(value, field, max) {
 }
 
 export async function getBookingSettings(req, res) {
-  const [settings, sessionTypes, staff] = await Promise.all([
+  const [settings, sessionTypes, staff, eligibleStaff] = await Promise.all([
     getOrCreateBookingSettings(req.auth.agencyId),
     prisma.bookingSessionType.findMany({ where: { agencyId: req.auth.agencyId }, include: { eligibleStaff: { select: { userId: true } } }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }),
     prisma.user.findMany({
@@ -257,8 +257,9 @@ export async function getBookingSettings(req, res) {
       select: { id: true, fullName: true, email: true, role: true, schedulingPreference: true, zoomHostMapping: { select: { status: true } } },
       orderBy: { fullName: "asc" },
     }),
+    eligibleSchedulingStaff({ agencyId: req.auth.agencyId }),
   ]);
-  res.json({ data: { settings, sessionTypes, staff } });
+  res.json({ data: { settings, sessionTypes, staff, eligibleStaff } });
 }
 
 export async function updateBookingSettings(req, res) {

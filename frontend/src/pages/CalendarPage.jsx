@@ -1928,6 +1928,11 @@ export default function CalendarPage() {
         setAppointments(calendar);
         setSessionTypes(settings.sessionTypes);
         setBookingSettings(settings.settings);
+        setStaff(settings.eligibleStaff || (settings.staff || []).filter((member) => (
+          member.schedulingPreference
+            ? member.schedulingPreference.acceptsAppointments
+            : member.role === "consultant"
+        )));
       }
     } catch (reason) {
       if (!background) setError(reason.response?.data?.message || "The calendar could not be loaded.");
@@ -1983,13 +1988,6 @@ export default function CalendarPage() {
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => { window.removeEventListener("focus", refreshWhenVisible); document.removeEventListener("visibilitychange", refreshWhenVisible); };
   }, [load]);
-
-  useEffect(() => {
-    if (role === "consultant") return;
-    api.get("/leads/staff").then((response) => {
-      setStaff((response.data.data || []).filter((member) => ["admin", "consultant"].includes(member.role) && member.schedulingPreference?.acceptsAppointments !== false));
-    }).catch(() => {});
-  }, [role]);
 
   const staffTone = useMemo(() => {
     const map = new Map();
@@ -2335,8 +2333,8 @@ export default function CalendarPage() {
             </div>
             <div className="hidden h-3 w-px bg-slate-200 sm:block" />
             <div className="flex flex-wrap items-center gap-2.5">
-              {staff.length ? staff.map((member, index) => (
-                <span key={member.id} className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${EVENT_TONES[index % EVENT_TONES.length].chip}`} />{member.fullName}</span>
+              {role !== "consultant" && staff.length ? staff.map((member) => (
+                <span key={member.id} className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${staffTone.get(member.id)?.chip || NEUTRAL_TONE.chip}`} />{member.fullName}</span>
               )) : role === "consultant" ? (
                 <span className="flex items-center gap-1"><span className={`h-2 w-2 shrink-0 rounded-full ${EVENT_TONES[0].chip}`} />Your appointments</span>
               ) : null}

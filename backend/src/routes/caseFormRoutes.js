@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { assignCatalogForms, checkCaseFormVersion, createCaseFormReviewComment, createCustomCaseForm, deleteCaseForm, deleteCaseFormReviewComment, finalizeCaseForm, getCaseFormCatalog, getCurrentFormPermissions, importOfficialCaseForm, listCaseFormAudit, listCaseFormReviewComments, listCaseForms, listCaseFormVersions, recordCaseFormAutofill, restoreCaseFormVersion, saveBrowserCaseFormCopy, serveCaseFormFile, serveCaseFormVersionFile, setCaseFormReviewCommentResolution, unlockCaseForm, updateCaseForm, updateUserFormPermissions, uploadCaseForm } from "../controllers/caseFormController.js";
+import { assignCatalogForms, checkCaseFormVersion, createCaseFormReviewComment, createCustomCaseForm, deleteCaseForm, deleteCaseFormReviewComment, finalizeCaseForm, getCaseFormCatalog, getCaseFormSignatureEditor, getCurrentFormPermissions, importOfficialCaseForm, listCaseFormAudit, listCaseFormReviewComments, listCaseForms, listCaseFormVersions, recordCaseFormAutofill, restoreCaseFormVersion, saveBrowserCaseFormCopy, serveCaseFormFile, serveCaseFormVersionFile, setCaseFormReviewCommentResolution, unlockCaseForm, updateCaseForm, updateUserFormPermissions, uploadCaseForm } from "../controllers/caseFormController.js";
 import { getChecklist, getClientRequests, listRepresentativeOptions, patchFieldValue, patchReviewClientRequest, postClientRequest, runAutofill, setApplicant, setRepresentative } from "../controllers/caseFormFieldController.js";
 import { generateFilledCaseFormPdf } from "../controllers/caseFormRenderController.js";
 import { listFormSignatureRequests, sendFormSignatureRequest } from "../controllers/caseFormSignatureController.js";
@@ -30,6 +30,7 @@ router.post("/:id/review-comments", asyncHandler(createCaseFormReviewComment));
 router.patch("/:id/review-comments/:commentId", asyncHandler(setCaseFormReviewCommentResolution));
 router.delete("/:id/review-comments/:commentId", asyncHandler(deleteCaseFormReviewComment));
 router.get("/:id/file", asyncHandler(serveCaseFormFile));
+router.get("/:id/signature-editor", asyncHandler(getCaseFormSignatureEditor));
 // Government-form field auto-fill engine (checklist, autofill, client requests)
 router.get("/:id/checklist", asyncHandler(getChecklist));
 router.post("/:id/checklist/autofill", asyncHandler(runAutofill));

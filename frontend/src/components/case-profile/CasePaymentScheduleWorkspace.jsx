@@ -1,11 +1,14 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, BadgePercent, Calculator, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
+import { AlertTriangle, BadgePercent, Calculator, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, RefreshCw, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
-import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, updateCaseSchedule, voidCaseSchedule, voidInstallmentInvoice } from "../../api/paymentScheduleApi";
+import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, retryInstallmentInvoice, updateCaseSchedule, voidCaseSchedule, voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import { getBillingSettings } from "../../api/billingSettingsApi";
 import { getFeeCategories } from "../../api/feeCategoryApi";
+import { CASE_STAGES } from "../../constants/caseStages";
 import InstallmentListEditor, { blankInstallment, TAXABLE_KINDS } from "../payments/InstallmentListEditor";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 const STATUS_META = {
   Scheduled: { label: "Scheduled", tone: "bg-slate-100 text-slate-600" },
@@ -29,6 +32,16 @@ function triggerLabel(installment) {
   if (installment.triggerType === "Stage") return `On stage: ${installment.triggerStage}`;
   if (installment.triggerDate) return `Due ${formatDate(installment.triggerDate)}`;
   return `${installment.triggerDaysAfterSigning} day${installment.triggerDaysAfterSigning === 1 ? "" : "s"} after signing`;
+}
+
+function installmentIsDue(installment, currentStage) {
+  if (installment.status !== "Scheduled") return false;
+  if (installment.triggerType === "Date") {
+    return Boolean(installment.triggerDate) && new Date(installment.triggerDate) <= new Date();
+  }
+  const triggerIndex = CASE_STAGES.indexOf(installment.triggerStage);
+  const currentIndex = CASE_STAGES.indexOf(currentStage);
+  return triggerIndex >= 0 && currentIndex >= triggerIndex;
 }
 
 function TaxSummaryBar({ taxSummary }) {
@@ -203,24 +216,40 @@ export function DiscountField({ value, onChange, disabled = false, installments 
   );
 }
 
-function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
+function InstallmentRow({ installment, caseId, isAdmin, canRetry, onChanged }) {
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState("");
   const meta = STATUS_META[installment.status] || STATUS_META.Scheduled;
   const invoice = installment.caseInvoice;
   const canVoidInvoice = isAdmin && installment.status === "Invoiced" && invoice && Number(invoice.balance) === Number(invoice.amount);
+  const invoiceError = retryError || installment.lastInvoiceError;
 
   async function confirmVoid() {
     setBusy(true);
     setError("");
     try {
       const updated = await voidInstallmentInvoice(caseId, installment.id, reason.trim() || undefined);
-      onVoided(updated);
+      onChanged(updated);
     } catch (reason_) {
       setError(reason_.response?.data?.message || "Could not void this invoice.");
       setBusy(false);
+    }
+  }
+
+  async function retryInvoice() {
+    setRetrying(true);
+    setRetryError("");
+    try {
+      const updated = await retryInstallmentInvoice(caseId, installment.id);
+      onChanged(updated);
+    } catch (reason_) {
+      setRetryError(reason_.response?.data?.message || "The invoice could not be issued. Try again or review the QuickBooks settings.");
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -249,6 +278,32 @@ function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
           <span className="text-xs text-slate-400">Not yet invoiced</span>
         )}
       </div>
+      {installment.status === "Scheduled" && invoiceError ? (
+        <Alert variant="destructive" className="mt-3">
+          <AlertTriangle aria-hidden="true" />
+          <AlertTitle>Invoice could not be issued</AlertTitle>
+          <AlertDescription>
+            <p>{invoiceError}</p>
+            {installment.lastInvoiceAttemptedAt ? (
+              <p className="mt-1 text-xs">
+                Last attempted {new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(installment.lastInvoiceAttemptedAt))}
+              </p>
+            ) : null}
+            {canRetry ? (
+              <Button type="button" variant="destructive" size="sm" className="mt-3" disabled={retrying} onClick={retryInvoice}>
+                {retrying ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <RefreshCw data-icon="inline-start" />}
+                {retrying ? "Retrying…" : "Retry invoice"}
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {installment.status === "Scheduled" && canRetry && !invoiceError ? (
+        <Button type="button" variant="outline" size="sm" className="mt-3" disabled={retrying} onClick={retryInvoice}>
+          {retrying ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Receipt data-icon="inline-start" />}
+          {retrying ? "Issuing…" : "Issue invoice now"}
+        </Button>
+      ) : null}
       {canVoidInvoice ? (
         confirming ? (
           <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50/70 p-3">
@@ -517,7 +572,8 @@ export default function CasePaymentScheduleWorkspace({ caseItem }) {
                   installment={installment}
                   caseId={caseItem.id}
                   isAdmin={isAdmin}
-                  onVoided={setSchedule}
+                  canRetry={canManage && installmentIsDue(installment, caseItem.stage)}
+                  onChanged={setSchedule}
                 />
               ))}
             </AnimatePresence>

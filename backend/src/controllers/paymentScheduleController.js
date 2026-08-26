@@ -10,6 +10,7 @@ import {
   getCasePaymentSummary,
   getCaseSchedule,
   listScheduleTemplates,
+  retryScheduledInstallment,
   updateCaseInstallments,
   updateScheduleTemplate,
   voidInvoicedInstallment,
@@ -130,6 +131,16 @@ export async function updateSchedule(req, res) {
     actorRole: req.auth.role,
     actorUserId: req.auth.userId,
   });
+  res.json({ data });
+}
+
+export async function retryInstallmentInvoice(req, res) {
+  const data = await retryScheduledInstallment(
+    req.auth.agencyId,
+    req.params.id,
+    req.params.installmentId,
+    req.auth.userId,
+  );
   res.json({ data });
 }
 
