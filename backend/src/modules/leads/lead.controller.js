@@ -1,4 +1,5 @@
 import * as service from "./lead.service.js";
+import { recordAppointmentAdviceOutcome as recordAdviceOutcome } from "../../services/appointmentAdviceService.js";
 import { listPermitExpiryLeads } from "./lead.permitExpiry.service.js";
 import { syncClientToQuickBooks } from "../../services/clientQuickBooksSyncService.js";
 import { evaluateCaseTimelineLegs } from "../../services/incentiveTimelineService.js";
@@ -168,6 +169,10 @@ export async function updateLeadFollowUp(req, res) {
 
 export async function assignLead(req, res) {
   res.json({ data: await service.assignLead(req) });
+}
+
+export async function recordAppointmentAdviceOutcome(req, res) {
+  res.json({ data: await recordAdviceOutcome(req, req.params.id, req.params.adviceId, req.body?.outcome) });
 }
 
 export async function moveLeadToNurture(req, res) {

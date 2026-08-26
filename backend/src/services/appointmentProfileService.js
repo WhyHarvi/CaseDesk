@@ -87,6 +87,13 @@ export const appointmentProfileInclude = {
       assignedUser: { select: { id: true, fullName: true, email: true } },
     },
   },
+  advice: {
+    include: {
+      consultant: { select: { id: true, fullName: true } },
+      assignedUser: { select: { id: true, fullName: true } },
+      outcomeRecordedBy: { select: { id: true, fullName: true } },
+    },
+  },
 };
 
 function intakeSummary(appointmentId, events = []) {
@@ -172,6 +179,9 @@ export async function requireAppointmentProfile(
     followUps: req.auth.role === "frontdesk" ? [] : data.followUps,
     clientNotes,
     preConsultationIntake: intakeSummary(data.id, data.events || []),
+    // Same visibility rule as internal notes — advice is staff-internal
+    // handoff context, not something a client-facing view should ever see.
+    advice: canAccessInternalNotes ? data.advice : null,
   };
 }
 

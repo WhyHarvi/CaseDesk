@@ -391,6 +391,8 @@ enum LeadActivityType {
   LEAD_MERGED
   LEAD_PROMOTED_TO_PIPELINE
   PRIORITY_CHANGED
+  ADVICE_RECORDED
+  ADVICE_OUTCOME_RECORDED
 }
 
 enum LeadActivityDirection {
@@ -705,6 +707,7 @@ model Agency {
   leadRoutingRules                LeadRoutingRule[]
   leadRoutingBacklogReviews       LeadRoutingBacklogReview[]
   leadFollowUps                   LeadFollowUp[]
+  appointmentAdvice               AppointmentAdvice[]
   leadLostDetails                 LeadLostDetail[]
   leadConversions                 LeadConversion[]
   leadQualifications              LeadQualification[]
@@ -1960,6 +1963,9 @@ model User {
   reviewedLeadRoutingBacklog           LeadRoutingBacklogReview[]      @relation("LeadRoutingBacklogReviewerUser")
   assignedLeadFollowUps                LeadFollowUp[]                  @relation("LeadFollowUpAssigneeUser")
   completedLeadFollowUps               LeadFollowUp[]                  @relation("LeadFollowUpCompleterUser")
+  givenAppointmentAdvice               AppointmentAdvice[]             @relation("AppointmentAdviceConsultantUser")
+  assignedAppointmentAdvice            AppointmentAdvice[]             @relation("AppointmentAdviceAssigneeUser")
+  recordedAppointmentAdviceOutcomes    AppointmentAdvice[]             @relation("AppointmentAdviceOutcomeRecorderUser")
   lostLeads                            LeadLostDetail[]                @relation("LeadLostActorUser")
   convertedLeads                       LeadConversion[]                @relation("LeadConversionActorUser")
   createdCaseInvoices                  CaseInvoice[]
@@ -2303,6 +2309,7 @@ model Client {
   caseEasyImportContacts     CaseEasyImportContact[]
   caseEasyImportReportRows   CaseEasyImportReportRow[]
   oomaCallSessions           OomaCallSession[]
+  appointmentAdvice          AppointmentAdvice[]
 
   @@unique([agencyId, clientNumber])
   @@unique([agencyId, creationIdempotencyKey])
@@ -2528,6 +2535,7 @@ model Appointment {
   paymentApprovals       PaymentApproval[]
   cashTransactions       CashTransaction[]
   meetingJobs            AppointmentMeetingJob[]
+  advice                 AppointmentAdvice?
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId])
@@ -4673,6 +4681,7 @@ model Lead {
   bookingPaymentHolds      BookingPaymentHold[]
   manualLedgerEntries      CaseManualLedgerEntry[]
   oomaCallSessions         OomaCallSession[]
+  appointmentAdvice        AppointmentAdvice[]
 
   @@unique([agencyId, leadNumber])
   @@index([agencyId, status])
@@ -4878,10 +4887,57 @@ model LeadFollowUp {
   assignedUser      User               @relation("LeadFollowUpAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
   completedBy       User?              @relation("LeadFollowUpCompleterUser", fields: [completedById], references: [id], onDelete: SetNull)
   oomaCallSessions  OomaCallSession[]
+  appointmentAdvice AppointmentAdvice?
 
   @@index([agencyId, assignedUserId, status, dueAt])
   @@index([agencyId, leadId, dueAt])
   @@map("lead_follow_ups")
+}
+
+enum AppointmentAdviceOutcome {
+  PENDING
+  PROCEEDING
+  CONSIDERING
+  DECLINED
+}
+
+// A consultant's post-consultation recommendation, handed off to whoever
+// should make the follow-up call — one row per appointment. adviceText and
+// categories are the consultant's original words and are never rewritten
+// after creation; only assignedUserId/followUpDate (the handoff itself) are
+// editable, and every reassignment is separately logged via LeadActivity/
+// LeadAssignmentHistory (through moveLeadOwnership) so the original advice
+// is never lost even if the handoff changes hands.
+model AppointmentAdvice {
+  id                  String                   @id @default(uuid())
+  agencyId            String                   @map("agency_id")
+  appointmentId       String                   @unique @map("appointment_id")
+  leadId              String?                  @map("lead_id")
+  clientId            String?                  @map("client_id")
+  consultantUserId    String                   @map("consultant_user_id")
+  assignedUserId      String                   @map("assigned_user_id")
+  categories          String[]
+  adviceText          String                   @map("advice_text")
+  followUpDate        DateTime                 @map("follow_up_date")
+  followUpId          String?                  @unique @map("follow_up_id")
+  outcome             AppointmentAdviceOutcome @default(PENDING)
+  outcomeRecordedAt   DateTime?                @map("outcome_recorded_at")
+  outcomeRecordedById String?                  @map("outcome_recorded_by_id")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  agency              Agency                   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  appointment         Appointment              @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  lead                Lead?                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  client              Client?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  consultant          User                     @relation("AppointmentAdviceConsultantUser", fields: [consultantUserId], references: [id], onDelete: Restrict)
+  assignedUser        User                     @relation("AppointmentAdviceAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
+  outcomeRecordedBy   User?                    @relation("AppointmentAdviceOutcomeRecorderUser", fields: [outcomeRecordedById], references: [id], onDelete: SetNull)
+  followUp            LeadFollowUp?            @relation(fields: [followUpId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([leadId])
+  @@index([assignedUserId])
+  @@map("appointment_advice")
 }
 
 model LeadLostDetail {

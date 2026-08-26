@@ -3,9 +3,11 @@ import { createAppointment, deleteAppointment, listCaseAppointments, updateAppoi
 import { asyncHandler } from "../utils/http.js";
 import { requireRole } from "../middleware/authorization.js";
 import {
+  confirmAppointmentAdviceController,
   createAppointmentFollowUp,
   createAppointmentNote,
   getAppointmentProfile,
+  saveAppointmentAdviceDraftController,
   updateAppointmentProfileContext,
 } from "../controllers/appointmentProfileController.js";
 
@@ -15,6 +17,8 @@ router.get("/:id/profile", asyncHandler(getAppointmentProfile));
 router.patch("/:id/profile", requireRole("admin", "consultant", "frontdesk"), asyncHandler(updateAppointmentProfileContext));
 router.post("/:id/notes", requireRole("admin", "consultant"), asyncHandler(createAppointmentNote));
 router.post("/:id/follow-ups", requireRole("admin", "consultant"), asyncHandler(createAppointmentFollowUp));
+router.post("/:id/advice/draft", requireRole("admin", "consultant"), asyncHandler(saveAppointmentAdviceDraftController));
+router.post("/:id/advice/confirm", requireRole("admin", "consultant"), asyncHandler(confirmAppointmentAdviceController));
 router.post("/", asyncHandler(createAppointment));
 router.patch("/:id", asyncHandler(updateAppointment));
 router.delete("/:id", asyncHandler(deleteAppointment));

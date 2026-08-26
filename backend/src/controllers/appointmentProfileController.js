@@ -3,6 +3,7 @@ import { createHttpError } from "../utils/http.js";
 import { caseNotificationActionUrl, notifyUsers } from "../services/notificationService.js";
 import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 import { requireAppointmentProfile } from "../services/appointmentProfileService.js";
+import { confirmAppointmentAdvice, saveAppointmentAdviceDraft } from "../services/appointmentAdviceService.js";
 import { APPOINTMENT_SUBJECT_MAX_WORDS } from "./bookingController.js";
 
 function clean(value, max) {
@@ -144,5 +145,15 @@ export async function createAppointmentFollowUp(req, res) {
       : `/app/follow-ups?highlight=${encodeURIComponent(data.id)}`,
     dedupeKey: `follow-up:${data.id}:assigned:${assignedUserId}`,
   });
+  res.status(201).json({ data });
+}
+
+export async function saveAppointmentAdviceDraftController(req, res) {
+  const data = await saveAppointmentAdviceDraft(req, req.params.id, req.body || {});
+  res.json({ data });
+}
+
+export async function confirmAppointmentAdviceController(req, res) {
+  const data = await confirmAppointmentAdvice(req, req.params.id, req.body || {});
   res.status(201).json({ data });
 }

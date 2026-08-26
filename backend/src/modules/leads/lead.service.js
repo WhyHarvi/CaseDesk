@@ -300,6 +300,17 @@ export async function getLead(req) {
       lostDetail: true,
       conversion: true,
       qualification: true,
+      // Most recent first — a lead could in principle carry advice from more
+      // than one past appointment; the curtain only highlights the latest
+      // unresolved one (outcome still PENDING), but history stays available.
+      appointmentAdvice: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          consultant: { select: { id: true, fullName: true } },
+          assignedUser: { select: { id: true, fullName: true } },
+          outcomeRecordedBy: { select: { id: true, fullName: true } },
+        },
+      },
     },
   });
   if (!data) throw createHttpError(404, "Lead not found.", "LEAD_NOT_FOUND");
@@ -395,7 +406,7 @@ async function lockLeadTransfer(tx, agencyId, leadId) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`lead-transfer:${agencyId}:${leadId}`}, 0))`;
 }
 
-async function syncLeadNextAction(tx, leadId) {
+export async function syncLeadNextAction(tx, leadId) {
   const next = await tx.leadFollowUp.findFirst({ where: { leadId, status: "PENDING" }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }] });
   await tx.lead.update({ where: { id: leadId }, data: { nextActionType: next?.type || null, nextActionDescription: next?.description || null, nextActionAt: next?.dueAt || null, nextActionOwnerId: next?.assignedUserId || null, version: { increment: 1 } } });
   return next;

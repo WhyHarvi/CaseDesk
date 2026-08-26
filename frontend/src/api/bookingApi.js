@@ -94,6 +94,16 @@ export async function createAppointmentFollowUp(id, values) {
   return response.data.data;
 }
 
+export async function saveAppointmentAdviceDraft(id, values) {
+  const response = await api.post(`/appointments/${id}/advice/draft`, values);
+  return response.data.data;
+}
+
+export async function confirmAppointmentAdvice(id, values) {
+  const response = await api.post(`/appointments/${id}/advice/confirm`, values);
+  return response.data.data;
+}
+
 export async function getSchedulingBlocks(params = {}) {
   const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
   const response = await api.get(`/booking/blocks${query.size ? `?${query.toString()}` : ""}`);

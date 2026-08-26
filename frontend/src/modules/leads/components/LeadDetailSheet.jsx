@@ -124,6 +124,8 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [savedNote, setSavedNote] = useState(null);
   const [calling, setCalling] = useState(false);
   const [callError, setCallError] = useState("");
+  const [recordingOutcome, setRecordingOutcome] = useState(false);
+  const [outcomeError, setOutcomeError] = useState("");
 
   useEffect(() => {
     setLead(initialLead);
@@ -188,6 +190,19 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   function refreshLead() {
     api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {});
     onChanged();
+  }
+
+  async function recordAdviceOutcome(adviceId, outcome) {
+    try {
+      setRecordingOutcome(true);
+      setOutcomeError("");
+      await api.post(`/leads/${lead.id}/advice/${adviceId}/outcome`, { outcome });
+      refreshLead();
+    } catch (requestError) {
+      setOutcomeError(requestError.response?.data?.message || "The call result could not be saved.");
+    } finally {
+      setRecordingOutcome(false);
+    }
   }
 
   async function promoteLead() {
@@ -292,6 +307,11 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const canReassign = isWorkable && role === "admin";
   const canRequestTransfer = isWorkable && role === "consultant" && ownsLead;
   const pendingTransfer = lead.transferRequests?.[0] || null;
+  // Ordered newest-first by the backend — the first one still awaiting a
+  // call result is the one to surface. Resolved advice (outcome already
+  // recorded) drops out of view here on its own; it's still visible in the
+  // activity history.
+  const activeAdvice = (lead.appointmentAdvice || []).find((item) => item.outcome === "PENDING");
   const leadOwners = staff.filter(
     (person) => ["admin", "consultant", "frontdesk"].includes(person.role),
   );
@@ -457,6 +477,33 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                         {!isFrontdesk ? <button type="button" onClick={promoteLead} disabled={promoting} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-amber-600 px-4 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:opacity-60">{promoting ? "Promoting…" : "Promote to pipeline"}</button> : null}
                       </div>
                       {promoteError ? <p className="mt-3 text-xs font-medium text-rose-700">{promoteError}</p> : null}
+                    </section>
+                  ) : null}
+
+                  {activeAdvice ? (
+                    <section className="rounded-2xl border border-brand-200 bg-brand-50 p-5">
+                      <p className="text-xs font-semibold uppercase tracking-[0.1em] text-brand-600">Consultant advised: {activeAdvice.categories.join(", ")}</p>
+                      <p className="mt-2 text-sm leading-6 text-brand-950">{activeAdvice.adviceText}</p>
+                      <p className="mt-3 text-xs text-brand-700">
+                        Advised by {activeAdvice.consultant?.fullName || "a consultant"} on {new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(new Date(activeAdvice.createdAt))}
+                        <span className="mx-1.5">·</span>
+                        Follow-up assigned to {activeAdvice.assignedUser?.fullName || "—"}
+                      </p>
+                      {outcomeError ? <p className="mt-3 text-xs font-medium text-rose-700">{outcomeError}</p> : null}
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        <button type="button" onClick={startCall} disabled={!lead.phone || calling} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-600 px-3.5 text-xs font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60">
+                          <Phone className="h-3.5 w-3.5" />{calling ? "Calling…" : "Call client"}
+                        </button>
+                        <button type="button" disabled={recordingOutcome} onClick={() => recordAdviceOutcome(activeAdvice.id, "PROCEEDING")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 transition hover:bg-emerald-50 disabled:opacity-60">
+                          <CheckCircle2 className="h-3.5 w-3.5" />Client wants to proceed
+                        </button>
+                        <button type="button" disabled={recordingOutcome} onClick={() => recordAdviceOutcome(activeAdvice.id, "CONSIDERING")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 transition hover:bg-amber-50 disabled:opacity-60">
+                          <Circle className="h-3.5 w-3.5" />Client is considering
+                        </button>
+                        <button type="button" disabled={recordingOutcome} onClick={() => recordAdviceOutcome(activeAdvice.id, "DECLINED")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-xs font-semibold text-rose-700 ring-1 ring-inset ring-rose-200 transition hover:bg-rose-50 disabled:opacity-60">
+                          <XCircle className="h-3.5 w-3.5" />Client declined
+                        </button>
+                      </div>
                     </section>
                   ) : null}
 

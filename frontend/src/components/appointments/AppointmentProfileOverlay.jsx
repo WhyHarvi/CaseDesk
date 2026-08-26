@@ -26,18 +26,22 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
+  confirmAppointmentAdvice,
   convertAppointmentToClient,
   createAppointmentFollowUp,
   createAppointmentNote,
   archiveAppointmentNote,
   getAppointmentRegistryDetail,
+  saveAppointmentAdviceDraft,
   shortenAppointmentSubject,
   updateAppointmentProfileContext,
   updateAppointmentNote,
   updateBookingAppointmentStatus,
 } from "../../api/bookingApi";
+import api from "../../services/api";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
 import PreConsultationSummaryCard from "./PreConsultationSummaryCard";
+import MultiCaseTypeCombobox from "../ui/MultiCaseTypeCombobox";
 import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
@@ -113,6 +117,17 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [deleteNoteError, setDeleteNoteError] = useState("");
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [followUp, setFollowUp] = useState({ title: "", description: "", dueDate: dateInput() });
+  const [showAdviceComposer, setShowAdviceComposer] = useState(false);
+  const [adviceCategories, setAdviceCategories] = useState([]);
+  const [adviceText, setAdviceText] = useState("");
+  const [adviceAssignedUserId, setAdviceAssignedUserId] = useState("");
+  const [adviceFollowUpDate, setAdviceFollowUpDate] = useState("");
+  const [savedAdvice, setSavedAdvice] = useState(null);
+  const [adviceSaving, setAdviceSaving] = useState(false);
+  const [adviceError, setAdviceError] = useState("");
+  const [adviceStaff, setAdviceStaff] = useState([]);
+  const [adviceCaseTypeOptions, setAdviceCaseTypeOptions] = useState([]);
+  const [adviceCaseTypeAliases, setAdviceCaseTypeAliases] = useState({});
   const [completingConsultation, setCompletingConsultation] = useState(false);
 
   const load = useCallback(async () => {
@@ -128,6 +143,11 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setPurpose(data.purpose || data.description || "");
       setInternalNotes(data.internalNotes || "");
       setSubjectDraft(data.subject || "");
+      setSavedAdvice(data.advice || null);
+      setAdviceCategories(data.advice?.categories || []);
+      setAdviceText(data.advice?.adviceText || "");
+      setAdviceAssignedUserId(data.advice?.assignedUserId || "");
+      setAdviceFollowUpDate(data.advice?.followUpDate ? data.advice.followUpDate.slice(0, 10) : "");
       setError("");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Appointment details could not be loaded.");
@@ -146,6 +166,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setShowNoteComposer(false);
       setNote("");
       setAutosavedNote(null);
+      setShowAdviceComposer(false);
+      setAdviceError("");
     }
   }, [appointmentId, canAccessInternalNotes, initialTab]);
   useEffect(() => {
@@ -285,6 +307,81 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The note could not be updated.");
     } finally { setSaving(false); }
+  }
+
+  function openAdviceComposer() {
+    setShowAdviceComposer(true);
+    setAdviceError("");
+    if (!adviceStaff.length) {
+      api.get("/leads/staff", { cache: false }).then((response) => setAdviceStaff(response.data.data || [])).catch(() => {});
+    }
+    if (!adviceCaseTypeOptions.length) {
+      // The agency's real, live case-type catalog — the same list case
+      // creation itself uses — not a hand-picked subset. Real advice covers
+      // whatever the practice actually handles (every sponsorship variant,
+      // every provincial stream, citizenship, refugee/H&C matters, and so
+      // on), and reusing this list is what keeps "client agreed — start the
+      // case" a one-click handoff instead of a re-typing exercise.
+      api.get("/cases/case-types", { cache: false }).then((response) => {
+        setAdviceCaseTypeOptions(response.data.data || []);
+        setAdviceCaseTypeAliases(response.data.aliases || {});
+      }).catch(() => {});
+    }
+  }
+
+  const adviceDraftKey = JSON.stringify({ adviceCategories, adviceText, adviceAssignedUserId, adviceFollowUpDate });
+  const savedAdviceKey = savedAdvice ? JSON.stringify({ adviceCategories: savedAdvice.categories, adviceText: savedAdvice.adviceText, adviceAssignedUserId: savedAdvice.assignedUserId, adviceFollowUpDate: savedAdvice.followUpDate ? savedAdvice.followUpDate.slice(0, 10) : "" }) : "";
+
+  async function saveAdviceDraft() {
+    if (!appointment) return;
+    try {
+      const saved = await saveAppointmentAdviceDraft(appointment.id, {
+        categories: adviceCategories,
+        adviceText,
+        assignedUserId: adviceAssignedUserId || undefined,
+        followUpDate: adviceFollowUpDate || undefined,
+      });
+      setSavedAdvice(saved);
+    } catch {
+      // Autosave failures stay silent — the consultant's own typing is
+      // never touched, and "Save and assign" surfaces a real error if the
+      // final submit fails too.
+    }
+  }
+
+  useDebouncedAutosave({
+    value: adviceDraftKey,
+    savedValue: savedAdviceKey,
+    enabled: showAdviceComposer && !adviceSaving,
+    onSave: saveAdviceDraft,
+  });
+
+  async function confirmAdvice(event) {
+    event?.preventDefault();
+    if (adviceSaving) return;
+    if (!adviceText.trim()) { setAdviceError("Enter the advice given to the client."); return; }
+    if (!adviceCategories.length) { setAdviceError("Choose at least one category."); return; }
+    if (!adviceAssignedUserId) { setAdviceError("Select who should contact the client."); return; }
+    if (!adviceFollowUpDate) { setAdviceError("Choose a follow-up date."); return; }
+    try {
+      setAdviceSaving(true);
+      setAdviceError("");
+      const saved = await confirmAppointmentAdvice(appointment.id, {
+        categories: adviceCategories,
+        adviceText: adviceText.trim(),
+        assignedUserId: adviceAssignedUserId,
+        followUpDate: adviceFollowUpDate,
+      });
+      setSavedAdvice(saved);
+      setShowAdviceComposer(false);
+      onChanged?.();
+    } catch (requestError) {
+      // Deliberately does not clear/reset any field the consultant already
+      // entered — only the error message is shown, right below the button.
+      setAdviceError(requestError.response?.data?.message || "The advice could not be saved.");
+    } finally {
+      setAdviceSaving(false);
+    }
   }
 
   useDebouncedAutosave({
@@ -478,6 +575,75 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               {canWrite ? <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Internal note</h3><p className="mt-1 text-xs text-slate-400">Discussion, outcome, or context for the next contact.</p></div>{!showNoteComposer ? <button type="button" onClick={() => setShowNoteComposer(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Note</button> : null}</div>
                 {showNoteComposer ? <form onSubmit={addNote} className="mt-4"><textarea autoFocus rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write an internal note…" className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => { setNote(""); setAutosavedNote(null); setShowNoteComposer(false); }} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save note"}</button></div></form> : null}
+              </section> : null}
+              {canWrite ? <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Advice & handoff</h3>
+                    <p className="mt-1 text-xs text-slate-400">What to advise, who follows up, and by when.</p>
+                  </div>
+                  {!showAdviceComposer ? <button type="button" onClick={openAdviceComposer} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />{savedAdvice ? "Edit" : "Advice"}</button> : null}
+                </div>
+                {showAdviceComposer ? (
+                  <form onSubmit={confirmAdvice} className="mt-4 space-y-4">
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600">Consultant's advice</span>
+                      <textarea
+                        autoFocus
+                        rows={3}
+                        value={adviceText}
+                        onChange={(event) => setAdviceText(event.target.value)}
+                        placeholder='Example: "Client should apply for PSW. Call the client, confirm they want to proceed, and collect the required documents."'
+                        className="mt-1.5 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400"
+                      />
+                    </label>
+                    <div>
+                      <span className="text-xs font-semibold text-slate-600">Category</span>
+                      <div className="mt-1.5">
+                        <MultiCaseTypeCombobox
+                          value={adviceCategories}
+                          onChange={setAdviceCategories}
+                          options={adviceCaseTypeOptions}
+                          aliases={adviceCaseTypeAliases}
+                          placeholder="Search or add a category…"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Assign to</span>
+                        <select value={adviceAssignedUserId} onChange={(event) => setAdviceAssignedUserId(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400">
+                          <option value="">Select team member</option>
+                          {adviceStaff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold text-slate-600">Follow-up date</span>
+                        <input type="date" value={adviceFollowUpDate} onChange={(event) => setAdviceFollowUpDate(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400" />
+                      </label>
+                    </div>
+                    {adviceError ? <p className="text-xs font-medium text-rose-700">{adviceError}</p> : null}
+                    <div className="flex justify-end gap-2">
+                      <button type="button" disabled={adviceSaving} onClick={() => setShowAdviceComposer(false)} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Close</button>
+                      <button type="submit" disabled={adviceSaving} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">
+                        <Save className="h-3.5 w-3.5" />{adviceSaving ? "Saving…" : "Save and assign"}
+                      </button>
+                    </div>
+                  </form>
+                ) : savedAdvice ? (
+                  <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div className="flex flex-wrap gap-1.5">
+                      {savedAdvice.categories.map((category) => <span key={category} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-inset ring-slate-200">{category}</span>)}
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-700">{savedAdvice.adviceText}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Assigned to {savedAdvice.assignedUser?.fullName || "—"}
+                      <span className="mx-1.5">·</span>
+                      Follow up by {savedAdvice.followUpDate ? new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(new Date(savedAdvice.followUpDate)) : "—"}
+                      {!savedAdvice.leadId ? <><span className="mx-1.5">·</span>No lead linked — saved to this appointment only</> : null}
+                    </p>
+                  </div>
+                ) : null}
               </section> : null}
               <section>
                 <div className="mb-3 flex items-center justify-between">
