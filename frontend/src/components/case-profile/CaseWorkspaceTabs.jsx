@@ -383,18 +383,6 @@ const blankLanguageExamEntry = [
   ...languageExamScoreFields,
 ].reduce((entry, field) => ({ ...entry, [field.key]: "" }), {});
 
-function CompactMetric({ label, value, detail }) {
-  return (
-    <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-        {label}
-      </p>
-      <p className="mt-1 text-base font-semibold text-slate-950">{value}</p>
-      {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
-    </div>
-  );
-}
-
 function QuietList({ items, emptyMessage, renderItem }) {
   if (!items.length) {
     return (
@@ -3312,43 +3300,72 @@ function ProfileDetailsGrid({
 // and can't call hooks conditionally.
 function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreementsTab, onBillingChanged }) {
   const [retainerStatus, setRetainerStatus] = useState(null);
-  const [showPaymentsAnyway, setShowPaymentsAnyway] = useState(false);
-  const retainerFinalized = retainerStatus?.source === "existing" && retainerStatus.document?.correspondenceStatus === "Finalized";
-  const paymentsUnlocked = retainerFinalized || showPaymentsAnyway;
+  const retainerLabel = retainerStatus?.source === "existing"
+    ? retainerStatus.document?.correspondenceStatus || "In progress"
+    : "Not created";
 
   return (
-    <div className="space-y-6">
-      <RetainerStatusCard caseItem={caseItem} onOpenAgreementsTab={onOpenAgreementsTab} onStatusChange={setRetainerStatus} />
-
-      <div className="grid gap-3 md:grid-cols-4">
-        <CompactMetric label="Total Fee (incl. HST)" value={formatCurrency(paymentSummary.totalFee)} />
-        <CompactMetric label="Paid" value={formatCurrency(paymentSummary.paidAmount)} />
-        <CompactMetric label="Remaining" value={formatCurrency(paymentSummary.balance)} />
-        <div className="rounded-[1.15rem] bg-slate-50 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Status</p>
-          <span className={`mt-2 inline-flex rounded-full px-3 py-1.5 text-xs font-semibold ${getPaymentStatusStyles(paymentSummary.status)}`}>
-            {paymentSummary.status}
-          </span>
-        </div>
-      </div>
-
-      {paymentsUnlocked ? (
-        <>
-          <CasePaymentScheduleWorkspace caseItem={caseItem} />
-          <div className="border-t border-slate-100 pt-6">
-            <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} onBillingChanged={onBillingChanged} />
+    <div className="space-y-5">
+      <header className="border-b border-slate-200 pb-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-950">Billing overview</h2>
+            <p className="mt-1 text-sm text-slate-600">Invoices and received payments are first. Payment planning and retainer details follow below.</p>
           </div>
-        </>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setShowPaymentsAnyway(true)}
-          className="flex w-full items-center justify-between gap-2 rounded-[1.4rem] border border-dashed border-slate-300 bg-slate-50/60 px-5 py-4 text-left text-sm text-slate-500 transition hover:border-slate-400 hover:bg-slate-100"
-        >
-          <span>Payment schedule and invoices unlock once the retainer is countersigned — click to work with them now anyway.</span>
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        </button>
-      )}
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+            <span className={`rounded-full px-3 py-1.5 ${getPaymentStatusStyles(paymentSummary.status)}`}>{paymentSummary.status}</span>
+            <span className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-slate-700">Retainer · {retainerLabel}</span>
+          </div>
+        </div>
+
+        <div className="mt-5 grid overflow-hidden rounded-2xl border border-slate-200 bg-white sm:grid-cols-3">
+          <div className="border-b border-slate-200 px-5 py-4 sm:border-b-0 sm:border-r">
+            <p className="text-xs font-semibold text-slate-600">Outstanding</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{formatCurrency(paymentSummary.balance)}</p>
+          </div>
+          <div className="border-b border-slate-200 px-5 py-4 sm:border-b-0 sm:border-r">
+            <p className="text-xs font-semibold text-slate-600">Paid</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{formatCurrency(paymentSummary.paidAmount)}</p>
+          </div>
+          <div className="px-5 py-4">
+            <p className="text-xs font-semibold text-slate-600">Total fee including tax</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{formatCurrency(paymentSummary.totalFee)}</p>
+          </div>
+        </div>
+      </header>
+
+      <section aria-labelledby="billing-invoices-heading" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-3 border-b border-slate-100 pb-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold tabular-nums text-white">01</span>
+          <div>
+            <h3 id="billing-invoices-heading" className="text-base font-semibold text-slate-950">Invoices and payments</h3>
+            <p className="text-sm text-slate-600">Create invoices, record money received, download receipts, or manage refunds.</p>
+          </div>
+        </div>
+        <CaseBillingWorkspace caseItem={caseItem} highlightId={highlightId} onBillingChanged={onBillingChanged} />
+      </section>
+
+      <section aria-labelledby="billing-schedule-heading" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-3 border-b border-slate-100 pb-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold tabular-nums text-white">02</span>
+          <div>
+            <h3 id="billing-schedule-heading" className="text-base font-semibold text-slate-950">Payment schedule</h3>
+            <p className="text-sm text-slate-600">Plan installment amounts and when each invoice should be issued.</p>
+          </div>
+        </div>
+        <CasePaymentScheduleWorkspace caseItem={caseItem} />
+      </section>
+
+      <section aria-labelledby="billing-retainer-heading" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="mb-4 flex items-center gap-3 border-b border-slate-100 pb-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold tabular-nums text-white">03</span>
+          <div>
+            <h3 id="billing-retainer-heading" className="text-base font-semibold text-slate-950">Retainer agreement</h3>
+            <p className="text-sm text-slate-600">Review the agreement status, send it, or synchronize its fee schedule.</p>
+          </div>
+        </div>
+        <RetainerStatusCard caseItem={caseItem} onOpenAgreementsTab={onOpenAgreementsTab} onStatusChange={setRetainerStatus} />
+      </section>
     </div>
   );
 }
