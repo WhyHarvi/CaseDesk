@@ -143,6 +143,44 @@ test("case discounts reduce only professional installments and flow through invo
   assert.match(retainerCard, /\{ installments, signingDate, discountAmount, reviewToken \}/);
 });
 
+// Real staff confusion this fixes: entering a $39 "discount" for a $300 fee
+// (13% of $300, the intuitive-but-wrong number) landed the client at
+// $294.93, not $300 — the discount reduces the pre-tax fee, so tax is then
+// computed on a smaller base. Getting to an exact $300 final total requires
+// a $34.51 discount, math staff shouldn't have to do by hand. DiscountField
+// now offers a second entry mode that takes the target total directly.
+test("DiscountField can derive the professional-fee discount from a target final total instead of requiring staff to do the tax math themselves", async () => {
+  const workspace = await source("../../frontend/src/components/case-profile/CasePaymentScheduleWorkspace.jsx");
+  const fieldFn = workspace.slice(workspace.indexOf("export function DiscountField"), workspace.indexOf("function InstallmentRow"));
+
+  // Two entry modes, not a replacement of the raw discount input — some
+  // discounts (a flat promo, a goodwill credit) aren't tied to a round
+  // final total and still need direct entry.
+  assert.match(fieldFn, /DISCOUNT_ENTRY_MODES\.AMOUNT/);
+  assert.match(fieldFn, /DISCOUNT_ENTRY_MODES\.FINAL_TOTAL/);
+  assert.match(fieldFn, /Final agreed total, including HST/);
+
+  // The actual formula: government fees are excluded from the taxable
+  // portion before dividing out the tax rate, matching
+  // allocateScheduleDiscount's "government fees are never discounted" rule
+  // and attachTaxBreakdown's tax = round(taxableSubtotal * rate) / 100.
+  assert.match(fieldFn, /const targetTaxablePortion = Math\.max\(0, finalTotal - nonTaxableSubtotal\)/);
+  assert.match(fieldFn, /const targetNetTaxable = targetTaxablePortion \/ \(1 \+ taxRatePercent \/ 100\)/);
+  assert.match(fieldFn, /Math\.max\(0, Math\.round\(\(taxableSubtotal - targetNetTaxable\) \* 100\) \/ 100\)/);
+
+  // Whichever mode is active, staff see the resulting breakdown before
+  // saving — reusing TaxSummaryBar (previously only shown after a schedule
+  // was already saved) rather than a second, divergent summary widget.
+  assert.match(fieldFn, /<TaxSummaryBar/);
+
+  // Wired into every place a discount gets entered: the Billing tab's
+  // create/edit schedule forms, and the retainer flow's inline builder.
+  const retainerCard = await source("../../frontend/src/components/case-profile/RetainerStatusCard.jsx");
+  assert.match(workspace, /<DiscountField value=\{discountAmount\} onChange=\{setDiscountAmount\} installments=\{installments\} feeKindByType=\{feeKindByType\} taxRatePercent=\{taxRatePercent\} \/>/);
+  assert.match(workspace, /<DiscountField value=\{discountAmount\} onChange=\{setDiscountAmount\} disabled=\{lockedIds\.size > 0\} installments=\{installments\} feeKindByType=\{feeKindByType\} taxRatePercent=\{taxRatePercent\} \/>/);
+  assert.match(retainerCard, /installments=\{installments\} feeKindByType=\{feeKindByType\} taxRatePercent=\{taxRatePercent\}/);
+});
+
 test("retainer sync renders and removes a real dollar discount without corrupting currency", () => {
   const html = `<h2>5. Payment Terms and Conditions</h2><table><tbody><tr><td>Professional Fees</td><td>$1,500.00</td></tr><tr><td>Government Fees (Biometrics, Permits, etc.)</td><td>$235.00</td></tr><tr><td>Applicable Taxes (professional fees)</td><td>$195.00</td></tr><tr><td><strong>Total</strong></td><td><strong>$1,930.00</strong></td></tr></tbody></table><h2>6. Payment Schedule</h2><table><tbody><tr><td>Old</td><td>$1.00</td><td>Old date</td></tr></tbody></table>`;
   const discounted = applyScheduleToRetainerHtml(html, {

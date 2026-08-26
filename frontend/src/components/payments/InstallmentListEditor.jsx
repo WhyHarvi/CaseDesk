@@ -13,7 +13,7 @@ const PAYMENT_TYPES = [
   { value: "fees", label: "Professional fees", icon: Banknote, kind: "Professional" },
   { value: "disbursement", label: "Govt. fee disbursement", icon: Landmark, kind: "Government" },
 ];
-const TAXABLE_KINDS = new Set(["Professional", "Consultation"]);
+export const TAXABLE_KINDS = new Set(["Professional", "Consultation"]);
 
 let nextTempId = 1;
 export function blankInstallment() {

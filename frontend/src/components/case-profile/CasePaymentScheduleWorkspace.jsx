@@ -1,9 +1,11 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, BadgePercent, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
+import { AlertTriangle, BadgePercent, Calculator, Calendar, Check, ChevronRight, Loader2, Pencil, Receipt, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import { createCaseSchedule, getCaseSchedule, getScheduleTemplates, updateCaseSchedule, voidCaseSchedule, voidInstallmentInvoice } from "../../api/paymentScheduleApi";
-import InstallmentListEditor, { blankInstallment } from "../payments/InstallmentListEditor";
+import { getBillingSettings } from "../../api/billingSettingsApi";
+import { getFeeCategories } from "../../api/feeCategoryApi";
+import InstallmentListEditor, { blankInstallment, TAXABLE_KINDS } from "../payments/InstallmentListEditor";
 
 const STATUS_META = {
   Scheduled: { label: "Scheduled", tone: "bg-slate-100 text-slate-600" },
@@ -63,17 +65,127 @@ function TaxSummaryBar({ taxSummary }) {
   );
 }
 
-export function DiscountField({ value, onChange, disabled = false }) {
+// Feeds DiscountField's "Final total" mode: what a discount amount needs to
+// land on the target total requires knowing which installments are taxable
+// (fee categories are agency-configurable, not fixed) and the agency's HST
+// rate — neither is in the schedule builder's own state, so this fetches
+// both once and shares them between ScheduleBuilder and ScheduleEditor.
+export function useScheduleTaxContext() {
+  const [feeKindByType, setFeeKindByType] = useState(new Map());
+  const [taxRatePercent, setTaxRatePercent] = useState(13);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([getFeeCategories({ includeInactive: true }), getBillingSettings()])
+      .then(([categories, billing]) => {
+        if (!active) return;
+        setFeeKindByType(new Map(categories.map((category) => [category.code, category.kind])));
+        setTaxRatePercent(Number(billing?.taxRatePercent ?? 13));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  return { feeKindByType, taxRatePercent };
+}
+
+const DISCOUNT_ENTRY_MODES = { AMOUNT: "amount", FINAL_TOTAL: "finalTotal" };
+
+export function DiscountField({ value, onChange, disabled = false, installments = [], feeKindByType = new Map(), taxRatePercent = 13 }) {
+  const [mode, setMode] = useState(DISCOUNT_ENTRY_MODES.AMOUNT);
+  const [finalTotalInput, setFinalTotalInput] = useState("");
+
+  // Default type codes ("fees"/"disbursement") fall back to their built-in
+  // kind when the agency hasn't loaded/configured fee categories yet, so the
+  // preview isn't blank on first paint.
+  const { taxableSubtotal, nonTaxableSubtotal } = useMemo(() => {
+    let taxable = 0;
+    let nonTaxable = 0;
+    for (const row of installments) {
+      const amount = Number(row.amount) || 0;
+      const kind = feeKindByType.get(row.paymentType) ?? (row.paymentType === "disbursement" ? "Government" : "Professional");
+      if (TAXABLE_KINDS.has(kind)) taxable += amount;
+      else nonTaxable += amount;
+    }
+    return { taxableSubtotal: taxable, nonTaxableSubtotal: nonTaxable };
+  }, [installments, feeKindByType]);
+
+  // Government fees are never discounted (matches allocateScheduleDiscount
+  // server-side), so only the taxable portion absorbs both the discount and
+  // the gap between a tax-inclusive target and today's pre-tax fee fields —
+  // this is exactly the "what discount gets me to a round final number"
+  // question staff were previously doing by hand.
+  function handleFinalTotalChange(rawValue) {
+    setFinalTotalInput(rawValue);
+    const finalTotal = Number(rawValue);
+    if (!rawValue || Number.isNaN(finalTotal)) { onChange(""); return; }
+    const targetTaxablePortion = Math.max(0, finalTotal - nonTaxableSubtotal);
+    const targetNetTaxable = targetTaxablePortion / (1 + taxRatePercent / 100);
+    const discount = Math.max(0, Math.round((taxableSubtotal - targetNetTaxable) * 100) / 100);
+    onChange(String(discount));
+  }
+
+  const discountValue = Number(value) || 0;
+  const netTaxable = Math.max(0, taxableSubtotal - discountValue);
+  const tax = Math.round(netTaxable * taxRatePercent) / 100;
+  const totalFee = netTaxable + tax + nonTaxableSubtotal;
+  const hasFees = taxableSubtotal > 0 || nonTaxableSubtotal > 0;
+
   return (
-    <label className="block text-xs font-medium text-slate-600">Discount on professional fees
-      <span className={`mt-1.5 flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5 ${disabled ? "border-slate-100 opacity-65" : "border-slate-200 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100"}`}>
-        <BadgePercent className="h-4 w-4 text-emerald-500" />
-        <span className="text-sm text-slate-400">$</span>
-        <input type="number" min="0" step="0.01" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
-        <span className="text-xs font-semibold text-slate-400">CAD</span>
-      </span>
-      <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Applied to the later professional installments first. Government fees are never discounted.</span>
-    </label>
+    <div>
+      <div className="flex w-fit rounded-full border border-slate-200 bg-slate-50 p-0.5">
+        {[
+          { key: DISCOUNT_ENTRY_MODES.AMOUNT, label: "Discount amount" },
+          { key: DISCOUNT_ENTRY_MODES.FINAL_TOTAL, label: "Final total (incl. tax)" },
+        ].map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            disabled={disabled}
+            onClick={() => setMode(option.key)}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed ${mode === option.key ? "bg-slate-950 text-white" : "text-slate-500"}`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === DISCOUNT_ENTRY_MODES.AMOUNT ? (
+        <label className="mt-2 block text-xs font-medium text-slate-600">Discount on professional fees
+          <span className={`mt-1.5 flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5 ${disabled ? "border-slate-100 opacity-65" : "border-slate-200 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100"}`}>
+            <BadgePercent className="h-4 w-4 text-emerald-500" />
+            <span className="text-sm text-slate-400">$</span>
+            <input type="number" min="0" step="0.01" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
+            <span className="text-xs font-semibold text-slate-400">CAD</span>
+          </span>
+          <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Applied to the later professional installments first. Government fees are never discounted.</span>
+        </label>
+      ) : (
+        <label className="mt-2 block text-xs font-medium text-slate-600">Final agreed total, including HST
+          <span className={`mt-1.5 flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5 ${disabled ? "border-slate-100 opacity-65" : "border-slate-200 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100"}`}>
+            <Calculator className="h-4 w-4 text-emerald-500" />
+            <span className="text-sm text-slate-400">$</span>
+            <input type="number" min="0" step="0.01" value={finalTotalInput} disabled={disabled} onChange={(event) => handleFinalTotalChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
+            <span className="text-xs font-semibold text-slate-400">CAD</span>
+          </span>
+          <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Enter what the client should pay in total — the professional-fee discount needed to land there is worked out automatically. Government fees are never discounted.</span>
+        </label>
+      )}
+
+      {hasFees ? (
+        <TaxSummaryBar
+          taxSummary={{
+            professionalFeesBeforeDiscount: taxableSubtotal,
+            discountAmount: discountValue,
+            taxableSubtotal: netTaxable,
+            tax,
+            nonTaxableSubtotal,
+            totalFee,
+            taxRatePercent,
+          }}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -192,6 +304,7 @@ function ScheduleBuilder({ caseItem, onCreated }) {
   const [discountAmount, setDiscountAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const { feeKindByType, taxRatePercent } = useScheduleTaxContext();
 
   function applyTemplate(template) {
     setInstallments(
@@ -230,7 +343,7 @@ function ScheduleBuilder({ caseItem, onCreated }) {
           <input type="date" required value={signingDate} onChange={(event) => setSigningDate(event.target.value)} className="w-full bg-transparent text-sm outline-none" />
         </span>
       </label>
-      <div className="mt-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} /></div>
+      <div className="mt-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} installments={installments} feeKindByType={feeKindByType} taxRatePercent={taxRatePercent} /></div>
       <div className="mt-3.5">
         <InstallmentListEditor installments={installments} onChange={setInstallments} />
       </div>
@@ -248,6 +361,7 @@ function ScheduleEditor({ caseId, schedule, onSaved, onCancel }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const lockedIds = useMemo(() => new Set(schedule.installments.filter((row) => FIRED_STATUSES.has(row.status)).map((row) => row.id)), [schedule]);
+  const { feeKindByType, taxRatePercent } = useScheduleTaxContext();
 
   async function save() {
     setSaving(true);
@@ -264,7 +378,7 @@ function ScheduleEditor({ caseId, schedule, onSaved, onCancel }) {
 
   return (
     <div className="rounded-[1.4rem] border border-sky-200/80 bg-sky-50/40 p-4">
-      <div className="mb-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} disabled={lockedIds.size > 0} /></div>
+      <div className="mb-3.5"><DiscountField value={discountAmount} onChange={setDiscountAmount} disabled={lockedIds.size > 0} installments={installments} feeKindByType={feeKindByType} taxRatePercent={taxRatePercent} /></div>
       <InstallmentListEditor installments={installments} onChange={setInstallments} lockedIds={lockedIds} />
       {error ? <p className="mt-2.5 text-xs text-rose-600">{error}</p> : null}
       <div className="mt-3.5 flex items-center gap-2">

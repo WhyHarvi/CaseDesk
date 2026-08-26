@@ -7,7 +7,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, previewCaseBillingRetainer, resetCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../../api/caseBillingRetainerApi";
 import { getCaseSchedule } from "../../api/paymentScheduleApi";
 import InstallmentListEditor, { blankInstallment } from "../payments/InstallmentListEditor";
-import { DiscountField, TemplatePicker } from "./CasePaymentScheduleWorkspace";
+import { DiscountField, TemplatePicker, useScheduleTaxContext } from "./CasePaymentScheduleWorkspace";
 
 const STATUS_META = {
   Draft: { label: "Draft — not yet sent", tone: "bg-slate-100 text-slate-600" },
@@ -107,6 +107,7 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onPreview }) {
   const [signingDate, setSigningDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [installments, setInstallments] = useState([blankInstallment()]);
   const [discountAmount, setDiscountAmount] = useState("");
+  const { feeKindByType, taxRatePercent } = useScheduleTaxContext();
   const [preview, setPreview] = useState(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState("");
@@ -169,7 +170,7 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onPreview }) {
             <input type="date" required value={signingDate} onChange={(event) => { invalidateReview(); setSigningDate(event.target.value); }} className="w-full bg-transparent text-sm outline-none" />
           </span>
         </label>
-        <div className="mt-3.5"><DiscountField value={discountAmount} onChange={(value) => { invalidateReview(); setDiscountAmount(value); }} /></div>
+        <div className="mt-3.5"><DiscountField value={discountAmount} onChange={(value) => { invalidateReview(); setDiscountAmount(value); }} installments={installments} feeKindByType={feeKindByType} taxRatePercent={taxRatePercent} /></div>
         <div className="mt-3.5">
           <InstallmentListEditor installments={installments} onChange={(value) => { invalidateReview(); setInstallments(value); }} />
         </div>
