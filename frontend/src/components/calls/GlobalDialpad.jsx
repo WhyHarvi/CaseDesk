@@ -1,5 +1,6 @@
 import { ArrowLeftRight, BatteryFull, Circle, Clipboard, Delete, Grid3x3, Keyboard, Loader2, Mic, MicOff, Phone, PhoneCall, PhoneOff, Search, StickyNote, Wifi, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 import api from "../../services/api";
@@ -23,6 +24,7 @@ export function openGlobalDialpad(number = "") {
 }
 
 export default function GlobalDialpad() {
+  const location = useLocation();
   const { dial, active, status, muted, toggleMute, hangup, sendDigits } = useSoftphone();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState("");
@@ -444,6 +446,12 @@ export default function GlobalDialpad() {
     setNumber((current) => current.slice(0, -1));
     setError("");
   };
+
+  // Hidden on the Chats page itself — same reasoning FloatingChatWidget
+  // already applies there for the same reason (redundant with the page you're
+  // already on). Never hidden mid-call, though: navigating to Chats while on
+  // a live call must not strand the hang-up/mute controls.
+  if (location.pathname === "/app/chats" && !active) return null;
 
   if (!open) {
     return (

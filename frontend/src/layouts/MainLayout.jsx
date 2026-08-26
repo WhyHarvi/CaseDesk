@@ -47,7 +47,15 @@ export default function MainLayout({ children, hideTopBar = false, lockContentSc
             </>
           ) : null}
           <main
-            className={`min-h-0 min-w-0 flex-1 ${effectiveFlushContent ? "" : "px-6 py-8"} ${
+            // pb-28 (not py-8's usual bottom): GlobalDialpad and
+            // FloatingChatWidget are both `fixed bottom-6` with a ~56px
+            // (h-14) collapsed footprint, so anything scrolled to the very
+            // bottom of a normal page — pagination, "Previous/Next", a form's
+            // Save button — renders directly underneath them otherwise, with
+            // no way to reach it. Only applies to the default scrollable
+            // layout; Settings/Writer/Chats manage their own flush/locked
+            // scroll area and aren't affected by this.
+            className={`min-h-0 min-w-0 flex-1 ${effectiveFlushContent ? "" : "px-6 pt-8 pb-28"} ${
               effectiveLockContentScroll ? "overflow-hidden" : "overflow-y-auto"
             }`}
           >

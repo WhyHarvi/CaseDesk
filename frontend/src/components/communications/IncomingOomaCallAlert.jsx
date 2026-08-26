@@ -49,7 +49,12 @@ export default function IncomingOomaCallAlert() {
   if (!call) return null;
   const known = Boolean(call.client || call.lead);
   return (
-    <aside className="fixed bottom-5 right-5 z-[70] w-[calc(100%-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-sky-200/80 bg-white/95 shadow-[0_24px_80px_rgba(2,132,199,0.24)] backdrop-blur-xl" role="status" aria-live="polite">
+    // z-[425]: same bottom-right corner as GlobalDialpad (z-390),
+    // FloatingChatWidget (z-410), and SoftphoneProvider's call card
+    // (z-420, the Twilio equivalent of this Ooma alert) — stacked just
+    // above all three so a real incoming call, and its dismiss/open
+    // buttons, are never buried and unclickable underneath them.
+    <aside className="fixed bottom-5 right-5 z-[425] w-[calc(100%-2.5rem)] max-w-sm overflow-hidden rounded-3xl border border-sky-200/80 bg-white/95 shadow-[0_24px_80px_rgba(2,132,199,0.24)] backdrop-blur-xl" role="status" aria-live="polite">
       <div className="h-1 bg-gradient-to-r from-sky-400 via-cyan-400 to-emerald-400" />
       <div className="p-4">
         <div className="flex items-start gap-3">
