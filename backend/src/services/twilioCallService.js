@@ -315,8 +315,6 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // unless we hand the parent SID over explicitly as a custom parameter.
   const parentCallSid = clean(req.body?.CallSid, 64);
   const inboundCallerNumber = clean(req.body?.From, 80);
-  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
-  if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   const base = twilioPublicBase(req);
   // A <Dial><Client> callback describes the browser child leg, where From is
   // `client:casedesk:<userId>`. Twilio does not consistently include the
@@ -325,7 +323,15 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // retain the external caller number instead of displaying "Private number".
   const inboundBusinessNumber = clean(req.body?.To, 80);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?parentCallSid=${encodeURIComponent(parentCallSid)}&callerNumber=${encodeURIComponent(inboundCallerNumber)}&businessNumber=${encodeURIComponent(inboundBusinessNumber)}`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
+  // statusCallback/statusCallbackEvent belong on the <Client> noun, not on
+  // <Dial> itself — Twilio's TwiML schema only allows them there. Putting
+  // them on <Dial> instead is what Twilio Debugger warning 12200 ("not
+  // allowed to appear in element 'Dial'") was flagging on this exact
+  // endpoint, and per handleTwilioCallStatus's own notes below, an
+  // attribute Twilio's parser rejects also just never reliably fires.
+  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
+  if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25">${clients}</Dial></Response>`;
 }
 
 // Outbound call from a softphone client (the TwiML Application's Voice URL).
@@ -344,11 +350,13 @@ export async function outboundTwiML(agencyId, req) {
     // Same ParentCallSid hand-off as inboundTwiML above — the staff being
     // rung here only ever see their own (child) leg's SID otherwise.
     const parentCallSid = clean(req.body?.CallSid, 64);
-    const clients = (await staffClientIdentities(agencyId)).map((identity) => `<Client>${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
-    if (!clients) return unavailableTwiML;
     const base = twilioPublicBase(req);
     const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}`;
-    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${clients}</Dial></Response>`;
+    // See inboundTwiML — statusCallback/statusCallbackEvent must live on
+    // <Client>, not <Dial>, or Twilio's parser rejects them (Debugger 12200).
+    const clients = (await staffClientIdentities(agencyId)).map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
+    if (!clients) return unavailableTwiML;
+    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30">${clients}</Dial></Response>`;
   }
 
   const agentIdentity = identityFromClient(req.body?.From);
@@ -367,21 +375,23 @@ export async function outboundTwiML(agencyId, req) {
   // document and the caller hears "an application error has occurred" —
   // exactly what was happening on every call that carried a leadId/clientId.
   //
-  // Twilio's parser flags this Dial's statusCallback/statusCallbackEvent
-  // attributes with schema warning 12200 ("not allowed to appear in
-  // element 'Dial'") specifically for this Client-initiated outbound flow
-  // — confirmed against live Debugger alerts and call logs: every outbound
-  // call's remoteNumber only ever showed up via a manual history sync
-  // (sometimes hours later), while inbound calls, which don't depend on
-  // this attribute, stayed live the whole time. `action` is unaffected and
-  // always fires once the dial finishes, so it's the reliable mechanism
-  // here — handleTwilioCallStatus recognizes the DialCallStatus/
-  // DialCallSid shape action posts and treats it as the authoritative
-  // outbound outcome. The real dialed number rides along as `dialedNumber`
-  // since the action request's own To/From describe the leg executing the
-  // Dial (the agent's Client→Application leg), not the number actually
-  // dialed.
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" action="${escapeXml(statusBase)}" method="POST" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Dial></Response>`;
+  // statusCallback/statusCallbackEvent are only valid on the <Number> noun,
+  // not on <Dial> itself — putting them on <Dial> (as this used to) is what
+  // triggered schema warning 12200 ("not allowed to appear in element
+  // 'Dial'") and, per handleTwilioCallStatus's notes below, meant they never
+  // reliably fired at all for this flow: every outbound call's remoteNumber
+  // only ever showed up via a manual history sync (sometimes hours later),
+  // while inbound calls stayed live the whole time. `action` on <Dial> is
+  // unaffected by that and always fires once the dial finishes, so it stays
+  // the authoritative mechanism here — handleTwilioCallStatus recognizes the
+  // DialCallStatus/DialCallSid shape action posts and treats it as the
+  // authoritative outbound outcome. Wrapping the number in <Number> now
+  // lets statusCallback/statusCallbackEvent also fire correctly as a second,
+  // redundant confirmation, with no change to what action already did. The
+  // real dialed number rides along as `dialedNumber` since the action
+  // request's own To/From describe the leg executing the Dial (the agent's
+  // Client→Application leg), not the number actually dialed.
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------
@@ -410,7 +420,9 @@ export async function transferTwilioCall(agencyId, { toUserId, callSid }, req) {
   // activeTwilioCall resolves the controllable live leg (normally the parent
   // SID). Hand that SID to the next browser so the transferred-to person can
   // transfer or record again without depending on callback timing.
-  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30" statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed"><Client>${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
+  // statusCallback/statusCallbackEvent go on <Client>, not <Dial> — see
+  // inboundTwiML for why (Debugger 12200).
+  const twiml = `<Response><Dial callerId="${escapeXml(callerId)}" timeout="30"><Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(clientIdentity(target.id))}<Parameter name="ParentCallSid" value="${escapeXml(session.providerCallId)}"/></Client></Dial></Response>`;
   await client.calls(session.providerCallId).update({ twiml });
   logger.info("twilio.call_transferred", { agencyId, providerCallId: session.providerCallId, fromAgent: session.handledByUserId, toAgent: target.id });
   return { transferred: true, callerId, target: { id: target.id, fullName: target.fullName } };
@@ -594,14 +606,14 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   const parentCallSid = clean(body.parentCallSid || body.ParentCallSid, 64);
   if (!callSid && !parentCallSid) return { handled: false, reason: "no_call_sid" };
 
-  // <Dial>'s action attribute always fires once the dial finishes — unlike
-  // its statusCallback/statusCallbackEvent attributes, which Twilio's
-  // parser rejects for the outbound Client-initiated flow (see
-  // outboundTwiML) and which then never reliably fire at all. An action
-  // request is identifiable by DialCallStatus/DialCallSid, params that
-  // never appear on a regular per-leg status callback, and it's treated as
-  // the authoritative outbound outcome below rather than the parent leg's
-  // own (irrelevant) status.
+  // <Dial>'s action attribute always fires once the dial finishes and stays
+  // the authoritative source for the outbound Client-initiated flow (see
+  // outboundTwiML — statusCallback there now also fires correctly, since
+  // it's properly nested on <Number>, but action was already reliable and
+  // remains the primary signal). An action request is identifiable by
+  // DialCallStatus/DialCallSid, params that never appear on a regular
+  // per-leg status callback, and it's treated as the authoritative outbound
+  // outcome below rather than the parent leg's own (irrelevant) status.
   const isDialAction = body.DialCallStatus !== undefined;
   const status = isDialAction ? twilioCallStatus("completed", body.DialCallStatus) : twilioCallStatus(body.CallStatus, body.DialCallStatus);
   const isRecording = body.recording === "1" || Boolean(clean(body.RecordingSid, 64));

@@ -44,6 +44,31 @@ test("the Twilio call service issues Voice-grant access tokens and bridges TwiML
   assert.match(service, /Dial callerId=/);
 });
 
+test("statusCallback/statusCallbackEvent live on <Client>/<Number>, never on <Dial> itself — Twilio's schema only allows them on the nested noun (Debugger warning 12200)", async () => {
+  const service = await source("../src/services/twilioCallService.js");
+  // inboundTwiML and outboundTwiML's internal-line branch: each <Client>
+  // carries its own statusCallback, not the wrapping <Dial>.
+  const clientStatusCallbackCount = (service.match(/<Client statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{escapeXml\(identity\)\}<Parameter name="ParentCallSid"/g) || []).length;
+  assert.equal(clientStatusCallbackCount, 2, "both inboundTwiML and outboundTwiML's internal-line branch must put statusCallback on <Client>");
+  // outboundTwiML's external-number branch: the bare dialed number is
+  // wrapped in <Number> so statusCallback has a valid home; action/method
+  // stay on <Dial> unchanged (still the authoritative outbound source).
+  assert.match(service, /<Dial callerId="\$\{escapeXml\(config\.voiceNumber\)\}" timeout="30" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
+  // None of the four <Dial ...> opening tags carry statusCallback directly.
+  const dialTags = service.match(/<Dial [^>]*>/g) || [];
+  assert.ok(dialTags.length >= 4, "expected at least 4 <Dial> tags across inbound/outbound/transfer");
+  for (const tag of dialTags) {
+    assert.doesNotMatch(tag, /statusCallback=/, `<Dial> tag must not carry statusCallback directly: ${tag}`);
+  }
+});
+
+test("the status/action webhook always answers with a valid TwiML Content-Type, since it doubles as outboundTwiML's <Dial action> callback (Debugger error 12300 otherwise)", async () => {
+  const controller = await source("../src/controllers/twilioWebhookController.js");
+  const statusFn = controller.slice(controller.indexOf("export async function twilioCallStatus"));
+  assert.match(statusFn, /res\.type\("text\/xml"\)\.send\("<Response><\/Response>"\)/);
+  assert.doesNotMatch(statusFn, /res\.status\(200\)\.send\(\);/);
+});
+
 test("status callbacks ingest into the shared call history and distinguish missed calls", async () => {
   const [service, webhookController] = await Promise.all([
     source("../src/services/twilioCallService.js"),
@@ -94,7 +119,7 @@ test("voice lines route inbound calls to their group and the internal line bridg
   // The transfer target's <Client> carries session.providerCallId through as
   // a ParentCallSid parameter — the same hand-off inboundTwiML uses — so the
   // person transferred to can themselves transfer or record afterward.
-  assert.match(service, /<Client>\$\{escapeXml\(clientIdentity\(target\.id\)\)\}<Parameter name="ParentCallSid" value="\$\{escapeXml\(session\.providerCallId\)\}"\/><\/Client>/);
+  assert.match(service, /<Client statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{escapeXml\(clientIdentity\(target\.id\)\)\}<Parameter name="ParentCallSid" value="\$\{escapeXml\(session\.providerCallId\)\}"\/><\/Client>/);
   assert.match(service, /export async function listTwilioCallableStaff/);
   // The per-line webhook path is wired for Twilio to fetch.
   const webhookRoutes = await source("../src/routes/communicationWebhookRoutes.js");

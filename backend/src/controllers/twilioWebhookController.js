@@ -31,5 +31,11 @@ export async function twilioCallStatus(req, res) {
   } catch (error) {
     logger.warn("twilio.status_callback_failed", { agencyId: req.params.agencyId, callSid: req.body?.CallSid, reason: error.message });
   }
-  res.status(200).send();
+  // This same URL doubles as outboundTwiML's <Dial action> callback, not
+  // just a fire-and-forget statusCallback — an action callback must get a
+  // valid TwiML response back, or Twilio flags it as Debugger error 12300
+  // ("Invalid Content-Type") since a bare 200 with no body carries no
+  // Content-Type at all. An empty <Response/> satisfies both cases: nothing
+  // more to do, the call has already ended by the time this fires.
+  res.type("text/xml").send("<Response></Response>");
 }
