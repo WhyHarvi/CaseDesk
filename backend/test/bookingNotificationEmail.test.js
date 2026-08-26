@@ -160,6 +160,52 @@ test("phone emails say that CHK calls the client and never ask the client to dia
   assert.match(email.text, /Format: Phone call/);
 });
 
+test("in-person emails always include a friendly early-arrival note, phone emails always include a friendly timing note, and neither shows up for Zoom", () => {
+  const inPerson = bookingEmailContent({
+    appointment: { ...baseAppointment, meetingMode: "InPerson", location: "Main Office — 123 Main St" },
+    kind: "booked",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+  assert.match(inPerson.html, /Please try to arrive no more than 10 minutes before your appointment time/);
+  assert.match(inPerson.text, /Please try to arrive no more than 10 minutes before your appointment time/);
+
+  const phone = bookingEmailContent({
+    appointment: { ...baseAppointment, meetingMode: "Phone", meetingPhoneNumber: "+16475550100", location: null, locationMapsUrl: null },
+    kind: "booked",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+  assert.match(phone.html, /call timing can shift a little depending on how many appointments/);
+  assert.match(phone.text, /call timing can shift a little depending on how many appointments/);
+
+  const zoom = bookingEmailContent({
+    appointment: { ...baseAppointment, meetingMode: "Zoom", meetingUrl: "https://zoom.us/j/123", location: null, locationMapsUrl: null },
+    kind: "booked",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+  assert.doesNotMatch(zoom.html, /arrive no more than 10 minutes/);
+  assert.doesNotMatch(zoom.html, /call timing can shift/);
+
+  // A cancellation shouldn't tell someone to arrive early or expect a call.
+  const cancelled = bookingEmailContent({
+    appointment: { ...baseAppointment, meetingMode: "InPerson", location: "Main Office — 123 Main St" },
+    kind: "cancelled",
+    agency,
+    timezone: "America/Toronto",
+    contactName: "Jordan Lee",
+    manageUrl: "https://case-desk.example/book/manage/token-1",
+  });
+  assert.doesNotMatch(cancelled.html, /arrive no more than 10 minutes/);
+});
+
 test("Zoom emails identify Zoom separately from Jitsi", () => {
   const email = bookingEmailContent({
     appointment: {
