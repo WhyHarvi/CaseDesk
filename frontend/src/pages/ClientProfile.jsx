@@ -707,7 +707,7 @@ export default function ClientProfile() {
     }
   }
 
-  const shellBg = "min-h-full min-w-0 bg-slate-100/65 px-3 py-4 sm:px-5 lg:px-6";
+  const shellBg = "min-h-full min-w-0 px-3 py-4 sm:px-5 lg:px-6";
 
   if (loading) {
     return (
@@ -882,29 +882,8 @@ export default function ClientProfile() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 lg:shrink-0">
-              <button
-                type="button"
-                disabled={!workflowAppointmentId}
-                onClick={() => openAppointment(workflowAppointmentId, "pre-consultation")}
-                title={workflowAppointmentId ? "Open the pre-consultation questionnaire" : "No appointment is available"}
-                className="inline-flex h-11 items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                <FileText className="h-4 w-4" />
-                Pre-consultation form
-              </button>
-              {canAccessInternalNotes ? (
-                <button
-                  type="button"
-                  disabled={!workflowAppointmentId}
-                  onClick={() => openAppointment(workflowAppointmentId, "advice-handoff", "notes")}
-                  title={workflowAppointmentId ? "Open advice and handoff" : "No appointment is available"}
-                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <StickyNote className="h-4 w-4" />
-                  Advice &amp; handoff
-                </button>
-              ) : null}
+            <div className="flex flex-col items-end gap-2 lg:shrink-0">
+              <div className="flex flex-wrap items-center justify-end gap-2">
               {canAccessInternalNotes ? (
                 <button
                   type="button"
@@ -944,6 +923,31 @@ export default function ClientProfile() {
                   Create case
                 </Link>
               ) : null}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={!workflowAppointmentId}
+                  onClick={() => openAppointment(workflowAppointmentId, "pre-consultation")}
+                  title={workflowAppointmentId ? "Open the pre-consultation questionnaire" : "No appointment is available"}
+                  className="inline-flex h-11 items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <FileText className="h-4 w-4" />
+                  Pre-consultation form
+                </button>
+                {canAccessInternalNotes ? (
+                  <button
+                    type="button"
+                    disabled={!workflowAppointmentId}
+                    onClick={() => openAppointment(workflowAppointmentId, "advice-handoff", "notes")}
+                    title={workflowAppointmentId ? "Open advice and handoff" : "No appointment is available"}
+                    className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <StickyNote className="h-4 w-4" />
+                    Advice &amp; handoff
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         </motion.header>
