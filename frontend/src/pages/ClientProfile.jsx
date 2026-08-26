@@ -4,6 +4,7 @@ import {
   Calendar,
   Check,
   ChevronDown,
+  FileText,
   History,
   IdCard,
   Languages,
@@ -416,7 +417,8 @@ export default function ClientProfile() {
   const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
   const [statementOpen, setStatementOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(false);
-  const [selectedNoteAppointmentId, setSelectedNoteAppointmentId] = useState(null);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [workflowAppointmentId, setWorkflowAppointmentId] = useState(null);
   const [assignmentUsers, setAssignmentUsers] = useState([]);
   const [assignmentUserId, setAssignmentUserId] = useState("");
   const [assignmentLoading, setAssignmentLoading] = useState(false);
@@ -514,6 +516,30 @@ export default function ClientProfile() {
   useEffect(() => {
     loadClient();
   }, [id]);
+
+  useEffect(() => {
+    let active = true;
+    async function resolveWorkflowAppointment() {
+      try {
+        const upcoming = await api.get(`/clients/${id}/appointments?scope=upcoming&page=1&limit=1`);
+        let appointment = upcoming.data.data?.[0] || null;
+        if (!appointment) {
+          const recent = await api.get(`/clients/${id}/appointments?scope=all&page=1&limit=1`);
+          appointment = recent.data.data?.[0] || null;
+        }
+        if (active) setWorkflowAppointmentId(appointment?.id || null);
+      } catch {
+        if (active) setWorkflowAppointmentId(null);
+      }
+    }
+    resolveWorkflowAppointment();
+    return () => { active = false; };
+  }, [id]);
+
+  function openAppointment(appointmentId, action = null, initialTab = "details") {
+    if (!appointmentId) return;
+    setSelectedAppointment({ id: appointmentId, action, initialTab });
+  }
 
   useEffect(() => {
     setAssignmentUserId(client?.assignedUser?.id || "");
@@ -751,11 +777,12 @@ export default function ClientProfile() {
             }, 80);
           }}
         />
-        {selectedNoteAppointmentId ? (
+        {selectedAppointment ? (
           <AppointmentProfileOverlay
-            appointmentId={selectedNoteAppointmentId}
-            initialTab="notes"
-            onClose={() => setSelectedNoteAppointmentId(null)}
+            appointmentId={selectedAppointment.id}
+            initialTab={selectedAppointment.initialTab}
+            initialAction={selectedAppointment.action}
+            onClose={() => setSelectedAppointment(null)}
             onChanged={loadClient}
           />
         ) : null}
@@ -856,6 +883,28 @@ export default function ClientProfile() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 lg:shrink-0">
+              <button
+                type="button"
+                disabled={!workflowAppointmentId}
+                onClick={() => openAppointment(workflowAppointmentId, "pre-consultation")}
+                title={workflowAppointmentId ? "Open the pre-consultation questionnaire" : "No appointment is available"}
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 text-sm font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <FileText className="h-4 w-4" />
+                Pre-consultation form
+              </button>
+              {canAccessInternalNotes ? (
+                <button
+                  type="button"
+                  disabled={!workflowAppointmentId}
+                  onClick={() => openAppointment(workflowAppointmentId, "advice-handoff", "notes")}
+                  title={workflowAppointmentId ? "Open advice and handoff" : "No appointment is available"}
+                  className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <StickyNote className="h-4 w-4" />
+                  Advice &amp; handoff
+                </button>
+              ) : null}
               {canAccessInternalNotes ? (
                 <button
                   type="button"
@@ -906,7 +955,7 @@ export default function ClientProfile() {
             scroll of same-weight cards. */}
         <div className="grid gap-5 xl:grid-cols-[1.62fr_0.85fr] xl:items-start">
           <div className="min-w-0 space-y-5">
-            <ClientAppointmentsCard clientId={client.id} />
+            <ClientAppointmentsCard clientId={client.id} onOpenAppointment={openAppointment} />
 
             <motion.article initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.03 }} className={cx(glass, "p-6")}>
               <div className="flex items-center justify-between gap-4">
@@ -1000,7 +1049,7 @@ export default function ClientProfile() {
                         {note.appointment ? (
                           <button
                             type="button"
-                            onClick={() => setSelectedNoteAppointmentId(note.appointment.id)}
+                            onClick={() => openAppointment(note.appointment.id, null, "notes")}
                             className="mb-2 inline-flex max-w-full items-center gap-2 rounded-full bg-violet-50 px-3 py-1.5 text-left text-[11px] font-semibold text-violet-700 transition hover:bg-violet-100"
                           >
                             <span className="truncate">{note.appointment.subject}</span>
@@ -1154,7 +1203,7 @@ export default function ClientProfile() {
               </div>
             </motion.article>
 
-            {role === "admin" ? <CaseEasyReportsCard clientId={client.id} /> : null}
+            <CaseEasyReportsCard clientId={client.id} />
           </div>
         </div>
       </div>

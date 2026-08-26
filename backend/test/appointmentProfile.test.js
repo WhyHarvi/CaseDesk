@@ -38,6 +38,32 @@ test("a client's appointments card defaults to All, with Upcoming/History alongs
   assert.match(controller, /const scope = \["upcoming", "history", "all"\]\.includes\(String\(req\.query\.scope\)\)\s*\? String\(req\.query\.scope\)\s*: "all";/);
 });
 
+test("client appointment shortcuts open the correct workflow, reveal it, and briefly identify the work area", async () => {
+  const [card, overlay] = await Promise.all([
+    source("../../frontend/src/components/appointments/ClientAppointmentsCard.jsx"),
+    source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx"),
+  ]);
+
+  const clientProfile = await source("../../frontend/src/pages/ClientProfile.jsx");
+  assert.doesNotMatch(card, /Pre-consultation form|Advice &amp; handoff/);
+  assert.match(clientProfile, /openAppointment\(workflowAppointmentId, "pre-consultation"\)/);
+  assert.match(clientProfile, /openAppointment\(workflowAppointmentId, "advice-handoff", "notes"\)/);
+  assert.match(clientProfile, /initialAction=\{selectedAppointment\.action\}/);
+  assert.ok(clientProfile.indexOf("Pre-consultation form") < clientProfile.indexOf("<ClientAppointmentsCard"));
+  assert.match(overlay, /initialAction === "advice-handoff" \? "notes"/);
+  assert.match(overlay, /initialAction === "pre-consultation" \? "details"/);
+  assert.match(overlay, /openAdviceComposer\(\)/);
+  assert.match(overlay, /useFadingHighlight\(initialAction/);
+  assert.match(overlay, /domIdPrefix: "appointment-action-"/);
+  assert.match(overlay, /id="appointment-action-pre-consultation"/);
+  assert.match(overlay, /id="appointment-action-advice-handoff"/);
+  assert.ok(
+    overlay.indexOf('id="appointment-action-advice-handoff"') < overlay.indexOf("Advice & handoff"),
+    "the advice beacon belongs on the Advice & handoff card",
+  );
+  assert.match(overlay, /focus\(\{ preventScroll: true \}\)/);
+});
+
 test("appointment notes show the client query before an explicit note composer", async () => {
   const profile = await source(
     "../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx",

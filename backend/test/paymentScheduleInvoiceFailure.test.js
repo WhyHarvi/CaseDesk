@@ -46,6 +46,14 @@ test("after-tax fixed discounts are explicitly non-taxable in QuickBooks", () =>
   assert.equal(preTaxTotal + taxableBase * 0.13, 500);
 });
 
+test("discounted invoices fail before posting when QuickBooks has no non-taxable code", async () => {
+  const quickBooksService = await source("../src/services/quickbooksService.js");
+
+  assert.match(quickBooksService, /fixedDiscount > 0 && !nonTaxableCodeId/);
+  assert.match(quickBooksService, /QBO_NON_TAXABLE_CODE_REQUIRED/);
+  assert.match(quickBooksService, /before CaseDesk can apply an after-tax discount/);
+});
+
 test("scheduled invoice failures persist and are exposed with an explicit retry", async () => {
   const [schema, service, controller, routes, api, workspace] = await Promise.all([
     source("../prisma/schema.prisma"),

@@ -40,7 +40,7 @@ export const defaultClientFormState = {
   identificationNumber: "",
   identificationCountry: "",
   identificationExpiryDate: "",
-  status: "Lead",
+  status: "Active",
   assignedUserId: "",
 };
 
@@ -154,7 +154,7 @@ function getInitials(name) {
 
 function normalizeStatus(status) {
   if (!status) {
-    return "Lead";
+    return "Active";
   }
 
   if (status === "Inactive") {
@@ -510,7 +510,7 @@ export function ClientDrawer({
                     onChange={onChange}
                     className="h-12 w-full rounded-2xl border border-slate-200/90 bg-white/90 px-4 text-sm text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                   >
-                    {["Lead", "Active", "Inactive", "Closed"].map((status) => (
+                    {["Active", "Inactive", "Closed"].map((status) => (
                       <option key={status} value={status}>
                         {status}
                       </option>
@@ -1099,7 +1099,7 @@ export default function Clients() {
     [enrichedClients]
   );
 
-  const statusOptions = ["All Statuses", "Lead", "Active", "Waiting", "Closed"];
+  const statusOptions = ["All Statuses", "Active", "Waiting", "Closed"];
   const staffOptions = useMemo(
     () => ["All Staff", ...new Set(users.map((user) => user.fullName).filter(Boolean))],
     [users]
@@ -1180,7 +1180,7 @@ export default function Clients() {
       identificationNumber: client.identificationNumber || "",
       identificationCountry: client.identificationCountry || "",
       identificationExpiryDate: formatDateForInput(client.identificationExpiryDate),
-      status: client.status || "Lead",
+      status: client.status || "Active",
       assignedUserId: client.assignedUser?.id || "",
     });
     setFormError("");

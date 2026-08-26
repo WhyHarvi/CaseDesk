@@ -484,6 +484,13 @@ export async function createQuickBooksInvoice(agencyId, {
   const fixedDiscount = Math.max(0, Number(discountAmount) || 0);
   const needsNonTaxableCode = fixedDiscount > 0 || invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
   const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
+  if (fixedDiscount > 0 && !nonTaxableCodeId) {
+    throw createHttpError(
+      409,
+      "QuickBooks needs an active non-taxable sales-tax code (Out of Scope, Zero-rated, or Exempt) before CaseDesk can apply an after-tax discount. Check the QuickBooks sales-tax setup and retry the invoice.",
+      "QBO_NON_TAXABLE_CODE_REQUIRED",
+    );
+  }
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",

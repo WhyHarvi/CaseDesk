@@ -132,11 +132,14 @@ const fields = {
   email: fieldParsers.stringField,
   dateOfBirth: fieldParsers.dateField,
   address: fieldParsers.stringField,
-  status: fieldParsers.enumField(["Lead", "Active", "Inactive", "Closed"]),
+  status: fieldParsers.enumField(["Active", "Inactive", "Closed"]),
   assignedUserId: fieldParsers.relationField,
 };
 
-const CLIENT_STATUSES = ["Lead", "Active", "Inactive", "Closed"];
+// Lead is a separate model and pipeline. ClientStatus.Lead remains in the
+// Prisma enum only long enough for legacy migrations to read old rows; no
+// client-facing API may create or restore that invalid hybrid state.
+const CLIENT_STATUSES = ["Active", "Inactive", "Closed"];
 
 const controller = createCrudController({
   model: "client",
@@ -927,7 +930,12 @@ export function clientPayload(body, existing = null) {
     phone: Object.hasOwn(body, "phone") ? body.phone : existing?.phone,
     email: Object.hasOwn(body, "email") ? body.email : existing?.email,
   });
-  const status = body.status ?? existing?.status ?? "Lead";
+  // Leads have their own pipeline and Lead model. A row created through
+  // the Clients screen is already a client, even when it has no case yet;
+  // defaulting it back to the legacy "Lead" client status makes successful
+  // creation look like it failed and leaves records such as CL-2026-000039
+  // stranded between the two workflows.
+  const status = body.status ?? existing?.status ?? "Active";
   if (!CLIENT_STATUSES.includes(status))
     throw createHttpError(400, "Client status is invalid.", "VALIDATION_ERROR");
   const hasDateOfBirth = Object.hasOwn(body, "dateOfBirth");

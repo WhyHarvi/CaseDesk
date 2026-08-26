@@ -141,7 +141,9 @@ test("case discounts apply after tax only to professional installments and flow 
   assert.match(service, /totalFee: Math\.max\(0, regularTotal - discountAmount\)/);
   assert.match(invoiceService, /const total = money\(totalBeforeDiscount - discount\)/);
   assert.match(quickBooksService, /ApplyTaxAfterDiscount: false/);
-  assert.match(quickBooksService, /DetailType: "DiscountLineDetail"/);
+  assert.match(quickBooksService, /Amount: -fixedDiscount/);
+  assert.match(quickBooksService, /TaxCodeRef: \{ value: nonTaxableTaxCodeId \}/);
+  assert.match(quickBooksService, /QBO_NON_TAXABLE_CODE_REQUIRED/);
   assert.match(controller, /discountAmount: req\.body\?\.discountAmount/);
   assert.match(workspace, /function DiscountField/);
   assert.match(workspace, /Government fees are never discounted/);

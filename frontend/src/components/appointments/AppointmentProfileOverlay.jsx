@@ -45,6 +45,7 @@ import MultiCaseTypeCombobox from "../ui/MultiCaseTypeCombobox";
 import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
+import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -92,7 +93,7 @@ function Empty({ children }) {
   return <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-5 py-8 text-center text-sm text-slate-400">{children}</div>;
 }
 
-export default function AppointmentProfileOverlay({ appointmentId, initialTab = "details", onClose, onChanged, onEditScheduling }) {
+export default function AppointmentProfileOverlay({ appointmentId, initialTab = "details", initialAction = null, onClose, onChanged, onEditScheduling }) {
   const { role, appUser, membership } = useAuth();
   const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
   const canWrite = ["admin", "consultant", "frontdesk"].includes(role);
@@ -159,7 +160,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (appointmentId) {
-      setTab(!canAccessInternalNotes && initialTab === "notes" ? "details" : initialTab);
+      const requestedTab = initialAction === "advice-handoff" ? "notes" : initialAction === "pre-consultation" ? "details" : initialTab;
+      setTab(!canAccessInternalNotes && requestedTab === "notes" ? "details" : requestedTab);
       setEditingContext(false);
       setEditingSubject(false);
       setSubjectSuggestion(null);
@@ -169,7 +171,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setShowAdviceComposer(false);
       setAdviceError("");
     }
-  }, [appointmentId, canAccessInternalNotes, initialTab]);
+  }, [appointmentId, canAccessInternalNotes, initialAction, initialTab]);
   useEffect(() => {
     if (completingConsultation || !appointment?.leadConsultation) return;
     if (getDraftConsultationId() === appointment.leadConsultation.id) setCompletingConsultation(true);
@@ -328,6 +330,28 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       }).catch(() => {});
     }
   }
+
+  useEffect(() => {
+    if (!loading && appointment && initialAction === "advice-handoff" && canAccessInternalNotes) openAdviceComposer();
+    // Opening is intentionally tied to the requested deep action, not to
+    // changes made while the consultant is working inside the composer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentId, loading, initialAction, canAccessInternalNotes]);
+
+  const actionReady = !loading && Boolean(appointment) && (
+    (initialAction === "pre-consultation" && tab === "details")
+    || (initialAction === "advice-handoff" && tab === "notes" && showAdviceComposer)
+  );
+  const activeAction = useFadingHighlight(initialAction, {
+    domIdPrefix: "appointment-action-",
+    ready: actionReady,
+    deps: [tab, showAdviceComposer],
+  });
+
+  useEffect(() => {
+    if (!activeAction) return;
+    document.getElementById(`appointment-action-${activeAction}`)?.focus({ preventScroll: true });
+  }, [activeAction]);
 
   const adviceDraftKey = JSON.stringify({ adviceCategories, adviceText, adviceAssignedUserId, adviceFollowUpDate });
   const savedAdviceKey = savedAdvice ? JSON.stringify({ adviceCategories: savedAdvice.categories, adviceText: savedAdvice.adviceText, adviceAssignedUserId: savedAdvice.assignedUserId, adviceFollowUpDate: savedAdvice.followUpDate ? savedAdvice.followUpDate.slice(0, 10) : "" }) : "";
@@ -559,7 +583,9 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 </div>
                 <div className="mt-4 flex flex-wrap gap-2"><Link to={calendarUrl} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700"><CalendarDays className="h-3.5 w-3.5" />Open in calendar</Link>{appointment.meetingUrl ? <a href={appointment.meetingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-full bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white"><Video className="h-3.5 w-3.5" />Join meeting</a> : null}{appointment.location ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3.5 py-2 text-xs text-slate-600"><MapPin className="h-3.5 w-3.5" />{appointment.location}</span> : null}</div>
               </section>
-              <PreConsultationSummaryCard intake={appointment.preConsultationIntake} />
+              <div id="appointment-action-pre-consultation" tabIndex={-1} className={`rounded-[1.5rem] outline-none ${fadingHighlightClass(activeAction === "pre-consultation")}`}>
+                <PreConsultationSummaryCard intake={appointment.preConsultationIntake} />
+              </div>
               {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => appointment.lead?.id && appointment.leadConsultation?.id ? setCompletingConsultation(true) : setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
               {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
             </div> : null}
@@ -576,7 +602,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                 <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-900">Internal note</h3><p className="mt-1 text-xs text-slate-400">Discussion, outcome, or context for the next contact.</p></div>{!showNoteComposer ? <button type="button" onClick={() => setShowNoteComposer(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Note</button> : null}</div>
                 {showNoteComposer ? <form onSubmit={addNote} className="mt-4"><textarea autoFocus rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Write an internal note…" className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-sky-400" /><div className="mt-3 flex justify-end gap-2"><button type="button" disabled={saving} onClick={() => { setNote(""); setAutosavedNote(null); setShowNoteComposer(false); }} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Cancel</button><button type="submit" disabled={saving || !note.trim()} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save note"}</button></div></form> : null}
               </section> : null}
-              {canWrite ? <section className="rounded-[1.5rem] border border-white bg-white p-5 shadow-sm">
+              {canWrite ? <section id="appointment-action-advice-handoff" tabIndex={-1} className={`rounded-[1.5rem] border border-white bg-white p-5 shadow-sm outline-none ${fadingHighlightClass(activeAction === "advice-handoff")}`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900">Advice & handoff</h3>

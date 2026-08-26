@@ -459,10 +459,21 @@ export async function linkImportedContactsToExistingClients(agencyId, db = prism
     const candidateIds = new Set([...emailMatches, ...phoneMatches].map((client) => client.id));
     if (candidateIds.size !== 1) continue;
     const [convertedClientId] = candidateIds;
-    await db.caseEasyImportContact.update({
-      where: { id: contact.id },
-      data: { convertedClientId, importStatus: "converted" },
-    });
+    const linkContactAndReports = async (tx) => {
+      await tx.caseEasyImportContact.update({
+        where: { id: contact.id },
+        data: { convertedClientId, importStatus: "converted" },
+      });
+      await tx.caseEasyImportReportRow.updateMany({
+        where: { agencyId, linkedContactId: contact.id },
+        data: { linkedClientId: convertedClientId },
+      });
+    };
+    if (typeof db.$transaction === "function") {
+      await db.$transaction(linkContactAndReports);
+    } else {
+      await linkContactAndReports(db);
+    }
     linked += 1;
   }
   return linked;

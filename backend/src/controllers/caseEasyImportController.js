@@ -482,7 +482,16 @@ export async function getCaseEasyReportsForClient(req, res) {
   });
   if (!client) throw createHttpError(404, "Client not found.");
   const rows = await prisma.caseEasyImportReportRow.findMany({
-    where: { agencyId: req.user.agencyId, linkedClientId: client.id },
+    where: {
+      agencyId: req.user.agencyId,
+      OR: [
+        { linkedClientId: client.id },
+        {
+          linkedClientId: null,
+          linkedContact: { convertedClientId: client.id },
+        },
+      ],
+    },
     orderBy: [{ reportType: "asc" }, { importedAt: "desc" }],
     take: 250,
   });

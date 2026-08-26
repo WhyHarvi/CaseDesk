@@ -25,6 +25,10 @@ test("client management stores searchable identity fields and archives without d
   assert.match(controller, /AND: \[clientAccessWhere\(req\), \{ OR: contact \}\]/);
   assert.match(routes, /"\/contact-matches"/);
   assert.match(controller, /agencyId_creationIdempotencyKey/);
+  assert.match(controller, /existing\?\.status \?\? "Active"/);
+  assert.match(page, /defaultClientFormState[\s\S]*?status: "Active"/);
+  assert.doesNotMatch(controller, /CLIENT_STATUSES = \[[^\]]*"Lead"/);
+  assert.doesNotMatch(page, /\["Lead", "Active", "Inactive", "Closed"\]/);
   assert.match(controller, /archivedAt: new Date\(\), status: "Inactive"/);
   assert.doesNotMatch(routes, /router\.delete/);
   assert.match(page, /archive-impact/);

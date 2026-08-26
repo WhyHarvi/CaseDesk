@@ -36,14 +36,18 @@ test("Case Easy placeholder case types are treated as missing", () => {
 });
 
 test("late Case Easy imports link to one exact existing client without guessing", async () => {
-  const updates = [];
+  const contactUpdates = [];
+  const reportUpdates = [];
   const db = {
     caseEasyImportContact: {
       findMany: async () => [
         { id: "anwari-import", email: "anwarimalik15@gmail.com", phone: "+1 647 676 0329" },
         { id: "ambiguous-import", email: "shared@example.com", phone: null },
       ],
-      update: async (operation) => updates.push(operation),
+      update: async (operation) => contactUpdates.push(operation),
+    },
+    caseEasyImportReportRow: {
+      updateMany: async (operation) => reportUpdates.push(operation),
     },
     client: {
       findMany: async () => [
@@ -55,9 +59,13 @@ test("late Case Easy imports link to one exact existing client without guessing"
   };
 
   assert.equal(await linkImportedContactsToExistingClients("agency-1", db), 1);
-  assert.deepEqual(updates, [{
+  assert.deepEqual(contactUpdates, [{
     where: { id: "anwari-import" },
     data: { convertedClientId: "anwari-client", importStatus: "converted" },
+  }]);
+  assert.deepEqual(reportUpdates, [{
+    where: { agencyId: "agency-1", linkedContactId: "anwari-import" },
+    data: { linkedClientId: "anwari-client" },
   }]);
 });
 

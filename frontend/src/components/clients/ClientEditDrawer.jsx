@@ -18,7 +18,7 @@ const defaultFormState = {
   identificationNumber: "",
   identificationCountry: "",
   identificationExpiryDate: "",
-  status: "Lead",
+  status: "Active",
   assignedUserId: "",
 };
 
@@ -42,7 +42,7 @@ function clientToFormState(client) {
     identificationNumber: client.identificationNumber || "",
     identificationCountry: client.identificationCountry || "",
     identificationExpiryDate: formatDateForInput(client.identificationExpiryDate),
-    status: client.status || "Lead",
+    status: client.status || "Active",
     assignedUserId: client.assignedUser?.id || "",
   };
 }
@@ -211,7 +211,7 @@ export default function ClientEditDrawer({ client, onClose, onSaved }) {
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-slate-700">Status</span>
                   <select name="status" value={formState.status} onChange={handleInputChange} className="select-field h-12 w-full py-0">
-                    {["Lead", "Active", "Inactive", "Closed"].map((status) => <option key={status} value={status}>{status}</option>)}
+                    {["Active", "Inactive", "Closed"].map((status) => <option key={status} value={status}>{status}</option>)}
                   </select>
                 </label>
 

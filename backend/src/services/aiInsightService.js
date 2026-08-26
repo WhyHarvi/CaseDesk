@@ -573,12 +573,11 @@ async function resolveClientMetric(req, intent, db) {
   const base = { agencyId: req.auth.agencyId, AND: [access] };
   const currentWhere = { ...base, archivedAt: null };
   const assignedWhere = { ...currentWhere, assignedUserId: req.auth.userId };
-  const [total, active, inactive, closed, leads, archived, assignedTotal, assignedActive] = await Promise.all([
+  const [total, active, inactive, closed, archived, assignedTotal, assignedActive] = await Promise.all([
     db.client.count({ where: currentWhere }),
     db.client.count({ where: { ...currentWhere, status: "Active" } }),
     db.client.count({ where: { ...currentWhere, status: "Inactive" } }),
     db.client.count({ where: { ...currentWhere, status: "Closed" } }),
-    db.client.count({ where: { ...currentWhere, status: "Lead" } }),
     db.client.count({ where: { ...base, archivedAt: { not: null } } }),
     db.client.count({ where: assignedWhere }),
     db.client.count({ where: { ...assignedWhere, status: "Active" } }),
@@ -592,7 +591,7 @@ async function resolveClientMetric(req, intent, db) {
     return { answer: `You have ${countLabel(assignedTotal, "current client")} assigned to you; ${assignedActive} ${assignedActive === 1 ? "is" : "are"} active.\n\n${NOVA_LINKS.clients}` };
   }
   const assignedNote = req.auth.role === "admin" || intent.personal ? ` ${countLabel(assignedTotal, "client")} ${assignedTotal === 1 ? "is" : "are"} assigned directly to you.` : "";
-  return { answer: `${req.auth.role === "admin" ? "The workspace has" : "You can access"} ${countLabel(total, "non-archived client")} in total: ${active} active, ${inactive} inactive, ${closed} closed, and ${leads} still marked as leads. There are also ${countLabel(archived, "archived client")}.${assignedNote}\n\n${NOVA_LINKS.clients}` };
+  return { answer: `${req.auth.role === "admin" ? "The workspace has" : "You can access"} ${countLabel(total, "non-archived client")} in total: ${active} active, ${inactive} inactive, and ${closed} closed. There are also ${countLabel(archived, "archived client")}.${assignedNote}\n\n${NOVA_LINKS.clients}` };
 }
 
 function personalCaseWhere(req) {

@@ -319,13 +319,15 @@ test("report staging prefers stable identifiers and follows conversion links", a
 });
 
 test("report upload, browser, and client history are connected", async () => {
-  const [routes, settings, browser, clientCard, controller, service] = await Promise.all([
+  const [routes, settings, browser, clientCard, profile, controller, service, importService] = await Promise.all([
     source("../src/routes/caseEasyImportRoutes.js"),
     source("../../frontend/src/components/settings/CaseEasyReportImportPanel.jsx"),
     source("../../frontend/src/components/case-easy/CaseEasyReportsBrowser.jsx"),
     source("../../frontend/src/components/clients/CaseEasyReportsCard.jsx"),
+    source("../../frontend/src/pages/ClientProfile.jsx"),
     source("../src/controllers/caseEasyImportController.js"),
     source("../src/services/caseEasyReportImportService.js"),
+    source("../src/services/caseEasyImportService.js"),
   ]);
   assert.match(routes, /"\/reports\/preview"/);
   assert.match(routes, /"\/reports\/upload"/);
@@ -336,6 +338,9 @@ test("report upload, browser, and client history are connected", async () => {
   assert.match(browser, /Standalone companies/);
   assert.match(browser, /row\.companyName/);
   assert.match(clientCard, /Case Easy report history/);
+  assert.match(controller, /linkedContact: \{ convertedClientId: client\.id \}/);
+  assert.match(importService, /caseEasyImportReportRow\.updateMany/);
+  assert.doesNotMatch(profile, /role === "admin" \? <CaseEasyReportsCard/);
   assert.match(controller, /sheet\.rows\.length > 100_000/);
   assert.match(controller, /linkStatus === "standalone"/);
   assert.match(service, /caseEasyImportReportRow\.createMany/);
