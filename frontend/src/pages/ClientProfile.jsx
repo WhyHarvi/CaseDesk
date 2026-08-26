@@ -104,6 +104,7 @@ function getStatusStyles(status) {
     "Documents Pending": "bg-orange-100 text-orange-700",
     "Reviewing Documents": "bg-violet-100 text-violet-700",
     "Application Preparing": "bg-teal-100 text-teal-700",
+    "Application Under Review": "bg-blue-100 text-blue-700",
     Submitted: "bg-indigo-100 text-indigo-700",
   };
 

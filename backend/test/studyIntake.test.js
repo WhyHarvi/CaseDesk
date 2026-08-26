@@ -67,6 +67,21 @@ test("Study Permit cases expose education milestones without leaking them into o
   );
 });
 
+test("Application Under Review follows Application Preparing for every case type", () => {
+  for (const caseType of ["Study Permit", "Work Permit"]) {
+    const stages = caseStagesForType(caseType);
+    assert.equal(
+      stages.indexOf("Application Under Review"),
+      stages.indexOf("Application Preparing") + 1,
+    );
+  }
+  assert.equal(
+    isCaseStageAllowedForType("Work Permit", "Application Under Review"),
+    true,
+  );
+  assert.equal(stageRequiresStudyIntake("Application Under Review"), true);
+});
+
 test("case storage, filtering, audit history, and routes include academic intake", async () => {
   const [schema, migration, controller, routes] = await Promise.all([
     source("../prisma/schema.prisma"),

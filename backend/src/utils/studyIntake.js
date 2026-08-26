@@ -8,6 +8,7 @@ const CASE_STAGE_ORDER = [
   REQUIRED_FROM_STAGE,
   "Reviewing Documents",
   "Application Preparing",
+  "Application Under Review",
   "Submitted",
   "Decision Received",
   "Closed",

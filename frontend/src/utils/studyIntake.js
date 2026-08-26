@@ -7,6 +7,7 @@ const CASE_STAGE_ORDER = [
   "Documents Pending",
   "Reviewing Documents",
   "Application Preparing",
+  "Application Under Review",
   "Submitted",
   "Decision Received",
   "Closed",

@@ -34,6 +34,7 @@ const STAGE_PROGRESS = {
   "Documents Pending": 40,
   "Reviewing Documents": 60,
   "Application Preparing": 75,
+  "Application Under Review": 82,
   Submitted: 90,
   "Decision Received": 100,
   Closed: 100,
@@ -341,6 +342,9 @@ export function nextActionFor({ caseItem, documents, payment, assessment, agreem
   }
   if (underReview.length) {
     return { type: "waiting", title: "Waiting for review", reason: "Your documents were received and are being reviewed. We will let you know if anything else is needed.", dueDate: null, documentId: null, actionUrl: null };
+  }
+  if (caseItem.stage === "Application Under Review") {
+    return { type: "waiting", title: "Your application is under review", reason: "Your consultant is reviewing your application. No action is needed from you right now.", dueDate: null, documentId: null, actionUrl: null };
   }
   if (caseItem.stage === "Application Preparing" || caseItem.stage === "Reviewing Documents") {
     return { type: "waiting", title: "Your application is being prepared", reason: "Your consultant is working on your file. No action is needed from you right now.", dueDate: null, documentId: null, actionUrl: null };

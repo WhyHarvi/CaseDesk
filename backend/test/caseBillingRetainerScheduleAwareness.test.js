@@ -168,6 +168,12 @@ test("DiscountField can derive the professional-fee discount from a target final
   assert.match(fieldFn, /const targetNetTaxable = targetTaxablePortion \/ \(1 \+ taxRatePercent \/ 100\)/);
   assert.match(fieldFn, /Math\.max\(0, Math\.round\(\(taxableSubtotal - targetNetTaxable\) \* 100\) \/ 100\)/);
 
+  // The target can be entered before the installment amount. Changes to the
+  // fee rows must recalculate the discount without forcing staff to retype it.
+  assert.match(fieldFn, /useMemo\(\(\) => \{[\s\S]*\[finalTotalInput, nonTaxableSubtotal, taxableSubtotal, taxRatePercent\]\)/);
+  assert.match(fieldFn, /if \(mode !== DISCOUNT_ENTRY_MODES\.FINAL_TOTAL\) return;/);
+  assert.match(fieldFn, /A professional-fee discount of/);
+
   // Whichever mode is active, staff see the resulting breakdown before
   // saving — reusing TaxSummaryBar (previously only shown after a schedule
   // was already saved) rather than a second, divergent summary widget.

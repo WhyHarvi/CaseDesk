@@ -114,6 +114,7 @@ export function getDefaultNextAction(stage) {
     "Documents Pending": "Review documents",
     "Reviewing Documents": "Review documents",
     "Application Preparing": "Submit application",
+    "Application Under Review": "Monitor application review",
     Submitted: "Wait for decision",
     "Decision Received": "Call client",
     Closed: "Wait for decision",
@@ -136,6 +137,8 @@ function getStageStyles(stage) {
       "bg-violet-100 text-violet-700 ring-1 ring-violet-200",
     "Application Preparing":
       "bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200",
+    "Application Under Review":
+      "bg-blue-100 text-blue-700 ring-1 ring-blue-200",
     Submitted: "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200",
     "Decision Received": "bg-green-100 text-green-700 ring-1 ring-green-200",
     Closed: "bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200",

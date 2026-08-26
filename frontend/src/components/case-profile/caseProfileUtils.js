@@ -51,6 +51,7 @@ export function getStageStyles(stage) {
     "Documents Pending": "bg-orange-100 text-orange-700",
     "Reviewing Documents": "bg-violet-100 text-violet-700",
     "Application Preparing": "bg-indigo-100 text-indigo-700",
+    "Application Under Review": "bg-blue-100 text-blue-700",
     Submitted: "bg-emerald-100 text-emerald-700",
     "Decision Received": "bg-green-100 text-green-700",
     Closed: "bg-zinc-100 text-zinc-700",

@@ -10,6 +10,7 @@ const STAGE_LABELS = {
   "Documents Pending": "Documents needed",
   "Reviewing Documents": "Reviewing documents",
   "Application Preparing": "Preparing application",
+  "Application Under Review": "Application under review",
   Submitted: "Submitted",
   "Decision Received": "Decision received",
   Closed: "Closed",

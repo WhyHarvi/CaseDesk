@@ -13,6 +13,7 @@ export const CASE_STAGES = [
   "Documents Pending",
   "Reviewing Documents",
   "Application Preparing",
+  "Application Under Review",
   "Submitted",
   "Decision Received",
   "Closed",

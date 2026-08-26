@@ -115,15 +115,22 @@ export function DiscountField({ value, onChange, disabled = false, installments 
   // the gap between a tax-inclusive target and today's pre-tax fee fields —
   // this is exactly the "what discount gets me to a round final number"
   // question staff were previously doing by hand.
-  function handleFinalTotalChange(rawValue) {
-    setFinalTotalInput(rawValue);
-    const finalTotal = Number(rawValue);
-    if (!rawValue || Number.isNaN(finalTotal)) { onChange(""); return; }
+  const calculatedFinalTotalDiscount = useMemo(() => {
+    const finalTotal = Number(finalTotalInput);
+    if (!finalTotalInput || Number.isNaN(finalTotal)) return null;
     const targetTaxablePortion = Math.max(0, finalTotal - nonTaxableSubtotal);
     const targetNetTaxable = targetTaxablePortion / (1 + taxRatePercent / 100);
-    const discount = Math.max(0, Math.round((taxableSubtotal - targetNetTaxable) * 100) / 100);
-    onChange(String(discount));
-  }
+    return Math.max(0, Math.round((taxableSubtotal - targetNetTaxable) * 100) / 100);
+  }, [finalTotalInput, nonTaxableSubtotal, taxableSubtotal, taxRatePercent]);
+
+  // The target field appears before the installment editor, so staff often
+  // enter the agreed total first. Recalculate whenever an installment amount,
+  // payment type, fee-category kind, or tax rate changes afterward.
+  useEffect(() => {
+    if (mode !== DISCOUNT_ENTRY_MODES.FINAL_TOTAL) return;
+    const nextValue = calculatedFinalTotalDiscount === null ? "" : String(calculatedFinalTotalDiscount);
+    if (value !== nextValue) onChange(nextValue);
+  }, [calculatedFinalTotalDiscount, mode, onChange, value]);
 
   const discountValue = Number(value) || 0;
   const netTaxable = Math.max(0, taxableSubtotal - discountValue);
@@ -165,10 +172,15 @@ export function DiscountField({ value, onChange, disabled = false, installments 
           <span className={`mt-1.5 flex items-center gap-2 rounded-xl border bg-white px-3.5 py-2.5 ${disabled ? "border-slate-100 opacity-65" : "border-slate-200 focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-100"}`}>
             <Calculator className="h-4 w-4 text-emerald-500" />
             <span className="text-sm text-slate-400">$</span>
-            <input type="number" min="0" step="0.01" value={finalTotalInput} disabled={disabled} onChange={(event) => handleFinalTotalChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
+            <input type="number" min="0" step="0.01" value={finalTotalInput} disabled={disabled} onChange={(event) => setFinalTotalInput(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
             <span className="text-xs font-semibold text-slate-400">CAD</span>
           </span>
           <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Enter what the client should pay in total — the professional-fee discount needed to land there is worked out automatically. Government fees are never discounted.</span>
+          {calculatedFinalTotalDiscount > 0 ? (
+            <span role="status" className="mt-2 block rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-medium leading-4 text-emerald-700">
+              A professional-fee discount of <strong>{formatMoney(calculatedFinalTotalDiscount)}</strong> will be applied so the client pays <strong>{formatMoney(totalFee)}</strong> in total, including HST.
+            </span>
+          ) : null}
         </label>
       )}
 
