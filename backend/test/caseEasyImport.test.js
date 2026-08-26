@@ -171,6 +171,27 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   assert.doesNotMatch(controller, /identificationNumber:\s*(contact\.uci|uci)/);
 });
 
+test("a staging case's resolvedAssigneeUserId is re-checked against admin/consultant at conversion time, not trusted as a stale fallback straight onto the real Case", async () => {
+  const controller = await source("../src/controllers/caseEasyImportController.js");
+  // Single-contact conversion: cases without an explicit assignedUserId
+  // fall back to resolvedAssigneeUserId, but only if it's still eligible —
+  // resolveCaseEasyLinks only recomputes non-converted rows, so a value
+  // computed before candidates were restricted to admin/consultant can
+  // still be sitting there stale.
+  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(singleFn, /const fallbackAssigneeIds = \[/);
+  assert.match(singleFn, /role: \{ in: \["admin", "consultant"\] \}/);
+  assert.match(singleFn, /assignedUserId: caseInput\.assignedUserId \|\| \(eligibleFallbackAssigneeIds\.has\(stagingCase\.resolvedAssigneeUserId\) \? stagingCase\.resolvedAssigneeUserId : null\)/);
+  assert.doesNotMatch(singleFn, /assignedUserId: caseInput\.assignedUserId \|\| stagingCase\.resolvedAssigneeUserId \|\| null/);
+
+  // Bulk conversion: same staleness risk, checked once up front for the
+  // whole batch instead of per-contact (avoids an N+1 query).
+  const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(bulkFn, /const candidateFallbackAssigneeIds = \[/);
+  assert.match(bulkFn, /assignedUserId: eligibleFallbackAssigneeIds\.has\(planned\.stagingCase\.resolvedAssigneeUserId\) \? planned\.stagingCase\.resolvedAssigneeUserId : null/);
+  assert.doesNotMatch(bulkFn, /assignedUserId: planned\.stagingCase\.resolvedAssigneeUserId \|\| null/);
+});
+
 test("Case Easy conversion requires a real type instead of accepting its unassigned sentinel", async () => {
   const [controller, page] = await Promise.all([
     source("../src/controllers/caseEasyImportController.js"),

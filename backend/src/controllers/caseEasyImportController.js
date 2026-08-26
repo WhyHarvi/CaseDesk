@@ -595,6 +595,24 @@ export async function convertCaseEasyImportContact(req, res) {
       );
     }
   }
+  // Cases without an explicit assignedUserId fall back to the staging row's
+  // resolvedAssigneeUserId below — that value can be stale (computed before
+  // resolveCaseEasyLinks started restricting candidates to admin/consultant
+  // only), so it needs the same eligibility check as an explicit selection
+  // rather than a free pass straight onto a real Case.
+  const fallbackAssigneeIds = [
+    ...new Set(
+      casesInput
+        .filter((caseInput) => !caseInput.assignedUserId)
+        .map((caseInput) => linkedCaseById.get(caseInput.caseEasyImportCaseId)?.resolvedAssigneeUserId)
+        .filter(Boolean),
+    ),
+  ];
+  const eligibleFallbackAssigneeIds = new Set(
+    fallbackAssigneeIds.length
+      ? (await prisma.user.findMany({ where: { id: { in: fallbackAssigneeIds }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
+      : [],
+  );
 
   for (const caseInput of casesInput) {
     const stagingCase = linkedCaseById.get(caseInput.caseEasyImportCaseId);
@@ -772,7 +790,7 @@ export async function convertCaseEasyImportContact(req, res) {
             stage: caseInput.stage || suggested.stage,
             status: caseInput.status || suggested.status,
             priority: caseInput.priority || "Normal",
-            assignedUserId: caseInput.assignedUserId || stagingCase.resolvedAssigneeUserId || null,
+            assignedUserId: caseInput.assignedUserId || (eligibleFallbackAssigneeIds.has(stagingCase.resolvedAssigneeUserId) ? stagingCase.resolvedAssigneeUserId : null),
             nextAction: caseInput.nextAction || null,
             submittedAt: caseInput.submittedAt ? new Date(caseInput.submittedAt) : stagingCase.submitted,
             decisionAt: caseInput.decisionAt ? new Date(caseInput.decisionAt) : stagingCase.approved || stagingCase.refused || null,
@@ -874,6 +892,21 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
   });
   const foundIds = new Set(contacts.map((contact) => contact.id));
 
+  // Same staleness concern as convertCaseEasyImportContact above: a staging
+  // case's resolvedAssigneeUserId can predate resolveCaseEasyLinks
+  // restricting candidates to admin/consultant, so it's re-checked here
+  // rather than trusted as-is before it becomes a real Case's assignedUserId.
+  const candidateFallbackAssigneeIds = [
+    ...new Set(
+      contacts.flatMap((contact) => contact.linkedCases.map((stagingCase) => stagingCase.resolvedAssigneeUserId)).filter(Boolean),
+    ),
+  ];
+  const eligibleFallbackAssigneeIds = new Set(
+    candidateFallbackAssigneeIds.length
+      ? (await prisma.user.findMany({ where: { id: { in: candidateFallbackAssigneeIds }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
+      : [],
+  );
+
   const results = [];
   for (const contactId of contactIds) {
     if (!foundIds.has(contactId)) {
@@ -963,7 +996,7 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
               stage: planned.stage,
               status: planned.status,
               priority: "Normal",
-              assignedUserId: planned.stagingCase.resolvedAssigneeUserId || null,
+              assignedUserId: eligibleFallbackAssigneeIds.has(planned.stagingCase.resolvedAssigneeUserId) ? planned.stagingCase.resolvedAssigneeUserId : null,
               nextAction: TERMINAL_CASE_STATUSES.has(planned.status) ? null : "Review imported case",
               submittedAt: planned.stagingCase.submitted,
               decisionAt: planned.stagingCase.approved || planned.stagingCase.refused || null,
