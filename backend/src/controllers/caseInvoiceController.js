@@ -13,6 +13,7 @@ export async function createInvoice(req, res) {
     paymentType: req.body?.paymentType,
     description: req.body?.description,
     amount: req.body?.amount,
+    discountAmount: req.body?.discountAmount,
     dueDate: req.body?.dueDate,
     actorUserId: req.auth.userId,
   });

@@ -298,7 +298,7 @@ export async function createInvoiceRecord(agencyId, {
   }
 }
 
-export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS }) {
+export async function createCaseInvoice(agencyId, { caseId, paymentType, description, amount, discountAmount = 0, dueDate, actorUserId, idempotencyKey = null, notifyClient = true, accountingProvider = ACCOUNTING_PROVIDERS.QUICKBOOKS }) {
   const operationKey = normalizeIdempotencyKey(idempotencyKey);
   if (operationKey) {
     const existing = await prisma.caseInvoice.findUnique({
@@ -313,6 +313,10 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
   if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > 1_000_000) {
     throw createHttpError(400, "Enter an invoice amount between $0.01 and $1,000,000.", "VALIDATION_ERROR");
   }
+  const numericDiscount = Number(discountAmount || 0);
+  if (!Number.isFinite(numericDiscount) || numericDiscount < 0 || numericDiscount > 1_000_000) {
+    throw createHttpError(400, "Enter a discount between $0.00 and $1,000,000.", "VALIDATION_ERROR");
+  }
 
   const caseItem = await prisma.case.findFirst({ where: { id: caseId, agencyId, deletedAt: null }, select: { id: true, clientId: true } });
   if (!caseItem) throw createHttpError(404, "Case not found.", "NOT_FOUND");
@@ -323,6 +327,7 @@ export async function createCaseInvoice(agencyId, { caseId, paymentType, descrip
     paymentType,
     description: trimmedDescription,
     amount: numericAmount,
+    discountAmount: numericDiscount,
     dueDate,
     actorUserId,
     idempotencyKey: operationKey,

@@ -151,7 +151,7 @@ function CashPaymentRow({ invoice, onPaid }) {
   );
 }
 
-function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, canRefund, categories, highlighted, role }) {
+function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, canRecordPayment, canRefund, categories, highlighted, role }) {
   const category = categories.find((item) => item.code === invoice.paymentType);
   const baseMeta = PAYMENT_TYPE_META[invoice.paymentType] || PAYMENT_TYPE_META.fees;
   const meta = { ...baseMeta, label: invoice.paymentTypeLabel || category?.name || baseMeta.label };
@@ -343,7 +343,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, canRecordPayment, 
         </div>
       ) : null}
 
-      {payable ? <div className="mt-3"><CashPaymentRow invoice={invoice} onPaid={onPaid} /></div> : null}
+      {payable ? <div className="mt-3">{["admin", "consultant"].includes(role) ? <CashPaymentRow invoice={invoice} onPaid={onPaid} /> : <button type="button" onClick={() => onRecordPayment(invoice)} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800"><Banknote className="h-3.5 w-3.5" /> Record payment</button>}</div> : null}
       {role === "admin" && Number(invoice.balance) === Number(invoice.amount) && !["Void", "Voided"].includes(invoice.status) ? (
         <div className="mt-3 border-t border-slate-100 pt-3">
           {!voidOpen ? (
@@ -385,6 +385,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [discountAmount, setDiscountAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [errorHint, setErrorHint] = useState("");
@@ -395,6 +396,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
       setDescription("");
       setAmount("");
       setDueDate("");
+      setDiscountAmount("");
       setError("");
       setErrorHint("");
     }
@@ -406,7 +408,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
     setError("");
     setErrorHint("");
     try {
-      const created = await createCaseInvoice(caseId, { paymentType, description: description.trim(), amount: Number(amount), dueDate: dueDate || undefined });
+      const created = await createCaseInvoice(caseId, { paymentType, description: description.trim(), amount: Number(amount), discountAmount: Number(discountAmount || 0), dueDate: dueDate || undefined });
       onCreated(created);
       onClose();
     } catch (reason) {
@@ -459,6 +461,11 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
                 </label>
               </div>
 
+              <label className="block text-xs font-medium text-slate-600">Discount (CAD, optional)
+                <input type="number" min="0" step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} className={`mt-1.5 ${input}`} placeholder="0.00" />
+                <span className="mt-1.5 block text-[11px] leading-4 text-slate-400">Applied after tax. The invoice keeps the full fee and shows the discount separately.</span>
+              </label>
+
               <p className="rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs leading-5 text-slate-500">
                 Enter the charge before tax. CaseDesk applies the agency tax rules, sends the same total to QuickBooks, and blocks the invoice if the totals do not match.
               </p>
@@ -490,6 +497,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cashSheetOpen, setCashSheetOpen] = useState(false);
+  const [paymentInvoiceId, setPaymentInvoiceId] = useState("");
   const canManage = ["admin", "consultant"].includes(role);
   const canRefund = ["admin", "accountant"].includes(role);
   const canRecordCash = ["admin", "consultant", "frontdesk"].includes(role);
@@ -540,7 +548,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
           <p className="text-xs text-slate-400">One billing trail across CaseDesk and QuickBooks, including cash and e-transfer receipts.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {canRecordCash ? <button type="button" onClick={() => setCashSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"><Banknote className="h-3.5 w-3.5" /> Record cash</button> : null}
+          {canRecordCash ? <button type="button" onClick={() => { setPaymentInvoiceId(""); setCashSheetOpen(true); }} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"><Banknote className="h-3.5 w-3.5" /> Record payment</button> : null}
           {canManage ? <button type="button" onClick={() => setSheetOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"><Plus className="h-3.5 w-3.5" /> New invoice</button> : null}
         </div>
       </div>
@@ -564,14 +572,14 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
         <div className="mt-4 space-y-3">
           <AnimatePresence initial={false}>
             {visibleInvoices.map((invoice) => (
-              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} onRefunded={handleCashSaved} onVoided={handleCashSaved} canRecordPayment={canManage} canRefund={canRefund} categories={categories} highlighted={invoice.id === activeHighlightId} role={role} />
+              <InvoiceCard key={invoice.id} invoice={{ ...invoice, caseId: caseItem.id }} onPaid={handleInvoiceChanged} onRefunded={handleCashSaved} onVoided={handleCashSaved} onRecordPayment={(item) => { setPaymentInvoiceId(item.id); setCashSheetOpen(true); }} canRecordPayment={canRecordCash} canRefund={canRefund} categories={categories} highlighted={invoice.id === activeHighlightId} role={role} />
             ))}
           </AnimatePresence>
         </div>
       )}
 
       {canManage ? <NewInvoiceSheet open={sheetOpen} caseId={caseItem.id} onClose={() => setSheetOpen(false)} onCreated={handleInvoiceChanged} categories={categories} /> : null}
-      {canRecordCash && (caseItem.clientId || caseItem.client?.id) ? <ClientManualBillingEntrySheet open={cashSheetOpen} clientId={caseItem.clientId || caseItem.client.id} clientName={caseItem.client?.fullName || "Client"} initialCaseId={caseItem.id} restrictCaseId={caseItem.id} includeAppointments={false} fixedMethod="Cash" onClose={() => setCashSheetOpen(false)} onSaved={handleCashSaved} /> : null}
+      {canRecordCash && (caseItem.clientId || caseItem.client?.id) ? <ClientManualBillingEntrySheet open={cashSheetOpen} clientId={caseItem.clientId || caseItem.client.id} clientName={caseItem.client?.fullName || "Client"} initialCaseId={caseItem.id} initialInvoiceId={paymentInvoiceId} restrictCaseId={caseItem.id} includeAppointments={false} onClose={() => setCashSheetOpen(false)} onSaved={handleCashSaved} /> : null}
 
     </div>
   );

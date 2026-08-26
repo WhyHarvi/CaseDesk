@@ -126,7 +126,7 @@ test("only cash needs administrator approval — frontdesk's other consultation 
   assert.match(migration, /CREATE TABLE "payment_approvals"/);
 });
 
-test("case Billing exposes CaseDesk-only cash entry and refreshes effective totals", async () => {
+test("case Billing exposes manual payment entry and refreshes effective totals", async () => {
   const [workspace, sheet, scheduleService, tabs, profile] = await Promise.all([
     readFile(new URL("../../frontend/src/components/case-profile/CaseBillingWorkspace.jsx", import.meta.url), "utf8"),
     readFile(new URL("../../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx", import.meta.url), "utf8"),
@@ -135,8 +135,8 @@ test("case Billing exposes CaseDesk-only cash entry and refreshes effective tota
     readFile(new URL("../../frontend/src/pages/CaseProfile.jsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(workspace, /Record cash/);
-  assert.match(workspace, /fixedMethod="Cash"/);
+  assert.match(workspace, /Record payment/);
+  assert.doesNotMatch(workspace, /fixedMethod="Cash"/);
   assert.match(workspace, /restrictCaseId=\{caseItem\.id\}/);
   assert.match(workspace, /\["admin", "consultant", "frontdesk"\]\.includes\(role\)/);
   assert.match(sheet, /Cash · CaseDesk only/);

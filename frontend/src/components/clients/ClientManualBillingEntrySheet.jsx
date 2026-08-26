@@ -13,7 +13,7 @@ const fieldClass = "mt-1.5 h-11 w-full rounded-2xl border border-slate-200 bg-wh
 const PAYMENT_METHODS = [["ETransfer", "E-transfer"], ["Cash", "Cash"]];
 const visiblePaymentMethod = (value) => PAYMENT_METHODS.some(([method]) => method === value) ? value : "ETransfer";
 
-export default function ClientManualBillingEntrySheet({ open, clientId, clientName, initialMode = "", initialPaymentType = "", initialCaseId = "", restrictCaseId = "", includeAppointments = true, fixedMethod = "", onClose, onSaved }) {
+export default function ClientManualBillingEntrySheet({ open, clientId, clientName, initialMode = "", initialPaymentType = "", initialCaseId = "", initialInvoiceId = "", restrictCaseId = "", includeAppointments = true, fixedMethod = "", onClose, onSaved }) {
   const [options, setOptions] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -53,7 +53,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
           appointments: includeAppointments ? (result.appointments || []).filter((item) => item.caseId === restrictCaseId) : [],
         } : { ...result, appointments: includeAppointments ? result.appointments || [] : [] };
         setOptions(scopedResult);
-        const firstInvoice = scopedResult.invoices?.[0];
+        const firstInvoice = scopedResult.invoices?.find((item) => item.id === initialInvoiceId) || scopedResult.invoices?.[0];
         const firstAppointment = scopedResult.appointments?.find((item) => item.paymentHold?.status !== "Paid" || !item.paymentHold?.manualPaymentReference);
         const requestedCategory = scopedResult.categories?.find((item) => item.code === initialPaymentType);
         const firstCategory = initialPaymentType
@@ -84,7 +84,7 @@ export default function ClientManualBillingEntrySheet({ open, clientId, clientNa
       .catch((reason) => { if (active) setError(reason.response?.data?.message || "Payment options could not be loaded."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [open, clientId, initialMode, initialPaymentType, initialCaseId, restrictCaseId, includeAppointments, fixedMethod, loadAttempt]);
+  }, [open, clientId, initialMode, initialPaymentType, initialCaseId, initialInvoiceId, restrictCaseId, includeAppointments, fixedMethod, loadAttempt]);
 
   const availableAppointments = useMemo(() => (options?.appointments || []).filter((item) => item.paymentHold?.status !== "Paid" || (item.paymentHold?.paymentMethod === "ETransfer" && !item.paymentHold?.manualPaymentReference)), [options]);
   const selectedInvoice = options?.invoices?.find((item) => item.id === form.invoiceId);

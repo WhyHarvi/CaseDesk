@@ -108,3 +108,21 @@ test("staff payment selectors expose only card, e-transfer and cash while legacy
   assert.match(booking, /"Cheque", "Wire", "Debit", "BankDraft"/);
   assert.match(holdService, /Cheque: "Cheque"[\s\S]*Wire: "Wire transfer"[\s\S]*Debit: "Debit"[\s\S]*BankDraft: "Bank draft"/);
 });
+
+test("case invoices expose discounts and an e-transfer settlement path to every permitted billing role", async () => {
+  const [controller, invoiceService, caseBilling, clientEntry] = await Promise.all([
+    read("src/controllers/caseInvoiceController.js"),
+    read("src/services/caseInvoiceService.js"),
+    read("../frontend/src/components/case-profile/CaseBillingWorkspace.jsx"),
+    read("../frontend/src/components/clients/ClientManualBillingEntrySheet.jsx"),
+  ]);
+
+  assert.match(caseBilling, /Discount \(CAD, optional\)/);
+  assert.match(caseBilling, /discountAmount: Number\(discountAmount \|\| 0\)/);
+  assert.match(controller, /discountAmount: req\.body\?\.discountAmount/);
+  assert.match(invoiceService, /discountAmount: numericDiscount/);
+  assert.match(caseBilling, /canRecordPayment=\{canRecordCash\}/);
+  assert.match(caseBilling, /initialInvoiceId=\{paymentInvoiceId\}/);
+  assert.doesNotMatch(caseBilling, /fixedMethod="Cash"/);
+  assert.match(clientEntry, /find\(\(item\) => item\.id === initialInvoiceId\)/);
+});
