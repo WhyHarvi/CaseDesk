@@ -66,11 +66,10 @@ async function validateInstallmentsInput(agencyId, installments) {
   return validated;
 }
 
-// A schedule discount is applied only to professional/consultation work,
-// never government fees or pass-through disbursements. Each installment
-// keeps its quoted (gross) amount and its own allocated discount so the
-// retainer can show the original fee while QuickBooks receives only the
-// agreed net installment amount. Allocation starts at the last professional
+// A schedule discount is allocated only to professional/consultation work,
+// never government fees or pass-through disbursements. The dollar value is
+// an invoice-level discount applied after HST: $300 fee + $39 HST - $39
+// discount = $300 payable. Allocation starts at the last professional
 // installment, preserving the initial deposit wherever possible.
 async function allocateScheduleDiscount(agencyId, installments, discountValue, preservedById = new Map()) {
   const discountAmount = validateDiscountAmount(discountValue);
@@ -196,24 +195,34 @@ async function attachTaxBreakdown(schedule, agencyId) {
   if (!schedule) return schedule;
   const [kindByCode, taxRatePercent] = await Promise.all([getFeeCategoryKindMap(agencyId), getAgencyTaxRatePercent(agencyId)]);
   let professionalFeesBeforeDiscount = 0;
-  let taxableSubtotal = 0;
   let nonTaxableSubtotal = 0;
   for (const installment of schedule.installments) {
     if (installment.status === "Void") continue;
     const kind = kindByCode.get(installment.paymentType) || "Other";
     if (TAXABLE_FEE_KINDS.has(kind)) {
       professionalFeesBeforeDiscount += Number(installment.amount);
-      taxableSubtotal += installmentNetAmount(installment);
     }
     else nonTaxableSubtotal += Number(installment.amount);
   }
+  const taxableSubtotal = professionalFeesBeforeDiscount;
   const tax = Math.round(taxableSubtotal * taxRatePercent) / 100;
-  const discountAmount = Math.max(0, professionalFeesBeforeDiscount - taxableSubtotal);
+  const discountAmount = schedule.installments
+    .filter((item) => item.status !== "Void")
+    .reduce((sum, item) => sum + Number(item.discountAmount || 0), 0);
+  const regularTotal = taxableSubtotal + tax + nonTaxableSubtotal;
   return {
     ...schedule,
     discountAmount,
-    installments: schedule.installments.map((item) => ({ ...item, netAmount: installmentNetAmount(item) })),
-    taxSummary: { professionalFeesBeforeDiscount, discountAmount, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent, totalFee: taxableSubtotal + tax + nonTaxableSubtotal },
+    installments: schedule.installments.map((item) => {
+      const kind = kindByCode.get(item.paymentType) || "Other";
+      const installmentTax = TAXABLE_FEE_KINDS.has(kind) ? Math.round(Number(item.amount) * taxRatePercent) / 100 : 0;
+      return {
+        ...item,
+        netAmount: installmentNetAmount(item),
+        totalAmount: Math.max(0, Number(item.amount) + installmentTax - Number(item.discountAmount || 0)),
+      };
+    }),
+    taxSummary: { professionalFeesBeforeDiscount, discountAmount, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent, regularTotal, totalFee: Math.max(0, regularTotal - discountAmount) },
   };
 }
 
@@ -266,7 +275,7 @@ function buildRetainerScheduleMergeContext(schedule) {
     },
     installmentRows: activeInstallments.map((item) => ({
       label: item.label,
-      amount: formatMoney(item.netAmount),
+      amount: formatMoney(item.totalAmount),
       due: installmentDueLabel(item),
     })),
     totalLabel: formatMoney(schedule.taxSummary.totalFee),
@@ -529,11 +538,14 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
   let taxableSubtotal = 0;
   let nonTaxableSubtotal = 0;
   let tax = 0;
+  let discountAmount = 0;
   let outstandingAmount = 0;
   for (const installment of installments) {
     const kind = kindByCode.get(installment.paymentType) || "Other";
     const invoice = installment.caseInvoiceId ? invoiceById.get(installment.caseInvoiceId) : null;
-    const subtotal = invoice ? Number(invoice.subtotalAmount ?? invoice.amount) : installmentNetAmount(installment);
+    const subtotal = invoice ? Number(invoice.subtotalAmount ?? invoice.amount) : Number(installment.amount);
+    const discount = invoice ? Number(invoice.discountAmount || 0) : Number(installment.discountAmount || 0);
+    discountAmount += discount;
     if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += subtotal;
     else nonTaxableSubtotal += subtotal;
     if (invoice) {
@@ -544,7 +556,7 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
     } else if (TAXABLE_FEE_KINDS.has(kind)) {
       const estimatedTax = Math.round(subtotal * taxRatePercent) / 100;
       tax += estimatedTax;
-      outstandingAmount += subtotal + estimatedTax;
+      outstandingAmount += Math.max(0, subtotal + estimatedTax - discount);
     } else {
       outstandingAmount += subtotal;
     }
@@ -553,6 +565,7 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
     if (linkedInvoiceIds.has(invoice.id) || ["Void", "Voided"].includes(invoice.status)) continue;
     const kind = kindByCode.get(invoice.paymentType) || "Other";
     const invoiceSubtotal = Number(invoice.subtotalAmount ?? invoice.amount);
+    discountAmount += Number(invoice.discountAmount || 0);
     if (TAXABLE_FEE_KINDS.has(kind)) taxableSubtotal += invoiceSubtotal;
     else nonTaxableSubtotal += invoiceSubtotal;
     tax += Number(invoice.taxAmount ?? (TAXABLE_FEE_KINDS.has(kind) ? Math.round(invoiceSubtotal * taxRatePercent) / 100 : 0));
@@ -566,17 +579,17 @@ function summarizeCaseBilling(installments, invoices, legacyPayments = [], kindB
     outstandingAmount += Math.max(0, Number(payment.balance));
   }
   tax = Math.round(tax * 100) / 100;
-  const totalFee = taxableSubtotal + tax + nonTaxableSubtotal;
+  const totalFee = Math.max(0, taxableSubtotal + tax + nonTaxableSubtotal - discountAmount);
   // Refunds reduce net collections, but do not reopen a settled invoice.
   // Outstanding money is therefore the explicit balance carried by each
   // invoice plus the estimated total of installments not issued yet—not
   // simply charges minus net collections.
   const balance = Math.round(Math.max(outstandingAmount, 0) * 100) / 100;
   const status = totalFee === 0 ? "Unpaid" : balance <= 0 ? "Paid" : paidAmount > 0 ? "Partial" : "Unpaid";
-  return { totalFee, paidAmount, balance, status, taxableSubtotal, nonTaxableSubtotal, tax, taxRatePercent };
+  return { totalFee, paidAmount, balance, status, taxableSubtotal, nonTaxableSubtotal, discountAmount, tax, taxRatePercent };
 }
 
-const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid", taxableSubtotal: 0, nonTaxableSubtotal: 0, tax: 0, taxRatePercent: 13 };
+const EMPTY_SUMMARY = { totalFee: 0, paidAmount: 0, balance: 0, status: "Unpaid", taxableSubtotal: 0, nonTaxableSubtotal: 0, discountAmount: 0, tax: 0, taxRatePercent: 13 };
 
 export async function getAgencyTaxRatePercent(agencyId) {
   const settings = await prisma.agencyBillingSettings.findUnique({ where: { agencyId }, select: { taxRatePercent: true } });
@@ -605,7 +618,7 @@ export async function getCasePaymentSummary(agencyId, caseId) {
     prisma.caseInvoice.findMany({
       where: { agencyId, caseId },
       select: {
-        id: true, caseId: true, amount: true, subtotalAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
+        id: true, caseId: true, amount: true, subtotalAmount: true, discountAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
         paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
         refunds: { where: { status: "Completed" }, select: { amount: true } },
       },
@@ -630,7 +643,7 @@ export async function getCasePaymentSummariesByCase(agencyId) {
   }), prisma.caseInvoice.findMany({
     where: { agencyId },
     select: {
-      id: true, caseId: true, amount: true, subtotalAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
+      id: true, caseId: true, amount: true, subtotalAmount: true, discountAmount: true, taxAmount: true, balance: true, status: true, paymentType: true,
       paymentApprovals: { where: { status: "Approved", method: "Cash" }, select: { amount: true, status: true, method: true, paymentDate: true } },
       refunds: { where: { status: "Completed" }, select: { amount: true } },
     },
@@ -692,7 +705,7 @@ async function fireInstallment(agencyId, installment, actorUserId) {
   if (!claimed) return null;
 
   try {
-    const invoiceAmount = installmentNetAmount(installment);
+    const invoiceAmount = Number(installment.amount);
     const invoiceRow = await createInvoiceRecord(agencyId, {
       caseId: installment.caseId,
       clientId: installment.clientId,
@@ -714,12 +727,12 @@ async function fireInstallment(agencyId, installment, actorUserId) {
       clientId: installment.clientId,
       caseId: installment.caseId,
       action: "payment_schedule.installment_invoiced",
-      details: `${installment.label} — $${invoiceAmount.toFixed(2)} invoiced${Number(installment.discountAmount || 0) > 0 ? ` after a $${Number(installment.discountAmount).toFixed(2)} discount` : ""} (${installment.triggerType === "Stage" ? `stage: ${installment.triggerStage}` : "scheduled date"})`,
+      details: `${installment.label} — $${Number(invoiceRow.amount).toFixed(2)} invoiced${Number(installment.discountAmount || 0) > 0 ? ` after a $${Number(installment.discountAmount).toFixed(2)} discount` : ""} (${installment.triggerType === "Stage" ? `stage: ${installment.triggerStage}` : "scheduled date"})`,
       entityType: "casePaymentInstallment",
       entityId: installment.id,
     });
 
-    notifyInstallmentInvoiced({ agencyId, installment: { ...installment, amount: invoiceAmount, caseInvoiceId: invoiceRow.id }, actorUserId }).catch(() => {});
+    notifyInstallmentInvoiced({ agencyId, installment: { ...installment, amount: Number(invoiceRow.amount), caseInvoiceId: invoiceRow.id }, actorUserId }).catch(() => {});
     return updated;
   } catch (error) {
     // Release the claim so this installment is retried on the next trigger

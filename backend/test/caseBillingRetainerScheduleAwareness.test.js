@@ -120,9 +120,11 @@ test("schedule-to-retainer merge fills only what has real schedule data and neve
   assert.match(retainerController, /<tr><td>Discount<\/td><td>-\$\{escapeHtml\(scheduleContext\.discountLabel\)\}<\/td><\/tr>/);
 });
 
-test("case discounts reduce only professional installments and flow through invoices, tax, and UI", async () => {
-  const [service, controller, workspace, retainerCard, migration] = await Promise.all([
+test("case discounts apply after tax only to professional installments and flow through invoices, tax, and UI", async () => {
+  const [service, invoiceService, quickBooksService, controller, workspace, retainerCard, migration] = await Promise.all([
     source("../src/services/paymentScheduleService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/services/quickbooksService.js"),
     source("../src/controllers/paymentScheduleController.js"),
     source("../../frontend/src/components/case-profile/CasePaymentScheduleWorkspace.jsx"),
     source("../../frontend/src/components/case-profile/RetainerStatusCard.jsx"),
@@ -133,9 +135,13 @@ test("case discounts reduce only professional installments and flow through invo
   assert.match(migration, /case_payment_installments[\s\S]*discount_amount/);
   assert.match(service, /TAXABLE_FEE_KINDS\.has\(kindByCode\.get\(item\.paymentType\)/);
   assert.match(service, /\.reverse\(\)/);
-  assert.match(service, /const invoiceAmount = installmentNetAmount\(installment\)/);
+  assert.match(service, /const invoiceAmount = Number\(installment\.amount\)/);
   assert.match(service, /amount: invoiceAmount/);
-  assert.match(service, /taxableSubtotal \+= installmentNetAmount\(installment\)/);
+  assert.match(service, /const regularTotal = taxableSubtotal \+ tax \+ nonTaxableSubtotal/);
+  assert.match(service, /totalFee: Math\.max\(0, regularTotal - discountAmount\)/);
+  assert.match(invoiceService, /const total = money\(totalBeforeDiscount - discount\)/);
+  assert.match(quickBooksService, /ApplyTaxAfterDiscount: false/);
+  assert.match(quickBooksService, /DetailType: "DiscountLineDetail"/);
   assert.match(controller, /discountAmount: req\.body\?\.discountAmount/);
   assert.match(workspace, /function DiscountField/);
   assert.match(workspace, /Government fees are never discounted/);
@@ -143,12 +149,9 @@ test("case discounts reduce only professional installments and flow through invo
   assert.match(retainerCard, /\{ installments, signingDate, discountAmount, reviewToken \}/);
 });
 
-// Real staff confusion this fixes: entering a $39 "discount" for a $300 fee
-// (13% of $300, the intuitive-but-wrong number) landed the client at
-// $294.93, not $300 — the discount reduces the pre-tax fee, so tax is then
-// computed on a smaller base. Getting to an exact $300 final total requires
-// a $34.51 discount, math staff shouldn't have to do by hand. DiscountField
-// now offers a second entry mode that takes the target total directly.
+// Staff quote the regular fee and HST first, then agree on the final amount
+// the client will pay. For a $300 fee at 13% HST, the regular total is $339;
+// a $300 agreed total is therefore a $39 invoice discount.
 test("DiscountField can derive the professional-fee discount from a target final total instead of requiring staff to do the tax math themselves", async () => {
   const workspace = await source("../../frontend/src/components/case-profile/CasePaymentScheduleWorkspace.jsx");
   const fieldFn = workspace.slice(workspace.indexOf("export function DiscountField"), workspace.indexOf("function InstallmentRow"));
@@ -160,19 +163,16 @@ test("DiscountField can derive the professional-fee discount from a target final
   assert.match(fieldFn, /DISCOUNT_ENTRY_MODES\.FINAL_TOTAL/);
   assert.match(fieldFn, /Final agreed total, including HST/);
 
-  // The actual formula: government fees are excluded from the taxable
-  // portion before dividing out the tax rate, matching
-  // allocateScheduleDiscount's "government fees are never discounted" rule
-  // and attachTaxBreakdown's tax = round(taxableSubtotal * rate) / 100.
-  assert.match(fieldFn, /const targetTaxablePortion = Math\.max\(0, finalTotal - nonTaxableSubtotal\)/);
-  assert.match(fieldFn, /const targetNetTaxable = targetTaxablePortion \/ \(1 \+ taxRatePercent \/ 100\)/);
-  assert.match(fieldFn, /Math\.max\(0, Math\.round\(\(taxableSubtotal - targetNetTaxable\) \* 100\) \/ 100\)/);
+  // Calculate regular tax first, then subtract the agreed final total.
+  assert.match(fieldFn, /const regularTax = Math\.round\(taxableSubtotal \* taxRatePercent\) \/ 100/);
+  assert.match(fieldFn, /const regularTotal = taxableSubtotal \+ regularTax \+ nonTaxableSubtotal/);
+  assert.match(fieldFn, /Math\.max\(0, Math\.round\(\(regularTotal - finalTotal\) \* 100\) \/ 100\)/);
 
   // The target can be entered before the installment amount. Changes to the
   // fee rows must recalculate the discount without forcing staff to retype it.
-  assert.match(fieldFn, /useMemo\(\(\) => \{[\s\S]*\[finalTotalInput, nonTaxableSubtotal, taxableSubtotal, taxRatePercent\]\)/);
+  assert.match(fieldFn, /useMemo\(\(\) => \{[\s\S]*\[finalTotalInput, regularTotal\]\)/);
   assert.match(fieldFn, /if \(mode !== DISCOUNT_ENTRY_MODES\.FINAL_TOTAL\) return;/);
-  assert.match(fieldFn, /A professional-fee discount of/);
+  assert.match(fieldFn, /The regular total is/);
 
   // Whichever mode is active, staff see the resulting breakdown before
   // saving — reusing TaxSummaryBar (previously only shown after a schedule

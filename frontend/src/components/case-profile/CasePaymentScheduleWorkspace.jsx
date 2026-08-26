@@ -33,22 +33,16 @@ function triggerLabel(installment) {
 
 function TaxSummaryBar({ taxSummary }) {
   if (!taxSummary) return null;
+  const professionalFees = Number(taxSummary.professionalFeesBeforeDiscount ?? taxSummary.taxableSubtotal);
+  const regularTotal = Number(taxSummary.regularTotal ?? professionalFees + Number(taxSummary.tax) + Number(taxSummary.nonTaxableSubtotal));
+  const discountAmount = Number(taxSummary.discountAmount) || 0;
+  const discountPercent = regularTotal > 0 ? (discountAmount / regularTotal) * 100 : 0;
   return (
     <div className="mt-3 rounded-2xl border border-slate-200/70 bg-slate-50/70 px-4 py-3 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <span className="text-slate-500">Professional / consultation fees</span>
-        <span className="font-semibold text-slate-800">{formatMoney(taxSummary.professionalFeesBeforeDiscount ?? taxSummary.taxableSubtotal)}</span>
+        <span className="text-slate-500">Professional fee before tax</span>
+        <span className="font-semibold text-slate-800">{formatMoney(professionalFees)}</span>
       </div>
-      {Number(taxSummary.discountAmount) > 0 ? <>
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5 text-emerald-700">
-          <span>Discount</span>
-          <span className="font-semibold">−{formatMoney(taxSummary.discountAmount)}</span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
-          <span className="text-slate-500">Professional fees after discount</span>
-          <span className="font-semibold text-slate-800">{formatMoney(taxSummary.taxableSubtotal)}</span>
-        </div>
-      </> : null}
       <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5">
         <span className="text-slate-500">HST ({Number(taxSummary.taxRatePercent)}%)</span>
         <span className="font-semibold text-slate-800">{formatMoney(taxSummary.tax)}</span>
@@ -57,8 +51,18 @@ function TaxSummaryBar({ taxSummary }) {
         <span className="text-slate-500">Govt. fees &amp; disbursements <span className="text-slate-400">(not taxed)</span></span>
         <span className="font-semibold text-slate-800">{formatMoney(taxSummary.nonTaxableSubtotal)}</span>
       </div>
+      {discountAmount > 0 ? <>
+        <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2">
+          <span className="font-semibold text-slate-700">Total regular fee</span>
+          <span className="font-semibold text-slate-800">{formatMoney(regularTotal)}</span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-1.5 text-emerald-700">
+          <span>Discount <span className="text-emerald-600/75">({discountPercent.toFixed(2)}% off total)</span></span>
+          <span className="font-semibold">−{formatMoney(discountAmount)}</span>
+        </div>
+      </> : null}
       <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2">
-        <span className="text-sm font-semibold text-slate-900">Total</span>
+        <span className="text-sm font-semibold text-slate-900">{discountAmount > 0 ? "Client is paying" : "Total"}</span>
         <span className="text-sm font-bold text-slate-900">{formatMoney(taxSummary.totalFee)}</span>
       </div>
     </div>
@@ -110,18 +114,17 @@ export function DiscountField({ value, onChange, disabled = false, installments 
     return { taxableSubtotal: taxable, nonTaxableSubtotal: nonTaxable };
   }, [installments, feeKindByType]);
 
-  // Government fees are never discounted (matches allocateScheduleDiscount
-  // server-side), so only the taxable portion absorbs both the discount and
-  // the gap between a tax-inclusive target and today's pre-tax fee fields —
-  // this is exactly the "what discount gets me to a round final number"
-  // question staff were previously doing by hand.
+  const regularTax = Math.round(taxableSubtotal * taxRatePercent) / 100;
+  const regularTotal = taxableSubtotal + regularTax + nonTaxableSubtotal;
+
+  // The final-total mode is intentionally simple: calculate the regular
+  // invoice first (professional fees + HST + government fees), then subtract
+  // the client's agreed total. HST remains visible at its regular amount.
   const calculatedFinalTotalDiscount = useMemo(() => {
     const finalTotal = Number(finalTotalInput);
     if (!finalTotalInput || Number.isNaN(finalTotal)) return null;
-    const targetTaxablePortion = Math.max(0, finalTotal - nonTaxableSubtotal);
-    const targetNetTaxable = targetTaxablePortion / (1 + taxRatePercent / 100);
-    return Math.max(0, Math.round((taxableSubtotal - targetNetTaxable) * 100) / 100);
-  }, [finalTotalInput, nonTaxableSubtotal, taxableSubtotal, taxRatePercent]);
+    return Math.max(0, Math.round((regularTotal - finalTotal) * 100) / 100);
+  }, [finalTotalInput, regularTotal]);
 
   // The target field appears before the installment editor, so staff often
   // enter the agreed total first. Recalculate whenever an installment amount,
@@ -133,9 +136,7 @@ export function DiscountField({ value, onChange, disabled = false, installments 
   }, [calculatedFinalTotalDiscount, mode, onChange, value]);
 
   const discountValue = Number(value) || 0;
-  const netTaxable = Math.max(0, taxableSubtotal - discountValue);
-  const tax = Math.round(netTaxable * taxRatePercent) / 100;
-  const totalFee = netTaxable + tax + nonTaxableSubtotal;
+  const totalFee = Math.max(0, regularTotal - discountValue);
   const hasFees = taxableSubtotal > 0 || nonTaxableSubtotal > 0;
 
   return (
@@ -165,7 +166,7 @@ export function DiscountField({ value, onChange, disabled = false, installments 
             <input type="number" min="0" step="0.01" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder="0.00" className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed" />
             <span className="text-xs font-semibold text-slate-400">CAD</span>
           </span>
-          <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Applied to the later professional installments first. Government fees are never discounted.</span>
+          <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Applied after HST to the later professional installments first. Government fees are never discounted.</span>
         </label>
       ) : (
         <label className="mt-2 block text-xs font-medium text-slate-600">Final agreed total, including HST
@@ -178,7 +179,7 @@ export function DiscountField({ value, onChange, disabled = false, installments 
           <span className="mt-1 block text-[11px] font-normal leading-4 text-slate-400">Enter what the client should pay in total — the professional-fee discount needed to land there is worked out automatically. Government fees are never discounted.</span>
           {calculatedFinalTotalDiscount > 0 ? (
             <span role="status" className="mt-2 block rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-medium leading-4 text-emerald-700">
-              A professional-fee discount of <strong>{formatMoney(calculatedFinalTotalDiscount)}</strong> will be applied so the client pays <strong>{formatMoney(totalFee)}</strong> in total, including HST.
+              The regular total is <strong>{formatMoney(regularTotal)}</strong>. A discount of <strong>{formatMoney(calculatedFinalTotalDiscount)}</strong> will be applied so the client pays <strong>{formatMoney(totalFee)}</strong> including HST.
             </span>
           ) : null}
         </label>
@@ -189,9 +190,10 @@ export function DiscountField({ value, onChange, disabled = false, installments 
           taxSummary={{
             professionalFeesBeforeDiscount: taxableSubtotal,
             discountAmount: discountValue,
-            taxableSubtotal: netTaxable,
-            tax,
+            taxableSubtotal,
+            tax: regularTax,
             nonTaxableSubtotal,
+            regularTotal,
             totalFee,
             taxRatePercent,
           }}
@@ -234,7 +236,7 @@ function InstallmentRow({ installment, caseId, isAdmin, onVoided }) {
         <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${meta.tone}`}>{meta.label}</span>
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-50/80 px-3.5 py-2.5 text-sm">
-        <span className="text-slate-500">Amount {Number(installment.discountAmount) > 0 ? <><span className="text-xs line-through">{formatMoney(installment.amount)}</span> <span className="font-semibold text-emerald-700">{formatMoney(installment.netAmount)}</span></> : <span className="font-semibold text-slate-900">{formatMoney(installment.netAmount ?? installment.amount)}</span>}</span>
+        <span className="text-slate-500">Fee <span className="font-semibold text-slate-900">{formatMoney(installment.amount)}</span>{Number(installment.discountAmount) > 0 ? <span className="ml-1.5 text-xs font-semibold text-emerald-700">· {formatMoney(installment.discountAmount)} invoice discount</span> : null}</span>
         {invoice ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
             <Receipt className="h-3.5 w-3.5" />

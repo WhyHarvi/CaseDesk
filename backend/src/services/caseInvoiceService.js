@@ -139,7 +139,11 @@ export async function createInvoiceRecord(agencyId, {
   const taxable = TAXABLE_FEE_KINDS.has(category.kind);
   const taxRatePercent = taxable ? Number(billing?.taxRatePercent ?? 13) : 0;
   const taxAmount = taxable ? money(subtotal * taxRatePercent / 100) : 0;
-  const total = money(subtotal + taxAmount);
+  const totalBeforeDiscount = money(subtotal + taxAmount);
+  if (discount > totalBeforeDiscount) {
+    throw createHttpError(400, "The discount cannot be greater than the invoice total.", "VALIDATION_ERROR");
+  }
+  const total = money(totalBeforeDiscount - discount);
   const invoiceNumber = newInvoiceNumber(accountingProvider);
   // Freeze the people and formula before the invoice exists, so a later
   // case transfer or plan edit only ever applies to later invoices.
@@ -169,7 +173,7 @@ export async function createInvoiceRecord(agencyId, {
         createdById: actorUserId,
         creationIdempotencyKey: operationKey,
         lines: {
-          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
+          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: subtotal, discount, taxable, taxRate: taxRatePercent, taxAmount, lineTotal: total }],
         },
         ...(incentiveSnapshot ? {
           creditCursor: { create: { agencyId, lastCreditedBalance: total } },
@@ -206,6 +210,7 @@ export async function createInvoiceRecord(agencyId, {
       invoiceNumber,
       taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
       expectedTotal: total,
+      discountAmount: discount,
       lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
@@ -233,6 +238,7 @@ export async function createInvoiceRecord(agencyId, {
       invoiceNumber,
       taxableTaxCodeId: quickBooksSettings.taxableTaxCodeId,
       expectedTotal: total,
+      discountAmount: discount,
       lines: [{ itemId: category.qboItemId, description, amount: subtotal, taxable }],
       requestId: operationKey ? `case-invoice-${operationKey}` : undefined,
     });
@@ -267,7 +273,7 @@ export async function createInvoiceRecord(agencyId, {
         creationIdempotencyKey: operationKey,
         lastSyncedAt: new Date(),
         lines: {
-          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: money(subtotal + discount), discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
+          create: [{ agencyId, feeCategory: paymentType, description, unitAmount: subtotal, discount, taxable, taxRate: taxRatePercent, taxAmount: money(invoice.totalTax), lineTotal: invoice.totalAmount }],
         },
         ...(incentiveSnapshot ? {
           creditCursor: { create: { agencyId, lastCreditedBalance: invoice.balance } },

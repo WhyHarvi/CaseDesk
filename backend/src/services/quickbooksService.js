@@ -433,6 +433,7 @@ export async function createQuickBooksInvoice(agencyId, {
   lines,
   taxableTaxCodeId,
   expectedTotal,
+  discountAmount = 0,
   globalTaxCalculation = "TaxExcluded",
 }) {
   const invoiceLines = Array.isArray(lines) && lines.length
@@ -440,6 +441,7 @@ export async function createQuickBooksInvoice(agencyId, {
     : [{ itemId, description, amount, taxable: false }];
   const needsNonTaxableCode = invoiceLines.some((line) => !(line.taxable && taxableTaxCodeId));
   const nonTaxableCodeId = needsNonTaxableCode ? await resolveNonTaxableTaxCodeId(agencyId) : null;
+  const fixedDiscount = Math.max(0, Number(discountAmount) || 0);
   const payload = await qboRequest(agencyId, {
     method: "POST",
     path: "/invoice",
@@ -449,9 +451,10 @@ export async function createQuickBooksInvoice(agencyId, {
       ...(invoiceNumber ? { DocNumber: invoiceNumber } : {}),
       ...(dueDate ? { DueDate: dueDate } : {}),
       GlobalTaxCalculation: globalTaxCalculation,
+      ...(fixedDiscount > 0 ? { ApplyTaxAfterDiscount: false } : {}),
       AllowOnlineCreditCardPayment: true,
       AllowOnlineACHPayment: true,
-      Line: invoiceLines.map((line) => {
+      Line: [...invoiceLines.map((line) => {
         const lineAmount = Number(line.amount);
         const taxCodeId = line.taxable && taxableTaxCodeId ? taxableTaxCodeId : nonTaxableCodeId;
         return {
@@ -465,7 +468,12 @@ export async function createQuickBooksInvoice(agencyId, {
             ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}),
           },
         };
-      }),
+      }), ...(fixedDiscount > 0 ? [{
+        Amount: fixedDiscount,
+        DetailType: "DiscountLineDetail",
+        Description: "Agreed fee discount",
+        DiscountLineDetail: { PercentBased: false },
+      }] : [])],
     },
   });
   const invoice = payload.Invoice;

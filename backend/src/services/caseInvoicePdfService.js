@@ -88,8 +88,8 @@ export function generateCaseInvoicePdf(invoice) {
     y += 14;
     const totals = [
       ["Subtotal", invoice.subtotalAmount],
-      ...(Number(invoice.discountAmount || 0) > 0 ? [["Discount", -Number(invoice.discountAmount)]] : []),
       [`Tax (${Number(invoice.taxRatePercent || 0)}%)`, invoice.taxAmount],
+      ...(Number(invoice.discountAmount || 0) > 0 ? [["Discount", -Number(invoice.discountAmount)]] : []),
       ["Invoice total", invoice.amount],
       ["Balance due", invoice.balance],
     ];
