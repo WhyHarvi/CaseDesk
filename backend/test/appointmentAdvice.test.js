@@ -9,6 +9,7 @@ test("the schema backs the advice model: one per appointment, a fixed set of rol
   const model = schema.slice(schema.indexOf("model AppointmentAdvice {"), schema.indexOf("model LeadLostDetail {"));
   assert.match(model, /appointmentId\s+String\s+@unique @map\("appointment_id"\)/);
   assert.match(model, /followUpId\s+String\?\s+@unique @map\("follow_up_id"\)/);
+  assert.match(model, /clientFollowUpId\s+String\?\s+@unique @map\("client_follow_up_id"\)/);
   assert.match(model, /categories\s+String\[\]/);
   assert.match(model, /outcome\s+AppointmentAdviceOutcome\s+@default\(PENDING\)/);
   assert.match(schema, /enum AppointmentAdviceOutcome \{\s*PENDING\s*PROCEEDING\s*CONSIDERING\s*DECLINED\s*\}/);
@@ -41,6 +42,32 @@ test("draft saves never touch the lead — only confirmAppointmentAdvice does, a
   // If there's no linked lead at all, every lead-side side effect is
   // skipped — the advice still saves against the appointment alone.
   assert.match(confirmFn, /if \(appointment\.leadId\) \{/);
+});
+
+test("when the appointment has no lead (a client booked directly, or a bare walk-in), confirming advice falls back to a generic FollowUp instead of silently skipping the handoff", async () => {
+  const service = await source("../src/services/appointmentAdviceService.js");
+  const confirmFn = service.slice(service.indexOf("export async function confirmAppointmentAdvice"), service.indexOf("// The lead-curtain"));
+  assert.match(confirmFn, /\} else \{/);
+  // Update-in-place on repeat saves, same as the lead branch's followUpId reuse.
+  assert.match(confirmFn, /clientFollowUp = existing\?\.clientFollowUpId\s*\n\s*\? await tx\.followUp\.update/);
+  assert.match(confirmFn, /: await tx\.followUp\.create/);
+  // clientId/caseId pass through as-is (both nullable on FollowUp) so this
+  // works whether or not a Client is actually attached to the appointment.
+  assert.match(confirmFn, /clientId: appointment\.clientId,\s*\n\s*caseId: appointment\.caseId,/);
+  assert.match(confirmFn, /if \(!existing\?\.clientFollowUpId\) \{/);
+  assert.match(confirmFn, /data: \{ clientFollowUpId: clientFollowUp\.id \}, include: adviceInclude/);
+  // The assigned employee still gets notified even without a lead.
+  assert.match(confirmFn, /\} else if \(result\.clientFollowUp\) \{/);
+  assert.match(confirmFn, /type: "follow_up\.assigned"/);
+  assert.match(confirmFn, /actionUrl: `\/app\/follow-ups\?highlight=\$\{encodeURIComponent\(result\.clientFollowUp\.id\)\}`/);
+});
+
+test("converting a guest appointment to a client backfills appointmentAdvice.clientId the same way it already backfills notes and follow-ups", async () => {
+  const controller = await source("../src/controllers/bookingController.js");
+  const convertFn = controller.slice(controller.indexOf("export async function convertAppointmentToClient"), controller.indexOf("export async function applyAppointmentStatusChange"));
+  assert.match(convertFn, /tx\.note\.updateMany\(\{ where: \{ appointmentId: appointment\.id, clientId: null \}, data: \{ clientId: created\.id \} \}\)/);
+  assert.match(convertFn, /tx\.followUp\.updateMany\(\{ where: \{ appointmentId: appointment\.id, clientId: null \}, data: \{ clientId: created\.id \} \}\)/);
+  assert.match(convertFn, /tx\.appointmentAdvice\.updateMany\(\{ where: \{ appointmentId: appointment\.id, clientId: null \}, data: \{ clientId: created\.id \} \}\)/);
 });
 
 test("confirming advice validates every required field before touching the database, and returns the advice with its (just-created or just-updated) followUpId, not a stale pre-update snapshot", async () => {

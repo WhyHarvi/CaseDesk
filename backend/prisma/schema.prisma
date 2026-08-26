@@ -4352,6 +4352,7 @@ model FollowUp {
   createdBy            User?           @relation("CreatedFollowUpUser", fields: [createdById], references: [id], onDelete: SetNull)
   completedBy          User?           @relation("CompletedFollowUpUser", fields: [completedById], references: [id], onDelete: SetNull)
   cancelledBy          User?           @relation("CancelledFollowUpUser", fields: [cancelledById], references: [id], onDelete: SetNull)
+  appointmentAdvice    AppointmentAdvice[]
 
   @@index([agencyId])
   @@index([clientId])
@@ -4920,6 +4921,11 @@ model AppointmentAdvice {
   adviceText          String                   @map("advice_text")
   followUpDate        DateTime                 @map("follow_up_date")
   followUpId          String?                  @unique @map("follow_up_id")
+  // Set instead of followUpId when the appointment has no linked lead (an
+  // existing client booked directly, or a walk-in with no CRM record at
+  // all) — LeadFollowUp only exists pre-conversion, so the handoff task
+  // for these appointments lives on the generic FollowUp table instead.
+  clientFollowUpId    String?                  @unique @map("client_follow_up_id")
   outcome             AppointmentAdviceOutcome @default(PENDING)
   outcomeRecordedAt   DateTime?                @map("outcome_recorded_at")
   outcomeRecordedById String?                  @map("outcome_recorded_by_id")
@@ -4933,9 +4939,11 @@ model AppointmentAdvice {
   assignedUser        User                     @relation("AppointmentAdviceAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
   outcomeRecordedBy   User?                    @relation("AppointmentAdviceOutcomeRecorderUser", fields: [outcomeRecordedById], references: [id], onDelete: SetNull)
   followUp            LeadFollowUp?            @relation(fields: [followUpId], references: [id], onDelete: SetNull)
+  clientFollowUp      FollowUp?                @relation(fields: [clientFollowUpId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([leadId])
+  @@index([clientId])
   @@index([assignedUserId])
   @@map("appointment_advice")
 }

@@ -5,6 +5,7 @@ import { notifyUsers } from "./notificationService.js";
 import { requireLead } from "../modules/leads/lead.repository.js";
 import { moveLeadOwnership, requireLeadStaff, syncLeadNextAction } from "../modules/leads/lead.service.js";
 import { canonicalCaseType } from "./workflowService.js";
+import { recordActivity } from "../utils/prismaCrud.js";
 
 // A real immigration practice advises across dozens of distinct pathways —
 // PSW, PGWP, every family-sponsorship variant, every provincial stream,
@@ -47,7 +48,7 @@ function cleanCategories(value) {
 async function requireAppointmentForAdvice(tx, req, appointmentId) {
   const appointment = await tx.appointment.findFirst({
     where: { id: appointmentId, agencyId: req.auth.agencyId },
-    select: { id: true, agencyId: true, subject: true, leadId: true, clientId: true },
+    select: { id: true, agencyId: true, subject: true, leadId: true, clientId: true, caseId: true },
   });
   if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
   return appointment;
@@ -129,6 +130,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
 
     let lead = null;
     let followUp = null;
+    let clientFollowUp = null;
     if (appointment.leadId) {
       // Never a duplicate: the appointment already has a lead, so every
       // save updates that same lead — it's never re-created or re-matched.
@@ -191,6 +193,43 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
           metadata: { appointmentId: appointment.id, adviceId: advice.id, followUpId: followUp.id },
         },
       });
+    } else {
+      // No lead on this appointment — either an existing client was booked
+      // directly (client already existed, so createOrLinkLeadForConsultation
+      // never ran) or it's a bare walk-in with no CRM record at all.
+      // LeadFollowUp only exists pre-conversion, so it can't carry the
+      // handoff here — reuse the same generic FollowUp table (and the same
+      // "follow_up.assigned" notification) that every other non-lead task in
+      // the app already uses, so the assigned employee gets a real,
+      // findable task instead of the advice silently saving with no handoff
+      // at all. clientId/caseId are passed through as-is (both nullable) so
+      // this works whether or not a Client is actually attached.
+      const followUpTitle = `Call ${appointment.clientId ? "client" : "guest"} regarding ${categories.join(", ")} advice`;
+      clientFollowUp = existing?.clientFollowUpId
+        ? await tx.followUp.update({
+            where: { id: existing.clientFollowUpId },
+            data: { assignedUserId, title: followUpTitle, description: adviceText, dueDate: followUpDate, reminderAt: followUpDate },
+          })
+        : await tx.followUp.create({
+            data: {
+              agencyId,
+              clientId: appointment.clientId,
+              caseId: appointment.caseId,
+              appointmentId: appointment.id,
+              assignedUserId,
+              createdById: actorId,
+              title: followUpTitle,
+              description: adviceText,
+              followUpType: "Client call",
+              dueDate: followUpDate,
+              reminderAt: followUpDate,
+              notificationChannels: ["in_app"],
+              status: "Pending",
+            },
+          });
+      if (!existing?.clientFollowUpId) {
+        advice = await tx.appointmentAdvice.update({ where: { id: advice.id }, data: { clientFollowUpId: clientFollowUp.id }, include: adviceInclude });
+      }
     }
 
     await recordAppointmentEvent(tx, {
@@ -202,7 +241,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
       metadata: { adviceId: advice.id, categories, assignedUserId },
     });
 
-    return { advice, lead, followUp, appointment };
+    return { advice, lead, followUp, clientFollowUp, appointment, assigneeName: assignee.fullName };
   });
 
   if (result.lead) {
@@ -220,6 +259,33 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
       actionUrl: `/leads?lead=${encodeURIComponent(result.lead.id)}`,
       dedupeKey: `appointment-advice:${result.advice.id}:assigned:${result.advice.assignedUserId}:${result.advice.updatedAt.getTime()}`,
     });
+  } else if (result.clientFollowUp) {
+    await notifyUsers({
+      agencyId,
+      recipientIds: [result.advice.assignedUserId],
+      actorUserId: actorId,
+      type: "follow_up.assigned",
+      category: "work",
+      title: `Advice handoff: ${result.clientFollowUp.title}`,
+      body: `${result.advice.categories.join(", ")} — call by ${result.advice.followUpDate.toDateString()}`,
+      severity: "info",
+      entityType: "follow_up",
+      entityId: result.clientFollowUp.id,
+      actionUrl: `/app/follow-ups?highlight=${encodeURIComponent(result.clientFollowUp.id)}`,
+      dedupeKey: `appointment-advice:${result.advice.id}:assigned:${result.advice.assignedUserId}:${result.advice.updatedAt.getTime()}`,
+    });
+    if (result.appointment.clientId) {
+      await recordActivity({
+        agencyId,
+        userId: actorId,
+        clientId: result.appointment.clientId,
+        action: "client.advice_recorded",
+        details: `${result.advice.categories.join(", ")} advice — assigned to ${result.assigneeName}`,
+        entityType: "client",
+        entityId: result.appointment.clientId,
+        metadata: { appointmentId: result.appointment.id, adviceId: result.advice.id, followUpId: result.clientFollowUp.id },
+      });
+    }
   }
 
   return result.advice;

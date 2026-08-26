@@ -1756,6 +1756,7 @@ export async function convertAppointmentToClient(req, res) {
     await tx.appointment.update({ where: { id: appointment.id }, data: { clientId: created.id } });
     await tx.note.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });
     await tx.followUp.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });
+    await tx.appointmentAdvice.updateMany({ where: { appointmentId: appointment.id, clientId: null }, data: { clientId: created.id } });
     await tx.bookingPaymentHold.updateMany({
       where: { appointmentId: appointment.id, clientId: null },
       data: { clientId: created.id },
