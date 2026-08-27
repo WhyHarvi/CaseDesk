@@ -11,6 +11,7 @@ test("the schema backs the advice model: one per appointment, a fixed set of rol
   assert.match(model, /followUpId\s+String\?\s+@unique @map\("follow_up_id"\)/);
   assert.match(model, /clientFollowUpId\s+String\?\s+@unique @map\("client_follow_up_id"\)/);
   assert.match(model, /categories\s+String\[\]/);
+  assert.match(model, /additionalAssignedUserIds\s+String\[\]\s+@default\(\[\]\) @map\("additional_assigned_user_ids"\)/);
   assert.match(model, /outcome\s+AppointmentAdviceOutcome\s+@default\(PENDING\)/);
   assert.match(schema, /enum AppointmentAdviceOutcome \{\s*PENDING\s*PROCEEDING\s*CONSIDERING\s*DECLINED\s*\}/);
   const activityEnum = schema.slice(schema.indexOf("enum LeadActivityType {"), schema.indexOf("enum LeadActivityDirection {"));
@@ -114,7 +115,33 @@ test("the lead-side outcome route is nested under the lead, matching the follow-
 test("advice is bundled into the appointment profile payload and gated by the same internalNotes capability as notes, never shown to a client-facing view", async () => {
   const profileService = await source("../src/services/appointmentProfileService.js");
   assert.match(profileService, /advice: \{\s*include: \{/);
-  assert.match(profileService, /advice: canAccessInternalNotes \? data\.advice : null,/);
+  assert.match(profileService, /advice: canAccessInternalNotes \? await withAdditionalAssignedUsers\(db, data\.advice\) : null,/);
+});
+
+test("additionalAssignedUserIds is deduped, capped, and never includes the primary assignee — a co-assignee needs its own real task owner check the same as the primary", async () => {
+  const service = await source("../src/services/appointmentAdviceService.js");
+  assert.match(service, /const MAX_ADDITIONAL_ASSIGNEES = 5;/);
+  const cleanFn = service.slice(service.indexOf("function cleanAdditionalAssignedUserIds"), service.indexOf("async function resolveAdditionalAssignedUsers"));
+  assert.match(cleanFn, /\[\.\.\.new Set\(cleaned\)\]\.filter\(\(id\) => id !== primaryUserId\)\.slice\(0, MAX_ADDITIONAL_ASSIGNEES\)/);
+});
+
+test("confirming advice validates every additional assignee is real, active agency staff — same integrity check as the primary — and notifies every assignee, not just the primary", async () => {
+  const service = await source("../src/services/appointmentAdviceService.js");
+  const confirmFn = service.slice(service.indexOf("export async function confirmAppointmentAdvice"), service.indexOf("// The lead-curtain"));
+  assert.match(confirmFn, /const additionalAssignees = await Promise\.all\(\s*\n\s*additionalAssignedUserIds\.map\(\(id\) => requireLeadStaff\(tx, agencyId, id\)\),/);
+  assert.match(confirmFn, /update: \{ assignedUserId, additionalAssignedUserIds, categories, adviceText, followUpDate \},/);
+  assert.match(confirmFn, /const allAssigneeIds = \[\.\.\.new Set\(\[result\.advice\.assignedUserId, \.\.\.\(result\.advice\.additionalAssignedUserIds \|\| \[\]\)\]\)\];/);
+  assert.match(confirmFn, /recipientIds: allAssigneeIds,/g);
+  const notifyCalls = confirmFn.match(/recipientIds: allAssigneeIds,/g) || [];
+  assert.equal(notifyCalls.length, 2, "both the lead-linked and client-linked notification paths must notify every assignee");
+});
+
+test("saveAppointmentAdviceDraft and recordAppointmentAdviceOutcome both resolve additionalAssignedUserIds into display-ready {id, fullName} objects, same as the primary assignedUser relation", async () => {
+  const service = await source("../src/services/appointmentAdviceService.js");
+  const draftFn = service.slice(service.indexOf("export async function saveAppointmentAdviceDraft"), service.indexOf("// \"Save and assign\""));
+  assert.match(draftFn, /return \{ \.\.\.advice, additionalAssignedUsers: await resolveAdditionalAssignedUsers\(tx, agencyId, additionalAssignedUserIds\) \};/);
+  const outcomeFn = service.slice(service.indexOf("export async function recordAppointmentAdviceOutcome"));
+  assert.match(outcomeFn, /return \{ \.\.\.updated, additionalAssignedUsers: await resolveAdditionalAssignedUsers\(tx, agencyId, updated\.additionalAssignedUserIds\) \};/);
 });
 
 test("getLead includes appointmentAdvice, newest first, so the lead curtain can find the latest unresolved handoff", async () => {
@@ -155,4 +182,32 @@ test("the lead curtain highlights the latest unresolved advice near the top of O
   // rest of this file already uses — not a separate advice-only reassign
   // path — so "assigned employee" and "lead owner" can never drift apart.
   assert.match(sheet, /async function recordAdviceOutcome\(adviceId, outcome\) \{/);
+});
+
+test("the advice composer lets admin/consultant assign additional co-assignees beyond the primary, and the saved-advice card lists everyone assigned, not just the primary", async () => {
+  const overlay = await source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx");
+  assert.match(overlay, /const \[adviceAdditionalAssignedUserIds, setAdviceAdditionalAssignedUserIds\] = useState\(\[\]\);/);
+  assert.match(overlay, /setAdviceAdditionalAssignedUserIds\(data\.advice\?\.additionalAssignedUserIds \|\| \[\]\);/);
+  // Picking a new primary can never leave that same person double-booked as
+  // a co-assignee too.
+  assert.match(overlay, /setAdviceAdditionalAssignedUserIds\(\(current\) => current\.filter\(\(id\) => id !== nextPrimary\)\);/);
+  assert.match(overlay, /additionalAssignedUserIds: adviceAdditionalAssignedUserIds,/);
+  assert.match(overlay, /Assigned to \{\[savedAdvice\.assignedUser\?\.fullName, \.\.\.\(savedAdvice\.additionalAssignedUsers \|\| \[\]\)\.map\(\(user\) => user\.fullName\)\]\.filter\(Boolean\)\.join\(", "\) \|\| "—"\}/);
+});
+
+test("completing a consultation claims the appointment's status change atomically, the same way every other attendance-marking path does, instead of a bare update that could silently overwrite a concurrent change (e.g. a call or Zoom join completing it first, or reverting an already-recorded cancellation)", async () => {
+  const leadService = await source("../src/modules/leads/lead.service.js");
+  const fnStart = leadService.indexOf("export async function updateConsultation(req, db = prisma) {");
+  const fnBody = leadService.slice(fnStart, leadService.indexOf("\nexport", fnStart + 1));
+  assert.match(fnBody, /const currentAppointment = await tx\.appointment\.findFirst\(\{ where: \{ id: existing\.appointmentId, agencyId \} \}\);/);
+  assert.match(fnBody, /const claimed = await tx\.appointment\.updateMany\(\{\s*\n\s*where: \{ id: existing\.appointmentId, status: currentAppointment\.status \},/);
+  assert.match(fnBody, /if \(!claimed\.count\) throw createHttpError\(409, "This appointment's status changed elsewhere just now — refresh and try again\."/);
+});
+
+test("syncLeadNextAction leaves an OPEN lead's next-action fields untouched when there's no remaining pending follow-up, instead of nulling them out — nulling would violate the leads_open_next_action_check DB constraint and crash the whole transaction", async () => {
+  const leadService = await source("../src/modules/leads/lead.service.js");
+  const fnStart = leadService.indexOf("export async function syncLeadNextAction(tx, leadId) {");
+  const fnBody = leadService.slice(fnStart, leadService.indexOf("\n}\n", fnStart) + 3);
+  assert.match(fnBody, /if \(!next\) return next;/);
+  assert.doesNotMatch(fnBody, /next\?\.type \|\| null/);
 });

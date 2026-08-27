@@ -409,7 +409,16 @@ async function lockLeadTransfer(tx, agencyId, leadId) {
 
 export async function syncLeadNextAction(tx, leadId) {
   const next = await tx.leadFollowUp.findFirst({ where: { leadId, status: "PENDING" }, orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }] });
-  await tx.lead.update({ where: { id: leadId }, data: { nextActionType: next?.type || null, nextActionDescription: next?.description || null, nextActionAt: next?.dueAt || null, nextActionOwnerId: next?.assignedUserId || null, version: { increment: 1 } } });
+  // An OPEN lead's next-action fields are NOT NULL-enforced by a DB check
+  // constraint (leads_open_next_action_check) — nulling them out when the
+  // last pending follow-up just got completed (e.g. recording an advice
+  // call outcome, or re-confirming advice after that) throws a raw
+  // constraint-violation error and rolls back the whole transaction. When
+  // there's nothing left to point to, leave the lead's existing next-action
+  // fields as they are rather than blanking them — stale-but-present beats
+  // a hard crash, and a human (or the next follow-up created) corrects it.
+  if (!next) return next;
+  await tx.lead.update({ where: { id: leadId }, data: { nextActionType: next.type, nextActionDescription: next.description, nextActionAt: next.dueAt, nextActionOwnerId: next.assignedUserId, version: { increment: 1 } } });
   return next;
 }
 
@@ -1220,13 +1229,24 @@ export async function updateConsultation(req, db = prisma) {
     const consultation = await tx.leadConsultation.update({ where: { id: existing.id }, data: values, include: consultationInclude });
     if (existing.appointmentId) {
       const appointmentStatus = values.status === "COMPLETED" ? "Completed" : values.status === "CANCELLED" ? "Cancelled" : values.status === "NO_SHOW" ? "NoShow" : "Scheduled";
-      const appointment = await tx.appointment.update({
-        where: { id: existing.appointmentId },
+      const currentAppointment = await tx.appointment.findFirst({ where: { id: existing.appointmentId, agencyId } });
+      if (!currentAppointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
+      // Claimed atomically against whatever status was just read, matching
+      // every other attendance-marking path (applyAppointmentStatusChange
+      // in bookingController.js). A Twilio call or Zoom join can complete
+      // this same appointment between when the consultant opened this
+      // sheet and when they submit it — a bare update() here would
+      // silently overwrite that state (including reverting an
+      // already-recorded cancellation) instead of surfacing the conflict.
+      const claimed = await tx.appointment.updateMany({
+        where: { id: existing.appointmentId, status: currentAppointment.status },
         data: {
           status: appointmentStatus,
           ...(appointmentStatus === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorId, cancellationReason: values.notes || null } : {}),
         },
       });
+      if (!claimed.count) throw createHttpError(409, "This appointment's status changed elsewhere just now — refresh and try again.", "APPOINTMENT_STATUS_CHANGED");
+      const appointment = await tx.appointment.findFirst({ where: { id: existing.appointmentId } });
       await syncLeadConsultationFromAppointment(tx, appointment, {
         consultationStatus: values.status,
         // This workflow records a richer activity below with outcome and actor.

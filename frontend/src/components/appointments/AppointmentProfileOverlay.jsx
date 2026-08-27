@@ -172,6 +172,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [adviceCategories, setAdviceCategories] = useState([]);
   const [adviceText, setAdviceText] = useState("");
   const [adviceAssignedUserId, setAdviceAssignedUserId] = useState("");
+  const [adviceAdditionalAssignedUserIds, setAdviceAdditionalAssignedUserIds] = useState([]);
   const [adviceFollowUpDate, setAdviceFollowUpDate] = useState("");
   const [savedAdvice, setSavedAdvice] = useState(null);
   const [adviceSaving, setAdviceSaving] = useState(false);
@@ -198,6 +199,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setAdviceCategories(data.advice?.categories || []);
       setAdviceText(data.advice?.adviceText || "");
       setAdviceAssignedUserId(data.advice?.assignedUserId || "");
+      setAdviceAdditionalAssignedUserIds(data.advice?.additionalAssignedUserIds || []);
       setAdviceFollowUpDate(data.advice?.followUpDate ? data.advice.followUpDate.slice(0, 10) : "");
       setNovaSummary(data.preConsultationIntake?.novaSummary || null);
       setNovaSummaryError("");
@@ -423,8 +425,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     document.getElementById(`appointment-action-${activeAction}`)?.focus({ preventScroll: true });
   }, [activeAction]);
 
-  const adviceDraftKey = JSON.stringify({ adviceCategories, adviceText, adviceAssignedUserId, adviceFollowUpDate });
-  const savedAdviceKey = savedAdvice ? JSON.stringify({ adviceCategories: savedAdvice.categories, adviceText: savedAdvice.adviceText, adviceAssignedUserId: savedAdvice.assignedUserId, adviceFollowUpDate: savedAdvice.followUpDate ? savedAdvice.followUpDate.slice(0, 10) : "" }) : "";
+  const adviceDraftKey = JSON.stringify({ adviceCategories, adviceText, adviceAssignedUserId, adviceAdditionalAssignedUserIds, adviceFollowUpDate });
+  const savedAdviceKey = savedAdvice ? JSON.stringify({ adviceCategories: savedAdvice.categories, adviceText: savedAdvice.adviceText, adviceAssignedUserId: savedAdvice.assignedUserId, adviceAdditionalAssignedUserIds: savedAdvice.additionalAssignedUserIds || [], adviceFollowUpDate: savedAdvice.followUpDate ? savedAdvice.followUpDate.slice(0, 10) : "" }) : "";
 
   async function saveAdviceDraft() {
     if (!appointment) return;
@@ -433,6 +435,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         categories: adviceCategories,
         adviceText,
         assignedUserId: adviceAssignedUserId || undefined,
+        additionalAssignedUserIds: adviceAdditionalAssignedUserIds,
         followUpDate: adviceFollowUpDate || undefined,
       });
       setSavedAdvice(saved);
@@ -464,6 +467,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         categories: adviceCategories,
         adviceText: adviceText.trim(),
         assignedUserId: adviceAssignedUserId,
+        additionalAssignedUserIds: adviceAdditionalAssignedUserIds,
         followUpDate: adviceFollowUpDate,
       });
       setSavedAdvice(saved);
@@ -765,7 +769,15 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Assign to</span>
-                        <select value={adviceAssignedUserId} onChange={(event) => setAdviceAssignedUserId(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400">
+                        <select
+                          value={adviceAssignedUserId}
+                          onChange={(event) => {
+                            const nextPrimary = event.target.value;
+                            setAdviceAssignedUserId(nextPrimary);
+                            setAdviceAdditionalAssignedUserIds((current) => current.filter((id) => id !== nextPrimary));
+                          }}
+                          className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+                        >
                           <option value="">Select team member</option>
                           {adviceStaff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
                         </select>
@@ -775,6 +787,27 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                         <input type="date" value={adviceFollowUpDate} onChange={(event) => setAdviceFollowUpDate(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400" />
                       </label>
                     </div>
+                    {adviceStaff.length > 1 ? (
+                      <div>
+                        <span className="text-xs font-semibold text-slate-600">Also assign (optional)</span>
+                        <p className="mt-0.5 text-[11px] text-slate-400">Other consultants who should see this handoff. The follow-up task still goes to the primary assignee above.</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {adviceStaff.filter((person) => person.id !== adviceAssignedUserId).map((person) => {
+                            const checked = adviceAdditionalAssignedUserIds.includes(person.id);
+                            return (
+                              <button
+                                type="button"
+                                key={person.id}
+                                onClick={() => setAdviceAdditionalAssignedUserIds((current) => checked ? current.filter((id) => id !== person.id) : current.length >= 5 ? current : [...current, person.id])}
+                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition ${checked ? "bg-slate-950 text-white ring-slate-950" : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300"}`}
+                              >
+                                {person.fullName}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
                     {adviceError ? <p className="text-xs font-medium text-rose-700">{adviceError}</p> : null}
                     <div className="flex justify-end gap-2">
                       <button type="button" disabled={adviceSaving} onClick={() => setShowAdviceComposer(false)} className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Close</button>
@@ -790,7 +823,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                     </div>
                     <p className="mt-2 text-sm leading-6 text-slate-700">{savedAdvice.adviceText}</p>
                     <p className="mt-2 text-xs text-slate-500">
-                      Assigned to {savedAdvice.assignedUser?.fullName || "—"}
+                      Assigned to {[savedAdvice.assignedUser?.fullName, ...(savedAdvice.additionalAssignedUsers || []).map((user) => user.fullName)].filter(Boolean).join(", ") || "—"}
                       <span className="mx-1.5">·</span>
                       Follow up by {savedAdvice.followUpDate ? new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(new Date(savedAdvice.followUpDate)) : "—"}
                       {!savedAdvice.leadId ? <><span className="mx-1.5">·</span>No lead linked — saved to this appointment only</> : null}

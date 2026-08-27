@@ -4924,6 +4924,11 @@ model AppointmentAdvice {
   clientId            String?                  @map("client_id")
   consultantUserId    String                   @map("consultant_user_id")
   assignedUserId      String                   @map("assigned_user_id")
+  // Extra consultants assigned alongside assignedUserId (the primary — the
+  // one lead ownership and the handoff follow-up task go to, so there's
+  // never more than one owner of "call the client"). These get the same
+  // notification and see the same handoff card, but aren't the task owner.
+  additionalAssignedUserIds String[]           @default([]) @map("additional_assigned_user_ids")
   categories          String[]
   adviceText          String                   @map("advice_text")
   followUpDate        DateTime                 @map("follow_up_date")

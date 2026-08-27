@@ -192,8 +192,20 @@ export async function requireAppointmentProfile(
     preConsultationIntake: intakeSummary(data.id, data.events || []),
     // Same visibility rule as internal notes — advice is staff-internal
     // handoff context, not something a client-facing view should ever see.
-    advice: canAccessInternalNotes ? data.advice : null,
+    advice: canAccessInternalNotes ? await withAdditionalAssignedUsers(db, data.advice) : null,
   };
+}
+
+// additionalAssignedUserIds is a plain string array, not a real relation
+// Prisma can include — resolved into display-ready {id, fullName} objects
+// here so the overlay never has to cross-reference the staff list itself.
+async function withAdditionalAssignedUsers(db, advice) {
+  if (!advice) return advice;
+  const ids = advice.additionalAssignedUserIds || [];
+  if (!ids.length) return { ...advice, additionalAssignedUsers: [] };
+  const users = await db.user.findMany({ where: { id: { in: ids }, agencyId: advice.agencyId }, select: { id: true, fullName: true } });
+  const byId = new Map(users.map((user) => [user.id, user]));
+  return { ...advice, additionalAssignedUsers: ids.map((id) => byId.get(id) || { id, fullName: "Former team member" }) };
 }
 
 export async function ensureAppointmentCompletionFollowUp(db, appointment) {
@@ -210,6 +222,20 @@ export async function ensureAppointmentCompletionFollowUp(db, appointment) {
     },
   });
   if (existing) return existing;
+  // Advice & Handoff already creates its own task for this exact
+  // appointment when it's used — a LeadFollowUp (lead-linked) or a generic
+  // FollowUp (client-linked/walk-in), tracked via AppointmentAdvice's
+  // followUpId/clientFollowUpId. The lead-linked case lives in a different
+  // table than this function's own dedupe check above, so without this,
+  // completing a consultation that already had advice recorded created a
+  // second, differently-worded task for the same outcome. Advice's task is
+  // the more specific one (who to call, about what, by when) — this
+  // generic one is only a fallback for when no advice was ever recorded.
+  const advice = await db.appointmentAdvice.findUnique({
+    where: { appointmentId: appointment.id },
+    select: { followUpId: true, clientFollowUpId: true },
+  });
+  if (advice?.followUpId || advice?.clientFollowUpId) return null;
   const dueDate = new Date(Date.now() + 24 * 60 * 60_000);
   return db.followUp.create({
     data: {

@@ -253,6 +253,7 @@ test("completed appointments create one traceable follow-up", async () => {
         return { id: "follow-up-1", ...data };
       },
     },
+    appointmentAdvice: { findUnique: async () => null },
   };
   const appointment = {
     id: "appointment-1",
@@ -282,6 +283,7 @@ test("completed appointments reuse an existing pending follow-up", async () => {
         createCalled = true;
       },
     },
+    appointmentAdvice: { findUnique: async () => { throw new Error("should short-circuit before checking advice"); } },
   };
 
   const result = await ensureAppointmentCompletionFollowUp(db, {
@@ -293,6 +295,36 @@ test("completed appointments reuse an existing pending follow-up", async () => {
 
   assert.equal(result, existing);
   assert.equal(createCalled, false);
+});
+
+// Regression: Advice & Handoff (appointmentAdviceService.js) creates its own
+// task for this same appointment — a LeadFollowUp when the appointment is
+// lead-linked, tracked via AppointmentAdvice.followUpId, which lives in a
+// different table than this function's own dedupe check above. Without this,
+// completing a consultation that already had advice recorded created a
+// second, differently-worded "Follow up after {subject}" task for the same
+// outcome, in addition to the specific "Call client regarding X advice" one.
+test("completed appointments skip the generic follow-up when Advice & Handoff already created its own task for this appointment", async () => {
+  for (const advice of [{ followUpId: "lead-follow-up-1", clientFollowUpId: null }, { followUpId: null, clientFollowUpId: "generic-follow-up-1" }]) {
+    let createCalled = false;
+    const db = {
+      followUp: {
+        findFirst: async () => null,
+        create: async () => { createCalled = true; },
+      },
+      appointmentAdvice: { findUnique: async () => advice },
+    };
+
+    const result = await ensureAppointmentCompletionFollowUp(db, {
+      id: "appointment-1",
+      agencyId: "agency-1",
+      clientId: "client-1",
+      assignedToId: "user-1",
+    });
+
+    assert.equal(result, null);
+    assert.equal(createCalled, false);
+  }
 });
 
 test("pressing Escape while completing a consultation does not discard the in-progress notes", async () => {

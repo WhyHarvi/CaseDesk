@@ -22,6 +22,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 // the exact form a real case's caseType would take, so "the client agreed —
 // start the case" stays a one-click handoff, not a re-typing exercise.
 const MAX_CATEGORIES = 8;
+const MAX_ADDITIONAL_ASSIGNEES = 5;
 
 const OUTCOME_LABEL = {
   PROCEEDING: "Client wants to proceed",
@@ -45,6 +46,27 @@ function cleanCategories(value) {
   return [...new Set(canonicalized)].slice(0, MAX_CATEGORIES);
 }
 
+// Co-assignees beyond the primary — the one assignedUserId still tracks,
+// since lead ownership and the handoff follow-up task can only ever have
+// one owner. Deduped against each other and against the primary (adding
+// the same person twice, or as both primary and co-assignee, is a no-op
+// rather than an error — the composer's own multi-select can't produce it,
+// but a stale/replayed request shouldn't be able to either).
+function cleanAdditionalAssignedUserIds(value, primaryUserId) {
+  const supplied = Array.isArray(value) ? value : [];
+  const cleaned = supplied.map((item) => clean(item, 100)).filter(Boolean);
+  return [...new Set(cleaned)].filter((id) => id !== primaryUserId).slice(0, MAX_ADDITIONAL_ASSIGNEES);
+}
+
+async function resolveAdditionalAssignedUsers(tx, agencyId, userIds) {
+  if (!userIds.length) return [];
+  const users = await tx.user.findMany({ where: { id: { in: userIds }, agencyId }, select: { id: true, fullName: true } });
+  const byId = new Map(users.map((user) => [user.id, user]));
+  // Preserve the stored order and keep a placeholder for a since-removed
+  // staff account rather than silently dropping it from the list.
+  return userIds.map((id) => byId.get(id) || { id, fullName: "Former team member" });
+}
+
 async function requireAppointmentForAdvice(tx, req, appointmentId) {
   const appointment = await tx.appointment.findFirst({
     where: { id: appointmentId, agencyId: req.auth.agencyId },
@@ -65,6 +87,10 @@ export async function saveAppointmentAdviceDraft(req, appointmentId, values) {
     const categories = values?.categories !== undefined ? cleanCategories(values.categories) : existing?.categories || [];
     const adviceText = values?.adviceText !== undefined ? clean(values.adviceText, 4000) : existing?.adviceText || "";
     const assignedUserId = values?.assignedUserId !== undefined ? clean(values.assignedUserId, 100) || null : existing?.assignedUserId || null;
+    const resolvedAssignedUserId = assignedUserId || existing?.assignedUserId || req.auth.userId;
+    const additionalAssignedUserIds = values?.additionalAssignedUserIds !== undefined
+      ? cleanAdditionalAssignedUserIds(values.additionalAssignedUserIds, resolvedAssignedUserId)
+      : (existing?.additionalAssignedUserIds || []).filter((id) => id !== resolvedAssignedUserId);
     const followUpDateRaw = values?.followUpDate !== undefined ? values.followUpDate : existing?.followUpDate;
     const followUpDate = followUpDateRaw ? new Date(followUpDateRaw) : null;
     if (followUpDate && Number.isNaN(followUpDate.getTime())) throw createHttpError(400, "Choose a valid follow-up date.", "VALIDATION_ERROR");
@@ -75,7 +101,8 @@ export async function saveAppointmentAdviceDraft(req, appointmentId, values) {
       leadId: appointment.leadId,
       clientId: appointment.clientId,
       consultantUserId: existing?.consultantUserId || req.auth.userId,
-      assignedUserId: assignedUserId || existing?.assignedUserId || req.auth.userId,
+      assignedUserId: resolvedAssignedUserId,
+      additionalAssignedUserIds,
       categories,
       adviceText,
       followUpDate: followUpDate || existing?.followUpDate || new Date(),
@@ -83,7 +110,7 @@ export async function saveAppointmentAdviceDraft(req, appointmentId, values) {
     const advice = existing
       ? await tx.appointmentAdvice.update({ where: { appointmentId }, data, include: adviceInclude })
       : await tx.appointmentAdvice.create({ data, include: adviceInclude });
-    return advice;
+    return { ...advice, additionalAssignedUsers: await resolveAdditionalAssignedUsers(tx, agencyId, additionalAssignedUserIds) };
   });
 }
 
@@ -103,12 +130,18 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
   if (!categories.length) throw createHttpError(400, "Choose at least one category.", "VALIDATION_ERROR");
   const assignedUserId = clean(values?.assignedUserId, 100);
   if (!assignedUserId) throw createHttpError(400, "Select who should contact the client.", "VALIDATION_ERROR");
+  const additionalAssignedUserIds = cleanAdditionalAssignedUserIds(values?.additionalAssignedUserIds, assignedUserId);
   const followUpDate = values?.followUpDate ? new Date(values.followUpDate) : null;
   if (!followUpDate || Number.isNaN(followUpDate.getTime())) throw createHttpError(400, "Choose a follow-up date.", "VALIDATION_ERROR");
 
   const result = await prisma.$transaction(async (tx) => {
     const appointment = await requireAppointmentForAdvice(tx, req, appointmentId);
     const assignee = await requireLeadStaff(tx, agencyId, assignedUserId);
+    // Every co-assignee must be a real, active member of this agency too —
+    // same integrity check as the primary, just run once per id.
+    const additionalAssignees = await Promise.all(
+      additionalAssignedUserIds.map((id) => requireLeadStaff(tx, agencyId, id)),
+    );
     const existing = await tx.appointmentAdvice.findUnique({ where: { appointmentId: appointment.id } });
 
     let advice = await tx.appointmentAdvice.upsert({
@@ -120,11 +153,12 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
         clientId: appointment.clientId,
         consultantUserId: actorId,
         assignedUserId,
+        additionalAssignedUserIds,
         categories,
         adviceText,
         followUpDate,
       },
-      update: { assignedUserId, categories, adviceText, followUpDate },
+      update: { assignedUserId, additionalAssignedUserIds, categories, adviceText, followUpDate },
       include: adviceInclude,
     });
 
@@ -169,6 +203,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
       }
       await syncLeadNextAction(tx, lead.id);
 
+      const assigneeNames = [assignee.fullName, ...additionalAssignees.map((user) => user.fullName)].join(", ");
       await tx.leadActivity.create({
         data: {
           agencyId,
@@ -179,7 +214,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
           title: `Consultant advised: ${categories.join(", ")}`,
           description: adviceText,
           performedById: actorId,
-          metadata: { appointmentId: appointment.id, adviceId: advice.id, followUpId: followUp.id, assignedUserId, categories },
+          metadata: { appointmentId: appointment.id, adviceId: advice.id, followUpId: followUp.id, assignedUserId, additionalAssignedUserIds, categories },
         },
       });
       await tx.activityLog.create({
@@ -187,7 +222,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
           agencyId,
           userId: actorId,
           action: "lead.advice_recorded",
-          details: `${lead.leadNumber}: ${categories.join(", ")} advice — assigned to ${assignee.fullName}`,
+          details: `${lead.leadNumber}: ${categories.join(", ")} advice — assigned to ${assigneeNames}`,
           entityType: "lead",
           entityId: lead.id,
           metadata: { appointmentId: appointment.id, adviceId: advice.id, followUpId: followUp.id },
@@ -238,16 +273,28 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
       actorUserId: actorId,
       type: "ADVICE_RECORDED",
       summary: appointment.leadId ? "Post-consultation advice recorded and assigned" : "Post-consultation advice recorded",
-      metadata: { adviceId: advice.id, categories, assignedUserId },
+      metadata: { adviceId: advice.id, categories, assignedUserId, additionalAssignedUserIds },
     });
 
-    return { advice, lead, followUp, clientFollowUp, appointment, assigneeName: assignee.fullName };
+    return {
+      advice,
+      lead,
+      followUp,
+      clientFollowUp,
+      appointment,
+      assigneeName: assignee.fullName,
+      additionalAssignedUsers: await resolveAdditionalAssignedUsers(tx, agencyId, additionalAssignedUserIds),
+    };
   });
 
+  // Everyone assigned gets notified — the co-assignees see the same
+  // handoff card and can take the call just as much as the primary; only
+  // lead ownership and the follow-up task itself stay singly-owned.
+  const allAssigneeIds = [...new Set([result.advice.assignedUserId, ...(result.advice.additionalAssignedUserIds || [])])];
   if (result.lead) {
     await notifyUsers({
       agencyId,
-      recipientIds: [result.advice.assignedUserId],
+      recipientIds: allAssigneeIds,
       actorUserId: actorId,
       type: "lead.advice_assigned",
       category: "leads",
@@ -262,7 +309,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
   } else if (result.clientFollowUp) {
     await notifyUsers({
       agencyId,
-      recipientIds: [result.advice.assignedUserId],
+      recipientIds: allAssigneeIds,
       actorUserId: actorId,
       type: "follow_up.assigned",
       category: "work",
@@ -275,12 +322,13 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
       dedupeKey: `appointment-advice:${result.advice.id}:assigned:${result.advice.assignedUserId}:${result.advice.updatedAt.getTime()}`,
     });
     if (result.appointment.clientId) {
+      const assigneeNames = [result.assigneeName, ...result.additionalAssignedUsers.map((user) => user.fullName)].join(", ");
       await recordActivity({
         agencyId,
         userId: actorId,
         clientId: result.appointment.clientId,
         action: "client.advice_recorded",
-        details: `${result.advice.categories.join(", ")} advice — assigned to ${result.assigneeName}`,
+        details: `${result.advice.categories.join(", ")} advice — assigned to ${assigneeNames}`,
         entityType: "client",
         entityId: result.appointment.clientId,
         metadata: { appointmentId: result.appointment.id, adviceId: result.advice.id, followUpId: result.clientFollowUp.id },
@@ -288,7 +336,7 @@ export async function confirmAppointmentAdvice(req, appointmentId, values) {
     }
   }
 
-  return result.advice;
+  return { ...result.advice, additionalAssignedUsers: result.additionalAssignedUsers };
 }
 
 // The lead-curtain "Add call result" action — records what happened when the
@@ -348,6 +396,6 @@ export async function recordAppointmentAdviceOutcome(req, leadId, adviceId, outc
       },
     });
 
-    return updated;
+    return { ...updated, additionalAssignedUsers: await resolveAdditionalAssignedUsers(tx, agencyId, updated.additionalAssignedUserIds) };
   });
 }
