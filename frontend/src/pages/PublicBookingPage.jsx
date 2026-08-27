@@ -2110,18 +2110,16 @@ export default function PublicBookingPage() {
                           <span className="text-rose-500">*</span>
                         </>
                       )}
-                      <div className="mt-1.5 flex overflow-hidden rounded-md border border-[#E5E7EB] focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
-                        <span className="flex items-center gap-1 border-r border-[#E5E7EB] bg-[#F9F9FA] px-3 text-sm text-[#4D5865]">
-                          <Phone className="h-3.5 w-3.5" /> +1
-                        </span>
+                      <div className="mt-1.5 flex items-center overflow-hidden rounded-md border border-[#E5E7EB] px-3 focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
+                        <Phone className="h-3.5 w-3.5 shrink-0 text-[#4D5865]" />
                         <input
                           value={form.phone}
                           onChange={(e) =>
                             setForm((c) => ({ ...c, phone: e.target.value }))
                           }
-                          className="flex-1 px-3 py-2.5 text-sm text-[#1A1F36] outline-none"
+                          className="flex-1 px-2 py-2.5 text-sm text-[#1A1F36] outline-none"
                           autoComplete="tel"
-                          placeholder="(555) 123-4567"
+                          placeholder="+1 (555) 123-4567"
                         />
                       </div>
                       {meetingMode === "Phone" ? (
@@ -2130,11 +2128,15 @@ export default function PublicBookingPage() {
                           {info.phoneCallerId
                             ? ` from ${info.phoneCallerId}`
                             : ""}
-                          . You do not need to call the office.
+                          . You do not need to call the office. Outside
+                          Canada? Include your country code, e.g. +44 7911
+                          123456.
                         </span>
                       ) : (
                         <span className="mt-1.5 block font-normal leading-5 text-[#6B7280]">
-                          So we can reach you about your appointment.
+                          So we can reach you about your appointment. Outside
+                          Canada? Include your country code, e.g. +44 7911
+                          123456.
                         </span>
                       )}
                     </motion.label>
