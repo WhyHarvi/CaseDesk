@@ -220,7 +220,7 @@ export async function processClaimed(eventId) {
     await tx.leadIncomingEvent.update({ where: { id: event.id }, data: { status: "PROCESSED", normalizedPayload: normalized.data, processedLeadId: lead.id, lockedAt: null, processedAt: new Date(), lastError: null } });
     if (event.importRowId) await tx.leadImportRow.update({ where: { id: event.importRowId }, data: { status: "PROCESSED", normalizedData: normalized.data, createdLeadId: lead.id } });
     await refreshBatch(tx, event.importBatchId);
-    return { agencyId: event.agencyId, eventId: event.id, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, phone: lead.phone, firstName: lead.firstName };
+    return { agencyId: event.agencyId, eventId: event.id, leadId: lead.id, leadNumber, ownerUserId, firstResponseDueAt: nextActionAt, channel: event.channel, email: lead.email, phone: lead.phone, firstName: lead.firstName, lastName: lead.lastName };
   }, { maxWait: 10_000, timeout: 30_000 });
   if (result?.agencyId) invalidateDashboardCache(result.agencyId);
   if (result?.agencyId && result?.eventId) {
@@ -232,7 +232,8 @@ export async function processClaimed(eventId) {
     });
   }
   if (result?.ownerUserId) {
-    await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: `First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: "/leads", dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
+    const leadName = [result.firstName, result.lastName].filter(Boolean).join(" ") || result.leadNumber;
+    await notifyUsers({ agencyId: result.agencyId, recipientIds: [result.ownerUserId], type: "lead.intake_assigned", category: "leads", title: `Lead assigned to you: ${leadName}`, body: `Assigned by intake automation · ${result.leadNumber} · First response due ${result.firstResponseDueAt.toISOString()}`, severity: "warning", entityType: "lead", entityId: result.leadId, actionUrl: `/leads?lead=${encodeURIComponent(result.leadId)}`, dedupeKey: `lead:${result.leadId}:intake-assigned:${result.ownerUserId}` });
   }
   if (result?.leadId && leadWelcomeEmailEligible(result.channel)) {
     void sendLeadWelcomeEmail(result.agencyId, {

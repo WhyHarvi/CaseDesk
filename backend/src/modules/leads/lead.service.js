@@ -64,6 +64,16 @@ const leadTransactionOptions = {
   timeout: 20_000,
 };
 
+function assignmentLeadLabel(lead) {
+  return [lead?.firstName, lead?.lastName].filter(Boolean).join(" ") || lead?.leadNumber || "Lead";
+}
+
+async function assignmentActorName(agencyId, actorId) {
+  if (!actorId) return "CaseDesk";
+  const actor = await prisma.user.findFirst({ where: { id: actorId, agencyId }, select: { fullName: true } });
+  return actor?.fullName || "A team member";
+}
+
 async function validateReferences(tx, agencyId, values) {
   const userIds = [...new Set([values.ownerUserId, values.nextActionOwnerId])];
   const [users, source, campaign] = await Promise.all([
@@ -120,7 +130,8 @@ export async function createLead(req, db = prisma) {
     return lead;
   }, leadTransactionOptions);
   if (db === prisma) {
-    await notifyUsers({ agencyId, recipientIds: [result.ownerUserId], actorUserId: actorId, type: "lead.assigned", category: "leads", title: `New lead assigned: ${result.leadNumber}`, body: result.initialMessage, severity: result.priority === "URGENT" ? "critical" : result.priority === "HIGH" ? "warning" : "info", entityType: "lead", entityId: result.id, actionUrl: "/leads", dedupeKey: `lead:${result.id}:assigned:${result.ownerUserId}` });
+    const assignedBy = await assignmentActorName(agencyId, actorId);
+    await notifyUsers({ agencyId, recipientIds: [result.ownerUserId], actorUserId: actorId, type: "lead.assigned", category: "leads", title: `Lead assigned to you: ${assignmentLeadLabel(result)}`, body: `Assigned by ${assignedBy} · ${result.leadNumber}`, severity: result.priority === "URGENT" ? "critical" : result.priority === "HIGH" ? "warning" : "info", entityType: "lead", entityId: result.id, actionUrl: `/leads?lead=${encodeURIComponent(result.id)}`, dedupeKey: `lead:${result.id}:assigned:${result.ownerUserId}` });
   }
   return result;
 }
@@ -651,7 +662,8 @@ export async function assignLead(req, db = prisma) {
   }, leadTransactionOptions);
   if (db === prisma) {
     await Promise.all(result.staleRequestIds.map((id) => resolveNotifications({ agencyId, entityType: "leadTransferRequest", entityId: id, types: ["lead.transfer_approval_required"] })));
-    await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead reassigned: ${result.updated.leadNumber}`, body: result.assignmentReason, severity: result.updated.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.updated.id, actionUrl: "/leads", dedupeKey: `lead:${result.updated.id}:assigned:${values.ownerUserId}:${result.updated.updatedAt.toISOString()}` });
+    const assignedBy = await assignmentActorName(agencyId, actorId);
+    await notifyUsers({ agencyId, recipientIds: [values.ownerUserId], actorUserId: actorId, type: "lead.reassigned", category: "leads", title: `Lead assigned to you: ${assignmentLeadLabel(result.updated)}`, body: `Assigned by ${assignedBy} · ${result.updated.leadNumber}`, severity: result.updated.priority === "URGENT" ? "critical" : "info", entityType: "lead", entityId: result.updated.id, actionUrl: `/leads?lead=${encodeURIComponent(result.updated.id)}`, dedupeKey: `lead:${result.updated.id}:assigned:${values.ownerUserId}:${result.updated.updatedAt.toISOString()}` });
   }
   return result.updated;
 }
@@ -742,7 +754,10 @@ export async function approveLeadTransferRequest(req, db = prisma) {
   if (db === prisma) await resolveNotifications({ agencyId, entityType: "leadTransferRequest", entityId: req.params.requestId, types: ["lead.transfer_approval_required"] }).catch(() => {});
   if (result.stale) throw createHttpError(409, "The lead changed after this request was submitted. The request was closed without transferring it.", "TRANSFER_REQUEST_STALE");
   if (db === prisma) {
-    await notifyUsers({ agencyId, recipientIds: [...new Set([result.request.requestedById, result.request.toOwnerId])], actorUserId: actorId, type: "lead.transfer_approved", category: "leads", title: `Lead transfer approved: ${result.updated.leadNumber}`, body: `${result.request.toOwner.fullName} is now responsible for this lead and its pending follow-ups.`, severity: "info", entityType: "lead", entityId: result.updated.id, actionUrl: "/leads", destinationKey: "leads", dedupeKey: `lead-transfer:${result.request.id}:approved` }).catch(() => {});
+    await notifyUsers({ agencyId, recipientIds: [result.request.toOwnerId], actorUserId: actorId, type: "lead.transfer_approved", category: "leads", title: `Lead assigned to you: ${assignmentLeadLabel(result.updated)}`, body: `Assigned by ${result.request.reviewedBy?.fullName || "an administrator"} · ${result.updated.leadNumber}`, severity: "info", entityType: "lead", entityId: result.updated.id, actionUrl: `/leads?lead=${encodeURIComponent(result.updated.id)}`, destinationKey: "leads", dedupeKey: `lead-transfer:${result.request.id}:approved:assignee` }).catch(() => {});
+    if (result.request.requestedById !== result.request.toOwnerId) {
+      await notifyUsers({ agencyId, recipientIds: [result.request.requestedById], actorUserId: actorId, type: "lead.transfer_approved", category: "leads", title: `Lead transfer approved: ${assignmentLeadLabel(result.updated)}`, body: `${result.request.reviewedBy?.fullName || "An administrator"} approved your handoff to ${result.request.toOwner.fullName}.`, severity: "info", entityType: "leadTransferRequest", entityId: result.request.id, actionUrl: "/leads", destinationKey: "leads", dedupeKey: `lead-transfer:${result.request.id}:approved:requester` }).catch(() => {});
+    }
   }
   return { request: result.request, lead: result.updated };
 }
@@ -926,7 +941,7 @@ export async function bulkReassignLeads(req, db = prisma) {
             metadata: { runId, previousOwnerId: lead.ownerUserId, ownerUserId: targetUserId },
           },
         });
-        reassigned.push({ id, leadNumber: updated.leadNumber, ownerUserId: targetUserId });
+        reassigned.push({ id, leadNumber: updated.leadNumber, leadName: assignmentLeadLabel(updated), ownerUserId: targetUserId });
         succeeded = true;
       }, leadTransactionOptions);
       if (succeeded) counts.set(targetUserId, (counts.get(targetUserId) || 0) + 1);
@@ -936,20 +951,21 @@ export async function bulkReassignLeads(req, db = prisma) {
   }
 
   if (db === prisma) {
-    const byOwner = new Map();
-    for (const item of reassigned) byOwner.set(item.ownerUserId, (byOwner.get(item.ownerUserId) || 0) + 1);
-    for (const [ownerUserId, count] of byOwner) {
+    const assignedBy = await assignmentActorName(agencyId, actorId);
+    for (const item of reassigned) {
       await notifyUsers({
         agencyId,
-        recipientIds: [ownerUserId],
+        recipientIds: [item.ownerUserId],
         actorUserId: actorId,
         type: "lead.bulk_reassigned",
         category: "leads",
-        title: `${count} lead${count === 1 ? "" : "s"} reassigned to you`,
-        body: "Rebalanced from another team member's queue.",
+        title: `Lead assigned to you: ${item.leadName}`,
+        body: `Assigned by ${assignedBy} · ${item.leadNumber}`,
         severity: "info",
-        actionUrl: "/leads",
-        dedupeKey: `lead-bulk-reassign:${runId}:${ownerUserId}`,
+        entityType: "lead",
+        entityId: item.id,
+        actionUrl: `/leads?lead=${encodeURIComponent(item.id)}`,
+        dedupeKey: `lead-bulk-reassign:${runId}:${item.id}:${item.ownerUserId}`,
       });
     }
   }

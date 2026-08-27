@@ -55,6 +55,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [supportingDataError, setSupportingDataError] = useState("");
   const [selectedLead, setSelectedLead] = useState(null);
+  const [deepLinkError, setDeepLinkError] = useState("");
   const requestedLeadId = params.get("lead") || "";
   const canBulkPromote = segment === "IMPORT_REVIEW";
   const canBulkReassign = segment === "STANDARD" && role === "admin";
@@ -107,17 +108,14 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   useEffect(() => {
     if (!requestedLeadId || selectedLead?.id === requestedLeadId) return;
     let active = true;
+    setDeepLinkError("");
     api.get(`/leads/${encodeURIComponent(requestedLeadId)}`)
       .then((response) => {
         if (active) setSelectedLead(response.data.data);
       })
-      .catch(() => {
+      .catch((requestError) => {
         if (active) {
-          setParams((current) => {
-            const next = new URLSearchParams(current);
-            next.delete("lead");
-            return next;
-          }, { replace: true });
+          setDeepLinkError(requestError.response?.data?.message || "This assigned lead could not be loaded. Refresh the page or ask an administrator to confirm its owner.");
         }
       });
     return () => {
@@ -288,6 +286,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       </header>
 
       {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{supportingDataError} Refresh the page before adding a lead.</div> : null}
+      {deepLinkError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><p>{deepLinkError}</p><button type="button" onClick={() => window.location.reload()} className="mt-2 text-xs font-semibold underline">Refresh and try again</button></div> : null}
       {callError ? <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{callError}</span><button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button></div> : null}
 
       <div className="overflow-visible rounded-3xl border border-white/80 bg-white/80 shadow-[0_18px_55px_rgba(28,45,74,0.10)] backdrop-blur-xl">
