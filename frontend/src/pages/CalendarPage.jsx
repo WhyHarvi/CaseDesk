@@ -1313,7 +1313,6 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       ...current,
       startsAt: "",
       date: initialDate || current.date,
-      assignedToId: role === "consultant" ? userId : current.assignedToId,
       paymentMethod: initialIntake?.action === "appointment-payment" ? initialIntake.paymentMethod || "" : "",
       paymentReference: initialIntake?.action === "appointment-payment" ? initialIntake.paymentReference || "" : "",
       idempotencyKey: newBookingOperationKey(),
@@ -2467,7 +2466,7 @@ export default function CalendarPage() {
 
       <NewAppointmentSheet
         open={sheetOpen}
-        onClose={() => { setSheetOpen(false); setPrefillClient(null); setPrefillIntake(null); }}
+        onClose={() => { setSheetOpen(false); setPrefillClient(null); setPrefillLead(null); setPrefillIntake(null); }}
         onCreated={(created) => { setAppointments((current) => [...current, created]); setSelected(created); }}
         onRefresh={() => load({ fresh: true, background: true })}
         staff={staff}
