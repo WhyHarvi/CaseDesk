@@ -782,7 +782,7 @@ export async function createCommunicationMessage(req, res) {
   const shouldQueue =
     direction === "Outbound" &&
     sendNow &&
-    ["Email", "Sms", "Call"].includes(channel);
+    ["Email", "Sms"].includes(channel);
   if (shouldQueue || (direction === "Outbound" && channel === "Chat")) {
     const preference = await ensureRecipientAllowed(
       req.user.agencyId,
@@ -833,8 +833,10 @@ export async function createCommunicationMessage(req, res) {
         : "Supabase"
       : channel === "Email"
         ? "SMTP"
-        : ["Sms", "Call"].includes(channel)
-          ? "Ooma"
+        : channel === "Sms"
+          ? "Twilio"
+          : channel === "Call"
+            ? "Manual"
           : "Manual";
   let parent = null;
   if (req.body.parentMessageId) {

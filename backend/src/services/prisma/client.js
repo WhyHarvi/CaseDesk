@@ -52,9 +52,8 @@ const shouldReusePrisma =
   cachedPrisma.communicationOutbox &&
   cachedPrisma.agencyMailSettings &&
   cachedPrisma.agencyMicrosoftMailboxConnection &&
-  cachedPrisma.agencyOomaSettings &&
-  cachedPrisma.oomaCallSession &&
-  cachedPrisma.oomaCallEvent &&
+  cachedPrisma.callSession &&
+  cachedPrisma.callEvent &&
   cachedPrisma.notification &&
   cachedPrisma.notificationPreference &&
   cachedPrisma.notificationDelivery &&
@@ -74,8 +73,7 @@ const shouldReusePrisma =
   hasRuntimeField(cachedPrisma, "CommunicationMessage", "conversation") &&
   hasRuntimeField(cachedPrisma, "CommunicationMessage", "deliveryEvents") &&
   hasRuntimeField(cachedPrisma, "Agency", "mailSettings") &&
-  hasRuntimeField(cachedPrisma, "Agency", "oomaSettings") &&
-  hasRuntimeField(cachedPrisma, "Agency", "oomaCallSessions") &&
+  hasRuntimeField(cachedPrisma, "Agency", "callSessions") &&
   hasRuntimeField(cachedPrisma, "User", "receivedNotifications") &&
   hasRuntimeField(cachedPrisma, "FollowUp", "createdBy") &&
   hasRuntimeField(cachedPrisma, "FollowUp", "document") &&

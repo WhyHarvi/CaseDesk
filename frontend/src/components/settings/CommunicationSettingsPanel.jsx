@@ -27,7 +27,7 @@ const permissionOptions = [
   ["canSendEmail", "Send email", "Create, schedule, and retry email"],
   ["canSendSms", "Send SMS", "Send texts through the workspace number"],
   ["canUseChat", "Use secure chat", "Send and receive portal chat"],
-  ["canInitiateCalls", "Start calls", "Use Ooma click-to-call"],
+  ["canInitiateCalls", "Start calls", "Use the Twilio softphone"],
   [
     "canManageConsent",
     "Manage consent",
@@ -224,7 +224,7 @@ export default function CommunicationSettingsPanel() {
         </h2>
         <p className="mt-2 max-w-2xl text-[15px] leading-6 text-slate-500">
           Set one client-wide communication policy, manage team access
-          separately, and define how long deleted records remain recoverable.
+          separately, configure automatic messages, and define how long deleted records remain recoverable.
         </p>
       </div>
       {notice ? (

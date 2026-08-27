@@ -48,10 +48,6 @@ export function adaptProviderPayload(provider, rawPayload = {}) {
     const fullName = text(payload.fullName || from?.replace(/<[^>]+>/, "").replace(email || "", "").replace(/["']/g, ""));
     return { fullName, phone: text(payload.phone || phoneFrom(body)), email, immigrationInterest: text(payload.immigrationInterest || payload.subject), initialMessage: body };
   }
-  if (provider === "OOMA") {
-    const source = direct(payload);
-    return { fullName: text(source.fullName || source.callerName || source.name), phone: text(source.phone || source.from || source.callerNumber || source.senderAddress), email: text(source.email), immigrationInterest: text(source.immigrationInterest), initialMessage: text(source.body || source.text || source.message || source.notes) };
-  }
   if (provider === "WEBSITE") {
     const body = direct(payload);
     // Shaped for CHK's site chatbot ("Aria"): { type, id, ref, status, heat,
@@ -89,13 +85,12 @@ export function adaptProviderPayload(provider, rawPayload = {}) {
   return direct(payload);
 }
 
-export const providerChannel = (provider) => ({ META: "META_LEAD_FORM", WHATSAPP: "WHATSAPP_BUSINESS", GOOGLE_ADS: "GOOGLE_ADS_LEAD_FORM", EMAIL: "EMAIL_INTAKE", OOMA: "PHONE_PROVIDER", WEBSITE: "WEBSITE_CONNECTOR" }[provider] || "OTHER");
+export const providerChannel = (provider) => ({ META: "META_LEAD_FORM", WHATSAPP: "WHATSAPP_BUSINESS", GOOGLE_ADS: "GOOGLE_ADS_LEAD_FORM", EMAIL: "EMAIL_INTAKE", WEBSITE: "WEBSITE_CONNECTOR" }[provider] || "OTHER");
 
 export function providerEventId(provider, payload = {}) {
   if (provider === "META") return payload.entry?.[0]?.changes?.[0]?.value?.leadgen_id || payload.leadgen_id;
   if (provider === "WHATSAPP") return payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id || payload.message?.id;
   if (provider === "GOOGLE_ADS") return payload.lead_id || payload.lead?.lead_id;
   if (provider === "EMAIL") return payload.messageId || payload.providerMessageId || payload.emailMessageId;
-  if (provider === "OOMA") return payload.callId || payload.messageId || payload.providerMessageId;
   return payload.externalId || payload.providerRecordId || payload.id;
 }

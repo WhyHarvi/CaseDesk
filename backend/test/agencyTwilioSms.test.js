@@ -17,7 +17,7 @@ test("agencies can save Twilio credentials before a phone number exists", async 
   assert.match(schema, /messagingServiceSid\s+String\?/);
   assert.match(schema, /twilioSettings\s+AgencyTwilioSettings\?/);
   // The number columns must stay nullable — credentials should save today
-  // with no number yet, unlike Ooma's original (later-loosened) migration.
+  // with no number yet.
   assert.match(migration, /CREATE TABLE "agency_twilio_settings"/);
   assert.doesNotMatch(migration, /"from_number" TEXT NOT NULL/);
   assert.doesNotMatch(migration, /"account_sid" TEXT NOT NULL/);
@@ -43,29 +43,28 @@ test("credential verification works without a phone number", async () => {
   assert.doesNotMatch(verifyBody, /fromNumber/);
 });
 
-test("SMS sends prefer Twilio and fall back to Ooma when Twilio is not ready", async () => {
+test("SMS sends require Twilio and never fall back to another provider", async () => {
   const [provider, twilioService, outbox] = await Promise.all([
     source("../src/services/communicationProviderService.js"),
     source("../src/services/agencyTwilioService.js"),
     source("../src/services/communicationOutboxService.js"),
   ]);
   assert.match(provider, /export async function sendSmsMessage\(\{ agencyId, to, body, idempotencyKey, requireVerified = true \}\)/);
-  assert.match(provider, /resolveAgencyTwilioConfig\(agencyId, \{ requireVerified, optional: true \}\)/);
-  assert.match(provider, /if \(twilioConfig\) return sendAgencyTwilioSms\(/);
-  assert.match(provider, /return sendAgencyOomaSms\(\{ agencyId, to, body, idempotencyKey, requireVerified \}\)/);
-  // optional:true must return null instead of throwing, so the fallback can run.
-  assert.match(twilioService, /const fail = \(message\) => \{\s*\n\s*if \(optional\) return null;/);
+  assert.match(provider, /resolveAgencyTwilioConfig\(agencyId, \{ requireVerified \}\)/);
+  assert.match(provider, /return sendAgencyTwilioSms\(/);
+  assert.doesNotMatch(provider, /Ooma|sendAgencyOomaSms/);
+  assert.match(twilioService, /Twilio is not connected/);
   assert.match(outbox, /sendSmsMessage/);
   assert.doesNotMatch(outbox, /sendOomaSms/);
 });
 
-test("Twilio settings can be removed, reverting sends to Ooma with no code changes", async () => {
+test("Twilio settings can be removed", async () => {
   const controller = await source("../src/controllers/twilioSettingsController.js");
   assert.match(controller, /export async function deleteTwilioSettings/);
   assert.match(controller, /agencyTwilioSettings\.delete\(\{ where: \{ id: existing\.id \} \}\)/);
 });
 
-test("automated SMS call sites route through the provider-neutral dispatcher, not Ooma directly", async () => {
+test("automated SMS call sites route through the Twilio-backed dispatcher", async () => {
   const files = [
     "../src/modules/leads/lead.retainer.service.js",
     "../src/modules/leads/lead.welcomeEmail.service.js",
@@ -81,17 +80,11 @@ test("automated SMS call sites route through the provider-neutral dispatcher, no
   const sources = await Promise.all(files.map((file) => source(file)));
   sources.forEach((src, index) => {
     assert.match(src, /sendSmsMessage/, `${files[index]} should import sendSmsMessage`);
-    assert.doesNotMatch(src, /sendAgencyOomaSms/, `${files[index]} should no longer call sendAgencyOomaSms directly`);
+    assert.doesNotMatch(src, /sendAgencyOomaSms/, `${files[index]} should not call a removed provider`);
   });
 });
 
-test("Ooma's own test endpoints still exercise Ooma directly, not the Twilio-aware dispatcher", async () => {
-  const controller = await source("../src/controllers/oomaSettingsController.js");
-  assert.match(controller, /import \{ sendAgencyOomaSms \} from "\.\.\/services\/agencyOomaService\.js";/);
-  assert.doesNotMatch(controller, /sendSmsMessage/);
-});
-
-test("frontend registers the Twilio panel alongside Ooma on the same settings page", async () => {
+test("frontend registers Twilio as the sole phone and SMS provider", async () => {
   const [settingsPage, twilioPanel] = await Promise.all([
     source("../../frontend/src/pages/Settings.jsx"),
     source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx"),
@@ -102,4 +95,5 @@ test("frontend registers the Twilio panel alongside Ooma on the same settings pa
   assert.match(twilioPanel, /settings\/twilio\/verify/);
   assert.match(twilioPanel, /Send test text/);
   assert.match(twilioPanel, /disabled=\{!form\.sendReady\}/);
+  assert.doesNotMatch(settingsPage, /AgencyOomaSettingsPanel|Ooma Enterprise/);
 });

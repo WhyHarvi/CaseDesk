@@ -19,6 +19,8 @@ import {
 } from "../services/zoomService.js";
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "../services/notificationService.js";
 import { lockSchedulingTransaction } from "../services/schedulingAssignmentService.js";
+import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
+import { autoMarkAppointmentAttended } from "../services/appointmentAttendanceService.js";
 
 function frontendBase() {
   return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -384,6 +386,55 @@ async function handleMeetingUpdated(payload) {
   });
 }
 
+async function handleParticipantJoined(payload) {
+  const accountId = String(payload?.payload?.account_id || "");
+  const object = payload?.payload?.object || {};
+  const meetingId = String(object.id || "");
+  const participant = object.participant || {};
+  if (!accountId || !meetingId) return;
+  const connection = await prisma.agencyZoomConnection.findUnique({ where: { providerAccountId: accountId } });
+  if (!connection) return;
+  const appointment = await prisma.appointment.findFirst({
+    where: { agencyId: connection.agencyId, meetingProvider: "Zoom", meetingProviderId: meetingId, meetingMode: "Zoom", status: "Scheduled" },
+    include: { client: { select: { email: true } } },
+  });
+  if (!appointment) return;
+
+  const participantEmail = String(participant.user_email || participant.email || "").trim().toLowerCase();
+  const participantUserId = String(participant.user_id || participant.id || "");
+  const guestEmail = String(appointment.guestEmail || appointment.client?.email || "").trim().toLowerCase();
+  const role = participantUserId && participantUserId === String(appointment.meetingProviderHostId || "")
+    ? "consultant"
+    : participantEmail && guestEmail && participantEmail === guestEmail
+      ? "client"
+      : null;
+  if (!role) return;
+
+  const priorJoins = await prisma.appointmentEvent.findMany({
+    where: { appointmentId: appointment.id, type: "MEETING_PARTICIPANT_JOINED" },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  const hasOtherRole = priorJoins.some((event) => event?.metadata?.attendanceRole && event.metadata.attendanceRole !== role);
+  await recordAppointmentEvent(prisma, {
+    agencyId: appointment.agencyId,
+    appointmentId: appointment.id,
+    type: "MEETING_PARTICIPANT_JOINED",
+    summary: role === "consultant" ? "Consultant joined Zoom" : "Client joined Zoom",
+    metadata: { attendanceRole: role, participantId: participantUserId || null },
+  });
+  if (hasOtherRole) {
+    await autoMarkAppointmentAttended({
+      agencyId: appointment.agencyId,
+      appointmentId: appointment.id,
+      source: "Consultant and client joined Zoom",
+      requireAssignedActor: false,
+      allowBeforeStartMinutes: 15,
+      metadata: { meetingProvider: "Zoom", meetingId },
+    });
+  }
+}
+
 async function handleDeauthorization(payload) {
   const accountId = String(payload?.payload?.account_id || "");
   if (!accountId) return;
@@ -418,6 +469,7 @@ export async function zoomWebhook(req, res) {
   }
   if (event.event === "meeting.deleted") await handleMeetingDeleted(event);
   else if (event.event === "meeting.updated") await handleMeetingUpdated(event);
+  else if (event.event === "meeting.participant_joined") await handleParticipantJoined(event);
   else if (event.event === "app_deauthorized") await handleDeauthorization(event);
   res.status(204).send();
 }

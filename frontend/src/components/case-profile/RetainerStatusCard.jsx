@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { Calendar, Check, CheckCircle2, Eye, FileSignature, Loader2, Mail, PenTool, Plus, RefreshCw, Sparkles, X } from "lucide-react";
 import DOMPurify from "dompurify";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { approveCaseBillingRetainer, createCaseBillingRetainerDraft, getCaseBillingRetainer, previewCaseBillingRetainer, resetCaseBillingRetainer, syncCaseBillingRetainerWithSchedule } from "../../api/caseBillingRetainerApi";
@@ -75,7 +75,7 @@ function RetainerPreviewOverlay({ preview, onClose }) {
               }}
             />
             {preview.footerText ? (
-              <p className="mt-9 border-t border-slate-200 pt-3 text-center text-xs text-slate-400">
+              <p className="mt-9 border-t border-slate-200 pt-3 text-center text-xs text-slate-500">
                 {preview.footerText}
               </p>
             ) : null}
@@ -113,6 +113,7 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onPreview }) {
   const [previewError, setPreviewError] = useState("");
   const [reviewedMode, setReviewedMode] = useState(null);
   const [reviewToken, setReviewToken] = useState("");
+  const installmentsRef = useRef(null);
 
   function invalidateReview() {
     setPreview(null);
@@ -134,6 +135,10 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onPreview }) {
         triggerDaysAfterSigning: row.triggerDaysAfterSigning ?? 0,
       })),
     );
+    // Otherwise a template pick lower in this modal's scrollable body can
+    // land with no visible change if the installment list isn't already
+    // in view.
+    installmentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function viewRetainer(withSchedule = true) {
@@ -166,12 +171,12 @@ function ScheduleReviewStep({ caseItem, busy, error, onApprove, onPreview }) {
         <TemplatePicker caseType={caseItem.caseType} onPick={applyTemplate} />
         <label className="block text-xs font-medium text-slate-600">Signing date
           <span className="mt-1.5 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
-            <Calendar className="h-4 w-4 text-slate-400" />
+            <Calendar className="h-4 w-4 text-slate-500" />
             <input type="date" required value={signingDate} onChange={(event) => { invalidateReview(); setSigningDate(event.target.value); }} className="w-full bg-transparent text-sm outline-none" />
           </span>
         </label>
         <div className="mt-3.5"><DiscountField value={discountAmount} onChange={(value) => { invalidateReview(); setDiscountAmount(value); }} installments={installments} feeKindByType={feeKindByType} taxRatePercent={taxRatePercent} /></div>
-        <div className="mt-3.5">
+        <div ref={installmentsRef} className="mt-3.5 scroll-mt-4">
           <InstallmentListEditor installments={installments} onChange={(value) => { invalidateReview(); setInstallments(value); }} />
         </div>
       </div>
@@ -501,7 +506,7 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
               <Plus className="h-3.5 w-3.5" /> Add template
             </button>
           ) : (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               A consultant or administrator can add a template.
             </p>
           )}
@@ -525,7 +530,7 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-slate-900">{document.title}</p>
-          <p className="mt-0.5 text-xs text-slate-400">Retainer agreement</p>
+          <p className="mt-0.5 text-xs text-slate-500">Retainer agreement</p>
         </div>
         <span className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${meta.tone}`}>{meta.label}</span>
       </div>
@@ -543,7 +548,7 @@ export default function RetainerStatusCard({ caseItem, onOpenAgreementsTab, onSt
         <p className="mt-2.5 text-xs text-slate-500">Open this retainer in the Writer and save it before it can be sent for signature.</p>
       ) : null}
       {!schedule && isEditable ? (
-        <p className="mt-2.5 text-xs text-slate-400">No payment schedule on this case yet — set one up on the Billing tab below, then sync it in here.</p>
+        <p className="mt-2.5 text-xs text-slate-500">No payment schedule on this case yet — set one up on the Billing tab below, then sync it in here.</p>
       ) : null}
 
       {error ? <p className="mt-2 text-xs text-rose-600">{error}</p> : null}

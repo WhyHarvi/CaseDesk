@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createHttpError } from "../utils/http.js";
 
-export const STAFF_AVATAR_PRESETS = Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`);
+export const STAFF_AVATAR_PRESETS = Array.from({ length: 21 }, (_, index) => `avatar-${index + 1}`);
 
 export function normalizeAvatarPreset(value, { required = false } = {}) {
   const preset = String(value || "").trim();

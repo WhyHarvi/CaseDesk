@@ -12,6 +12,7 @@ function field(key, fact, resolved) {
     value: present(value) ? String(value) : "",
     profileTab: fact.editTarget?.tab || null,
     profileView: fact.editTarget?.view || null,
+    profileField: key,
     status,
     note,
     // Client-model fields (dateOfBirth, email) have no editable control on

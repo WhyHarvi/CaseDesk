@@ -5,31 +5,23 @@ import test from "node:test";
 const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
 // Real bug: the two persistent bottom-right widgets (GlobalDialpad z-390,
-// FloatingChatWidget z-410) sat above IncomingOomaCallAlert (a real,
-// always-mounted incoming-call notification), which was still at its old
-// z-[70] — so its dismiss/"Open call record" buttons became invisible and
-// unclickable underneath the persistent widgets. This guards the layering
-// order so a future change to any one of these doesn't silently re-bury it.
+// FloatingChatWidget and the active Twilio call overlay must remain ordered.
 //
 // A second panel found during this fix (CallsPage.jsx's local "Dialpad"
 // function, colliding with FloatingChatWidget at the same corner) turned
 // out to be dead code — never instantiated as JSX anywhere — so it was
 // removed instead of re-layered; there was nothing real to fix there.
-test("floating widgets near the bottom-right corner stay correctly layered — the incoming-call alert never sits below the persistent chat/call widgets", async () => {
-  const [globalDialpad, chatWidget, softphoneProvider, oomaAlert, callsPage] = await Promise.all([
+test("floating widgets near the bottom-right corner stay correctly layered", async () => {
+  const [globalDialpad, chatWidget, softphoneProvider, callsPage] = await Promise.all([
     source("../../frontend/src/components/calls/GlobalDialpad.jsx"),
     source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
     source("../../frontend/src/components/calls/SoftphoneProvider.jsx"),
-    source("../../frontend/src/components/communications/IncomingOomaCallAlert.jsx"),
     source("../../frontend/src/pages/CallsPage.jsx"),
   ]);
 
   assert.match(globalDialpad, /z-\[390\]/);
   assert.match(chatWidget, /z-\[410\]/);
   assert.match(softphoneProvider, /z-\[420\]/);
-
-  assert.match(oomaAlert, /bottom-5 right-5 z-\[425\]/);
-  assert.doesNotMatch(oomaAlert, /z-\[70\]/);
 
   // The dead local Dialpad function (and the KEYPAD/KEY_LETTERS constants
   // and icon imports it alone used) is gone — GlobalDialpad, opened via

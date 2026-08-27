@@ -1788,16 +1788,50 @@ function ProfileDetailsGrid({
   }
 
   useEffect(() => {
-    if (!profileSectionRequest?.tab) return;
-    setActiveDetailTab(profileSectionRequest.tab);
-    if (profileSectionRequest.tab === "APPLICANT DETAILS")
-      setActiveApplicantView(profileSectionRequest.view || "Overview");
-    if (
-      profileSectionRequest.tab === "SPOUSE DETAILS" &&
-      profileSectionRequest.view
-    )
-      setActiveSpouseView(profileSectionRequest.view);
-  }, [profileSectionRequest]);
+    if (!profileSectionRequest?.tab || !sectionStatusLoaded) return undefined;
+    const requestedTab = profileDetailTabs.find(
+      (tab) => tab.label === profileSectionRequest.tab,
+    );
+    if (!requestedTab) return undefined;
+    let cancelled = false;
+
+    const openRequestedSection = async () => {
+      const requestedStatus = sectionStatusByKey[requestedTab.sectionKey];
+      if (requestedStatus?.isVisible === false) {
+        setAddingSectionKey(requestedTab.sectionKey);
+        try {
+          await setCaseInformationSectionEnabled(
+            caseItem.id,
+            requestedTab.sectionKey,
+            true,
+          );
+          await reloadSectionStatus();
+        } catch {
+          if (!cancelled) setSectionStatusError(true);
+          return;
+        } finally {
+          if (!cancelled) setAddingSectionKey(null);
+        }
+      }
+      if (cancelled) return;
+      setActiveDetailTab(requestedTab.label);
+      if (requestedTab.label === "APPLICANT DETAILS")
+        setActiveApplicantView(profileSectionRequest.view || "Overview");
+      if (
+        requestedTab.label === "SPOUSE DETAILS" &&
+        profileSectionRequest.view
+      )
+        setActiveSpouseView(profileSectionRequest.view);
+    };
+
+    void openRequestedSection();
+    return () => {
+      cancelled = true;
+    };
+    // A request is deliberately retried after section status reloads: this
+    // is what lets a form shortcut enable a case-type-hidden section first.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileSectionRequest, sectionStatusLoaded]);
   const activeConfig =
     profileDetailTabs.find((tab) => tab.label === activeDetailTab) ||
     profileDetailTabs[0];
@@ -2557,6 +2591,11 @@ function ProfileDetailsGrid({
         </div>
         <ProfileQuestionnaireSection
           sectionId="applicantIdentity"
+          focusRequest={
+            profileSectionRequest?.tab === "APPLICANT DETAILS"
+              ? profileSectionRequest
+              : null
+          }
           initialData={
             assessmentForm.profileQuestionnaires?.applicantIdentity || {}
           }
@@ -2884,6 +2923,11 @@ function ProfileDetailsGrid({
       return (
         <ProfileQuestionnaireSection
           sectionId={profileSectionId}
+          focusRequest={
+            profileSectionRequest?.tab === activeDetailTab
+              ? profileSectionRequest
+              : null
+          }
           initialData={
             assessmentForm.profileQuestionnaires?.[profileSectionId] || {}
           }
@@ -3762,19 +3806,6 @@ export default function CaseWorkspaceTabs({
   const highlightId = searchParams.get("highlight") || "";
   const [profileSectionRequest, setProfileSectionRequest] = useState(null);
   const [caseTabCounts, setCaseTabCounts] = useState({});
-  const workspaceShellRef = useRef(null);
-  const workspaceContentRef = useRef(null);
-  const previousUsesPageScrollRef = useRef(
-    ["DOCUMENTS", "APPOINTMENTS", "BILLING"].includes(activeTab),
-  );
-  // Documents, the case calendar, and billing can all grow substantially as
-  // folders, appointment history, payment schedules, or invoices expand.
-  // Let the Case Profile's main page scroller own them so wheel and touch
-  // input never has to cross between competing vertical scroll containers.
-  // Modal sheets still own their contained scroll areas independently.
-  const usesPageScroll = ["DOCUMENTS", "APPOINTMENTS", "BILLING"].includes(
-    activeTab,
-  );
 
   const selectWorkspaceTab = (tab) => {
     if (!visibleCaseWorkspaceTabs.includes(tab)) return;
@@ -3807,8 +3838,12 @@ export default function CaseWorkspaceTabs({
     return () => { active = false; };
   }, [caseItem.id]);
 
-  const openProfileSection = (tab = "APPLICANT DETAILS", view = null) => {
-    setProfileSectionRequest({ tab, view, requestId: Date.now() });
+  const openProfileSection = (
+    tab = "APPLICANT DETAILS",
+    view = null,
+    field = null,
+  ) => {
+    setProfileSectionRequest({ tab, view, field, requestId: Date.now() });
     selectWorkspaceTab("PROFILE");
   };
 
@@ -3819,21 +3854,6 @@ export default function CaseWorkspaceTabs({
     );
     if (tabFromUrl !== activeTab) setActiveTab(tabFromUrl);
   }, [activeTab, searchParams, visibleCaseWorkspaceTabs]);
-
-  useEffect(() => {
-    if (!usesPageScroll) {
-      // If a user changes tabs while deep inside Documents, bring the
-      // bounded workspace back into view before its content collapses.
-      if (previousUsesPageScrollRef.current) {
-        workspaceShellRef.current?.scrollIntoView({
-          block: "start",
-          behavior: "auto",
-        });
-      }
-      workspaceContentRef.current?.scrollTo({ top: 0, behavior: "instant" });
-    }
-    previousUsesPageScrollRef.current = usesPageScroll;
-  }, [activeTab, usesPageScroll]);
 
   if (!visibleCaseWorkspaceTabs.length)
     return (
@@ -3852,8 +3872,8 @@ export default function CaseWorkspaceTabs({
     );
 
   return (
-    <article ref={workspaceShellRef} className={`flex flex-col rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl ${usesPageScroll ? "overflow-clip" : "h-[calc(100dvh-7rem)] min-h-[36rem] max-h-[56rem] overflow-hidden"}`}>
-      <div className={`${usesPageScroll ? "sticky top-0 z-20 rounded-t-[2rem]" : "relative z-10"} shrink-0 border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl`}>
+    <article className="flex flex-col overflow-clip rounded-[2rem] border border-white/80 bg-white/88 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+      <div className="sticky top-0 z-20 shrink-0 rounded-t-[2rem] border-b border-slate-200/70 bg-slate-100/90 px-2 pt-2 shadow-[0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl">
         <div className="scrollbar-hidden flex gap-1 overflow-x-auto pb-0.5">
           {visibleCaseWorkspaceTabs.map((tab) => {
             const isActive = activeTab === tab;
@@ -3888,14 +3908,10 @@ export default function CaseWorkspaceTabs({
         </div>
       </div>
 
-      <div
-        ref={workspaceContentRef}
-        className={`${usesPageScroll ? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"} bg-white px-5 py-5`}
-      >
+      <div className="overflow-visible bg-white px-5 py-5">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
-            className={usesPageScroll ? "" : "min-h-full"}
             initial={{ opacity: 0, y: 10, scale: 0.995 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.995 }}

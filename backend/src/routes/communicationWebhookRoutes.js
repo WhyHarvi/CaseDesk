@@ -2,7 +2,6 @@ import { Router } from "express";
 import {
   receiveCommunicationEventWebhook,
   receiveCommunicationInboundWebhook,
-  receiveOomaCommunicationWebhook,
 } from "../controllers/communicationWebhookController.js";
 import {
   twilioCallStatus,
@@ -12,7 +11,6 @@ import {
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
-router.post("/ooma/:token", asyncHandler(receiveOomaCommunicationWebhook));
 router.post("/inbound", asyncHandler(receiveCommunicationInboundWebhook));
 router.post("/events", asyncHandler(receiveCommunicationEventWebhook));
 // Twilio Voice — the number's Voice webhook and the TwiML Application's

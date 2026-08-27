@@ -280,7 +280,7 @@ export async function serveThreadAvatar(req, res) {
 
 export async function serveStaffAvatar(req, res) {
   const user = await prisma.user.findFirst({
-    where: { id: req.params.userId, agencyId: req.auth.agencyId, role: { in: ["consultant", "frontdesk"] } },
+    where: { id: req.params.userId, agencyId: req.auth.agencyId, role: { in: ["admin", "consultant", "frontdesk"] } },
     select: { id: true, avatarStorageKey: true, avatarMimeType: true, avatarPreset: true },
   });
   if (!user) throw createHttpError(404, "Staff profile not found", "NOT_FOUND");

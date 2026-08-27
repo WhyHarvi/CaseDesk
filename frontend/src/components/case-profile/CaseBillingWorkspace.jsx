@@ -21,19 +21,33 @@ import { voidInstallmentInvoice } from "../../api/paymentScheduleApi";
 import ClientManualBillingEntrySheet from "../clients/ClientManualBillingEntrySheet";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
 
+// Payment-type tints are a category, not a status — kept in a separate blue
+// / orange pair so they never share a hue with the STATUS_TONE badges below.
+// Reusing emerald/indigo here (as before) made "Professional fees" read as
+// if it meant "Paid," since the same green also flagged a settled invoice.
 const PAYMENT_TYPE_META = {
-  fees: { label: "Professional fees", icon: Banknote, tint: "bg-emerald-50 text-emerald-700" },
-  disbursement: { label: "Govt. fee disbursement", icon: Landmark, tint: "bg-indigo-50 text-indigo-700" },
+  fees: { label: "Professional fees", icon: Banknote, tint: "bg-blue-50 text-blue-700" },
+  disbursement: { label: "Govt. fee disbursement", icon: Landmark, tint: "bg-orange-50 text-orange-700" },
 };
 
+// One hue = one meaning across the whole Billing tab: slate neutral, amber
+// attention/partial, emerald success, rose danger, violet/teal for refund
+// direction. "PartiallyRefunded" used to share fuchsia with the unrelated
+// template/AI-suggestion accents elsewhere on this tab (Sparkles badges,
+// "Read-only review" labels) — moved to teal so it's unambiguous, and reads
+// as a distinct step down from the fully-"Refunded" violet rather than a
+// near-identical shade of it. "Void" was bg-slate-100/text-slate-500, a
+// 2.3:1 contrast ratio (fails WCAG's 4.5:1 minimum for text) — replaced with
+// a true neutral gray pair that both passes contrast and reads as clearly
+// different from the "Open" neutral slate.
 const STATUS_TONE = {
   Open: "bg-slate-100 text-slate-600",
   PartiallyPaid: "bg-amber-50 text-amber-700",
   Paid: "bg-emerald-50 text-emerald-700",
   Refunded: "bg-violet-50 text-violet-700",
-  PartiallyRefunded: "bg-fuchsia-50 text-fuchsia-700",
+  PartiallyRefunded: "bg-teal-50 text-teal-700",
   Overdue: "bg-rose-50 text-rose-700",
-  Void: "bg-slate-100 text-slate-400",
+  Void: "bg-zinc-200 text-zinc-700",
 };
 
 function formatMoney(value) {
@@ -278,12 +292,12 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-900">{invoice.description}</p>
-            <p className="mt-0.5 text-xs text-slate-400">
+            <p className="mt-0.5 text-xs text-slate-500">
               {meta.label}
               {invoice.invoiceNumber ? ` · ${invoice.invoiceNumber}` : ""}
               {invoice.dueDate ? ` · Due ${formatDate(invoice.dueDate)}` : ""}
             </p>
-            {invoice.qbInvoiceNumber ? <p className="mt-1 text-[11px] text-slate-400">QuickBooks reference #{invoice.qbInvoiceNumber}</p> : null}
+            {invoice.qbInvoiceNumber ? <p className="mt-1 text-[11px] text-slate-500">QuickBooks reference #{invoice.qbInvoiceNumber}</p> : null}
             {invoice.lastPaymentReference ? <p className="mt-1 text-[11px] font-medium text-emerald-700">Latest payment · Transaction #{invoice.lastPaymentReference}</p> : null}
           </div>
         </div>
@@ -297,7 +311,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
               onClick={copyPayLink}
               aria-label="Copy pay-now link"
               title={linkCopied ? "Copied" : "Copy pay-now link"}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
             >
               {linkCopied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
@@ -308,7 +322,7 @@ function InvoiceCard({ invoice, onPaid, onRefunded, onVoided, onRecordPayment, c
             disabled={downloading}
             aria-label="Download invoice PDF"
             title="Download PDF"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
           >
             {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
           </button>
@@ -463,7 +477,7 @@ function NewInvoiceSheet({ open, caseId, onClose, onCreated, categories }) {
 
               <label className="block text-xs font-medium text-slate-600">Discount (CAD, optional)
                 <input type="number" min="0" step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} className={`mt-1.5 ${input}`} placeholder="0.00" />
-                <span className="mt-1.5 block text-[11px] leading-4 text-slate-400">Applied after tax. The invoice keeps the full fee and shows the discount separately.</span>
+                <span className="mt-1.5 block text-[11px] leading-4 text-slate-500">Applied after tax. The invoice keeps the full fee and shows the discount separately.</span>
               </label>
 
               <p className="rounded-2xl bg-slate-50 px-3.5 py-2.5 text-xs leading-5 text-slate-500">
@@ -545,7 +559,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Invoices</h3>
-          <p className="text-xs text-slate-400">One billing trail across CaseDesk and QuickBooks, including cash and e-transfer receipts.</p>
+          <p className="text-xs text-slate-500">One billing trail across CaseDesk and QuickBooks, including cash and e-transfer receipts.</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {canRecordCash ? <button type="button" onClick={() => { setPaymentInvoiceId(""); setCashSheetOpen(true); }} className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"><Banknote className="h-3.5 w-3.5" /> Record payment</button> : null}
@@ -564,7 +578,7 @@ export default function CaseBillingWorkspace({ caseItem, highlightId, onBillingC
         </div>
       ) : visibleInvoices.length === 0 ? (
         <div className="mt-6 flex flex-col items-center rounded-[1.4rem] bg-slate-50/80 px-5 py-10 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-400 shadow-sm"><Receipt className="h-5 w-5" /></span>
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm"><Receipt className="h-5 w-5" /></span>
           <p className="mt-3 text-sm font-semibold text-slate-700">No invoices yet</p>
           <p className="mt-1 max-w-sm text-sm text-slate-500">{canManage ? "Create the first invoice using any active agency fee category." : "Nothing has been invoiced on this case yet."}</p>
         </div>

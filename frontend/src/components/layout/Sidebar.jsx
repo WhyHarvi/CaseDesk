@@ -27,32 +27,6 @@ import { useNotifications } from "../notifications/NotificationProvider";
 import api from "../../services/api";
 import StaffAvatar from "../staff/StaffAvatar";
 
-function AdminWorkspaceAvatar({ agency, className = "h-10 w-10" }) {
-  const [url, setUrl] = useState("");
-
-  useEffect(() => {
-    if (agency?.hasAvatar === false) {
-      setUrl("");
-      return undefined;
-    }
-    let active = true;
-    let objectUrl = "";
-    api.get("/settings/agency-profile/avatar", { responseType: "blob", skipCache: true })
-      .then((response) => {
-        if (!active) return;
-        objectUrl = URL.createObjectURL(response.data);
-        setUrl(objectUrl);
-      })
-      .catch(() => { if (active) setUrl(""); });
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [agency?.hasAvatar, agency?.avatarUpdatedAt]);
-
-  return <img src={url || logo} alt={`${agency?.name || "Workspace"} profile`} className={`${className} rounded-full border border-slate-200 bg-white object-cover`} />;
-}
-
 const adminNavigation = [
   {
     label: "Dashboard",
@@ -374,7 +348,7 @@ function NavItem({ item, collapsed, onNavigate, role }) {
 }
 
 function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
-  const { role, appUser, agency, membership, signOut } = useAuth();
+  const { role, appUser, membership, signOut } = useAuth();
   const access = getPortalAccess(role, membership?.permissions);
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const location = useLocation();
@@ -467,15 +441,11 @@ function SidebarContent({ collapsed, onCloseMobile, mobile = false }) {
           ].join(" ")}
         >
           <div className="relative shrink-0 transition-transform duration-300 group-hover/account:scale-105">
-            {role === "admin" ? (
-              <AdminWorkspaceAvatar agency={agency} className="h-10 w-10 shadow-sm ring-2 ring-white" />
-            ) : (
-              <StaffAvatar
-                user={appUser}
-                alt={`${appUser?.fullName || "Staff"} profile`}
-                className="h-10 w-10 shadow-sm ring-2 ring-white"
-              />
-            )}
+            <StaffAvatar
+              user={appUser}
+              alt={`${appUser?.fullName || "Staff"} profile`}
+              className="h-10 w-10 shadow-sm ring-2 ring-white"
+            />
             <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500 shadow-sm" aria-label="Online" />
           </div>
           <div

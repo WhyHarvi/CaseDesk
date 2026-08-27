@@ -23,7 +23,7 @@ const CATEGORY_PATTERNS = {
     "shared_library",
   ],
   appointments: ["appointment", "booking"],
-  communications: ["communication", "mail", "ooma", "message"],
+  communications: ["communication", "mail", "twilio", "message"],
   settings: ["settings.", "agency_", "TEAM_MEMBER", "CONSULTANT_"],
 };
 

@@ -4,8 +4,9 @@ import { logger } from "./logger.js";
 import { decryptSecret } from "./secretEncryption.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeCommunicationPhone } from "./communicationAddressService.js";
-import { autoMatch, phoneMatches } from "./oomaCallService.js";
+import { autoMatch, phoneMatches } from "./callHistoryService.js";
 import { adminRecipientIds, notifyUsers } from "./notificationService.js";
+import { autoMarkPhoneAppointmentFromCall } from "./appointmentAttendanceService.js";
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const number = (value) => {
@@ -308,7 +309,7 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // Twilio's statusCallback on <Dial> reports on the leg it creates (the
   // browser <Client> leg). We map that event back to the inbound parent SID,
   // rather than the client leg's own SID, because that parent is what
-  // oomaCallSession ends up keyed by (providerCallId = parentCallSid ||
+  // the legacy call-session table ends up keyed by (providerCallId = parentCallSid ||
   // callSid). The browser's own incoming Call object only ever knows its
   // own (child) leg's SID, so transfer/recording — which need to find that
   // session row — would look up the wrong id and 409 as "no longer active"
@@ -339,13 +340,18 @@ export async function inboundTwiML(agencyId, lineId, req) {
 // bridge to the external number with the agency number as callerId. Dialing
 // the internal office line rings the whole team instead of an outside number.
 export async function outboundTwiML(agencyId, req) {
-  const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
+  // Configuration and internal-line routing are independent reads. Resolve
+  // them together so the TwiML webhook can tell Twilio where to dial without
+  // paying for two sequential database round trips on every call.
+  const [config, internalLine] = await Promise.all([
+    resolveAgencyTwilioVoiceConfig(agencyId, { optional: true }),
+    prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } }),
+  ]);
   if (!config) return `<Response><Say voice="alice" language="en-US">Calling is not configured. Please contact your administrator.</Say></Response>`;
   const toRaw = clean(req.body?.To, 40);
   if (!toRaw) return `<Response><Say voice="alice" language="en-US">No destination number was provided.</Say></Response>`;
   const to = escapeXml(toRaw);
 
-  const internalLine = await prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } });
   if (internalLine && normalizeCommunicationPhone(toRaw) === normalizeCommunicationPhone(internalLine.phoneNumber)) {
     // Same ParentCallSid hand-off as inboundTwiML above — the staff being
     // rung here only ever see their own (child) leg's SID otherwise.
@@ -356,7 +362,7 @@ export async function outboundTwiML(agencyId, req) {
     // <Client>, not <Dial>, or Twilio's parser rejects them (Debugger 12200).
     const clients = (await staffClientIdentities(agencyId)).map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/></Client>`).join("");
     if (!clients) return unavailableTwiML;
-    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30">${clients}</Dial></Response>`;
+    return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30" answerOnBridge="true">${clients}</Dial></Response>`;
   }
 
   const agentIdentity = identityFromClient(req.body?.From);
@@ -391,7 +397,7 @@ export async function outboundTwiML(agencyId, req) {
   // real dialed number rides along as `dialedNumber` since the action
   // request's own To/From describe the leg executing the Dial (the agent's
   // Client→Application leg), not the number actually dialed.
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
+  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" answerOnBridge="true" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------
@@ -440,7 +446,7 @@ const LIVE_TWILIO_CALL_STATUSES = new Set(["queued", "ringing", "in-progress"]);
 async function activeTwilioCall(agencyId, callSid, actionLabel, config) {
   const callSidClean = clean(callSid, 64);
   if (!callSidClean) throw createHttpError(400, `No active call to ${actionLabel}.`);
-  const session = await prisma.oomaCallSession.findFirst({
+  const session = await prisma.callSession.findFirst({
     where: {
       agencyId,
       provider: TWILIO_CALL_PROVIDER,
@@ -549,7 +555,7 @@ function twilioDirection(direction) {
 async function twilioSessionByCallIds(tx, agencyId, callSid, parentCallSid) {
   const ids = [callSid, parentCallSid].filter(Boolean);
   if (!ids.length) return null;
-  return tx.oomaCallSession.findFirst({
+  return tx.callSession.findFirst({
     where: { agencyId, provider: TWILIO_CALL_PROVIDER, providerCallId: { in: ids } },
     orderBy: { lastEventAt: "desc" },
   });
@@ -591,9 +597,9 @@ async function notifyTwilioCall(session, isNew, becameMissed) {
 
 async function reconcileTwilioSession(session) {
   if (session.leadId) {
-    const { syncOomaLeadActivity, ensureOomaCallbackFollowUp } = await import("./oomaCallService.js");
-    await syncOomaLeadActivity(session.id).catch(() => {});
-    await ensureOomaCallbackFollowUp(session.id).catch(() => {});
+    const { syncCallLeadActivity, ensureCallCallbackFollowUp } = await import("./callHistoryService.js");
+    await syncCallLeadActivity(session.id).catch(() => {});
+    await ensureCallCallbackFollowUp(session.id).catch(() => {});
   }
 }
 
@@ -624,7 +630,7 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
     const session = await twilioSessionByCallIds(prisma, agencyId, callSid, parentCallSid);
     if (session && !session.recordingUrl) {
       const recordingUrl = clean(body.RecordingUrl, 2000) || null;
-      if (recordingUrl) await prisma.oomaCallSession.update({ where: { id: session.id }, data: { recordingUrl, lastEventAt: occurredAt } });
+      if (recordingUrl) await prisma.callSession.update({ where: { id: session.id }, data: { recordingUrl, lastEventAt: occurredAt } });
     }
     return { handled: true, reason: "recording" };
   }
@@ -676,7 +682,7 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
       let session;
       if (existing) {
         const previousStatus = existing.status;
-        session = await tx.oomaCallSession.update({
+        session = await tx.callSession.update({
           where: { id: existing.id },
           data: {
             ...(status ? { status } : {}),
@@ -701,7 +707,7 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
       }
 
       const providerCallId = parentCallSid || callSid;
-      session = await tx.oomaCallSession.create({
+      session = await tx.callSession.create({
         data: {
           agencyId,
           provider: TWILIO_CALL_PROVIDER,
@@ -741,6 +747,11 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
     await notifyTwilioCall(result.session, isNew, becameMissed);
   }
   if (result.session.leadId || result.session.clientId) await reconcileTwilioSession(result.session);
+  if (result.session.status === "COMPLETED") {
+    await autoMarkPhoneAppointmentFromCall(result.session).catch((error) => {
+      logger.warn("appointment.twilio_attendance_failed", { sessionId: result.session.id, reason: error.message });
+    });
+  }
   return { handled: true, data: result.session };
 }
 
@@ -814,13 +825,13 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
       rawPayload: { callSid: call.sid, direction: call.direction, status: call.status },
     };
     try {
-      const existing = await prisma.oomaCallSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
+      const existing = await prisma.callSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
       if (remoteIsInternalClient && !existing) continue;
       await prisma.$transaction(async (tx) => {
         if (existing) {
-          await tx.oomaCallSession.update({ where: { id: existing.id }, data: { ...data, startedAt: existing.startedAt } });
+          await tx.callSession.update({ where: { id: existing.id }, data: { ...data, startedAt: existing.startedAt } });
         } else {
-          const created = await tx.oomaCallSession.create({ data: { agencyId, providerCallId: call.sid, ...data } });
+          const created = await tx.callSession.create({ data: { agencyId, providerCallId: call.sid, ...data } });
           await autoMatch(tx, created).catch(() => {});
         }
       });

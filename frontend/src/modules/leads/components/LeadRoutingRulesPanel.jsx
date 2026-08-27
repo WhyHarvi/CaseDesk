@@ -5,7 +5,7 @@ import api from "../../../services/api";
 import Select from "../../../components/ui/Select";
 import { humanize, LEAD_PRIORITIES } from "../leadPresentation";
 
-const SOURCE_TYPES = ["PHONE", "OOMA", "WHATSAPP", "FACEBOOK", "INSTAGRAM", "SOCIAL_FORM", "SOCIAL_MESSAGE", "WEBSITE", "GOOGLE_ADS", "EMAIL", "WALK_IN", "REFERRAL", "EVENT", "EMPLOYEE_PHONE", "CSV_IMPORT", "OTHER"];
+const SOURCE_TYPES = ["PHONE", "WHATSAPP", "FACEBOOK", "INSTAGRAM", "SOCIAL_FORM", "SOCIAL_MESSAGE", "WEBSITE", "GOOGLE_ADS", "EMAIL", "WALK_IN", "REFERRAL", "EVENT", "EMPLOYEE_PHONE", "CSV_IMPORT", "OTHER"];
 
 const FIELD_OPTIONS = [
   { value: "initialMessage", label: "Inquiry message contains", noun: "Message", match: "substring", placeholder: "e.g. study, study permit, student visa", tone: "bg-sky-50 text-sky-700 ring-sky-200" },

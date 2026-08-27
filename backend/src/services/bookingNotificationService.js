@@ -376,7 +376,7 @@ export async function sendBookingTemplateTest({ agencyId, userId, kind, messageT
 
 /**
  * Sends client-facing email + SMS and staff in-app notifications for a
- * booking event. Every channel is best-effort: a missing mailbox or Ooma
+ * booking event. Every channel is best-effort: a missing mailbox or Twilio
  * connection never fails the booking itself.
  */
 async function bookingDeliveryAllowed(deliveryId, appointmentId) {
@@ -403,6 +403,9 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
     prisma.agency.findUnique({ where: { id: agencyId }, select: { name: true, legalName: true, logoUrl: true, avatarStorageKey: true, avatarMimeType: true, phone: true, email: true, address: true, city: true, province: true, postalCode: true } }),
     prisma.bookingSettings.findUnique({ where: { agencyId } }),
   ]);
+  const emailEnabled = bookingClientMessageEnabled(settings, kind, "email");
+  const smsEnabled = bookingClientMessageEnabled(settings, kind, "sms");
+  if ((channel === "email" && !emailEnabled) || (channel === "sms" && !smsEnabled) || (!channel && !emailEnabled && !smsEnabled)) return { suppressed: true };
   const timezone = settings?.timezone || "America/Toronto";
   const agencyName = agency?.legalName || agency?.name || "CaseDesk";
   const contact = recipientContact(appointment);
@@ -410,7 +413,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
   const when = formatWhen(appointment, timezone);
   const manageUrl = publicBookingManageUrl(settings, appointment.manageToken);
 
-  if (contact.email && (!channel || channel === "email")) {
+  if (emailEnabled && contact.email && (!channel || channel === "email")) {
     try {
       const config = await resolveAgencyMailConfig(agencyId);
       const transport = createMailTransport(config);
@@ -442,7 +445,7 @@ export async function deliverBookingMessages({ agencyId, appointment, kind, acto
     }
   }
 
-  if (contact.phone && (!channel || channel === "sms")) {
+  if (smsEnabled && contact.phone && (!channel || channel === "sms")) {
     try {
       const mode = appointmentMeetingMode(appointment);
       const smsAccess = appointment.meetingUrl
@@ -559,14 +562,30 @@ export async function cancelQueuedBookingReminders(appointmentIds, db = prisma) 
   return result.count;
 }
 
+const OPTIONAL_CLIENT_MESSAGE_KINDS = new Set(["booked", "reminder", "rescheduled", "cancelled"]);
+
+export function bookingClientMessageEnabled(settings, kind, channel) {
+  // Payment links are transactional and must not be silently disabled by an
+  // appointment-message preference. New message kinds also stay enabled
+  // until they are deliberately exposed in the settings UI.
+  if (!OPTIONAL_CLIENT_MESSAGE_KINDS.has(kind)) return true;
+  const template = settings?.messageTemplates?.[kind];
+  if (channel === "email" && typeof template?.emailEnabled === "boolean") return template.emailEnabled;
+  if (channel === "sms" && typeof template?.smsEnabled === "boolean") return template.smsEnabled;
+  return template?.enabled !== false;
+}
+
 export async function sendBookingMessages({ agencyId, appointment, kind, actorUserId = null, dedupeSuffix = "", db = prisma, payNowUrl = null, amount = null, invoiceUrl = null, refundEstimate = null }) {
   if (kind === "cancelled") await cancelQueuedBookingReminders(appointment.id, db);
+  const settings = await db.bookingSettings.findUnique({ where: { agencyId }, select: { messageTemplates: true } });
+  const emailEnabled = bookingClientMessageEnabled(settings, kind, "email");
+  const smsEnabled = bookingClientMessageEnabled(settings, kind, "sms");
   const contact = recipientContact(appointment);
   const startsAtVersion = new Date(appointment.startsAt).toISOString();
   const revision = bookingMessageRevision(appointment);
   const jobs = [
-    contact.email ? { channel: "email", recipient: contact.email } : null,
-    contact.phone ? { channel: "sms", recipient: contact.phone } : null,
+    emailEnabled && contact.email ? { channel: "email", recipient: contact.email } : null,
+    smsEnabled && contact.phone ? { channel: "sms", recipient: contact.phone } : null,
     kind !== "reminder" ? { channel: "staff", recipient: `workspace:${agencyId}` } : null,
   ].filter(Boolean);
   if (jobs.length) {

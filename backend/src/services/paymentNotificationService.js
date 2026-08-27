@@ -59,7 +59,7 @@ function buildValues({ client, agency, caseItem, label, amount, dueDate, payment
  * Notifies a client that a real invoice now exists on their file, using the
  * agency's customized (or default) email/SMS wording and their configured
  * payment instructions. Best-effort on every channel — an unconfigured
- * mailbox or Ooma line must never block the invoice itself. Shared by both
+ * mailbox or Twilio line must never block the invoice itself. Shared by both
  * schedule-triggered installments and manually-created invoices.
  */
 async function notifyClientPaymentDue({ agencyId, clientId, caseId, caseInvoiceId, label, amount, dueDate, actorUserId, notificationType, dedupeKey }) {

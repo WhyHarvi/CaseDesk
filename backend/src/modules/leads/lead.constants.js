@@ -10,7 +10,6 @@ export const LEAD_INITIAL_PAYMENT_STATUSES = ["NOT_REQUESTED", "REQUESTED", "PAR
 
 export const DEFAULT_LEAD_SOURCES = [
   ["Phone", "PHONE"],
-  ["Ooma", "OOMA"],
   ["WhatsApp", "WHATSAPP"],
   ["Facebook", "FACEBOOK"],
   ["Instagram", "INSTAGRAM"],

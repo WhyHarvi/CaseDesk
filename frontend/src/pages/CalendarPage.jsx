@@ -130,7 +130,9 @@ const NEUTRAL_TONE = { chip: "bg-slate-400", block: "border-slate-300 bg-slate-5
 // of who they're assigned to, instead of the per-staff rotation below — a
 // distinct, at-a-glance "this came from the front desk" signal.
 const WALK_IN_TONE = { chip: "bg-fuchsia-500", block: "border-fuchsia-400 bg-fuchsia-50/90 hover:bg-fuchsia-100/90", title: "text-fuchsia-900", meta: "text-fuchsia-600" };
-const NO_SHOW_TONE = { chip: "bg-amber-500", block: "border-amber-400 bg-amber-50/95 hover:bg-amber-100/95", title: "text-amber-950", meta: "text-amber-700" };
+const ATTENDED_TONE = { chip: "bg-slate-300", block: "border-slate-200 bg-slate-50/55 hover:bg-slate-100/70", title: "text-slate-500", meta: "text-slate-400" };
+const NO_SHOW_TONE = { chip: "bg-amber-600", block: "border-amber-500 bg-amber-100 hover:bg-amber-200", title: "text-amber-950", meta: "text-amber-800", emphasis: "ring-2 ring-inset ring-amber-300 shadow-[0_7px_18px_rgba(217,119,6,0.16)]" };
+const ATTENDANCE_NEEDED_TONE = { chip: "bg-rose-600", block: "border-rose-600 bg-rose-100 hover:bg-rose-200", title: "text-rose-950", meta: "text-rose-800", emphasis: "ring-2 ring-inset ring-rose-300 shadow-[0_8px_20px_rgba(225,29,72,0.2)]" };
 // Free consultations are a service/payment distinction, so their color is
 // stable across consultants and booking sources. Teal is intentionally not
 // part of the rotating staff palette and stays distinct from walk-ins.
@@ -143,6 +145,10 @@ const APPOINTMENT_STATUS_TONE = {
   Cancelled: "bg-rose-50 text-rose-700 ring-rose-200",
   NoShow: "bg-amber-50 text-amber-700 ring-amber-200",
 };
+
+function appointmentNeedsAttendance(item, now = new Date()) {
+  return item.status === "Scheduled" && new Date(item.endsAt) <= now;
+}
 
 function appointmentRequiresPaymentRecord(appointment, settings) {
   // Attendance and payment are independent states. Completing a consultation
@@ -437,7 +443,7 @@ function MonthCalendar({ cursor, items, selectedDate, todayKey, toneFor, onOpenD
                 const tone = toneFor(item);
                 const name = item.client?.fullName || item.guestName || item.subject || "Appointment";
                 return (
-                  <button key={item.id} type="button" onClick={() => onSelectItem(item)} className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-2 text-left shadow-sm transition hover:border-slate-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500">
+                    <button key={item.id} type="button" onClick={() => onSelectItem(item)} className={`flex min-h-14 w-full items-center gap-3 rounded-2xl border-l-4 px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${tone.block} ${tone.emphasis || ""}`}>
                     <span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-100 text-slate-700">
                       <span className="text-[9px] font-bold uppercase">{start.toLocaleDateString("en-CA", { month: "short" })}</span>
                       <span className="text-sm font-bold leading-4">{start.getDate()}</span>
@@ -606,6 +612,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
   const isNarrowWeekPill = view === "week" && columns > 1;
   const isDone = item.status === "Completed";
   const isNoShow = item.status === "NoShow";
+  const attendanceNeeded = appointmentNeedsAttendance(item);
   const paymentAttention = appointmentPaymentAttention(item, item.paymentHold, bookingSettings);
   const displayName = item.client?.fullName || item.guestName || item.subject;
   const ModeIcon = MEETING_MODE_ICON[item.meetingMode] || MapPin;
@@ -626,9 +633,9 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
       onMouseLeave={onHoverEnd}
       onFocus={(event) => onHoverStart(item, tone, event.currentTarget.getBoundingClientRect())}
       onBlur={onHoverEnd}
-      title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
-      aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
-      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${isDone && !paymentAttention ? "opacity-60" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
+      title={`${displayName} · ${formatTime(item.startsAt)}–${formatTime(item.endsAt)}${isDone ? " · Attended" : isNoShow ? " · No-show" : attendanceNeeded ? " · Attendance needed" : ""}${paymentAttention ? ` · ${paymentAttention}` : ""}`}
+      aria-label={`${displayName}, ${formatTime(item.startsAt)} to ${formatTime(item.endsAt)}${isDone ? ", attended" : isNoShow ? ", no-show" : attendanceNeeded ? ", attendance needed" : ""}${paymentAttention ? `, ${paymentAttention}` : ""}`}
+      className={`absolute z-[1] flex min-w-0 flex-col justify-center overflow-hidden rounded-xl border-l-4 px-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.05)] transition-[background-color,box-shadow,opacity] duration-[3800ms] hover:z-20 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)] focus:z-20 ${isCompact ? "py-1" : "py-1.5"} ${tone.block} ${tone.emphasis || ""} ${isDone && !paymentAttention ? "opacity-70" : ""} ${paymentAttention ? "ring-1 ring-inset ring-amber-300" : ""} ${isSelected ? "ring-2 ring-slate-950/70" : ""} ${isFocused ? "z-20 ring-4 ring-amber-300 shadow-[0_10px_30px_rgba(245,158,11,0.35)]" : ""}`}
       style={{ top: Math.max(0, top), height, ...horizontalStyle }}
     >
       <p className={`flex w-full items-center gap-1 overflow-hidden font-semibold leading-[1.15] ${isNarrowWeekPill ? "text-[11px]" : "text-[12px]"} ${isCompact ? "whitespace-nowrap text-ellipsis" : isNarrowWeekPill ? "line-clamp-3" : "line-clamp-2"} ${tone.title}`}>
@@ -642,6 +649,7 @@ function AppointmentPill({ item, column, columns, view, tone, isSelected, isFocu
           {formatTime(item.startsAt)}
           {item.sessionType ? ` · ${item.sessionType.name}` : ""}
           {isNoShow ? " · No-show" : ""}
+          {attendanceNeeded ? " · Attendance needed" : ""}
           {paymentAttention ? ` · ${paymentAttention}` : ""}
         </p>
       ) : null}
@@ -1264,7 +1272,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialIntake, settings }) {
+function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialLead, initialIntake, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
   // Set once at mount and never again — distinguishes "the sheet is open
   // because a draft was restored on page load" from every other reason
@@ -1309,9 +1317,13 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       paymentMethod: initialIntake?.action === "appointment-payment" ? initialIntake.paymentMethod || "" : "",
       paymentReference: initialIntake?.action === "appointment-payment" ? initialIntake.paymentReference || "" : "",
       idempotencyKey: newBookingOperationKey(),
-      mode: initialClient ? "client" : current.mode,
+      mode: initialClient ? "client" : initialLead ? "guest" : current.mode,
       clientId: initialClient?.id || "",
-      leadId: "",
+      leadId: initialLead?.id || "",
+      guestName: initialLead ? [initialLead.firstName, initialLead.lastName].filter(Boolean).join(" ") : current.guestName,
+      guestEmail: initialLead?.email || (initialLead ? "" : current.guestEmail),
+      guestPhone: initialLead?.phone || (initialLead ? "" : current.guestPhone),
+      assignedToId: initialLead?.ownerUserId || initialLead?.owner?.id || (role === "consultant" ? userId : current.assignedToId),
     }));
     setSelectedClient(initialClient || null);
     setError("");
@@ -1321,7 +1333,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setPaymentActionError("");
     setPaymentRecipient("");
     setConfirmPaymentCancel(false);
-  }, [open, role, userId, initialDate, initialClient, initialIntake]);
+  }, [open, role, userId, initialDate, initialClient, initialLead, initialIntake]);
 
   useEffect(() => {
     if (!open) {
@@ -1892,7 +1904,7 @@ export default function CalendarPage() {
   const linkedDate = searchParams.get("date");
   const now = useNow();
   const [selectedDate, setSelectedDate] = useState(() => startOfDayLocal(linkedDate && /^\d{4}-\d{2}-\d{2}$/.test(linkedDate) ? new Date(`${linkedDate}T12:00:00`) : new Date()));
-  const [view, setView] = useState("week");
+  const [view, setView] = useState("day");
   const [appointments, setAppointments] = useState([]);
   const [sessionTypes, setSessionTypes] = useState([]);
   const [bookingSettings, setBookingSettings] = useState(null);
@@ -1902,6 +1914,7 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [sheetOpen, setSheetOpen] = useState(() => Boolean(readAppointmentDraft()));
   const [prefillClient, setPrefillClient] = useState(null);
+  const [prefillLead, setPrefillLead] = useState(null);
   const [prefillIntake, setPrefillIntake] = useState(null);
   const [selected, setSelected] = useState(null);
   const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
@@ -1978,6 +1991,26 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Arriving from a lead's "Book" action opens the calendar's appointment
+  // form with the lead linked and their contact details already populated.
+  useEffect(() => {
+    const bookForLeadId = searchParams.get("bookForLead");
+    if (!bookForLeadId) return;
+    let cancelled = false;
+    api.get(`/leads/${bookForLeadId}`).then((response) => {
+      if (cancelled) return;
+      setPrefillLead(response.data.data);
+      setSheetOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("bookForLead");
+      navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: null });
+    }).catch((reason) => {
+      if (!cancelled) setError(reason.response?.data?.message || "The lead was opened, but appointment booking could not be loaded.");
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState !== "visible" || Date.now() - lastBackgroundRefreshAt.current < 30_000) return;
@@ -1996,9 +2029,9 @@ export default function CalendarPage() {
   }, [staff]);
 
   const toneFor = useCallback(
-    // No-show is the strongest operational state. Otherwise a free
-    // consultation keeps its dedicated color even when frontdesk booked it.
-    (item) => item.status === "NoShow" ? NO_SHOW_TONE : item.isFreeConsultation ? FREE_CONSULTATION_TONE : item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
+    // Finished consultations recede. Missing attendance records and no-shows
+    // override consultant/source colors because they require staff action.
+    (item) => item.status === "Completed" ? ATTENDED_TONE : appointmentNeedsAttendance(item) ? ATTENDANCE_NEEDED_TONE : item.status === "NoShow" ? NO_SHOW_TONE : item.isFreeConsultation ? FREE_CONSULTATION_TONE : item.source === "WalkIn" ? WALK_IN_TONE : (item.assignedTo && staffTone.get(item.assignedTo.id)) || (role === "consultant" ? EVENT_TONES[0] : NEUTRAL_TONE),
     [staffTone, role],
   );
 
@@ -2443,6 +2476,7 @@ export default function CalendarPage() {
         userId={appUser?.id}
         initialDate={dateKey(selectedDate)}
         initialClient={prefillClient}
+        initialLead={prefillLead}
         initialIntake={prefillIntake}
         settings={bookingSettings}
       />

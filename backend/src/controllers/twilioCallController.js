@@ -2,7 +2,7 @@ import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
-import { applyCallOutcome } from "../services/oomaCallService.js";
+import { applyCallOutcome } from "../services/callHistoryService.js";
 import {
   TWILIO_CALL_PROVIDER,
   deleteTwilioVoiceLine,
@@ -189,7 +189,7 @@ export async function saveActiveTwilioCallNote(req, res) {
   const direction = clean(req.body?.direction, 20).toUpperCase() === "INBOUND" ? "INBOUND" : "OUTBOUND";
   const remoteNumber = clean(req.body?.remoteNumber, 80) || null;
   const now = new Date();
-  const call = await prisma.oomaCallSession.upsert({
+  const call = await prisma.callSession.upsert({
     where: { agencyId_providerCallId: { agencyId, providerCallId: callSid } },
     update: { outcomeNotes: notes, handledByUserId: req.user.id },
     create: {
@@ -235,7 +235,7 @@ export async function recordOutboundCallOutcome(req, res) {
     if (!client) throw createHttpError(404, "Client not found.", "CLIENT_NOT_FOUND");
   }
 
-  let call = await prisma.oomaCallSession.findFirst({
+  let call = await prisma.callSession.findFirst({
     where: {
       agencyId,
       OR: [{ providerCallId }, { rawPayload: { path: ["callSid"], equals: providerCallId } }, { rawPayload: { path: ["parentCallSid"], equals: providerCallId } }],
@@ -248,7 +248,7 @@ export async function recordOutboundCallOutcome(req, res) {
     const remoteNumber = clean(req.body?.remoteNumber, 80) || null;
     const durationSeconds = number(req.body?.durationSeconds);
     const now = new Date();
-    call = await prisma.oomaCallSession.create({
+    call = await prisma.callSession.create({
       data: {
         agencyId,
         provider: TWILIO_CALL_PROVIDER,
@@ -273,7 +273,7 @@ export async function recordOutboundCallOutcome(req, res) {
     if (clientId && !call.clientId) Object.assign(data, { clientId, resolution: "LINKED_CLIENT", resolvedAt: new Date(), resolvedById: req.user.id });
     const durationSeconds = number(req.body?.durationSeconds);
     if (durationSeconds != null) data.durationSeconds = durationSeconds;
-    if (Object.keys(data).length) call = await prisma.oomaCallSession.update({ where: { id: call.id }, data, select: { id: true, leadId: true, clientId: true, outcomeNotes: true } });
+    if (Object.keys(data).length) call = await prisma.callSession.update({ where: { id: call.id }, data, select: { id: true, leadId: true, clientId: true, outcomeNotes: true } });
   }
 
   // Keep a note written during the live call when the post-call outcome card

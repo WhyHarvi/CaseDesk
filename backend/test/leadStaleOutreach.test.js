@@ -106,7 +106,7 @@ test("stale outreach sends every available enabled channel and keeps a delivery 
     now: new Date("2026-08-12T16:00:00.000Z"),
     resolveMailConfig: async () => ({ from: "hello@chkimmigration.ca" }),
     makeMailTransport: () => ({ sendMail: async (message) => { mail.push(message); return { messageId: "mail-1" }; } }),
-    sendSms: async (message) => { sms.push(message); return { id: "sms-1", provider: "Zapier / Ooma" }; },
+    sendSms: async (message) => { sms.push(message); return { id: "sms-1", provider: "Twilio" }; },
   });
 
   assert.equal(result.sent, 2);

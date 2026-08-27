@@ -76,6 +76,12 @@ export default function GlobalDialpad() {
     return value || "Connecting…";
   }, [active?.number]);
   const callTime = `${String(Math.floor(callSeconds / 60)).padStart(2, "0")}:${String(callSeconds % 60).padStart(2, "0")}`;
+  const callConnected = active?.phase === "connected" && Boolean(active?.connectedAt);
+  const callStatusLabel = callConnected
+    ? "Call in progress"
+    : active?.phase === "ringing"
+      ? "Ringing…"
+      : "Connecting…";
 
   const startCall = useCallback(async () => {
     if (!canCall) return;
@@ -346,10 +352,12 @@ export default function GlobalDialpad() {
 
   useEffect(() => {
     setCallSeconds(0);
-    if (!active) return undefined;
-    const timer = window.setInterval(() => setCallSeconds((current) => current + 1), 1000);
+    if (!callConnected) return undefined;
+    const updateDuration = () => setCallSeconds(Math.max(0, Math.floor((Date.now() - Number(active.connectedAt)) / 1000)));
+    updateDuration();
+    const timer = window.setInterval(updateDuration, 1000);
     return () => window.clearInterval(timer);
-  }, [active?.callSid]);
+  }, [active?.callSid, active?.connectedAt, callConnected]);
 
   useEffect(() => {
     const handleOpen = (event) => {
@@ -455,15 +463,15 @@ export default function GlobalDialpad() {
 
   if (!open) {
     return (
-      <button type="button" onPointerDown={warmAudio} onClick={() => setOpen(true)} aria-label={active ? `Active call with ${activeNumber}, ${callTime}` : "Open dialpad"} aria-keyshortcuts="D" className={`fixed bottom-6 right-6 z-[390] flex h-14 items-center rounded-full border border-white/10 text-sm font-semibold text-white transition-all duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-95 max-sm:right-4 ${active ? "w-[19rem] max-w-[calc(100vw-2rem)] gap-3 bg-black px-3 shadow-[0_18px_45px_rgba(0,0,0,0.35)] hover:bg-zinc-900" : "w-14 justify-center bg-[#34c759] p-0 shadow-[0_10px_24px_rgba(15,23,42,0.2)] hover:bg-[#2fb350]"}`}>
+      <button type="button" onPointerDown={warmAudio} onClick={() => setOpen(true)} aria-label={active ? `${callStatusLabel} with ${activeNumber}${callConnected ? `, ${callTime}` : ""}` : "Open dialpad"} aria-keyshortcuts="D" className={`fixed bottom-6 right-6 z-[390] flex h-14 items-center rounded-full border border-white/10 text-sm font-semibold text-white transition-all duration-300 hover:-translate-y-1 active:translate-y-0 active:scale-95 max-sm:right-4 ${active ? "w-[19rem] max-w-[calc(100vw-2rem)] gap-3 bg-black px-3 shadow-[0_18px_45px_rgba(0,0,0,0.35)] hover:bg-zinc-900" : "w-14 justify-center bg-[#34c759] p-0 shadow-[0_10px_24px_rgba(15,23,42,0.2)] hover:bg-[#2fb350]"}`}>
         <span className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${active ? "bg-[#34c759]" : "bg-white/15"}`}>
           {active ? <span className="absolute inset-0 animate-ping rounded-full bg-[#34c759]/35" style={{ animationDuration: "2.2s" }} /> : null}
           <Phone className="relative h-4 w-4 fill-current" />
         </span>
         {active ? (
           <>
-            <span className="min-w-0 flex-1 text-left"><span className="block text-[9px] font-semibold uppercase tracking-[0.14em] text-[#34c759]">Call in progress</span><span className="block truncate text-xs font-medium text-white">{activeNumber}</span></span>
-            <span className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-white">{callTime}</span>
+            <span className="min-w-0 flex-1 text-left"><span className="block text-[9px] font-semibold uppercase tracking-[0.14em] text-[#34c759]">{callStatusLabel}</span><span className="block truncate text-xs font-medium text-white">{activeNumber}</span></span>
+            {callConnected ? <span className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-white">{callTime}</span> : null}
           </>
         ) : null}
       </button>
@@ -496,7 +504,7 @@ export default function GlobalDialpad() {
         {active ? (
         <div className="flex min-h-0 flex-1 flex-col items-center px-2 pb-4 pt-8 text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#34c759]">
-            {active.direction === "INBOUND" ? "Incoming call" : "Calling"} · {callTime}
+            {callConnected ? `${active.direction === "INBOUND" ? "Incoming call" : "Call connected"} · ${callTime}` : callStatusLabel}
           </p>
           <p className="mt-3 w-full truncate text-[1.7rem] font-light tracking-[-0.02em] text-white">{activeNumber}</p>
           {recordingSid ? (

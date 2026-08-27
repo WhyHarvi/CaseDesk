@@ -1103,6 +1103,7 @@ function MissingInformationOverlay({
                         onOpenProfileSection?.(
                           entry.profileTab,
                           entry.profileView,
+                          entry.profileField,
                         );
                     }}
                     className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-950 px-3 py-2 text-[11px] font-semibold text-white"

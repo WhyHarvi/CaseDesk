@@ -114,7 +114,7 @@ const SECTIONS = [
         icon: "check",
         h3: "Optional integrations.",
         h4: "Connected only if a Workplace enables them",
-        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Ooma (via Zapier) for SMS and calls; Microsoft 365 for personal and Workplace system mailbox connections — each only where a Workplace or individual user chooses to connect it.",
+        body: "Intuit/QuickBooks for accounting, invoicing, and payment processing; Twilio for SMS and calls; Microsoft 365 for personal and Workplace system mailbox connections — each only where a Workplace or individual user chooses to connect it.",
       },
     ],
     quickFacts: [

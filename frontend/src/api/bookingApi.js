@@ -77,7 +77,7 @@ export async function updateAppointmentProfileContext(id, values) {
 
 export async function createAppointmentNote(id, content) {
   const response = await api.post(`/appointments/${id}/notes`, { content });
-  return response.data.data;
+  return { note: response.data.data, meta: response.data.meta || {} };
 }
 
 export async function updateAppointmentNote(id, content) {
@@ -101,6 +101,11 @@ export async function saveAppointmentAdviceDraft(id, values) {
 
 export async function confirmAppointmentAdvice(id, values) {
   const response = await api.post(`/appointments/${id}/advice/confirm`, values);
+  return { advice: response.data.data, meta: response.data.meta || {} };
+}
+
+export async function checkInAppointmentClient(id) {
+  const response = await api.post(`/appointments/${id}/check-in`);
   return response.data.data;
 }
 

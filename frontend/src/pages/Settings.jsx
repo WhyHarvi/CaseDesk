@@ -29,8 +29,8 @@ import api from "../services/api";
 import AgencyMailSettingsPanel from "../components/settings/AgencyMailSettingsPanel";
 import PersonalMailboxSettingsPanel from "../components/settings/PersonalMailboxSettingsPanel";
 import AgencyProfilePanel from "../components/settings/AgencyProfilePanel";
-import AgencyOomaSettingsPanel from "../components/settings/AgencyOomaSettingsPanel";
 import AgencyTwilioSettingsPanel from "../components/settings/AgencyTwilioSettingsPanel";
+import ClientMessageAutomationSettingsPanel from "../components/settings/ClientMessageAutomationSettingsPanel";
 import CommunicationSettingsPanel from "../components/settings/CommunicationSettingsPanel";
 import NotificationPreferencesPanel from "../components/notifications/NotificationPreferencesPanel";
 import SchedulingSettingsPanel from "../components/booking/SchedulingSettingsPanel";
@@ -96,7 +96,7 @@ const adminSettingsItems = [
     label: "Phone & SMS",
     icon: PhoneCall,
     title: "Workspace Phone & SMS",
-    subtitle: "Connect Twilio or Ooma Enterprise for client calls and text messages.",
+    subtitle: "Connect Twilio for client calls and text messages.",
   },
   {
     id: "communication-controls",
@@ -104,7 +104,7 @@ const adminSettingsItems = [
     icon: MessagesSquare,
     title: "Communication Controls",
     subtitle:
-      "Manage team permissions, retention, and sensitive client communication.",
+      "Manage client message automation, team permissions, retention, and communication policy.",
   },
   {
     id: "users-roles",
@@ -702,8 +702,8 @@ function PersonalProfilePanel({ user, agency }) {
 
                   <div className="border-b border-slate-100 px-6 py-5">
                     <p className="text-sm font-semibold text-slate-800">Professional avatar</p>
-                    <div className="mt-3 grid grid-cols-6 gap-2">
-                      {Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`).map((preset, index) => (
+                    <div className="mt-3 grid grid-cols-5 gap-2">
+                      {Array.from({ length: 21 }, (_, index) => `avatar-${index + 1}`).map((preset, index) => (
                         <button key={preset} type="button" onClick={() => { setForm((current) => ({ ...current, avatarPreset: preset, removeUploadedAvatar: true })); setAvatarFile(null); setAvatarPreview(`/staff-avatars/${preset}.png`); }} className={`aspect-square overflow-hidden rounded-full border-2 transition ${form.avatarPreset === preset ? "border-sky-600 ring-2 ring-sky-100" : "border-transparent hover:border-slate-300"}`} aria-label={`Choose professional avatar ${index + 1}`}>
                           <img src={`/staff-avatars/${preset}.png`} alt="" className="h-full w-full object-cover" />
                         </button>
@@ -1035,12 +1035,12 @@ export default function Settings() {
                   ) : activeSection === "agency-email" ? (
                     <AgencyMailSettingsPanel />
                   ) : activeSection === "agency-phone" ? (
-                    <div className="space-y-6">
-                      <AgencyTwilioSettingsPanel />
-                      <AgencyOomaSettingsPanel />
-                    </div>
+                    <AgencyTwilioSettingsPanel />
                   ) : activeSection === "communication-controls" ? (
-                    <CommunicationSettingsPanel />
+                    <div className="flex flex-col gap-6">
+                      <CommunicationSettingsPanel />
+                      <ClientMessageAutomationSettingsPanel />
+                    </div>
                   ) : activeSection === "notifications" ? (
                     <NotificationPreferencesPanel />
                   ) : isAdmin && activeSection === "automated-reminders" ? (

@@ -5,6 +5,8 @@ import { recordAppointmentEvent } from "../services/appointmentOperationsService
 import { requireAppointmentProfile } from "../services/appointmentProfileService.js";
 import { confirmAppointmentAdvice, saveAppointmentAdviceDraft } from "../services/appointmentAdviceService.js";
 import { APPOINTMENT_SUBJECT_MAX_WORDS } from "./bookingController.js";
+import { applyAppointmentStatusChange } from "./bookingController.js";
+import { autoMarkAppointmentAttended } from "../services/appointmentAttendanceService.js";
 
 function clean(value, max) {
   return String(value ?? "").trim().slice(0, max);
@@ -12,6 +14,15 @@ function clean(value, max) {
 
 function wordCount(value) {
   return String(value || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+export function shouldAutoMarkAttendedFromNote({ appointment, role, userId, now = new Date() }) {
+  const startsAt = new Date(appointment?.startsAt);
+  return role === "consultant"
+    && appointment?.status === "Scheduled"
+    && appointment?.assignedToId === userId
+    && !Number.isNaN(startsAt.getTime())
+    && startsAt <= now;
 }
 
 export async function getAppointmentProfile(req, res) {
@@ -22,6 +33,9 @@ export async function updateAppointmentProfileContext(req, res) {
   const existing = await requireAppointmentProfile(req, req.params.id);
   const purpose = Object.hasOwn(req.body || {}, "purpose") ? clean(req.body.purpose, 5000) || null : existing.purpose;
   const internalNotes = Object.hasOwn(req.body || {}, "internalNotes") ? clean(req.body.internalNotes, 10000) || null : existing.internalNotes;
+  const savedNewInternalNote = Object.hasOwn(req.body || {}, "internalNotes")
+    && Boolean(internalNotes)
+    && internalNotes !== existing.internalNotes;
   // Staff correcting a bad entry (e.g. a walk-in confirmation pasted into
   // the subject by mistake) must be held to the same required + word-cap
   // rule the booking sheet enforces at creation — otherwise "fixing" it
@@ -56,7 +70,36 @@ export async function updateAppointmentProfileContext(req, res) {
     });
     return updated;
   });
-  res.json({ data: { subject: data.subject, purpose: data.purpose || data.description || null, internalNotes: data.internalNotes } });
+  let attendanceAutoMarked = false;
+  let attendanceAutoMarkFailed = false;
+  if (savedNewInternalNote && shouldAutoMarkAttendedFromNote({
+    appointment: existing,
+    role: req.auth.role,
+    userId: req.auth.userId,
+  })) {
+    try {
+      attendanceAutoMarked = Boolean(await applyAppointmentStatusChange({
+        agencyId: existing.agencyId,
+        existing,
+        status: "Completed",
+        actorUserId: req.auth.userId,
+        expectedStatus: "Scheduled",
+        attendanceSource: "Consultant saved appointment notes",
+      }));
+    } catch {
+      attendanceAutoMarkFailed = true;
+    }
+  }
+  res.json({
+    data: {
+      subject: data.subject,
+      purpose: data.purpose || data.description || null,
+      internalNotes: data.internalNotes,
+      attendanceAutoMarked,
+      attendanceAutoMarkFailed,
+      appointmentStatus: attendanceAutoMarked ? "Completed" : existing.status,
+    },
+  });
 }
 
 export async function createAppointmentNote(req, res) {
@@ -86,7 +129,38 @@ export async function createAppointmentNote(req, res) {
     });
     return note;
   });
-  res.status(201).json({ data });
+  let attendanceAutoMarked = false;
+  let attendanceAutoMarkFailed = false;
+  if (shouldAutoMarkAttendedFromNote({
+    appointment,
+    role: req.auth.role,
+    userId: req.auth.userId,
+  })) {
+    try {
+      const completed = await applyAppointmentStatusChange({
+        agencyId: appointment.agencyId,
+        existing: appointment,
+        status: "Completed",
+        actorUserId: req.auth.userId,
+        expectedStatus: "Scheduled",
+        attendanceSource: "Consultant saved client notes",
+      });
+      attendanceAutoMarked = Boolean(completed);
+    } catch {
+      // The note has already been committed. Return it successfully so an
+      // autosave retry cannot create a duplicate, and let the UI explain
+      // that attendance still needs to be marked manually.
+      attendanceAutoMarkFailed = true;
+    }
+  }
+  res.status(201).json({
+    data,
+    meta: {
+      attendanceAutoMarked,
+      attendanceAutoMarkFailed,
+      appointmentStatus: attendanceAutoMarked ? "Completed" : appointment.status,
+    },
+  });
 }
 
 export async function createAppointmentFollowUp(req, res) {
@@ -155,5 +229,38 @@ export async function saveAppointmentAdviceDraftController(req, res) {
 
 export async function confirmAppointmentAdviceController(req, res) {
   const data = await confirmAppointmentAdvice(req, req.params.id, req.body || {});
-  res.status(201).json({ data });
+  let attendanceAutoMarked = false;
+  let attendanceAutoMarkError = null;
+  if (req.auth.role === "consultant") {
+    try {
+      attendanceAutoMarked = await autoMarkAppointmentAttended({
+        agencyId: req.auth.agencyId,
+        appointmentId: req.params.id,
+        actorUserId: req.auth.userId,
+        source: "Consultant completed advice and handoff",
+      });
+    } catch (error) {
+      attendanceAutoMarkError = "The advice was saved, but attendance could not be updated. Please mark the appointment attended manually.";
+    }
+  }
+  res.status(201).json({ data, meta: { attendanceAutoMarked, attendanceAutoMarkError } });
+}
+
+export async function checkInAppointmentClient(req, res) {
+  const appointment = await requireAppointmentProfile(req, req.params.id);
+  if (appointment.meetingMode !== "InPerson") {
+    throw createHttpError(409, "Client check-in is only available for in-person appointments.", "INVALID_MEETING_MODE");
+  }
+  const completed = await autoMarkAppointmentAttended({
+    agencyId: req.auth.agencyId,
+    appointmentId: appointment.id,
+    actorUserId: req.auth.userId,
+    source: "Client checked in at the front desk",
+    requireAssignedActor: false,
+    metadata: { checkedInByRole: req.auth.role },
+  });
+  if (!completed) {
+    throw createHttpError(409, "This appointment cannot be checked in before it starts or after its attendance is resolved.", "ATTENDANCE_NOT_AVAILABLE");
+  }
+  res.json({ data: { appointmentStatus: "Completed", attendanceAutoMarked: true } });
 }

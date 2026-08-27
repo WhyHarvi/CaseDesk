@@ -47,8 +47,8 @@ function publicSettings(settings, canManage) {
 }
 
 // fromNumber/messagingServiceSid are deliberately optional here, unlike
-// Ooma's validate() — an agency should be able to save real Twilio
-// credentials today and add a number once they have one, without CaseDesk
+// An agency can save real Twilio credentials today and add a number once they
+// have one, without CaseDesk
 // rejecting the save.
 //
 // The frontend saves this settings object from two separate forms — the

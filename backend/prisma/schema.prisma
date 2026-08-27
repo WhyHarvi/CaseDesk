@@ -341,6 +341,7 @@ enum LeadTemperature {
 
 enum LeadSourceType {
   PHONE
+  /// Historical records only; Ooma is no longer a supported provider.
   OOMA
   WHATSAPP
   FACEBOOK
@@ -403,6 +404,7 @@ enum LeadActivityDirection {
 
 enum LeadActivityChannel {
   PHONE
+  /// Historical records only; new phone activity uses PHONE.
   OOMA
   WHATSAPP
   SMS
@@ -688,9 +690,8 @@ model Agency {
   bookingPaymentHolds             BookingPaymentHold[]
   paymentApprovals                PaymentApproval[]
   quickBooksWebhookEvents         QuickBooksWebhookEvent[]
-  oomaSettings                    AgencyOomaSettings?
-  oomaCallSessions                OomaCallSession[]
-  oomaCallEvents                  OomaCallEvent[]
+  callSessions                CallSession[]
+  callEvents                  CallEvent[]
   twilioSettings                  AgencyTwilioSettings?
   twilioVoiceLines                AgencyTwilioVoiceLine[]
   accountStatements               AccountStatementGeneration[]
@@ -1667,39 +1668,6 @@ model UserMailboxConnection {
   @@map("user_mailbox_connections")
 }
 
-model AgencyOomaSettings {
-  id                             String    @id @default(uuid())
-  agencyId                       String    @unique @map("agency_id")
-  apiBaseUrl                     String?   @map("api_base_url")
-  apiKeyEncrypted                String?   @map("api_key_encrypted")
-  fromNumber                     String?   @map("from_number")
-  smsSendPath                    String?   @map("sms_send_path")
-  callStartPath                  String?   @map("call_start_path")
-  authHeader                     String    @default("authorization") @map("auth_header")
-  authPrefix                     String    @default("Bearer") @map("auth_prefix")
-  webhookTokenEncrypted          String?   @map("webhook_token_encrypted")
-  webhookTokenHash               String?   @unique @map("webhook_token_hash")
-  lastWebhookAt                  DateTime? @map("last_webhook_at")
-  lastCallWebhookAt              DateTime? @map("last_call_webhook_at")
-  lastSmsWebhookAt               DateTime? @map("last_sms_webhook_at")
-  zapierOutboundWebhookEncrypted String?   @map("zapier_outbound_webhook_encrypted")
-  lastZapierOutboundTestedAt     DateTime? @map("last_zapier_outbound_tested_at")
-  lastZapierOutboundTestStatus   String?   @map("last_zapier_outbound_test_status")
-  lastZapierOutboundTestMessage  String?   @map("last_zapier_outbound_test_message")
-  enabled                        Boolean   @default(true)
-  smsEnabled                     Boolean   @default(true) @map("sms_enabled")
-  callsEnabled                   Boolean   @default(true) @map("calls_enabled")
-  lastSmsTestedAt                DateTime? @map("last_sms_tested_at")
-  lastSmsTestStatus              String?   @map("last_sms_test_status")
-  lastSmsTestMessage             String?   @map("last_sms_test_message")
-  createdAt                      DateTime  @default(now()) @map("created_at")
-  updatedAt                      DateTime  @updatedAt @map("updated_at")
-  agency                         Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-
-  @@index([agencyId])
-  @@map("agency_ooma_settings")
-}
-
 // One Twilio phone number configured for voice, with its inbound routing
 // rule. A call to a FRONTDESK line rings only frontdesk staff; STAFF/INTERNAL
 // lines ring everyone. The INTERNAL line is the office line staff dial to
@@ -1757,14 +1725,13 @@ model AgencyTwilioSettings {
   @@map("agency_twilio_settings")
 }
 
-model OomaCallSession {
+model CallSession {
   id                     String          @id @default(uuid())
   agencyId               String          @map("agency_id")
   providerCallId         String          @map("provider_call_id")
-  // Which provider produced this session — "OOMA" (legacy, via Zapier) or
-  // "TWILIO" (browser softphone + status callbacks + API sync). Both share
-  // one inbox, so old Ooma history and new Twilio calls live together.
-  provider               String          @default("OOMA")
+  // Historical Ooma records remain in this legacy-named table, but every new
+  // call session is produced by the Twilio softphone.
+  provider               String          @default("TWILIO")
   direction              String
   status                 String
   remoteNumber           String?         @map("remote_number")
@@ -1792,13 +1759,13 @@ model OomaCallSession {
   createdAt              DateTime        @default(now()) @map("created_at")
   updatedAt              DateTime        @updatedAt @map("updated_at")
   agency                 Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  handledBy              User?           @relation("OomaCallHandledByUser", fields: [handledByUserId], references: [id], onDelete: SetNull)
-  resolvedBy             User?           @relation("OomaCallResolvedByUser", fields: [resolvedById], references: [id], onDelete: SetNull)
+  handledBy              User?           @relation("CallHandledByUser", fields: [handledByUserId], references: [id], onDelete: SetNull)
+  resolvedBy             User?           @relation("CallResolvedByUser", fields: [resolvedById], references: [id], onDelete: SetNull)
   client                 Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
   case                   Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
   lead                   Lead?           @relation(fields: [leadId], references: [id], onDelete: SetNull)
   followUp               LeadFollowUp?   @relation(fields: [followUpId], references: [id], onDelete: SetNull)
-  events                 OomaCallEvent[]
+  events                 CallEvent[]
 
   @@unique([agencyId, providerCallId])
   @@index([agencyId, resolution, lastEventAt])
@@ -1811,7 +1778,7 @@ model OomaCallSession {
   @@map("ooma_call_sessions")
 }
 
-model OomaCallEvent {
+model CallEvent {
   id              String          @id @default(uuid())
   agencyId        String          @map("agency_id")
   callSessionId   String          @map("call_session_id")
@@ -1821,7 +1788,7 @@ model OomaCallEvent {
   payload         Json            @default("{}")
   createdAt       DateTime        @default(now()) @map("created_at")
   agency          Agency          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  callSession     OomaCallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+  callSession     CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
 
   @@unique([agencyId, providerEventId])
   @@index([callSessionId, occurredAt])
@@ -2001,8 +1968,8 @@ model User {
   schedulingBlocks                     SchedulingBlock[]
   appointmentEvents                    AppointmentEvent[]              @relation("AppointmentEventActor")
   mailboxConnection                    UserMailboxConnection?
-  handledOomaCalls                     OomaCallSession[]               @relation("OomaCallHandledByUser")
-  resolvedOomaCalls                    OomaCallSession[]               @relation("OomaCallResolvedByUser")
+  handledCalls                     CallSession[]               @relation("CallHandledByUser")
+  resolvedCalls                    CallSession[]               @relation("CallResolvedByUser")
   createdInternalChatThreads           InternalChatThread[]            @relation("InternalChatThreadCreator")
   internalChatParticipations           InternalChatParticipant[]
   sentInternalChatMessages             InternalChatMessage[]           @relation("InternalChatMessageSender")
@@ -2310,7 +2277,7 @@ model Client {
   cashTransactions           CashTransaction[]
   caseEasyImportContacts     CaseEasyImportContact[]
   caseEasyImportReportRows   CaseEasyImportReportRow[]
-  oomaCallSessions           OomaCallSession[]
+  callSessions           CallSession[]
   appointmentAdvice          AppointmentAdvice[]
 
   @@unique([agencyId, clientNumber])
@@ -2385,7 +2352,7 @@ model Case {
   cashTransactions             CashTransaction[]
   caseEasyImportCases          CaseEasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportReportRow[]
-  oomaCallSessions             OomaCallSession[]
+  callSessions             CallSession[]
   collaborationRequests        CaseCollaborationRequest[]
 
   @@unique([agencyId, creationIdempotencyKey])
@@ -2577,6 +2544,9 @@ model BookingSettings {
   messageTemplates              Json     @default("{}") @map("message_templates")
   waitlistEnabled               Boolean  @default(true) @map("waitlist_enabled")
   attendanceConfirmationEnabled Boolean  @default(true) @map("attendance_confirmation_enabled")
+  preConsultationIntakeEnabled  Boolean  @default(false) @map("pre_consultation_intake_enabled")
+  preConsultationEmailEnabled   Boolean  @default(false) @map("pre_consultation_email_enabled")
+  preConsultationSmsEnabled     Boolean  @default(false) @map("pre_consultation_sms_enabled")
   onlineBookingEnabled          Boolean  @default(true) @map("online_booking_enabled")
   phoneBookingEnabled           Boolean  @default(false) @map("phone_booking_enabled")
   phoneCallerId                 String?  @map("phone_caller_id")
@@ -4688,7 +4658,7 @@ model Lead {
   importedRows             LeadImportRow[]          @relation("LeadImportCreatedLead")
   bookingPaymentHolds      BookingPaymentHold[]
   manualLedgerEntries      CaseManualLedgerEntry[]
-  oomaCallSessions         OomaCallSession[]
+  callSessions         CallSession[]
   appointmentAdvice        AppointmentAdvice[]
 
   @@unique([agencyId, leadNumber])
@@ -4894,7 +4864,7 @@ model LeadFollowUp {
   lead              Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
   assignedUser      User               @relation("LeadFollowUpAssigneeUser", fields: [assignedUserId], references: [id], onDelete: Restrict)
   completedBy       User?              @relation("LeadFollowUpCompleterUser", fields: [completedById], references: [id], onDelete: SetNull)
-  oomaCallSessions  OomaCallSession[]
+  callSessions  CallSession[]
   appointmentAdvice AppointmentAdvice?
 
   @@index([agencyId, assignedUserId, status, dueAt])

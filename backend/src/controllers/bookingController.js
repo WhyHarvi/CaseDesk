@@ -281,6 +281,9 @@ export async function updateBookingSettings(req, res) {
     ...(body.reminderSchedule !== undefined ? { reminderSchedule: validReminderSchedule(body.reminderSchedule) } : {}),
     ...(typeof body.waitlistEnabled === "boolean" ? { waitlistEnabled: body.waitlistEnabled } : {}),
     ...(typeof body.attendanceConfirmationEnabled === "boolean" ? { attendanceConfirmationEnabled: body.attendanceConfirmationEnabled } : {}),
+    ...(typeof body.preConsultationIntakeEnabled === "boolean" ? { preConsultationIntakeEnabled: body.preConsultationIntakeEnabled } : {}),
+    ...(typeof body.preConsultationEmailEnabled === "boolean" ? { preConsultationEmailEnabled: body.preConsultationEmailEnabled } : {}),
+    ...(typeof body.preConsultationSmsEnabled === "boolean" ? { preConsultationSmsEnabled: body.preConsultationSmsEnabled } : {}),
     ...(typeof body.onlineBookingEnabled === "boolean" ? { onlineBookingEnabled: body.onlineBookingEnabled } : {}),
     ...(typeof body.phoneBookingEnabled === "boolean" ? { phoneBookingEnabled: body.phoneBookingEnabled } : {}),
     ...(body.phoneCallerId !== undefined ? { phoneCallerId: normalizeBookingPhone(body.phoneCallerId, "Outgoing caller ID") } : {}),
@@ -307,6 +310,12 @@ export async function updateBookingSettings(req, res) {
     ...(body.publicSignOffName !== undefined ? { publicSignOffName: optionalPublicCopy(body.publicSignOffName, "Sign-off", 160) } : {}),
   };
   const current = await getOrCreateBookingSettings(req.auth.agencyId);
+  if (data.preConsultationEmailEnabled !== undefined || data.preConsultationSmsEnabled !== undefined) {
+    data.preConsultationIntakeEnabled = Boolean(
+      (data.preConsultationEmailEnabled ?? current.preConsultationEmailEnabled)
+      || (data.preConsultationSmsEnabled ?? current.preConsultationSmsEnabled),
+    );
+  }
   const finalLocations = data.locations !== undefined ? data.locations : (Array.isArray(current.locations) ? current.locations : []);
   const enablingPublic = data.publicBookingEnabled === true || (data.publicBookingEnabled === undefined && current.publicBookingEnabled);
   const finalPhoneEnabled = data.phoneBookingEnabled ?? current.phoneBookingEnabled;
@@ -1786,20 +1795,34 @@ export async function convertAppointmentToClient(req, res) {
 // already treats a null actor as "system-triggered" (recordAppointmentEvent
 // defaults actorUserId to null, and both notification helpers accept a null
 // actorUserId as just metadata on the delivery record).
-export async function applyAppointmentStatusChange({ agencyId, existing, status, actorUserId = null, reason = null }) {
+export async function applyAppointmentStatusChange({ agencyId, existing, status, actorUserId = null, reason = null, expectedStatus = null, attendanceSource = null, attendanceMetadata = {} }) {
   const data = await prisma.$transaction(async (tx) => {
-    const result = await tx.appointment.update({
-      where: { id: existing.id },
-      data: {
-        status,
-        ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorUserId, cancellationReason: reason } : {}),
-      },
-      include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
-    });
+    const updateData = {
+      status,
+      ...(status === "Cancelled" ? { cancelledAt: new Date(), cancelledById: actorUserId, cancellationReason: reason } : {}),
+    };
+    let result;
+    if (expectedStatus) {
+      const claimed = await tx.appointment.updateMany({
+        where: { id: existing.id, status: expectedStatus },
+        data: updateData,
+      });
+      if (!claimed.count) return null;
+      result = await tx.appointment.findUnique({
+        where: { id: existing.id },
+        include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+      });
+    } else {
+      result = await tx.appointment.update({
+        where: { id: existing.id },
+        data: updateData,
+        include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
+      });
+    }
     await syncLeadConsultationFromAppointment(tx, result, {
       consultationStatus: leadConsultationStatusForAppointment(status),
     });
-    await recordAppointmentEvent(tx, { agencyId, appointmentId: existing.id, actorUserId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status } });
+    await recordAppointmentEvent(tx, { agencyId, appointmentId: existing.id, actorUserId, type: "STATUS_CHANGED", summary: `Appointment marked ${status}`, metadata: { from: existing.status, to: status, ...(attendanceSource ? { attendanceSource, ...attendanceMetadata } : {}) } });
     if (status === "Completed") await ensureAppointmentCompletionFollowUp(tx, result);
     if (["Completed", "NoShow"].includes(status)) {
       await sendBookingStaffNotification({ agencyId, appointment: result, kind: status === "Completed" ? "attended" : "no_show", actorUserId, db: tx });
@@ -1820,6 +1843,7 @@ export async function applyAppointmentStatusChange({ agencyId, existing, status,
     // actually changed from their perspective.
     return result;
   });
+  if (!data) return null;
   await recordActivity({ agencyId, userId: actorUserId, clientId: existing.clientId, caseId: existing.caseId, action: "appointment.status_updated", details: `${existing.subject} marked ${status}` });
   invalidateDashboardCache(agencyId);
   void processBookingMessageDeliveries();

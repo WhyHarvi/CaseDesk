@@ -20,8 +20,8 @@ function storedConfig(settings) {
   };
 }
 
-// Twilio's numeric error codes are far more specific than Ooma's HTTP status
-// codes ever were — map the ones an agency will actually hit to plain language
+// Twilio's numeric error codes are more specific than generic HTTP statuses —
+// map the ones an agency will actually hit to plain language
 // instead of surfacing "Error 21608" to a consultant.
 function friendlyTwilioError(error) {
   const code = error?.code;
@@ -33,10 +33,8 @@ function friendlyTwilioError(error) {
   return `Twilio returned an error${code ? ` (${code})` : ""}. Confirm the account and number with Twilio.`;
 }
 
-// requireVerified/optional mirror agencyOomaService.js's resolveAgencyOomaConfig
-// signature. optional:true returns null instead of throwing — this is what lets
-// communicationProviderService.js's sendSmsMessage() probe Twilio without
-// blowing up when it isn't (yet) fully configured, so it can fall back to Ooma.
+// optional:true returns null instead of throwing so connection-status checks
+// can probe an incomplete setup. Actual sends require a complete configuration.
 export async function resolveAgencyTwilioConfig(agencyId, { requireVerified = true, optional = false } = {}) {
   const settings = agencyId ? await prisma.agencyTwilioSettings.findUnique({ where: { agencyId } }) : null;
   const config = storedConfig(settings);
@@ -90,7 +88,7 @@ export async function verifyAgencyTwilioCredentials({ accountSid, authToken }) {
   }
 }
 
-// idempotencyKey is accepted for call-signature parity with sendAgencyOomaSms
+// idempotencyKey is accepted for a consistent communication-service signature
 // but not forwarded to Twilio — the classic Messages resource has no native
 // idempotency-key input, and real dedupe already lives in
 // communicationOutboxService.js's claim-based row-status transition.

@@ -65,12 +65,24 @@ test("consultants can organize My Documents into folders, scoped to one case and
   assert.match(caseProfile, /if \(folderId\) formData\.append\("folderId", folderId\)/);
 });
 
-test("long case workspaces use the page scroller instead of a competing nested scroller", async () => {
+test("every case workspace tab uses the page scroller — none of them fight it with their own bounded, independently-scrolling box", async () => {
   const tabs = await source("../../frontend/src/components/case-profile/CaseWorkspaceTabs.jsx");
 
-  assert.match(tabs, /const usesPageScroll = \["DOCUMENTS", "APPOINTMENTS", "BILLING"\]\.includes\(/);
-  assert.match(tabs, /usesPageScroll \? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto overscroll-contain/);
-  assert.match(tabs, /usesPageScroll \? "sticky top-0 z-20 rounded-t-\[2rem\]"/);
-  assert.match(tabs, /if \(!usesPageScroll\) \{[\s\S]*workspaceContentRef\.current\?\.scrollTo/);
-  assert.match(tabs, /previousUsesPageScrollRef\.current[\s\S]*workspaceShellRef\.current\?\.scrollIntoView/);
+  // Used to be limited to DOCUMENTS/APPOINTMENTS/BILLING via a
+  // usesPageScroll allowlist; every other tab (PROFILE, REMINDERS,
+  // QUESTIONNAIRES, FORMS, TASKS, AGREEMENTS & LETTERS, COMMUNICATION) got a
+  // viewport-height-capped shell with its own overflow-y-auto — a second,
+  // competing scrollbar nested inside the page's own scroll, which is what
+  // made the mouse wheel feel like it was fighting itself. None of those
+  // tabs' own content needs a bounded height, so the fix removes the
+  // conditional entirely rather than growing the allowlist.
+  assert.doesNotMatch(tabs, /usesPageScroll/);
+  assert.doesNotMatch(tabs, /workspaceContentRef/);
+  assert.doesNotMatch(tabs, /workspaceShellRef/);
+  assert.doesNotMatch(tabs, /h-\[calc\(100dvh-7rem\)\] min-h-\[36rem\] max-h-\[56rem\] overflow-hidden/);
+  assert.doesNotMatch(tabs, /min-h-0 flex-1 overflow-y-auto overscroll-contain/);
+  // The workspace shell and its content area both stay in normal document
+  // flow now, letting MainLayout's <main> be the only scroll container.
+  assert.match(tabs, /<article className="flex flex-col overflow-clip rounded-\[2rem\]/);
+  assert.match(tabs, /<div className="overflow-visible bg-white px-5 py-5">/);
 });

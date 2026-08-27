@@ -28,6 +28,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import {
   confirmAppointmentAdvice,
+  checkInAppointmentClient,
   convertAppointmentToClient,
   createAppointmentFollowUp,
   createAppointmentNote,
@@ -259,6 +260,9 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setAppointment((current) => ({ ...current, ...patch, description: patch.purpose }));
       setEditingContext(false);
       await load();
+      if (patch.attendanceAutoMarkFailed) {
+        setError("The note was saved, but attendance could not be updated. Mark the appointment attended manually.");
+      }
       onChanged?.();
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Appointment context could not be saved.");
@@ -328,11 +332,19 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     if (saving || !note.trim()) return;
     try {
       setSaving(true);
+      const created = autosavedNote
+        ? null
+        : await createAppointmentNote(appointment.id, note.trim());
       const saved = autosavedNote
         ? await updateAppointmentNote(autosavedNote.id, note.trim())
-        : await createAppointmentNote(appointment.id, note.trim());
+        : created.note;
       const localNote = { ...autosavedNote, ...saved, appointment: { id: appointment.id, subject: appointment.subject, startsAt: appointment.startsAt } };
       updateLocalNotes((items) => [localNote, ...items.filter((item) => item.id !== localNote.id)]);
+      if (created?.meta?.attendanceAutoMarked) {
+        setAppointment((current) => current ? { ...current, status: "Completed" } : current);
+      } else if (created?.meta?.attendanceAutoMarkFailed) {
+        setError("The note was saved, but attendance could not be updated. Mark the appointment attended manually.");
+      }
       if (keepOpen) {
         setAutosavedNote(localNote);
       } else {
@@ -470,7 +482,11 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         additionalAssignedUserIds: adviceAdditionalAssignedUserIds,
         followUpDate: adviceFollowUpDate,
       });
-      setSavedAdvice(saved);
+      setSavedAdvice(saved.advice);
+      if (saved.meta?.attendanceAutoMarked) {
+        setAppointment((current) => current ? { ...current, status: "Completed" } : current);
+      }
+      if (saved.meta?.attendanceAutoMarkError) setError(saved.meta.attendanceAutoMarkError);
       setShowAdviceComposer(false);
       onChanged?.();
     } catch (requestError) {
@@ -537,6 +553,19 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       onChanged?.(updated);
     } catch (requestError) {
       setError(requestError.response?.data?.message || "The appointment status could not be updated.");
+    } finally { setSaving(false); }
+  }
+
+  async function checkInClient() {
+    try {
+      setSaving(true);
+      setError("");
+      await checkInAppointmentClient(appointment.id);
+      setAppointment((current) => ({ ...current, status: "Completed" }));
+      await load();
+      onChanged?.();
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "The client could not be checked in.");
     } finally { setSaving(false); }
   }
 
@@ -660,7 +689,7 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
               <div id="appointment-action-pre-consultation" tabIndex={-1} className={`rounded-[1.5rem] outline-none ${fadingHighlightClass(activeAction === "pre-consultation")}`}>
                 <PreConsultationSummaryCard intake={appointment.preConsultationIntake} />
               </div>
-              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => appointment.lead?.id && appointment.leadConsultation?.id ? setCompletingConsultation(true) : setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
+              {canWrite && appointment.status === "Scheduled" && hasStarted ? <section className="rounded-[1.5rem] border border-white bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Attendance</p><div className="mt-3 grid grid-cols-2 gap-2">{role !== "frontdesk" ? <button type="button" disabled={saving} onClick={() => appointment.lead?.id && appointment.leadConsultation?.id ? setCompletingConsultation(true) : setStatus("Completed")} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Mark attended</button> : appointment.meetingMode === "InPerson" ? <button type="button" disabled={saving} onClick={checkInClient} className="rounded-full bg-emerald-50 px-4 py-2.5 text-xs font-semibold text-emerald-700">Check in client</button> : null}<button type="button" disabled={saving} onClick={() => setStatus("NoShow")} className={`rounded-full bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 ${role === "frontdesk" && appointment.meetingMode !== "InPerson" ? "col-span-2" : ""}`}>Mark no-show</button></div></section> : null}
               {canWrite && appointment.status === "Completed" && role === "admin" ? <button type="button" disabled={saving} onClick={() => setStatus("Scheduled")} className="w-full rounded-full border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600">Unmark attended</button> : null}
             </div> : null}
 

@@ -27,7 +27,7 @@ export const preConsultationAppointmentInclude = {
   agency: {
     select: {
       id: true, name: true, legalName: true, email: true, phone: true, logoUrl: true,
-      bookingSettings: { select: { timezone: true } },
+      bookingSettings: { select: { timezone: true, preConsultationIntakeEnabled: true, preConsultationEmailEnabled: true, preConsultationSmsEnabled: true } },
     },
   },
   sessionType: { select: { id: true, name: true } },
@@ -130,8 +130,23 @@ async function smsQuestionnaire(appointment, contact, intakeUrl, deliveryKey) {
 
 const retryDelay = (attempt) => Math.min(60 * 60_000, 60_000 * 2 ** Math.max(0, attempt - 1));
 
+export function automaticPreConsultationIntakeEnabled(appointment) {
+  const settings = appointment?.agency?.bookingSettings;
+  return settings?.preConsultationEmailEnabled === true || settings?.preConsultationSmsEnabled === true;
+}
+
 export async function deliverPreConsultationIntake(appointment, { force = false, actorUserId = null } = {}) {
   if (!appointment?.id || appointment.status !== "Scheduled" || !appointment.manageToken) return null;
+  // Manual staff sends deliberately bypass the workspace automation switch.
+  // Automatic sends reload the switches here so a change made after the
+  // worker selected an appointment is still respected before delivery.
+  const bookingSettings = force
+    ? appointment.agency?.bookingSettings
+    : await prisma.bookingSettings.findUnique({
+      where: { agencyId: appointment.agencyId },
+      select: { preConsultationEmailEnabled: true, preConsultationSmsEnabled: true },
+    });
+  if (!force && !automaticPreConsultationIntakeEnabled({ agency: { bookingSettings } })) return null;
   const reservation = await reserve(appointment, { force, actorUserId });
   if (!reservation?.event || reservation.skip) return reservation?.event || null;
 
@@ -139,8 +154,10 @@ export async function deliverPreConsultationIntake(appointment, { force = false,
   const contact = recipient(appointment);
   const intakeUrl = preConsultationIntakeUrl(appointment.manageToken);
   const attempt = Number(existing.attempts || 0) + 1;
-  let email = existing.emailStatus === "sent" ? { status: "sent", providerId: existing.emailProviderId || null } : existing.emailStatus === "skipped" ? { status: "skipped", reason: existing.emailError } : null;
-  let sms = existing.smsStatus === "sent" ? { status: "sent", providerId: existing.smsProviderId || null } : existing.smsStatus === "skipped" ? { status: "skipped", reason: existing.smsError } : null;
+  const automaticEmailEnabled = force || bookingSettings?.preConsultationEmailEnabled === true;
+  const automaticSmsEnabled = force || bookingSettings?.preConsultationSmsEnabled === true;
+  let email = !automaticEmailEnabled ? { status: "skipped", reason: "Automatic email is turned off" } : existing.emailStatus === "sent" ? { status: "sent", providerId: existing.emailProviderId || null } : existing.emailStatus === "skipped" ? { status: "skipped", reason: existing.emailError } : null;
+  let sms = !automaticSmsEnabled ? { status: "skipped", reason: "Automatic SMS is turned off" } : existing.smsStatus === "sent" ? { status: "sent", providerId: existing.smsProviderId || null } : existing.smsStatus === "skipped" ? { status: "skipped", reason: existing.smsError } : null;
   if (!email) { try { email = await emailQuestionnaire(appointment, contact, intakeUrl); } catch (error) { email = { status: "failed", reason: errorText(error) }; } }
   if (!sms) { try { sms = await smsQuestionnaire(appointment, contact, intakeUrl, reservation.event.id); } catch (error) { sms = { status: "failed", reason: errorText(error) }; } }
 
@@ -181,6 +198,7 @@ export async function processPreConsultationIntakeDeliveries() {
         startsAt: { gt: new Date() },
         createdAt: { gte: FEATURE_RELEASE_AT },
         manageToken: { not: null },
+        agency: { bookingSettings: { OR: [{ preConsultationEmailEnabled: true }, { preConsultationSmsEnabled: true }] } },
         events: { none: { type: { in: [PRE_CONSULTATION_EVENT.DELIVERY_SENT, PRE_CONSULTATION_EVENT.SUBMITTED] } } },
       },
       include: preConsultationAppointmentInclude,

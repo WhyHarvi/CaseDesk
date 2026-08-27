@@ -4,7 +4,7 @@ import { decryptSecret, encryptSecret, secretEncryptionReady } from "../../servi
 import { createHttpError } from "../../utils/http.js";
 import { providerChannel, providerEventId } from "./lead.provider.adapters.js";
 
-export const LEAD_CONNECTION_PROVIDERS = ["WEBSITE", "META", "WHATSAPP", "GOOGLE_ADS", "EMAIL", "OOMA"];
+export const LEAD_CONNECTION_PROVIDERS = ["WEBSITE", "META", "WHATSAPP", "GOOGLE_ADS", "EMAIL"];
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const connectionSelect = {

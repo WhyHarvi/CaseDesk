@@ -91,7 +91,7 @@ function initialValues(channel, caseItem, reply) {
       : "",
     bodyText: "",
     scheduledAt: "",
-    callMode: "start",
+    callMode: "log",
     callDisposition: "Completed",
     durationMinutes: "",
   };
@@ -155,8 +155,7 @@ export default function CommunicationComposer({
       : null,
     callDisposition: values.channel === "Call" ? values.callDisposition : null,
     sendNow,
-    initiateCall:
-      values.channel === "Call" && values.callMode === "start" && sendNow,
+    initiateCall: false,
     idempotencyKey: idempotencyKey.current,
   });
 
@@ -302,11 +301,9 @@ export default function CommunicationComposer({
           message = sent.data.data;
         }
       } else {
-        const shouldDeliver =
-          values.channel === "Call" ? values.callMode === "start" : true;
         const response = await api.post(
           "/communications/messages",
-          payload(intent !== "draft" && shouldDeliver),
+          payload(intent !== "draft" && values.channel !== "Call"),
           {
             headers: { "Idempotency-Key": idempotencyKey.current },
             timeout: 30000,
@@ -599,24 +596,10 @@ export default function CommunicationComposer({
               </label>
             ) : (
               <div className="mt-4 space-y-4">
-                <div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => update("callMode", "start")}
-                    className={`rounded-xl px-3 py-2 text-xs font-semibold ${values.callMode === "start" ? "bg-white shadow-sm" : "text-slate-500"}`}
-                  >
-                    Start Ooma call
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => update("callMode", "log")}
-                    className={`rounded-xl px-3 py-2 text-xs font-semibold ${values.callMode === "log" ? "bg-white shadow-sm" : "text-slate-500"}`}
-                  >
-                    Log past call
-                  </button>
-                </div>
-                {values.callMode === "log" ? (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                <p className="rounded-2xl bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">
+                  Log a completed call here. Use the Twilio dialpad for live calls.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
                     <label className="text-sm font-semibold text-slate-800">
                       Call outcome
                       <select
@@ -645,13 +628,7 @@ export default function CommunicationComposer({
                         className={inputClass}
                       />
                     </label>
-                  </div>
-                ) : (
-                  <p className="rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-                    Ooma will ring the workspace phone first, then connect the
-                    client when your provider supports click-to-call.
-                  </p>
-                )}
+                </div>
                 <label className="block text-sm font-semibold text-slate-800">
                   Call notes
                   <textarea
@@ -740,9 +717,7 @@ export default function CommunicationComposer({
               disabled={
                 saving ||
                 !allowed ||
-                (values.channel !== "Call" || values.callMode === "start"
-                  ? !provider.sendConfigured
-                  : false) ||
+                (values.channel !== "Call" ? !provider.sendConfigured : false) ||
                 (values.channel === "Email" &&
                   (!values.subject.trim() ||
                     subjectWords > EMAIL_SUBJECT_MAX_WORDS))
@@ -761,9 +736,7 @@ export default function CommunicationComposer({
                 : values.scheduledAt
                   ? "Schedule"
                   : values.channel === "Call"
-                    ? values.callMode === "start"
-                      ? "Start call"
-                      : "Save call record"
+                    ? "Save call record"
                     : "Send"}
             </button>
           </div>

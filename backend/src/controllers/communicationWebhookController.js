@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import prisma from "../services/prisma/client.js";
 import { recordCommunicationAudit } from "../services/communicationAudit.js";
 import { applyCommunicationAutomations } from "../services/communicationAutomationService.js";
@@ -7,15 +7,7 @@ import {
   communicationResponseDueAt,
 } from "../services/communicationSlaService.js";
 import { createHttpError } from "../utils/http.js";
-import { enqueueTrustedProviderLead } from "../modules/leads/lead.website.service.js";
-import {
-  normalizeCommunicationPhone,
-  oomaSenderCandidates,
-} from "../services/communicationAddressService.js";
-import {
-  ingestOomaCallEvent,
-  isOomaCallPayload,
-} from "../services/oomaCallService.js";
+import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const stopWords = new Set(["stop", "unsubscribe", "cancel", "end", "quit"]);
@@ -111,24 +103,6 @@ async function findClient(agencyId, channel, senderAddress) {
   return legacyCandidates.find(
     (client) => normalizeCommunicationPhone(client.phone) === normalized,
   ) || null;
-}
-
-async function resolveOomaSender(payload, agencyId, channel, eventName) {
-  const normalizedEvent = eventName.replaceAll(/[^a-z]/g, "");
-  const allowToFallback = [
-    "smsreceived",
-    "messagereceived",
-    "inboundsms",
-    "inboundmessage",
-  ].includes(normalizedEvent);
-  const candidates = oomaSenderCandidates(payload, { allowToFallback });
-  for (const candidate of candidates) {
-    if (await findClient(agencyId, channel, candidate)) return candidate;
-  }
-  // Preserve a supplied sender for the Unassigned queue even when it does not
-  // match a client. Never treat `to` as the sender unless it matched a client.
-  const explicitCandidates = oomaSenderCandidates(payload);
-  return explicitCandidates[0] || null;
 }
 
 async function storeUnmatched({
@@ -593,119 +567,4 @@ export async function receiveCommunicationEventWebhook(req, res) {
   verifySecret(req);
   const result = await ingestCommunicationProviderEvent(object(req.body));
   res.status(200).json(result);
-}
-
-export async function receiveOomaCommunicationWebhook(req, res) {
-  const tokenHash = createHash("sha256")
-    .update(clean(req.params.token, 200))
-    .digest("hex");
-  const settings = await prisma.agencyOomaSettings.findUnique({
-    where: { webhookTokenHash: tokenHash },
-  });
-  if (!settings || !settings.enabled)
-    throw createHttpError(404, "Ooma webhook endpoint not found");
-  const payload = object(req.body);
-  if (isOomaCallPayload(payload)) {
-    const result = await ingestOomaCallEvent({
-      agencyId: settings.agencyId,
-      settings,
-      payload,
-    });
-    await prisma.agencyOomaSettings.update({
-      where: { id: settings.id },
-      data: { lastWebhookAt: new Date(), lastCallWebhookAt: new Date() },
-    });
-    res.status(result.duplicate ? 200 : 201).json(result);
-    return;
-  }
-  const eventName = clean(
-    payload.event || payload.type || payload.status,
-    80,
-  ).toLowerCase();
-  const providerMessageId =
-    payload.providerMessageId || payload.messageId || payload.callId;
-  const isLifecycleEvent = Boolean(
-    providerMessageId &&
-    [
-      "queued",
-      "sent",
-      "accepted",
-      "delivered",
-      "bounced",
-      "failed",
-      "rejected",
-      "blocked",
-      "optedout",
-      "opted_out",
-      "completed",
-      "missed",
-      "answered",
-      "disconnected",
-    ].includes(eventName.replaceAll(/[^a-z_]/g, "")),
-  );
-  let result;
-  if (isLifecycleEvent) {
-    const normalizedEvent =
-      eventName === "answered"
-        ? "accepted"
-        : eventName === "disconnected"
-          ? "completed"
-          : eventName;
-    result = await ingestCommunicationProviderEvent({
-      ...payload,
-      agencyId: settings.agencyId,
-      provider: "Ooma",
-      event: normalizedEvent,
-    });
-  } else {
-    const channel =
-      clean(payload.channel, 20).toLowerCase() === "sms"
-        ? "Sms"
-        : clean(payload.channel, 20).toLowerCase() === "call"
-          ? "Call"
-        : payload.body ||
-            payload.text ||
-            payload.message ||
-            payload.messageBody ||
-            payload.message_body ||
-            payload.data?.body ||
-            payload.data?.message
-          ? "Sms"
-          : "Call";
-    const senderAddress = await resolveOomaSender(
-      payload,
-      settings.agencyId,
-      channel,
-      eventName,
-    );
-    result = await ingestInboundCommunication({
-      ...payload,
-      agencyId: settings.agencyId,
-      provider: "Ooma",
-      channel,
-      senderAddress,
-      recipients:
-        payload.recipients ||
-        (payload.to ? [payload.to] : [settings.fromNumber]),
-      bodyText:
-        payload.bodyText ||
-        payload.body ||
-        payload.text ||
-        payload.message ||
-        payload.messageBody ||
-        payload.message_body ||
-        payload.data?.body ||
-        payload.data?.message,
-      disposition: payload.disposition || eventName || null,
-    });
-  }
-  await prisma.agencyOomaSettings.update({
-    where: { id: settings.id },
-    data: { lastWebhookAt: new Date(), lastSmsWebhookAt: new Date() },
-  });
-  if (result.unmatched) {
-    const senderAddress = result.data?.senderAddress || null;
-    await enqueueTrustedProviderLead({ agencyId: settings.agencyId, provider: "OOMA", eventId: payload.callId || payload.messageId || payload.providerMessageId, payload: { ...payload, phone: senderAddress } });
-  }
-  res.status(result.duplicate ? 200 : 201).json(result);
 }

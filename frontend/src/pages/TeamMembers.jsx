@@ -37,7 +37,7 @@ const statusBadge = {
   disabled: "bg-slate-100 text-slate-500",
 };
 
-const AVATAR_PRESETS = Array.from({ length: 12 }, (_, index) => `avatar-${index + 1}`);
+const AVATAR_PRESETS = Array.from({ length: 21 }, (_, index) => `avatar-${index + 1}`);
 const avatarUrl = (preset) => `/staff-avatars/${preset || "avatar-1"}.png`;
 
 const knownErrors = {
@@ -195,7 +195,7 @@ function MemberFormFields({ form, update, creating, incentiveRoles, onToggleInce
       ) : null}
       <div className="sm:col-span-2">
         <p className="text-sm font-semibold text-slate-800">Profile avatar</p>
-        <div className="mt-3 grid grid-cols-6 gap-2">
+        <div className="mt-3 grid grid-cols-5 gap-2">
           {AVATAR_PRESETS.map((preset) => {
             const selected = form.avatarPreset === preset;
             return (
@@ -567,7 +567,7 @@ export default function TeamMembers() {
           <form onSubmit={saveAdminProfile} className="mt-7 space-y-6">
             <div>
               <p className="text-sm font-semibold text-slate-800">Profile avatar</p>
-              <div className="mt-3 grid grid-cols-6 gap-2">
+              <div className="mt-3 grid grid-cols-5 gap-2">
                 {AVATAR_PRESETS.map((preset) => {
                   const selected = adminForm.avatarPreset === preset;
                   return (

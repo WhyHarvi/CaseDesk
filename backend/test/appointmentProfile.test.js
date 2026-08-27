@@ -6,6 +6,7 @@ import {
   ensureAppointmentCompletionFollowUp,
   requireAppointmentProfile,
 } from "../src/services/appointmentProfileService.js";
+import { shouldAutoMarkAttendedFromNote } from "../src/controllers/appointmentProfileController.js";
 
 const source = (relativePath) =>
   readFile(new URL(relativePath, import.meta.url), "utf8");
@@ -83,6 +84,73 @@ test("appointment notes show the client query before an explicit note composer",
   assert.match(notesPanel, /setShowNoteComposer\(true\)/);
   assert.match(notesPanel, />Cancel</);
   assert.match(notesPanel, /Save note/);
+});
+
+test("a saved note auto-marks an assigned consultant's started appointment attended without touching future or terminal appointments", async () => {
+  const started = {
+    id: "appointment-1",
+    status: "Scheduled",
+    assignedToId: "consultant-1",
+    startsAt: "2026-08-27T14:00:00.000Z",
+  };
+  const input = { appointment: started, role: "consultant", userId: "consultant-1", now: new Date("2026-08-27T14:05:00.000Z") };
+
+  assert.equal(shouldAutoMarkAttendedFromNote(input), true);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, now: new Date("2026-08-27T13:59:00.000Z") }), false);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, appointment: { ...started, status: "Cancelled" } }), false);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, appointment: { ...started, status: "NoShow" } }), false);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, userId: "consultant-2" }), false);
+  assert.equal(shouldAutoMarkAttendedFromNote({ ...input, role: "admin" }), false);
+
+  const [controller, bookingController, api, overlay] = await Promise.all([
+    source("../src/controllers/appointmentProfileController.js"),
+    source("../src/controllers/bookingController.js"),
+    source("../../frontend/src/api/bookingApi.js"),
+    source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx"),
+  ]);
+  assert.match(controller, /expectedStatus: "Scheduled"/);
+  assert.match(controller, /savedNewInternalNote[\s\S]*?shouldAutoMarkAttendedFromNote/);
+  assert.match(bookingController, /where: \{ id: existing\.id, status: expectedStatus \}/);
+  assert.match(api, /meta: response\.data\.meta \|\| \{\}/);
+  assert.match(overlay, /created\?\.meta\?\.attendanceAutoMarked/);
+});
+
+test("reliable consultation activity shares one guarded attendance pipeline", async () => {
+  const [attendance, profileController, routes, api, overlay, twilio, zoom, leadService] = await Promise.all([
+    source("../src/services/appointmentAttendanceService.js"),
+    source("../src/controllers/appointmentProfileController.js"),
+    source("../src/routes/appointmentRoutes.js"),
+    source("../../frontend/src/api/bookingApi.js"),
+    source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx"),
+    source("../src/services/twilioCallService.js"),
+    source("../src/controllers/zoomController.js"),
+    source("../src/modules/leads/lead.service.js"),
+  ]);
+
+  assert.match(attendance, /expectedStatus: "Scheduled"/);
+  assert.match(attendance, /MINIMUM_ATTENDED_CALL_SECONDS = 30/);
+  assert.match(attendance, /if \(candidates\.length !== 1\) return false/);
+  assert.match(profileController, /Consultant completed advice and handoff/);
+  assert.match(profileController, /Client checked in at the front desk/);
+  assert.match(routes, /router\.post\("\/:id\/check-in", requireRole\("admin", "frontdesk"\)/);
+  assert.match(api, /export async function checkInAppointmentClient/);
+  assert.match(overlay, /Check in client/);
+  assert.match(overlay, /saved\.meta\?\.attendanceAutoMarkError/);
+  assert.match(twilio, /autoMarkPhoneAppointmentFromCall\(result\.session\)/);
+  assert.match(zoom, /event\.event === "meeting\.participant_joined"/);
+  assert.match(zoom, /Consultant and client joined Zoom/);
+  assert.match(leadService, /appointmentStatus === "Completed"\) await ensureAppointmentCompletionFollowUp/);
+
+  // "One guarded pipeline" must hold for Complete Consultation too — it's
+  // the one caller that sets an appointment's status directly rather than
+  // through applyAppointmentStatusChange (bookingController.js). A bare
+  // update() here (no expectedStatus re-check) would let it race a Twilio
+  // call or Zoom join that completes the same appointment first, silently
+  // overwriting whatever that already set — including reverting an
+  // already-recorded cancellation — instead of surfacing the conflict.
+  assert.match(leadService, /const currentAppointment = await tx\.appointment\.findFirst\(\{ where: \{ id: existing\.appointmentId, agencyId \} \}\);/);
+  assert.match(leadService, /const claimed = await tx\.appointment\.updateMany\(\{\s*where: \{ id: existing\.appointmentId, status: currentAppointment\.status \},/);
+  assert.match(leadService, /if \(!claimed\.count\) throw createHttpError\(409, "This appointment's status changed elsewhere just now — refresh and try again\."/);
 });
 
 test("dashboard upcoming appointments open the client profile or save an unlinked visitor", async () => {

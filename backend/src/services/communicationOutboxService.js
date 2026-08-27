@@ -2,7 +2,6 @@ import prisma from "./prisma/client.js";
 import {
   sendEmailMessage,
   sendSmsMessage,
-  startOomaCall,
 } from "./communicationProviderService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
 import { DOCUMENT_BUCKET, downloadStorageFile } from "./supabaseStorage.js";
@@ -43,13 +42,6 @@ async function deliver(job) {
       agencyId: job.agencyId,
       to: Array.isArray(payload.recipients) ? payload.recipients[0] : null,
       body: payload.bodyText || "",
-      idempotencyKey: job.message.idempotencyKey || job.message.id,
-    });
-  }
-  if (job.message.channel === "Call") {
-    return startOomaCall({
-      agencyId: job.agencyId,
-      to: Array.isArray(payload.recipients) ? payload.recipients[0] : null,
       idempotencyKey: job.message.idempotencyKey || job.message.id,
     });
   }

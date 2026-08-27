@@ -120,7 +120,7 @@ export function SoftphoneProvider({ children }) {
   const [error, setError] = useState("");
   const [registered, setRegistered] = useState(false);
   const [incoming, setIncoming] = useState(null); // { from, callSid }
-  const [active, setActive] = useState(null); // { callSid, number, direction, leadId?, leadName?, clientId?, clientName? }
+  const [active, setActive] = useState(null); // { callSid, number, direction, phase, connectedAt, leadId?, leadName?, clientId?, clientName? }
   const [muted, setMuted] = useState(false);
   // { number, callSid, durationSeconds, leadId, leadName, clientId, clientName }
   // set when an OUTBOUND call we placed ends — the trigger for the follow-up
@@ -241,10 +241,12 @@ export function SoftphoneProvider({ children }) {
     });
     activeCallRef.current = call;
     dialContextRef.current = context || {};
-    callStartedAtRef.current = Date.now();
-    applyState({ active: { callSid: call.parameters?.CallSid || "", number: target, direction: "OUTBOUND", ...(context || {}) }, muted: false });
+    applyState({ active: { callSid: call.parameters?.CallSid || "", number: target, direction: "OUTBOUND", phase: "dialing", connectedAt: null, ...(context || {}) }, muted: false });
+    let finished = false;
     const finish = (showPopup) => {
-      const durationSeconds = callStartedAtRef.current ? Math.max(1, Math.round((Date.now() - callStartedAtRef.current) / 1000)) : 1;
+      if (finished) return;
+      finished = true;
+      const durationSeconds = callStartedAtRef.current ? Math.max(0, Math.round((Date.now() - callStartedAtRef.current) / 1000)) : 0;
       callStartedAtRef.current = null;
       activeCallRef.current = null;
       applyState({ active: null, muted: false });
@@ -257,6 +259,11 @@ export function SoftphoneProvider({ children }) {
     };
     call.on("disconnect", () => finish(true));
     call.on("cancel", () => finish(false));
+    call.on("ringing", () => {
+      if (activeCallRef.current === call && stateRef.current.active) {
+        applyState({ active: { ...stateRef.current.active, phase: "ringing" } });
+      }
+    });
     // For an outbound call, Twilio doesn't hand back the real CallSid until
     // the callee actually picks up — call.parameters.CallSid right after
     // connect() is reliably still empty, so the "active" state set above
@@ -266,8 +273,10 @@ export function SoftphoneProvider({ children }) {
     // call.parameters is populated, so backfill callSid here.
     call.on("accept", () => {
       const resolvedCallSid = call.parameters?.CallSid || "";
-      if (resolvedCallSid && stateRef.current.active) {
-        applyState({ active: { ...stateRef.current.active, callSid: resolvedCallSid } });
+      if (activeCallRef.current === call && stateRef.current.active) {
+        const connectedAt = Date.now();
+        callStartedAtRef.current = connectedAt;
+        applyState({ active: { ...stateRef.current.active, callSid: resolvedCallSid || stateRef.current.active.callSid, phase: "connected", connectedAt } });
       }
     });
   }, [applyState, broadcast]);
@@ -281,10 +290,10 @@ export function SoftphoneProvider({ children }) {
     // preferred the ParentCallSid custom parameter over call.parameters —
     // see that handler's comment) rather than re-deriving it here.
     const callSid = stateRef.current.incoming?.callSid || call.parameters?.CallSid || "";
-    call.accept();
     activeCallRef.current = call;
     incomingCallRef.current = null;
-    applyState({ incoming: null, active: { callSid, number: stateRef.current.incoming?.from || "", direction: "INBOUND" }, muted: false });
+    applyState({ incoming: null, active: { callSid, number: stateRef.current.incoming?.from || "", direction: "INBOUND", phase: "connecting", connectedAt: null }, muted: false });
+    call.accept();
   }, [applyState, broadcast, stopRingtone]);
 
   const performReject = useCallback(() => {
@@ -399,7 +408,15 @@ export function SoftphoneProvider({ children }) {
         device = new Device(token, { logLevel: 1, allowIncomingWhileBusy: true });
         deviceRef.current = device;
         device.on("registered", () => { if (!disposed) applyState({ registered: true, status: "ready" }); });
-        device.on("unregistered", () => { if (!disposed) applyState({ registered: false }); });
+        // A network blip, laptop sleep/wake, or wifi/VPN switch can drop the
+        // SDK's registration after it was already "ready" — without also
+        // moving status off "ready" here, the dial button (gated only on
+        // status, not registered) stayed clickable and calling threw "The
+        // softphone is not registered" instead of the button simply
+        // disabling. The SDK re-fires "registered" on its own once it
+        // reconnects, which flips status back to "ready" via the handler
+        // above — this only covers the gap in between.
+        device.on("unregistered", () => { if (!disposed) applyState({ registered: false, status: "registering" }); });
         device.on("error", (deviceError) => {
           if (disposed) return;
           const message = deviceError?.message || String(deviceError || "Softphone error");
@@ -431,6 +448,10 @@ export function SoftphoneProvider({ children }) {
           };
           call.on("cancel", clearIncoming);
           call.on("reject", clearIncoming);
+          call.on("accept", () => {
+            if (activeCallRef.current !== call || !stateRef.current.active) return;
+            applyState({ active: { ...stateRef.current.active, phase: "connected", connectedAt: Date.now() } });
+          });
           call.on("disconnect", () => {
             stopRingtone();
             broadcast({ type: "ring-stop" });

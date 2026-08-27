@@ -15,9 +15,8 @@ test("Twilio voice schema and migrations add API key, toggles, lines, and a shar
   assert.match(schema, /callsEnabled\s+Boolean\s+@default\(false\)\s+@map\("calls_enabled"\)/);
   assert.match(schema, /voiceNumber\s+String\?\s+@map\("voice_number"\)/);
   assert.match(schema, /twimlAppSid\s+String\?\s+@map\("twiml_app_sid"\)/);
-  // Both Ooma (Zapier) and Twilio calls share one history inbox — the session
-  // row records which provider produced it.
-  assert.match(schema, /provider\s+String\s+@default\("OOMA"\)/);
+  // New sessions default to Twilio; legacy records remain readable.
+  assert.match(schema, /provider\s+String\s+@default\("TWILIO"\)/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS "api_key_sid" TEXT/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS "calls_enabled" BOOLEAN NOT NULL DEFAULT false/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS "provider" TEXT NOT NULL DEFAULT 'OOMA'/);
@@ -44,6 +43,20 @@ test("the Twilio call service issues Voice-grant access tokens and bridges TwiML
   assert.match(service, /Dial callerId=/);
 });
 
+// A network blip, laptop sleep/wake, or wifi/VPN switch can drop the Voice
+// SDK's registration after it was already "ready" — without the fix, the
+// dial button (gated only on status, not the separate registered flag)
+// stayed clickable and calling threw "The softphone is not registered"
+// instead of the button simply disabling until the SDK reconnects.
+test("losing the Voice SDK's registration mid-session also takes the dial button out of \"ready\", not just the internal registered flag", async () => {
+  const provider = await source("../../frontend/src/components/calls/SoftphoneProvider.jsx");
+  assert.match(provider, /device\.on\("registered", \(\) => \{ if \(!disposed\) applyState\(\{ registered: true, status: "ready" \}\); \}\);/);
+  assert.match(provider, /device\.on\("unregistered", \(\) => \{ if \(!disposed\) applyState\(\{ registered: false, status: "registering" \}\); \}\);/);
+
+  const dialpad = await source("../../frontend/src/components/calls/GlobalDialpad.jsx");
+  assert.match(dialpad, /const canCall = status === "ready" && digits\.length >= 7 && !active && !busy;/);
+});
+
 test("statusCallback/statusCallbackEvent live on <Client>/<Number>, never on <Dial> itself — Twilio's schema only allows them on the nested noun (Debugger warning 12200)", async () => {
   const service = await source("../src/services/twilioCallService.js");
   // inboundTwiML and outboundTwiML's internal-line branch: each <Client>
@@ -52,8 +65,10 @@ test("statusCallback/statusCallbackEvent live on <Client>/<Number>, never on <Di
   assert.equal(clientStatusCallbackCount, 2, "both inboundTwiML and outboundTwiML's internal-line branch must put statusCallback on <Client>");
   // outboundTwiML's external-number branch: the bare dialed number is
   // wrapped in <Number> so statusCallback has a valid home; action/method
-  // stay on <Dial> unchanged (still the authoritative outbound source).
-  assert.match(service, /<Dial callerId="\$\{escapeXml\(config\.voiceNumber\)\}" timeout="30" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
+  // stay on <Dial> (still the authoritative outbound source). Keeping the
+  // browser leg unanswered until the destination answers makes the SDK's
+  // accept event—and therefore CaseDesk's call timer—represent a real answer.
+  assert.match(service, /<Dial callerId="\$\{escapeXml\(config\.voiceNumber\)\}" timeout="30" answerOnBridge="true" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
   // None of the four <Dial ...> opening tags carry statusCallback directly.
   const dialTags = service.match(/<Dial [^>]*>/g) || [];
   assert.ok(dialTags.length >= 4, "expected at least 4 <Dial> tags across inbound/outbound/transfer");
@@ -75,7 +90,7 @@ test("status callbacks ingest into the shared call history and distinguish misse
     source("../src/controllers/twilioWebhookController.js"),
   ]);
   assert.match(service, /export async function handleTwilioCallStatus/);
-  assert.match(service, /oomaCallSession\.create/);
+  assert.match(service, /callSession\.create/);
   assert.match(service, /TWILIO_CALL_PROVIDER/);
   // A Dial child leg reports "completed" even when nobody picked up — the
   // DialCallStatus is what tells a missed call apart from a completed one.
@@ -210,14 +225,13 @@ test("lead calls auto-record: the softphone dial threads the lead id through Twi
 });
 
 test("the 'call ended' popup saves the outcome through a shared applyCallOutcome path", async () => {
-  const [service, controller, oomaController, routes] = await Promise.all([
-    source("../src/services/oomaCallService.js"),
+  const [service, controller, historyController, routes] = await Promise.all([
+    source("../src/services/callHistoryService.js"),
     source("../src/controllers/twilioCallController.js"),
-    source("../src/controllers/oomaCallController.js"),
+    source("../src/controllers/callHistoryController.js"),
     source("../src/routes/twilioCallRoutes.js"),
   ]);
-  // The outcome + follow-up logic is shared by the history drawer (Ooma
-  // routes) and the softphone popup (Twilio routes) so both write identically.
+  // The outcome + follow-up logic is shared by history and the softphone.
   assert.match(service, /export async function applyCallOutcome\(call, \{ outcome, notes, nextFollowUp = null } = \{\}, \{ agencyId, userId }/);
   assert.match(service, /CALL_OUTCOMES\.has\(value\)/);
   assert.match(service, /leadFollowUp\.create/);
@@ -228,9 +242,8 @@ test("the 'call ended' popup saves the outcome through a shared applyCallOutcome
   assert.match(controller, /createdByOutcomePopup: true/);
   assert.match(controller, /const outcomeInput = \{ \.\.\.req\.body, notes: clean\(req\.body\?\.notes, 3000\) \|\| call\.outcomeNotes \|\| "" };/);
   assert.match(controller, /await applyCallOutcome\(call, outcomeInput, \{ agencyId, userId: req\.user\.id }/);
-  // The Ooma drawer's outcome handler now routes through the same helper.
-  assert.match(oomaController, /await applyCallOutcome\(call, req\.body, \{ agencyId: req\.auth\.agencyId, userId: req\.auth\.userId }/);
-  assert.doesNotMatch(oomaController, /const allowed = new Set\(\["COMPLETED"/);
+  assert.match(historyController, /await applyCallOutcome\(call, req\.body, \{ agencyId: req\.auth\.agencyId, userId: req\.auth\.userId }/);
+  assert.doesNotMatch(historyController, /const allowed = new Set\(\["COMPLETED"/);
   assert.match(routes, /router\.post\("\/outcome", asyncHandler\(recordOutboundCallOutcome\)\)/);
 });
 
@@ -302,6 +315,10 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(provider, /device\.on\("incoming"/);
   assert.match(provider, /call\.customParameters\?\.get\?\.\("CallerNumber"\) \|\| call\.parameters\?\.From/);
   assert.match(provider, /device\.connect\(\{\s*params: \{\s*To: target/);
+  assert.match(provider, /call\.on\("ringing"/);
+  assert.match(provider, /phase: "connected", connectedAt/);
+  assert.match(dialpad, /if \(!callConnected\) return undefined/);
+  assert.match(dialpad, /Date\.now\(\) - Number\(active\.connectedAt\)/);
   assert.match(provider, /device\.updateToken\(response\.data\?\.data\?\.token\)/);
   assert.match(provider, /export function useSoftphone\(\)/);
   assert.match(callsPage, /export default function CallsPage\(\)/);

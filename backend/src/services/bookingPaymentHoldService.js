@@ -392,7 +392,7 @@ export async function createPaymentHoldForStaffBooking(agencyId, {
         qbSyncToken: invoice.syncToken,
       },
     });
-    // This is queued rather than sent inline so mailbox/Ooma outages are
+    // This is queued rather than sent inline so mailbox/Twilio outages are
     // visible to staff, retried, and recoverable with an explicit resend.
     await queuePaymentHoldMessages({ agencyId, hold: updated, actorUserId });
     return updated;

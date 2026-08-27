@@ -76,7 +76,7 @@ import aiRoutes from "./routes/aiRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
 import internalChatRoutes from "./routes/internalChatRoutes.js";
 import workloadRoutes from "./modules/workload/workload.routes.js";
-import oomaCallRoutes from "./routes/oomaCallRoutes.js";
+import callHistoryRoutes from "./routes/callHistoryRoutes.js";
 import twilioCallRoutes from "./routes/twilioCallRoutes.js";
 import clientCommunicationRoutes from "./routes/clientCommunicationRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
@@ -270,11 +270,11 @@ app.use(
   leadRoutes,
 );
 app.use(
-  "/api/ooma-calls",
+  "/api/call-history",
   requireAuth,
   leadUser,
   requirePortalPage("leads"),
-  oomaCallRoutes,
+  callHistoryRoutes,
 );
 app.use(
   "/api/twilio-calls",

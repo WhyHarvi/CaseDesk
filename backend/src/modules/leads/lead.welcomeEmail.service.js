@@ -100,7 +100,7 @@ export async function sendLeadWelcomeEmail(agencyId, lead, dependencies = {}) {
     });
     if (!claimed.count) return delivery;
 
-    // No email on file — fall back to a text through the agency's Ooma
+    // No email on file — fall back to a text through the agency's Twilio
     // line rather than sending the lead nothing at all.
     if (!lead.email) {
       const result = await sendSms({ agencyId, to: lead.phone, body: smsBody, idempotencyKey: dedupeKey });
@@ -110,7 +110,7 @@ export async function sendLeadWelcomeEmail(agencyId, lead, dependencies = {}) {
           status: "sent",
           sentAt: new Date(),
           failedAt: null,
-          provider: result?.provider || "Ooma",
+          provider: result?.provider || "Twilio",
           providerId: result?.id ? String(result.id) : null,
           lastError: null,
         },

@@ -114,7 +114,7 @@ async function deliverPrepared({ db, delivery, lead, agency, content, bookingUrl
     let providerId = null;
     if (delivery.channel === "sms") {
       const result = await sendSms({ agencyId: lead.agencyId, to: delivery.recipient, body: content.sms, idempotencyKey: delivery.dedupeKey });
-      provider = result?.provider || "Ooma";
+      provider = result?.provider || "Twilio";
       providerId = result?.id ? String(result.id) : null;
     } else {
       const config = await resolveMailConfig(lead.agencyId);

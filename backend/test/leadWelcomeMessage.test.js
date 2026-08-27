@@ -44,7 +44,7 @@ test("website lead welcome SMS records its provider result on the lead", async (
     db,
     sendSms: async (message) => {
       outbound = message;
-      return { id: "provider-message-1", provider: "Zapier / Ooma" };
+      return { id: "provider-message-1", provider: "Twilio" };
     },
   });
 
@@ -53,7 +53,7 @@ test("website lead welcome SMS records its provider result on the lead", async (
   assert.match(outbound.body, /Arshdeep/);
   assert.match(outbound.body, /\/b\/consultation/);
   assert.equal(result.status, "sent");
-  assert.equal(result.provider, "Zapier / Ooma");
+  assert.equal(result.provider, "Twilio");
   assert.equal(result.providerId, "provider-message-1");
   assert.equal(result.attempts, 1);
   assert.equal(result.sourceChannel, "WEBSITE_CONNECTOR");
@@ -69,12 +69,12 @@ test("website lead welcome SMS records a failed delivery instead of disappearing
     sourceChannel: "WEBSITE_CONNECTOR",
   }, {
     db,
-    sendSms: async () => { throw new Error("Ooma rejected the message"); },
+    sendSms: async () => { throw new Error("Twilio rejected the message"); },
   });
 
   assert.equal(result, null);
   assert.equal(db.currentDelivery().status, "failed");
   assert.equal(db.currentDelivery().attempts, 1);
-  assert.match(db.currentDelivery().lastError, /Ooma rejected/);
+  assert.match(db.currentDelivery().lastError, /Twilio rejected/);
   assert.ok(db.currentDelivery().failedAt instanceof Date);
 });

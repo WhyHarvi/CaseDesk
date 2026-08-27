@@ -138,7 +138,7 @@ function EditOverlay({ policy, placeholders, saving, error, onClose, onSave, onP
           </label>
           <label className="flex items-center gap-2.5 text-[13px] font-medium text-slate-700">
             <input type="checkbox" checked={form.smsEnabled} onChange={(event) => set("smsEnabled", event.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-slate-950" />
-            <MessageSquareText className="h-4 w-4 text-slate-400" /> SMS through Ooma
+            <MessageSquareText className="h-4 w-4 text-slate-400" /> SMS through Twilio
           </label>
         </div>
 

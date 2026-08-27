@@ -14,7 +14,7 @@ const NAVIGATION_CONTEXT = [
   "Dashboard: /app/dashboard - agency overview and daily priorities.",
   "Leads: /leads - inquiry pipeline and lead records.",
   "Import Review: /leads/review - imported leads awaiting cleanup.",
-  "Calls: /calls - Ooma call inbox.",
+  "Calls: /calls - Twilio softphone and call history.",
   "Chats: /app/chats - client and internal conversations.",
   "Clients: /app/clients - client list and client profiles.",
   "Client profile: /app/clients/:id - client details, related cases, contact information.",

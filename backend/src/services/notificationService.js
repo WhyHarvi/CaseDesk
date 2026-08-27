@@ -59,9 +59,7 @@ const CLIENT_ACTIONS = [
 const ADMIN_ACTIONS = [
   "communication.inbound_unmatched",
   "settings.mail_test_failed",
-  "settings.ooma_sms_test_failed",
   "settings.mail_disconnected",
-  "settings.ooma_disconnected",
   "MEMBER_INVITATION_ACCEPTED",
   "AGENCY_ONBOARDING_COMPLETED",
 ];

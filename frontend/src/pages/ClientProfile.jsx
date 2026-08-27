@@ -4,6 +4,7 @@ import {
   Calendar,
   Check,
   ChevronDown,
+  Copy,
   FileText,
   History,
   IdCard,
@@ -155,16 +156,18 @@ const QUICK_ACTION_TONES = {
   chat: "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900",
 };
 
-function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false, tone = "email" }) {
-  const sharedClassName =
-    `inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition ${QUICK_ACTION_TONES[tone] || QUICK_ACTION_TONES.email}`;
+function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false, tone = "email", copyValue = null }) {
+  const [copied, setCopied] = useState(false);
+  const wrapperClassName =
+    `inline-flex items-center rounded-full border text-sm font-medium transition ${QUICK_ACTION_TONES[tone] || QUICK_ACTION_TONES.email}`;
+  const mainClassName = `inline-flex items-center gap-2 py-2 pl-3.5 ${copyValue ? "pr-2.5" : "pr-3.5"}`;
 
   if (disabled) {
     return (
       <button
         type="button"
         disabled
-        className={`${sharedClassName} cursor-not-allowed opacity-50`}
+        className={`${wrapperClassName} cursor-not-allowed gap-2 py-2 pl-3.5 pr-3.5 opacity-50`}
       >
         <Icon className="h-4 w-4" />
         {label}
@@ -172,27 +175,49 @@ function QuickActionLink({ href, onClick, icon: Icon, label, disabled = false, t
     );
   }
 
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={`${sharedClassName} hover:border-slate-300 hover:text-slate-950`}
-      >
-        <Icon className="h-4 w-4" />
-        {label}
-      </button>
-    );
+  async function copyToClipboard(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard permission denied or unavailable in this browser context —
+      // the pill's own mailto/tel link still works, so this fails silently.
+    }
   }
 
-  return (
-    <a
-      href={href}
-      className={`${sharedClassName} hover:border-slate-300 hover:text-slate-950`}
-    >
+  const main = onClick ? (
+    <button type="button" onClick={onClick} className={mainClassName}>
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  ) : (
+    <a href={href} className={mainClassName}>
       <Icon className="h-4 w-4" />
       {label}
     </a>
+  );
+
+  return (
+    <div className={`${wrapperClassName} hover:border-slate-300 hover:text-slate-950`}>
+      {main}
+      {copyValue ? (
+        <>
+          <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-current opacity-20" />
+          <button
+            type="button"
+            onClick={copyToClipboard}
+            aria-label={copied ? `${label} copied` : `Copy ${label}`}
+            title={copied ? "Copied" : "Copy"}
+            className="mx-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/70 shadow-sm ring-1 ring-inset ring-black/5 transition hover:bg-white hover:shadow"
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -1017,6 +1042,7 @@ export default function ClientProfile() {
                     label={client.email || "No email on file"}
                     disabled={!client.email}
                     tone="email"
+                    copyValue={client.email || null}
                   />
                   <QuickActionLink
                     href={client.phone ? `tel:${client.phone}` : "#"}
@@ -1025,6 +1051,7 @@ export default function ClientProfile() {
                     disabled={!client.phone}
                     tone="phone"
                     onClick={softphoneStatus === "ready" && client.phone ? startClientCall : undefined}
+                    copyValue={client.phone || null}
                   />
                   <QuickActionLink
                     href={client.phone ? `https://wa.me/${client.phone.replace(/[^\d]/g, "")}` : "#"}

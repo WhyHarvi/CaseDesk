@@ -16,7 +16,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import api from "../services/api";
-import { CallHistorySection } from "./OomaCallsPage";
+import { CallHistorySection } from "./CallHistoryPage";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
 const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70";

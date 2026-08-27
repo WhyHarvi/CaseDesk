@@ -29,7 +29,6 @@ import { useAuth } from "../../../auth/AuthContext";
 import { useSoftphone } from "../../../components/calls/SoftphoneProvider";
 import api from "../../../services/api";
 import { formatDueDate, humanize, initials, leadName, LEAD_PRIORITIES, LEAD_STAGES, PAYMENT_READY_VALUES, paymentStatusTone, RETAINER_READY_VALUES, retainerStatusTone, statusTone } from "../leadPresentation";
-import BookConsultationSheet from "./BookConsultationSheet";
 import LeadCommercialStatusSheet from "./LeadCommercialStatusSheet";
 import ConvertLeadSheet from "./ConvertLeadSheet";
 import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet } from "./LeadActionSheets";
@@ -98,7 +97,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const [error, setError] = useState("");
   const [consultations, setConsultations] = useState([]);
   const [consultationError, setConsultationError] = useState("");
-  const [bookingOpen, setBookingOpen] = useState(false);
   const [commercialStatusOpen, setCommercialStatusOpen] = useState(false);
   const [creatingClientForPayment, setCreatingClientForPayment] = useState(false);
   const [createClientForPaymentError, setCreateClientForPaymentError] = useState("");
@@ -162,10 +160,10 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   }, [consultations, completingConsultation]);
 
   useEffect(() => {
-    const close = (event) => event.key === "Escape" && !bookingOpen && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose();
+    const close = (event) => event.key === "Escape" && !commercialStatusOpen && !conversionOpen && !activeAction && !qualificationPrompt && !closingFollowUp && !selectedAppointmentId && !completingConsultation && onClose();
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [bookingOpen, commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, completingConsultation, onClose]);
+  }, [commercialStatusOpen, conversionOpen, activeAction, qualificationPrompt, closingFollowUp, selectedAppointmentId, completingConsultation, onClose]);
 
   useEffect(() => {
     if (tab !== "messages") return;
@@ -293,7 +291,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
   const due = formatDueDate(lead.nextActionAt);
   const activities = lead.activities || [];
-  const callHistory = lead.oomaCallSessions || [];
+  const callHistory = lead.callSessions || [];
   const followUps = lead.followUps || [];
   const leadMessages = useMemo(() => [
     ...(lead.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "lead" })),
@@ -731,7 +729,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
                   </section>
 
                   <section>
-                    <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Video className="h-4 w-4 text-slate-400" />Consultations</h3><p className="mt-1 text-xs text-slate-500">{consultations.length} records</p></div>{lead.status === "OPEN" ? <button type="button" onClick={() => setBookingOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-600 px-3.5 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" />Book</button> : null}</div>
+                    <div className="mb-3 flex items-center justify-between"><div><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Video className="h-4 w-4 text-slate-400" />Consultations</h3><p className="mt-1 text-xs text-slate-500">{consultations.length} records</p></div>{lead.status === "OPEN" ? <Link to={`/app/calendar?bookForLead=${encodeURIComponent(lead.id)}`} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-brand-600 px-3.5 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" />Book</Link> : null}</div>
                     {consultationError ? <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">{consultationError}</div> : null}
                     <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{consultations.length ? consultations.map((item, index) => <div key={item.id} role={item.appointment?.id ? "button" : undefined} tabIndex={item.appointment?.id ? 0 : undefined} onClick={() => { if (item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} onKeyDown={(event) => { if (event.key === "Enter" && item.appointment?.id) { setSelectedAppointmentTab("details"); setSelectedAppointmentId(item.appointment.id); } }} className={[
                       "px-5 py-4 transition",
@@ -826,7 +824,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       {activeAction === "lost" ? <MarkLostSheet lead={lead} initialReasonCode={suggestedLostReason || "NO_RESPONSE"} onClose={() => { setActiveAction(null); setSuggestedLostReason(""); }} onSaved={() => { setSuggestedLostReason(""); actionCompleted(); }} /> : null}
       {activeAction === "reactivate" ? <ReactivateLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} staff={staff} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
-      {bookingOpen ? <BookConsultationSheet lead={lead} staff={staff} onClose={() => setBookingOpen(false)} onCreated={(consultation) => { setConsultations((current) => [consultation, ...current]); setBookingOpen(false); api.getFresh(`/leads/${lead.id}`).then((response) => setLead(response.data.data)).catch(() => {}); }} /> : null}
       {commercialStatusOpen ? <LeadCommercialStatusSheet lead={lead} onClose={() => setCommercialStatusOpen(false)} onUpdated={(updated) => { setLead((current) => ({ ...current, ...updated })); setCommercialStatusOpen(false); }} /> : null}
       {conversionOpen ? <ConvertLeadSheet lead={lead} onClose={() => setConversionOpen(false)} onConverted={(conversion) => { setLead((current) => ({ ...current, status: "CONVERTED", convertedClientId: conversion.client.id, convertedCaseId: conversion.case.id, convertedAt: conversion.convertedAt, nextActionType: null, nextActionDescription: null, nextActionAt: null, conversion })); setConversionOpen(false); onChanged(); }} /> : null}
       {selectedAppointmentId ? <AppointmentProfileOverlay appointmentId={selectedAppointmentId} initialTab={selectedAppointmentTab} onClose={() => setSelectedAppointmentId(null)} onChanged={() => { api.get(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}

@@ -78,7 +78,6 @@ test("Phase 6 provider adapters normalize Meta, WhatsApp, Google, email, and pho
   const email = adaptProviderPayload("EMAIL", { from: "Taylor Kim <taylor@example.ca>", bodyText: "Call me at +1 416 555 0103" });
   assert.equal(email.email, "taylor@example.ca");
   assert.match(email.phone, /416 555 0103/);
-  assert.equal(adaptProviderPayload("OOMA", { callerName: "Morgan Chen", callerNumber: "+14165550104" }).phone, "+14165550104");
 });
 
 test("email intake permits email-only leads while other streams still require phone", () => {
@@ -114,7 +113,7 @@ test("the intake worker uses the shared agency contact lock before duplicate det
 
 test("remaining Phase 6 providers are constrained and email-originated leads can begin without phone", async () => {
   const sql = await readFile(new URL("../prisma/migrations/20260714220000_enable_phase_6_lead_providers/migration.sql", import.meta.url), "utf8");
-  for (const provider of ["META", "WHATSAPP", "GOOGLE_ADS", "EMAIL", "OOMA"]) assert.match(sql, new RegExp(`'${provider}'`));
+  for (const provider of ["META", "WHATSAPP", "GOOGLE_ADS", "EMAIL"]) assert.match(sql, new RegExp(`'${provider}'`));
   assert.match(sql, /ALTER COLUMN "phone" DROP NOT NULL/);
   assert.match(sql, /ALTER COLUMN "phone_normalized" DROP NOT NULL/);
 });

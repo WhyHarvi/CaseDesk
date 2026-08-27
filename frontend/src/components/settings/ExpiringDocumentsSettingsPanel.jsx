@@ -64,7 +64,7 @@ function Editor({ policy, placeholders, saving, error, onClose, onSave, onPrevie
           <label className="flex items-center justify-between gap-4 text-[13px] font-medium text-slate-700"><span>Notify the client about expiration</span><Toggle checked={form.notifyClient} onChange={(value) => set("notifyClient", value)} label="Notify client" /></label>
           <div className={`flex flex-wrap gap-x-6 gap-y-3 transition ${form.notifyClient ? "" : "pointer-events-none opacity-40"}`}>
             <label className="flex items-center gap-2.5 text-[13px] font-medium text-slate-700"><input type="checkbox" checked={form.emailEnabled} onChange={(event) => set("emailEnabled", event.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-slate-950" /><Mail className="h-4 w-4 text-slate-400" /> Email</label>
-            <label className="flex items-center gap-2.5 text-[13px] font-medium text-slate-700"><input type="checkbox" checked={form.smsEnabled} onChange={(event) => set("smsEnabled", event.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-slate-950" /><MessageSquareText className="h-4 w-4 text-slate-400" /> SMS through Ooma</label>
+            <label className="flex items-center gap-2.5 text-[13px] font-medium text-slate-700"><input type="checkbox" checked={form.smsEnabled} onChange={(event) => set("smsEnabled", event.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-slate-950" /><MessageSquareText className="h-4 w-4 text-slate-400" /> SMS through Twilio</label>
           </div>
         </div>
 

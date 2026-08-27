@@ -7,10 +7,10 @@ import { createLead as createLeadRecord } from "../modules/leads/lead.service.js
 import { DEFAULT_LEAD_SOURCES } from "../modules/leads/lead.constants.js";
 import {
   applyCallOutcome,
-  ensureOomaCallbackFollowUp,
-  syncOomaClientCommunication,
-  syncOomaLeadActivity,
-} from "../services/oomaCallService.js";
+  ensureCallCallbackFollowUp,
+  syncCallClientCommunication,
+  syncCallLeadActivity,
+} from "../services/callHistoryService.js";
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const callStatuses = new Set(["RINGING", "ANSWERED", "COMPLETED", "MISSED", "FAILED"]);
@@ -42,11 +42,11 @@ function callAccessWhere(req) {
 }
 
 async function requireCall(req, include = callInclude) {
-  const item = await prisma.oomaCallSession.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...callAccessWhere(req) },
+  const item = await prisma.callSession.findFirst({
+    where: { id: req.params.id, agencyId: req.auth.agencyId, provider: "TWILIO", ...callAccessWhere(req) },
     ...(include && Object.keys(include).length ? { include } : {}),
   });
-  if (!item) throw createHttpError(404, "Ooma call not found.", "OOMA_CALL_NOT_FOUND");
+  if (!item) throw createHttpError(404, "Call not found.", "CALL_NOT_FOUND");
   return item;
 }
 
@@ -76,18 +76,16 @@ async function addMatchSummaries(data, agencyId) {
   }));
 }
 
-export async function listOomaCalls(req, res) {
+export async function listCalls(req, res) {
   const page = Math.max(Number(req.query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
   const status = callStatuses.has(req.query.status) ? req.query.status : null;
   const direction = callDirections.has(req.query.direction) ? req.query.direction : null;
   const resolution = callResolutions.has(req.query.resolution) ? req.query.resolution : null;
   const search = clean(req.query.search, 120);
-  const provider = clean(req.query.provider, 20).toUpperCase();
-  const providerFilter = ["OOMA", "TWILIO"].includes(provider) ? provider : null;
   const where = {
     agencyId: req.auth.agencyId,
-    ...(providerFilter ? { provider: providerFilter } : {}),
+    provider: "TWILIO",
     AND: [
       callAccessWhere(req),
       ...(search ? [{
@@ -105,45 +103,19 @@ export async function listOomaCalls(req, res) {
     ...(resolution ? { resolution } : {}),
   };
   const [raw, total, unresolved] = await Promise.all([
-    prisma.oomaCallSession.findMany({ where, include: callInclude, orderBy: { lastEventAt: "desc" }, skip: (page - 1) * limit, take: limit }),
-    prisma.oomaCallSession.count({ where }),
-    prisma.oomaCallSession.count({ where: { agencyId: req.auth.agencyId, ...(providerFilter ? { provider: providerFilter } : {}), resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
+    prisma.callSession.findMany({ where, include: callInclude, orderBy: { lastEventAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+    prisma.callSession.count({ where }),
+    prisma.callSession.count({ where: { agencyId: req.auth.agencyId, provider: "TWILIO", resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
   ]);
   const data = await addMatchSummaries(raw, req.auth.agencyId);
   res.json({ data, meta: { page, limit, total, unresolved, hasMore: page * limit < total } });
 }
 
-export async function getOomaCallAttention(req, res) {
-  // Ooma settings default to enabled:true/callsEnabled:true even when no
-  // real integration has ever been connected, so those flags alone can't
-  // tell a live agency apart from one that's never touched this feature.
-  // webhookTokenHash is only ever set once an actual webhook has been
-  // provisioned, so its presence is a reasonable proxy for "really wired up".
-  // We only ever return a boolean here (never the settings row itself) so
-  // this stays safe to call from the non-admin roles this alert is shown to.
-  const settings = await prisma.agencyOomaSettings.findUnique({
-    where: { agencyId: req.auth.agencyId },
-    select: { enabled: true, callsEnabled: true, webhookTokenHash: true },
-  });
-  const configured = Boolean(settings?.enabled && settings?.callsEnabled && settings?.webhookTokenHash);
-  if (!configured) {
-    res.json({ data: null, configured: false });
-    return;
-  }
-  const recent = new Date(Date.now() - 15 * 60_000);
-  const data = await prisma.oomaCallSession.findFirst({
-    where: { agencyId: req.auth.agencyId, direction: "INBOUND", status: { in: ["RINGING", "ANSWERED"] }, lastEventAt: { gte: recent }, ...callAccessWhere(req) },
-    include: callInclude,
-    orderBy: { lastEventAt: "desc" },
-  });
-  res.json({ data, configured: true });
-}
-
-export async function getOomaCall(req, res) {
+export async function getCall(req, res) {
   res.json({ data: await requireCall(req) });
 }
 
-export async function listOomaCallCandidates(req, res) {
+export async function listCallCandidates(req, res) {
   await requireCall(req, {});
   const search = clean(req.query.search, 120);
   const digits = search.replace(/\D/g, "");
@@ -173,24 +145,24 @@ export async function listOomaCallCandidates(req, res) {
   res.json({ data: { leads: leads.map((lead) => ({ ...lead, fullName: leadName(lead) })), clients } });
 }
 
-export async function linkOomaCallToLead(req, res) {
+export async function linkCallToLead(req, res) {
   const call = await requireCall(req, {});
   const lead = await prisma.lead.findFirst({
     where: { id: clean(req.body.leadId, 100), agencyId: req.auth.agencyId, deletedAt: null, ...(req.auth.role === "admin" || req.auth.role === "frontdesk" ? {} : leadAccessWhere(req)) },
     select: { id: true },
   });
   if (!lead) throw createHttpError(404, "Lead not found or not available to you.", "LEAD_NOT_FOUND");
-  const data = await prisma.oomaCallSession.update({
+  const data = await prisma.callSession.update({
     where: { id: call.id },
     data: { leadId: lead.id, clientId: null, caseId: null, resolution: "LINKED_LEAD", resolvedAt: new Date(), resolvedById: req.auth.userId },
     include: callInclude,
   });
-  await syncOomaLeadActivity(call.id);
-  await ensureOomaCallbackFollowUp(call.id);
+  await syncCallLeadActivity(call.id);
+  await ensureCallCallbackFollowUp(call.id);
   res.json({ data });
 }
 
-export async function linkOomaCallToClient(req, res) {
+export async function linkCallToClient(req, res) {
   const call = await requireCall(req, {});
   const scope = req.auth.role === "admin" || req.auth.role === "frontdesk" ? {} : clientAccessWhere(req);
   const client = await prisma.client.findFirst({
@@ -203,22 +175,22 @@ export async function linkOomaCallToClient(req, res) {
     orderBy: { updatedAt: "desc" },
     select: { id: true, assignedUserId: true },
   });
-  const data = await prisma.oomaCallSession.update({
+  const data = await prisma.callSession.update({
     where: { id: call.id },
     data: { clientId: client.id, caseId: caseItem?.id || null, leadId: null, followUpId: null, resolution: "LINKED_CLIENT", resolvedAt: new Date(), resolvedById: req.auth.userId, handledByUserId: call.handledByUserId || caseItem?.assignedUserId || client.assignedUserId || null },
     include: callInclude,
   });
-  await syncOomaClientCommunication(call.id);
+  await syncCallClientCommunication(call.id);
   res.json({ data });
 }
 
-export async function createLeadFromOomaCall(req, res) {
+export async function createLeadFromCall(req, res) {
   const call = await requireCall(req, {});
   if (!call.remoteNumberNormalized) throw createHttpError(400, "A valid caller phone number is required before creating a lead.", "INVALID_CALLER_PHONE");
-  const sourceDefinition = DEFAULT_LEAD_SOURCES.find(([, type]) => type === "OOMA") || ["Ooma", "OOMA"];
+  const sourceDefinition = DEFAULT_LEAD_SOURCES.find(([, type]) => type === "PHONE") || ["Phone", "PHONE"];
   await prisma.leadSource.createMany({ data: [{ agencyId: req.auth.agencyId, name: sourceDefinition[0], type: sourceDefinition[1] }], skipDuplicates: true });
-  const source = await prisma.leadSource.findFirst({ where: { agencyId: req.auth.agencyId, type: "OOMA", isActive: true }, orderBy: { createdAt: "asc" } });
-  if (!source) throw createHttpError(409, "The Ooma lead source is unavailable.", "OOMA_SOURCE_UNAVAILABLE");
+  const source = await prisma.leadSource.findFirst({ where: { agencyId: req.auth.agencyId, type: "PHONE", isActive: true }, orderBy: { createdAt: "asc" } });
+  if (!source) throw createHttpError(409, "The phone lead source is unavailable.", "PHONE_SOURCE_UNAVAILABLE");
   const ownerUserId = clean(req.body.ownerUserId, 100) || call.handledByUserId || req.auth.userId;
   const nextActionAt = new Date(Date.now() + 15 * 60_000);
   const lead = await createLeadRecord({
@@ -231,29 +203,29 @@ export async function createLeadFromOomaCall(req, res) {
       ownerUserId,
       originalSourceId: source.id,
       immigrationInterest: clean(req.body.immigrationInterest, 150) || null,
-      initialMessage: clean(req.body.initialMessage, 5000) || `Inbound Ooma call received ${call.startedAt.toISOString()}`,
+      initialMessage: clean(req.body.initialMessage, 5000) || `Inbound phone call received ${call.startedAt.toISOString()}`,
       priority: clean(req.body.priority, 20) || (call.status === "MISSED" ? "HIGH" : "NORMAL"),
       temperature: "WARM",
       nextActionType: "PHONE_CALL",
-      nextActionDescription: `Return Ooma call to ${call.remoteNumberNormalized}`,
+      nextActionDescription: `Return phone call to ${call.remoteNumberNormalized}`,
       nextActionAt: nextActionAt.toISOString(),
       nextActionOwnerId: ownerUserId,
       firstContactDueAt: nextActionAt.toISOString(),
     },
   });
-  await prisma.oomaCallSession.update({
+  await prisma.callSession.update({
     where: { id: call.id },
     data: { leadId: lead.id, clientId: null, caseId: null, resolution: "LINKED_LEAD", resolvedAt: new Date(), resolvedById: req.auth.userId, handledByUserId: call.handledByUserId || ownerUserId },
   });
-  await syncOomaLeadActivity(call.id);
-  await ensureOomaCallbackFollowUp(call.id);
-  res.status(201).json({ data: { lead, call: await prisma.oomaCallSession.findUnique({ where: { id: call.id }, include: callInclude }) } });
+  await syncCallLeadActivity(call.id);
+  await ensureCallCallbackFollowUp(call.id);
+  res.status(201).json({ data: { lead, call: await prisma.callSession.findUnique({ where: { id: call.id }, include: callInclude }) } });
 }
 
-export async function markOomaCallSpam(req, res) {
+export async function markCallSpam(req, res) {
   if (!["admin", "frontdesk"].includes(req.auth.role)) throw createHttpError(403, "Only administrators and front desk staff can mark calls as spam.", "FORBIDDEN");
   const call = await requireCall(req, {});
-  const data = await prisma.oomaCallSession.update({
+  const data = await prisma.callSession.update({
     where: { id: call.id },
     data: { resolution: "SPAM", resolvedAt: new Date(), resolvedById: req.auth.userId, leadId: null, clientId: null, caseId: null, followUpId: null, outcomeNotes: clean(req.body.notes, 1000) || "Marked as spam" },
     include: callInclude,
@@ -261,8 +233,8 @@ export async function markOomaCallSpam(req, res) {
   res.json({ data });
 }
 
-export async function recordOomaCallOutcome(req, res) {
+export async function recordCallOutcome(req, res) {
   const call = await requireCall(req, {});
   await applyCallOutcome(call, req.body, { agencyId: req.auth.agencyId, userId: req.auth.userId });
-  res.json({ data: await prisma.oomaCallSession.findUnique({ where: { id: call.id }, include: callInclude }) });
+  res.json({ data: await prisma.callSession.findUnique({ where: { id: call.id }, include: callInclude }) });
 }

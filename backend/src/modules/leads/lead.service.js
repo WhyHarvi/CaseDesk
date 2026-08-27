@@ -34,6 +34,7 @@ import { triggerRetainerFlow } from "./lead.retainer.service.js";
 import { isGlobalCaseType, listAgencyCaseTypeOptions } from "../../services/caseTypeOptionsService.js";
 import { canonicalCaseType, normalizeCaseType } from "../../services/workflowService.js";
 import { staleLeadOutreachOverview } from "./lead.staleOutreach.service.js";
+import { ensureAppointmentCompletionFollowUp } from "../../services/appointmentProfileService.js";
 
 const leadInclude = {
   owner: { select: { id: true, fullName: true, email: true } },
@@ -223,7 +224,7 @@ export async function getLead(req) {
     include: {
       ...leadInclude,
       activities: { orderBy: { occurredAt: "desc" }, take: 100 },
-      oomaCallSessions: {
+      callSessions: {
         where: { provider: "TWILIO" },
         orderBy: { startedAt: "desc" },
         select: { id: true, direction: true, status: true, remoteNumber: true, startedAt: true, answeredAt: true, endedAt: true, durationSeconds: true, disposition: true, outcomeNotes: true, recordingUrl: true, handledBy: { select: { id: true, fullName: true } } },
@@ -1260,6 +1261,7 @@ export async function updateConsultation(req, db = prisma) {
         summary: appointmentStatus === "Cancelled" ? "Lead consultation cancelled" : `Appointment marked ${appointmentStatus}`,
         metadata: { from: existing.status, to: values.status, consultationId: existing.id },
       });
+      if (appointmentStatus === "Completed") await ensureAppointmentCompletionFollowUp(tx, appointment);
       if (db === prisma && appointmentStatus === "Cancelled") {
         await sendBookingMessages({ agencyId, appointment, kind: "cancelled", actorUserId: actorId, db: tx });
         if (appointment.meetingProvider === "Zoom" && appointment.meetingProviderId) {
