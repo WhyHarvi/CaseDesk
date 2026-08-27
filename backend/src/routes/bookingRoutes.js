@@ -37,9 +37,11 @@ import {
 } from "../controllers/bookingController.js";
 import {
   getStaffPreConsultationIntake,
+  getStaffPreConsultationSummary,
   saveStaffPreConsultationIntake,
   sendStaffPreConsultationIntake,
 } from "../controllers/preConsultationStaffController.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -61,6 +63,7 @@ router.get("/appointments/:id/detail", asyncHandler(getAppointmentRegistryDetail
 router.get("/appointments/:id/pre-consultation", asyncHandler(getStaffPreConsultationIntake));
 router.post("/appointments/:id/pre-consultation/send", asyncHandler(sendStaffPreConsultationIntake));
 router.post("/appointments/:id/pre-consultation/manual", asyncHandler(saveStaffPreConsultationIntake));
+router.post("/appointments/:id/pre-consultation/summary", rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(getStaffPreConsultationSummary));
 router.get("/appointments/:id/refund-estimate", asyncHandler(getAppointmentRefundEstimate));
 router.get("/blocks", asyncHandler(listSchedulingBlocks));
 router.post("/blocks", asyncHandler(createSchedulingBlock));

@@ -14,3 +14,8 @@ export async function saveStaffPreConsultationIntake(appointmentId, values) {
   const response = await api.post(`/booking/appointments/${appointmentId}/pre-consultation/manual`, values);
   return response.data.data;
 }
+
+export async function getStaffPreConsultationSummary(appointmentId, { regenerate = false } = {}) {
+  const response = await api.post(`/booking/appointments/${appointmentId}/pre-consultation/summary`, { regenerate }, { cache: false });
+  return response.data.data;
+}

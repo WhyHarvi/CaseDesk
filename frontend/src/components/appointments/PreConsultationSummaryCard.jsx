@@ -36,7 +36,7 @@ const statusLabel = {
   NotSent: "Not sent yet",
 };
 
-const flagLabel = {
+export const flagLabel = {
   STATUS_EXPIRY: "Status expiring",
   PREVIOUS_REFUSAL: "Previous refusal",
   ACTIVE_IMMIGRATION_ISSUE: "Active immigration issue",
@@ -44,7 +44,7 @@ const flagLabel = {
   NO_CURRENT_STATUS: "No current status",
 };
 
-function dateOnly(value) {
+export function dateOnly(value) {
   if (!value) return null;
   const date = new Date(`${String(value).slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return String(value);

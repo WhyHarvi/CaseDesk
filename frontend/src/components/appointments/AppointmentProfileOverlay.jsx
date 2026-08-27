@@ -14,6 +14,7 @@ import {
   Plus,
   Pencil,
   Save,
+  ShieldAlert,
   Sparkles,
   Trash2,
   UserRound,
@@ -39,8 +40,9 @@ import {
   updateBookingAppointmentStatus,
 } from "../../api/bookingApi";
 import api from "../../services/api";
+import { getStaffPreConsultationSummary } from "../../api/preConsultationApi";
 import NoteDeleteOverlay from "../case-profile/notes/NoteDeleteOverlay";
-import PreConsultationSummaryCard from "./PreConsultationSummaryCard";
+import PreConsultationSummaryCard, { dateOnly, flagLabel } from "./PreConsultationSummaryCard";
 import MultiCaseTypeCombobox from "../ui/MultiCaseTypeCombobox";
 import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
@@ -71,6 +73,51 @@ const statusTone = {
 function dateTime(value) {
   if (!value) return "Not set";
   return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function consultationSummarySections(value) {
+  const sections = {};
+  const remaining = [];
+  for (const rawLine of String(value || "").split(/\r?\n/)) {
+    const line = rawLine.replace(/\*\*/g, "").replace(/^[-*#\s]+/, "").trim();
+    if (!line || /^(Flags|Relevant answers):/i.test(line)) continue;
+    const match = line.match(/^(Important for the consultation|Immigration context|Consultation focus):\s*(.*)$/i);
+    if (!match) {
+      if (!/questionnaire identifies no urgent immigration concern/i.test(line)) remaining.push(line);
+      continue;
+    }
+    const key = match[1].toLowerCase().startsWith("important")
+      ? "important"
+      : match[1].toLowerCase().startsWith("immigration") ? "context" : "focus";
+    sections[key] = match[2].trim();
+  }
+  if (!sections.important && remaining.length) sections.important = remaining.join(" ");
+  return sections;
+}
+
+// Highlighted text for a flag's own computed date/days — built directly
+// from that plain date math (see the flag-recompute above), never from
+// Nova's prose, so the exact fact staff need to trust is never at the
+// mercy of how the model happened to phrase it this time.
+function highlightedFactClause(flag) {
+  const days = Number(flag.days);
+  const hasDays = Number.isFinite(days);
+  switch (flag.type) {
+    case "STATUS_EXPIRY":
+      return hasDays && days < 0
+        ? `status expired ${dateOnly(flag.date)} (${Math.abs(days)} days ago)`
+        : `status expires ${dateOnly(flag.date)}${hasDays ? ` (in ${days} day${days === 1 ? "" : "s"})` : ""}`;
+    case "NO_CURRENT_STATUS":
+      return "client currently has no immigration status";
+    case "PREVIOUS_REFUSAL":
+      return "a previous application refusal is on record";
+    case "ACTIVE_IMMIGRATION_ISSUE":
+      return "an active immigration issue was reported";
+    case "UPCOMING_DEADLINE":
+      return `upcoming deadline ${flag.date ? dateOnly(flag.date) : ""}${hasDays ? ` (${days} day${days === 1 ? "" : "s"})` : ""}`.trim();
+    default:
+      return flagLabel[flag.type] || flag.type;
+  }
 }
 
 function dateInput(value = new Date(Date.now() + 24 * 60 * 60_000)) {
@@ -116,6 +163,9 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
   const [editingNoteContent, setEditingNoteContent] = useState("");
   const [deleteNoteTarget, setDeleteNoteTarget] = useState(null);
   const [deleteNoteError, setDeleteNoteError] = useState("");
+  const [novaSummary, setNovaSummary] = useState(null);
+  const [novaSummaryLoading, setNovaSummaryLoading] = useState(false);
+  const [novaSummaryError, setNovaSummaryError] = useState("");
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [followUp, setFollowUp] = useState({ title: "", description: "", dueDate: dateInput() });
   const [showAdviceComposer, setShowAdviceComposer] = useState(false);
@@ -149,6 +199,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
       setAdviceText(data.advice?.adviceText || "");
       setAdviceAssignedUserId(data.advice?.assignedUserId || "");
       setAdviceFollowUpDate(data.advice?.followUpDate ? data.advice.followUpDate.slice(0, 10) : "");
+      setNovaSummary(data.preConsultationIntake?.novaSummary || null);
+      setNovaSummaryError("");
       setError("");
     } catch (requestError) {
       setError(requestError.response?.data?.message || "Appointment details could not be loaded.");
@@ -328,6 +380,24 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
         setAdviceCaseTypeOptions(response.data.data || []);
         setAdviceCaseTypeAliases(response.data.aliases || {});
       }).catch(() => {});
+    }
+  }
+
+  // Nova only ever restates the flags/answers the backend already computed
+  // deterministically (see summarizePreConsultationIntake) — this call never
+  // blocks the flags themselves from showing, since those render immediately
+  // from appointment.preConsultationIntake below, independent of this.
+  async function generateNovaSummary(regenerate = false) {
+    setNovaSummaryLoading(true);
+    setNovaSummaryError("");
+    try {
+      const data = await getStaffPreConsultationSummary(appointmentId, { regenerate });
+      setNovaSummary(data);
+      if (data.summaryError) setNovaSummaryError(data.summaryError);
+    } catch (requestError) {
+      setNovaSummaryError(requestError.response?.data?.message || "The AI summary could not be generated.");
+    } finally {
+      setNovaSummaryLoading(false);
     }
   }
 
@@ -591,6 +661,63 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
             </div> : null}
 
             {!loading && appointment && tab === "notes" ? <div className="space-y-5">
+              {appointment.preConsultationIntake?.answers ? (() => {
+                // Recomputed live, right here, from each flag's own static
+                // date — never trust the days value stored at submission
+                // time, which only reflects "how many days" as of whenever
+                // the client filled the form out, not as of today. This is
+                // plain date math, not Nova — the one thing here that must
+                // never be wrong stays independent of the AI call below.
+                const liveFlags = (appointment.preConsultationIntake.flags || []).map((flag) => ({
+                  ...flag,
+                  days: flag.date ? Math.ceil((new Date(`${flag.date}T00:00:00Z`).getTime() - Date.now()) / 86_400_000) : flag.days,
+                }));
+                const urgent = liveFlags.some((flag) => flag.severity === "urgent");
+                const summarySections = consultationSummarySections(novaSummary?.summary);
+                // One flowing note, not a chip row plus a separate labeled-card
+                // restatement of the same facts: flag-derived clauses (exact
+                // date/days math, never Nova's prose) are highlighted inline as
+                // the lead sentence, and Nova's context/focus — genuinely new
+                // information, not a repeat of the flags — reads on as the rest
+                // of the paragraph.
+                const factClauses = liveFlags.map((flag) => ({ text: highlightedFactClause(flag), severity: flag.severity }));
+                const novaProse = [
+                  summarySections.context,
+                  summarySections.focus ? `Consultation focus: ${summarySections.focus.charAt(0).toLowerCase()}${summarySections.focus.slice(1)}.` : null,
+                ].filter(Boolean).join(" ");
+                return (
+                  <section className={`rounded-[1.5rem] border bg-white p-5 shadow-sm ${urgent ? "border-rose-200 ring-2 ring-rose-50" : "border-white"}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2"><ShieldAlert className={`h-4 w-4 ${urgent ? "text-rose-600" : "text-violet-600"}`} /><h3 className="text-sm font-semibold text-slate-900">Pre-consultation summary</h3></div>
+                        <p className="mt-1 text-xs text-slate-400">Private to staff — what the client told us before the appointment, so nothing urgent gets missed.</p>
+                      </div>
+                      <button type="button" onClick={() => generateNovaSummary(Boolean(novaSummary?.summary))} disabled={novaSummaryLoading} className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
+                        {novaSummaryLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        {novaSummaryLoading ? "Asking Nova…" : novaSummary?.summary ? "Regenerate" : "Add Nova's read"}
+                      </button>
+                    </div>
+
+                    <p className="mt-3 text-sm leading-6 text-slate-700">
+                      {factClauses.length ? factClauses.map((clause, index) => (
+                        <span key={index}>
+                          {index > 0 ? (index === factClauses.length - 1 ? " and " : ", ") : ""}
+                          <mark className={`rounded px-1 font-medium ${clause.severity === "urgent" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>{clause.text}</mark>
+                        </span>
+                      )) : "No urgent flags from the questionnaire."}
+                      {factClauses.length ? ". " : " "}
+                      {novaProse}
+                    </p>
+
+                    {novaSummary?.summary ? (
+                      <p className="mt-2 text-[10px] text-slate-400">
+                        Nova's read saved{novaSummary.generatedAt ? ` ${dateTime(novaSummary.generatedAt)}` : ""} · Verify against the questionnaire.
+                      </p>
+                    ) : null}
+                    {novaSummaryError ? <p className="mt-2 text-xs text-amber-700">{novaSummaryError}</p> : null}
+                  </section>
+                );
+              })() : null}
               <section className="rounded-[1.5rem] border border-sky-100 bg-sky-50/55 p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-600">Client query</p><p className="mt-1 text-xs text-slate-500">Keep the client’s original concern visible while documenting the consultation.</p></div>{canWrite ? editingContext ? <div className="flex items-center gap-2"><button type="button" onClick={cancelContextEdit} disabled={saving} className="rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200 disabled:opacity-50">Cancel</button><button type="button" onClick={saveContext} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3.5 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-50"><Save className="h-3.5 w-3.5" />{saving ? "Saving…" : "Save context"}</button></div> : <button type="button" onClick={() => setEditingContext(true)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200"><NotebookPen className="h-3.5 w-3.5" />Edit context</button> : null}</div>
                 <div className="mt-4 space-y-4">

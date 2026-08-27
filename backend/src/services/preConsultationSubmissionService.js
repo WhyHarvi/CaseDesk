@@ -171,6 +171,35 @@ export function derivePreConsultationFlags(answers) {
   return flags;
 }
 
+export function buildPreConsultationHighlights(flags, answers) {
+  const highlights = flags.map((flag) => {
+    if (flag.type === "STATUS_EXPIRY") {
+      const expired = Number(flag.days) < 0;
+      return {
+        severity: flag.severity,
+        title: expired ? "Immigration status has expired" : "Immigration status expires soon",
+        detail: expired
+          ? `The reported status expiry date passed ${Math.abs(Number(flag.days))} day${Math.abs(Number(flag.days)) === 1 ? "" : "s"} ago${flag.date ? ` (${flag.date})` : ""}.`
+          : `The reported status expires in ${Number(flag.days)} day${Number(flag.days) === 1 ? "" : "s"}${flag.date ? ` (${flag.date})` : ""}.`,
+      };
+    }
+    if (flag.type === "NO_CURRENT_STATUS") return { severity: "urgent", title: "No current immigration status reported", detail: "The client reports that they currently have no immigration status in Canada." };
+    if (flag.type === "PREVIOUS_REFUSAL") return { severity: "warning", title: "Previous immigration refusal", detail: answers.immigrationHistory.refusalReason || "The client reported a previous immigration refusal." };
+    if (flag.type === "ACTIVE_IMMIGRATION_ISSUE") return { severity: "urgent", title: "Active immigration issue", detail: answers.urgency.activeIssueDetails || "The client reported an active immigration issue requiring consultation review." };
+    if (flag.type === "UPCOMING_DEADLINE") return { severity: "urgent", title: "Immigration deadline", detail: [answers.urgency.deadlineType, answers.urgency.deadlineDate, answers.urgency.deadlineDetails].filter(Boolean).join(" · ") || "The client reported an upcoming immigration deadline." };
+    return { severity: flag.severity || "warning", title: "Immigration matter to review", detail: "Review this item during the consultation." };
+  });
+
+  if (answers.canadaStatus.hasPendingIrccApplication) {
+    highlights.push({
+      severity: "context",
+      title: "Pending IRCC application",
+      detail: [answers.canadaStatus.pendingApplicationType, answers.canadaStatus.pendingApplicationStatus].filter(Boolean).join(" · ") || "The client reports an application currently pending with IRCC.",
+    });
+  }
+  return highlights.slice(0, 8);
+}
+
 function educationSummary(answers) {
   if (!answers.study.studiedInCanada) return null;
   return [answers.study.institution, answers.study.program, answers.study.completed ? "Completed" : answers.study.currentStudyStatus].filter(Boolean).join(" · ").slice(0, 1000) || null;

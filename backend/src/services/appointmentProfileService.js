@@ -99,11 +99,16 @@ export const appointmentProfileInclude = {
 function intakeSummary(appointmentId, events = []) {
   const intakeEvents = events.filter((event) => String(event.type || "").startsWith("PRE_CONSULTATION_INTAKE_"));
   const submitted = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.SUBMITTED);
+  const generatedSummary = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.SUMMARY_GENERATED);
   const opened = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.OPENED);
   const sent = intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.DELIVERY_SENT)
     || intakeEvents.find((event) => event.type === PRE_CONSULTATION_EVENT.DELIVERY_PARTIAL);
   const delivery = sent?.metadata && typeof sent.metadata === "object" ? sent.metadata : {};
   const submission = submitted?.metadata && typeof submitted.metadata === "object" ? submitted.metadata : {};
+  const summaryMetadata = generatedSummary?.metadata && typeof generatedSummary.metadata === "object" ? generatedSummary.metadata : {};
+  const summaryIsCurrent = generatedSummary && submitted
+    ? new Date(generatedSummary.createdAt) >= new Date(submitted.createdAt)
+    : Boolean(generatedSummary);
   return {
     appointmentId,
     status: preConsultationStatus(intakeEvents),
@@ -118,6 +123,12 @@ function intakeSummary(appointmentId, events = []) {
     source: submission.source || null,
     consentRecordedAt: submission.consentRecordedAt || null,
     enteredByUserId: submission.enteredByUserId || null,
+    novaSummary: summaryIsCurrent && summaryMetadata.summary ? {
+      summary: summaryMetadata.summary,
+      highlights: Array.isArray(summaryMetadata.highlights) ? summaryMetadata.highlights : [],
+      generatedAt: generatedSummary.createdAt,
+      generatedByUserId: generatedSummary.actorUserId || null,
+    } : null,
   };
 }
 

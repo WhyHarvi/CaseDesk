@@ -3,9 +3,13 @@ import { createHttpError } from "../utils/http.js";
 import { requireAppointmentProfile } from "../services/appointmentProfileService.js";
 import {
   deliverPreConsultationIntake,
+  PRE_CONSULTATION_EVENT,
   preConsultationAppointmentInclude,
 } from "../services/preConsultationIntakeService.js";
-import { savePreConsultationSubmission } from "../services/preConsultationSubmissionService.js";
+import { buildPreConsultationHighlights, derivePreConsultationFlags, savePreConsultationSubmission } from "../services/preConsultationSubmissionService.js";
+import { summarizePreConsultationIntake } from "../services/ollama.service.js";
+import { logger } from "../services/logger.js";
+import { recordAppointmentEvent } from "../services/appointmentOperationsService.js";
 
 function contactFor(appointment) {
   const leadName = [appointment.lead?.firstName, appointment.lead?.lastName].filter(Boolean).join(" ").trim();
@@ -105,5 +109,52 @@ export async function saveStaffPreConsultationIntake(req, res) {
       flagsRecorded: result.flags.length,
       source: "staff_manual",
     },
+  });
+}
+
+// Flags are recomputed fresh here (derivePreConsultationFlags runs its own
+// date math against right now) rather than trusting the flags array stored
+// at submission time, which freezes days_from_today as of whenever the
+// client submitted — a flag that was "expires in 60 days" at submission
+// reads as stale, or an already-expired status that was outside the
+// original 90-day window never got flagged at all otherwise. Nova's
+// narrative summary is best-effort: a failure here still returns the real
+// flags, just without the prose, so nothing gets hidden behind an
+// unavailable local model.
+export async function getStaffPreConsultationSummary(req, res) {
+  const { profile, appointment } = await authorizedAppointment(req);
+  const answers = profile.preConsultationIntake?.answers;
+  if (!answers) throw createHttpError(404, "No pre-consultation information has been submitted for this appointment.", "INTAKE_NOT_SUBMITTED");
+
+  const flags = derivePreConsultationFlags(answers);
+  const retainedSummary = profile.preConsultationIntake?.novaSummary || null;
+  const regenerate = req.body?.regenerate === true;
+  if (retainedSummary && !regenerate) {
+    return res.json({ data: { flags, ...retainedSummary, retained: true, summaryError: null } });
+  }
+
+  let summary = null;
+  let summaryError = null;
+  const highlights = buildPreConsultationHighlights(flags, answers);
+  try {
+    summary = await summarizePreConsultationIntake({ flags, answers });
+    const event = await recordAppointmentEvent(prisma, {
+      agencyId: req.auth.agencyId,
+      appointmentId: appointment.id,
+      actorUserId: req.auth.userId,
+      type: PRE_CONSULTATION_EVENT.SUMMARY_GENERATED,
+      summary: regenerate ? "Nova pre-consultation summary regenerated" : "Nova pre-consultation summary generated",
+      metadata: { summary, highlights },
+    });
+    return res.json({ data: { flags, summary, highlights, generatedAt: event.createdAt, retained: false, summaryError: null } });
+  } catch (error) {
+    summaryError = error.message || "The AI summary is unavailable right now.";
+    logger.warn("pre_consultation.summary_failed", { agencyId: req.auth.agencyId, appointmentId: appointment.id, reason: error.message });
+  }
+
+  res.json({
+    data: retainedSummary
+      ? { flags, ...retainedSummary, retained: true, summaryError }
+      : { flags, summary, highlights, generatedAt: null, retained: false, summaryError },
   });
 }
