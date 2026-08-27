@@ -2,7 +2,7 @@ import api from "../services/api";
 
 export async function getCaseEasyImportContacts(params) {
   const response = await api.get("/case-easy-import/contacts", { params, cache: false });
-  return response.data.data;
+  return response.data;
 }
 
 export async function getCaseEasyImportContact(id) {
@@ -25,7 +25,7 @@ export async function getUnlinkedCaseEasyImportCases(params) {
     params,
     cache: false,
   });
-  return response.data.data;
+  return response.data;
 }
 
 export async function getImportedCases(params) {
@@ -33,7 +33,7 @@ export async function getImportedCases(params) {
     params,
     cache: false,
   });
-  return response.data.data;
+  return response.data;
 }
 
 export async function getCaseEasyReportSummary() {

@@ -108,7 +108,9 @@ test("issuing a temporary portal password is a distinct, explicitly-gated action
   assert.match(section, /requirePortalCapability|hasPortalCapability\(req, "manageClientPortal"\)/);
   assert.match(section, /generateTemporaryPassword\(\)/);
   assert.match(section, /createAuthUser\(\{ email, password, fullName, mustChangePassword: false \}\)/);
-  assert.match(section, /updateAuthUser\(existingAuthUserId, \{ password \}\)/);
+  assert.match(section, /updateAuthUser\(existingAuthUserId,[\s\S]*?password/);
+  assert.match(section, /email_confirm:\s*true/);
+  assert.match(section, /ban_duration:\s*"none"/);
   assert.match(section, /status: "active"/);
   assert.match(section, /kind: "temporaryPassword"/);
   assert.match(routes, /"\/:clientId\/portal-account\/temporary-password"/);

@@ -1,4 +1,4 @@
-import { AlertTriangle, Archive, BarChart3, ChevronDown, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
+import { AlertTriangle, Archive, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "../services/api";
@@ -78,6 +78,19 @@ const CASE_RAW_FIELDS = [
 function fmtDate(value) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function Pagination({ pagination, onPage }) {
+  if (!pagination || pagination.pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
+      <span>{pagination.total} total · Page {pagination.page} of {pagination.pages}</span>
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={pagination.page <= 1} onClick={() => onPage(pagination.page - 1)} className="inline-flex h-9 items-center gap-1 rounded-full border border-slate-200 px-3 font-semibold text-slate-700 disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /> Previous</button>
+        <button type="button" disabled={pagination.page >= pagination.pages} onClick={() => onPage(pagination.page + 1)} className="inline-flex h-9 items-center gap-1 rounded-full border border-slate-200 px-3 font-semibold text-slate-700 disabled:opacity-40">Next <ChevronRight className="h-3.5 w-3.5" /></button>
+      </div>
+    </div>
+  );
 }
 
 function PageHeader({ view, onViewChange, needsReviewTotal, totalContacts }) {
@@ -503,7 +516,9 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
 export default function CaseEasyImport() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [contacts, setContacts] = useState([]);
+  const [pagination, setPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
   const [unlinkedCases, setUnlinkedCases] = useState([]);
+  const [unlinkedPagination, setUnlinkedPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -521,6 +536,7 @@ export default function CaseEasyImport() {
     searchParams.get("search") || "",
   );
   const search = searchParams.get("search") || "";
+  const requestedContactId = searchParams.get("contact") || "";
 
   useEffect(() => {
     const requestedView = searchParams.get("view");
@@ -545,6 +561,8 @@ export default function CaseEasyImport() {
         else next.delete("search");
         next.set("view", "contacts");
         next.delete("contact");
+        next.delete("page");
+        next.delete("casePage");
         return next;
       }, { replace: true });
     }, 300);
@@ -555,16 +573,26 @@ export default function CaseEasyImport() {
     setLoading(true);
     setError("");
     try {
-      const [data, unlinked] = await Promise.all([
-        getCaseEasyImportContacts({
-          recordType: recordType || undefined,
-          importStatus: importStatus || undefined,
-          search: search || undefined,
-        }),
-        getUnlinkedCaseEasyImportCases({ search: search || undefined }),
+      const page = Math.max(1, Number.parseInt(searchParams.get("page"), 10) || 1);
+      const casePage = Math.max(1, Number.parseInt(searchParams.get("casePage"), 10) || 1);
+      const [result, unlinked] = await Promise.all([
+        requestedContactId
+          ? getCaseEasyImportContact(requestedContactId).then((contact) => ({ data: [contact], pagination: { page: 1, limit: 25, total: 1, pages: 1 } }))
+          : getCaseEasyImportContacts({
+              recordType: recordType || undefined,
+              importStatus: importStatus || undefined,
+              search: search || undefined,
+              page,
+              limit: 25,
+            }),
+        requestedContactId
+          ? Promise.resolve({ data: [], pagination: { page: 1, limit: 25, total: 0, pages: 1 } })
+          : getUnlinkedCaseEasyImportCases({ search: search || undefined, page: casePage, limit: 25 }),
       ]);
-      setContacts(data);
-      setUnlinkedCases(unlinked);
+      setContacts(result.data || []);
+      setPagination(result.pagination || { page: 1, limit: 25, total: result.data?.length || 0, pages: 1 });
+      setUnlinkedCases(unlinked.data || []);
+      setUnlinkedPagination(unlinked.pagination || { page: 1, limit: 25, total: unlinked.data?.length || 0, pages: 1 });
     } catch (reason) {
       setError(reason.response?.data?.message || "Could not load Case Easy import data.");
     } finally {
@@ -572,11 +600,11 @@ export default function CaseEasyImport() {
     }
   }
 
-  useEffect(() => { load(); }, [recordType, importStatus, search]);
+  useEffect(() => { load(); }, [recordType, importStatus, search, requestedContactId, searchParams.get("page"), searchParams.get("casePage")]);
   // Selection is scoped to whatever's currently visible — changing a filter
   // implicitly changes the working set, so stale ids from a previous filter
   // shouldn't silently carry into the next bulk convert.
-  useEffect(() => { setSelectedIds(new Set()); }, [recordType, importStatus, search]);
+  useEffect(() => { setSelectedIds(new Set()); }, [recordType, importStatus, search, requestedContactId, searchParams.get("page")]);
 
   const convertibleContacts = useMemo(() => contacts.filter((contact) => contact.importStatus !== "converted"), [contacts]);
   const allVisibleSelected = convertibleContacts.length > 0 && convertibleContacts.every((contact) => selectedIds.has(contact.id));
@@ -649,7 +677,7 @@ export default function CaseEasyImport() {
   if (view === "import") {
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={pagination.total} />
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
           <CaseEasyImportSettingsPanel />
         </section>
@@ -660,7 +688,7 @@ export default function CaseEasyImport() {
   if (view === "reports") {
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={pagination.total} />
         <CaseEasyReportsBrowser />
       </div>
     );
@@ -669,7 +697,7 @@ export default function CaseEasyImport() {
   if (view === "imported") {
     return (
       <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
+        <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={pagination.total} />
         <ImportedCasesBrowser />
       </div>
     );
@@ -677,7 +705,7 @@ export default function CaseEasyImport() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-1 py-1">
-      <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={contacts.length} />
+      <PageHeader view={view} onViewChange={setView} needsReviewTotal={needsReviewTotal} totalContacts={pagination.total} />
 
       <div className="flex flex-wrap items-center gap-3">
         <label className="relative min-w-[260px] flex-1">
@@ -694,17 +722,17 @@ export default function CaseEasyImport() {
             </button>
           ) : null}
         </label>
-        <Select value={recordType} onChange={(event) => setRecordType(event.target.value)} className="w-40">
+        <Select value={recordType} onChange={(event) => { setRecordType(event.target.value); setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("page"); next.delete("contact"); return next; }); }} className="w-40">
           {RECORD_TYPE_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </Select>
-        <Select value={importStatus} onChange={(event) => setImportStatus(event.target.value)} className="w-44">
+        <Select value={importStatus} onChange={(event) => { setImportStatus(event.target.value); setSearchParams((current) => { const next = new URLSearchParams(current); next.delete("page"); next.delete("contact"); return next; }); }} className="w-44">
           {IMPORT_STATUS_FILTERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </Select>
         <button type="button" onClick={load} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300">
           <RefreshCw className="h-3.5 w-3.5" /> Refresh
         </button>
         <p className="text-xs font-medium text-slate-500">
-          {loading ? "Loading…" : `${contacts.length} contact${contacts.length === 1 ? "" : "s"}${recordType || importStatus || search ? " matching filters" : ""}`}
+          {loading ? "Loading…" : `${pagination.total} contact${pagination.total === 1 ? "" : "s"}${recordType || importStatus || search ? " matching filters" : ""}`}
         </p>
       </div>
 
@@ -735,6 +763,9 @@ export default function CaseEasyImport() {
                 </p>
               </div>
             ))}
+          </div>
+          <div className="mt-3">
+            <Pagination pagination={unlinkedPagination} onPage={(page) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("casePage", String(page)); return next; })} />
           </div>
         </section>
       ) : null}
@@ -809,6 +840,7 @@ export default function CaseEasyImport() {
               />
             ))}
           </div>
+          <Pagination pagination={pagination} onPage={(page) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set("page", String(page)); next.delete("contact"); return next; })} />
         </>
       )}
 

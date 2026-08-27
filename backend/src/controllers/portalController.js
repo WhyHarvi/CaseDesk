@@ -340,7 +340,16 @@ export async function sendPortalTemporaryPassword(req, res) {
   let authUserId = existingAuthUserId;
   let authUserCreated = false;
   if (existingAuthUserId) {
-    await updateAuthUser(existingAuthUserId, { password }).catch(() => {
+    // A portal identity can exist in Supabase before its invitation was
+    // completed. Replacing only the password leaves that identity unable to
+    // sign in with `email_not_confirmed`, even though staff just issued direct
+    // credentials. Temporary-password access is an explicit staff activation,
+    // so confirm the email and clear any previous revoke ban at the same time.
+    await updateAuthUser(existingAuthUserId, {
+      password,
+      email_confirm: true,
+      ban_duration: "none",
+    }).catch(() => {
       throw createHttpError(502, "The temporary password could not be set.", "AUTH_UPDATE_FAILED");
     });
   } else {

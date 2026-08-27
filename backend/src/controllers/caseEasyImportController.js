@@ -184,6 +184,8 @@ export async function confirmCaseEasyImportUpload(req, res) {
 export async function listCaseEasyImportContacts(req, res) {
   const agencyId = req.user.agencyId;
   const search = cleanCaseEasySearch(req.query.search);
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
   if (req.query.recordType && !RECORD_TYPES.has(req.query.recordType)) {
     throw createHttpError(400, "recordType is invalid.", "VALIDATION_ERROR");
   }
@@ -206,46 +208,59 @@ export async function listCaseEasyImportContacts(req, res) {
     ...(req.query.importStatus ? { importStatus: req.query.importStatus } : {}),
     ...(search ? buildCaseEasyContactSearchWhere(search) : {}),
   };
-  const contacts = await prisma.caseEasyImportContact.findMany({
-    where,
-    include: {
-      convertedClient: { select: { id: true, clientNumber: true } },
-      linkedCases: { include: caseInclude, orderBy: { createdAt: "asc" } },
-    },
-    orderBy: [{ importedAt: "desc" }],
-  });
-  res.json({ data: contacts });
+  const [contacts, total] = await Promise.all([
+    prisma.caseEasyImportContact.findMany({
+      where,
+      include: {
+        convertedClient: { select: { id: true, clientNumber: true } },
+        linkedCases: { include: caseInclude, orderBy: { createdAt: "asc" } },
+      },
+      orderBy: [{ importedAt: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.caseEasyImportContact.count({ where }),
+  ]);
+  res.json({ data: contacts, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
 }
 
 export async function listUnlinkedCaseEasyImportCases(req, res) {
   const search = cleanCaseEasySearch(req.query.search);
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
   const terms = search.split(" ").filter(Boolean).slice(0, 8);
-  const cases = await prisma.caseEasyImportCase.findMany({
-    where: {
-      agencyId: req.user.agencyId,
-      linkedContactId: null,
-      importStatus: { not: "converted" },
-      ...(terms.length
-        ? {
-            AND: terms.map((term) => ({
-              OR: [
-                { caseNumber: { contains: term, mode: "insensitive" } },
-                { clientIdentifier: { contains: term, mode: "insensitive" } },
-                { firstName: { contains: term, mode: "insensitive" } },
-                { lastName: { contains: term, mode: "insensitive" } },
-                { email: { contains: term, mode: "insensitive" } },
-                { phone: { contains: term, mode: "insensitive" } },
-                { otherEmails: { contains: term, mode: "insensitive" } },
-                { companyName: { contains: term, mode: "insensitive" } },
-              ],
-            })),
-          }
-        : {}),
-    },
-    include: caseInclude,
-    orderBy: [{ importedAt: "desc" }, { createdAt: "desc" }],
-  });
-  res.json({ data: cases });
+  const where = {
+    agencyId: req.user.agencyId,
+    linkedContactId: null,
+    importStatus: { not: "converted" },
+    ...(terms.length
+      ? {
+          AND: terms.map((term) => ({
+            OR: [
+              { caseNumber: { contains: term, mode: "insensitive" } },
+              { clientIdentifier: { contains: term, mode: "insensitive" } },
+              { firstName: { contains: term, mode: "insensitive" } },
+              { lastName: { contains: term, mode: "insensitive" } },
+              { email: { contains: term, mode: "insensitive" } },
+              { phone: { contains: term, mode: "insensitive" } },
+              { otherEmails: { contains: term, mode: "insensitive" } },
+              { companyName: { contains: term, mode: "insensitive" } },
+            ],
+          })),
+        }
+      : {}),
+  };
+  const [cases, total] = await Promise.all([
+    prisma.caseEasyImportCase.findMany({
+      where,
+      include: caseInclude,
+      orderBy: [{ importedAt: "desc" }, { createdAt: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.caseEasyImportCase.count({ where }),
+  ]);
+  res.json({ data: cases, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
 }
 
 // Every real CaseDesk case ever produced by a Case Easy conversion, across
@@ -255,38 +270,45 @@ export async function listUnlinkedCaseEasyImportCases(req, res) {
 export async function listImportedCases(req, res) {
   const agencyId = req.user.agencyId;
   const search = cleanCaseEasySearch(req.query.search);
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
   const terms = search.split(" ").filter(Boolean).slice(0, 8);
-  const cases = await prisma.case.findMany({
-    where: {
-      agencyId,
-      deletedAt: null,
-      caseEasyImportCases: { some: {} },
-      ...(terms.length
-        ? {
-            AND: terms.map((term) => ({
-              OR: [
-                { caseType: { contains: term, mode: "insensitive" } },
-                { client: { fullName: { contains: term, mode: "insensitive" } } },
-                { client: { clientNumber: { contains: term, mode: "insensitive" } } },
-              ],
-            })),
-          }
-        : {}),
-    },
-    select: {
-      id: true,
-      caseType: true,
-      stage: true,
-      status: true,
-      archivedAt: true,
-      updatedAt: true,
-      client: { select: { id: true, fullName: true, clientNumber: true } },
-      caseEasyImportCases: { select: { caseNumber: true, status: true }, take: 1 },
-    },
-    orderBy: { updatedAt: "desc" },
-    take: 500,
-  });
-  res.json({ data: cases });
+  const where = {
+    agencyId,
+    deletedAt: null,
+    caseEasyImportCases: { some: {} },
+    ...(terms.length
+      ? {
+          AND: terms.map((term) => ({
+            OR: [
+              { caseType: { contains: term, mode: "insensitive" } },
+              { client: { fullName: { contains: term, mode: "insensitive" } } },
+              { client: { clientNumber: { contains: term, mode: "insensitive" } } },
+            ],
+          })),
+        }
+      : {}),
+  };
+  const [cases, total] = await Promise.all([
+    prisma.case.findMany({
+      where,
+      select: {
+        id: true,
+        caseType: true,
+        stage: true,
+        status: true,
+        archivedAt: true,
+        updatedAt: true,
+        client: { select: { id: true, fullName: true, clientNumber: true } },
+        caseEasyImportCases: { select: { caseNumber: true, status: true }, take: 1 },
+      },
+      orderBy: { updatedAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prisma.case.count({ where }),
+  ]);
+  res.json({ data: cases, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
 }
 
 async function readReportSheet(file) {

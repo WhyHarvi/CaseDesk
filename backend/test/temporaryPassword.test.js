@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import { generateTemporaryPassword } from "../src/utils/temporaryPassword.js";
 import { accountAccessEmailContent } from "../src/services/accountAccessMailService.js";
 
@@ -52,4 +53,16 @@ test("the existing link-based onboarding email is unaffected by the new temporar
   assert.match(content.html, /use this link only once/);
   assert.doesNotMatch(content.html, /Temporary password/);
   assert.match(content.text, /https:\/\/app\.casedesk\.example\/auth\/accept-invite\?token=abc/);
+});
+
+test("resetting an existing portal password also activates its Supabase identity", async () => {
+  const controller = await readFile(new URL("../src/controllers/portalController.js", import.meta.url), "utf8");
+  const temporaryPasswordSection = controller.slice(
+    controller.indexOf("export async function sendPortalTemporaryPassword"),
+    controller.indexOf("export async function getPortalAccountStatus"),
+  );
+
+  assert.match(temporaryPasswordSection, /updateAuthUser\(existingAuthUserId,[\s\S]*?password/);
+  assert.match(temporaryPasswordSection, /email_confirm:\s*true/);
+  assert.match(temporaryPasswordSection, /ban_duration:\s*"none"/);
 });
