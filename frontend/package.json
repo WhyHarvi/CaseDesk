@@ -34,6 +34,7 @@
     "heic2any": "^0.0.4",
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
+    "libphonenumber-js": "^1.13.12",
     "lucide-react": "^0.542.0",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^6.1.200",

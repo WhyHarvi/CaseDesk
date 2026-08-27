@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { getCountries, getCountryCallingCode, parsePhoneNumberFromString } from "libphonenumber-js/min";
 import {
   createPublicBooking,
   createPublicBookingPaymentHold,
@@ -31,6 +32,80 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DEFAULT_PHONE_COUNTRY = "CA";
+// Real ISO country + calling-code data straight from the same library the
+// backend validates phone numbers with (bookingMeetingModeService.js) —
+// never a hand-maintained list that could drift out of sync with it.
+// Intl.DisplayNames gives correct localized country names natively, with
+// no separate name list to maintain either.
+const phoneCountryDisplayNames = new Intl.DisplayNames(["en"], { type: "region" });
+function countryFlagEmoji(isoCode) {
+  return String(isoCode)
+    .toUpperCase()
+    .replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
+}
+const PHONE_COUNTRY_OPTIONS = getCountries()
+  .map((code) => ({
+    code,
+    name: phoneCountryDisplayNames.of(code) || code,
+    callingCode: getCountryCallingCode(code),
+  }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+// The inverse of composePhoneNumber — splits an already-full number (e.g. a
+// returning portal client's saved phone) back into the country + national
+// parts the two-piece UI needs, so a pre-filled Canadian client still shows
+// their real national number next to the right flag instead of the whole
+// "+1..." string dumped into the local-number box.
+function splitPhoneNumber(fullNumber) {
+  const trimmed = String(fullNumber || "").trim();
+  if (!trimmed) return { country: DEFAULT_PHONE_COUNTRY, nationalNumber: "" };
+  const parsed = parsePhoneNumberFromString(trimmed, DEFAULT_PHONE_COUNTRY);
+  if (parsed) return { country: parsed.country || DEFAULT_PHONE_COUNTRY, nationalNumber: parsed.formatNational() };
+  return { country: DEFAULT_PHONE_COUNTRY, nationalNumber: trimmed };
+}
+
+function composePhoneNumber(countryCode, nationalNumber) {
+  const trimmed = String(nationalNumber || "").trim();
+  if (!trimmed) return "";
+  const parsed = parsePhoneNumberFromString(trimmed, countryCode);
+  if (parsed) return parsed.number;
+  // Falls back to a best-effort E.164-shaped string rather than dropping the
+  // number silently — the backend's own validation is the source of truth
+  // and will return a clear error if this still isn't a real number.
+  return `+${getCountryCallingCode(countryCode)}${trimmed.replace(/\D/g, "")}`;
+}
+
+function PhoneNumberField({ country, onCountryChange, value, onValueChange, placeholder }) {
+  return (
+    <div className="mt-1.5 flex overflow-hidden rounded-md border border-[#E5E7EB] focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
+      <label className="relative flex shrink-0 cursor-pointer items-center gap-1 border-r border-[#E5E7EB] bg-[#F9F9FA] px-2.5 text-sm text-[#4D5865] transition hover:bg-[#F0F1F3]">
+        <span aria-hidden="true">{countryFlagEmoji(country)}</span>
+        <span>+{getCountryCallingCode(country)}</span>
+        <ChevronDown className="h-3 w-3 text-[#9AA1AC]" aria-hidden="true" />
+        <select
+          aria-label="Country code"
+          value={country}
+          onChange={(event) => onCountryChange(event.target.value)}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        >
+          {PHONE_COUNTRY_OPTIONS.map((option) => (
+            <option key={option.code} value={option.code}>
+              {option.name} +{option.callingCode}
+            </option>
+          ))}
+        </select>
+      </label>
+      <input
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        className="flex-1 px-3 py-2.5 text-sm text-[#1A1F36] outline-none"
+        autoComplete="tel-national"
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
 const springy = { type: "spring", stiffness: 420, damping: 30 };
 const cardHover = {
   whileHover: { scale: 1.015, y: -1 },
@@ -922,12 +997,16 @@ export default function PublicBookingPage() {
   const [locationId, setLocationId] = useState("");
   const [consultantId, setConsultantId] = useState("");
   const [slot, setSlot] = useState(null);
-  const [form, setForm] = useState({
-    name: String(portalBookingClient?.fullName || ""),
-    email: String(portalBookingClient?.email || ""),
-    phone: String(portalBookingClient?.phone || ""),
-    notes: "",
-    website: "",
+  const [form, setForm] = useState(() => {
+    const { country, nationalNumber } = splitPhoneNumber(portalBookingClient?.phone);
+    return {
+      name: String(portalBookingClient?.fullName || ""),
+      email: String(portalBookingClient?.email || ""),
+      phone: nationalNumber,
+      phoneCountry: country,
+      notes: "",
+      website: "",
+    };
   });
   const [timeFormat24h, setTimeFormat24h] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1044,7 +1123,10 @@ export default function PublicBookingPage() {
       if (saved.sessionTypeId) setSessionTypeId(saved.sessionTypeId);
       if (saved.meetingMode) setMeetingMode(saved.meetingMode);
       if (saved.locationId) setLocationId(saved.locationId);
-      if (saved.form)
+      if (saved.form) {
+        const portalPhone = portalBookingClient?.phone
+          ? splitPhoneNumber(portalBookingClient.phone)
+          : null;
         setForm((current) => ({
           ...current,
           ...saved.form,
@@ -1052,11 +1134,14 @@ export default function PublicBookingPage() {
             ? {
                 name: String(portalBookingClient.fullName || saved.form.name || ""),
                 email: String(portalBookingClient.email || saved.form.email || ""),
-                phone: String(portalBookingClient.phone || saved.form.phone || ""),
+                ...(portalPhone
+                  ? { phone: portalPhone.nationalNumber, phoneCountry: portalPhone.country }
+                  : {}),
               }
             : {}),
           website: "",
         }));
+      }
     } catch {
       /* Ignore an invalid browser draft. */
     }
@@ -1074,6 +1159,7 @@ export default function PublicBookingPage() {
           name: form.name,
           email: form.email,
           phone: form.phone,
+          phoneCountry: form.phoneCountry,
           notes: form.notes,
         },
       }),
@@ -1328,7 +1414,7 @@ export default function PublicBookingPage() {
       idempotencyKey: bookingKey.current,
       name: form.name,
       email: form.email,
-      phone: form.phone,
+      phone: composePhoneNumber(form.phoneCountry, form.phone),
       notes: form.notes,
       website: form.website,
       verificationToken: verification.token || undefined,
@@ -1458,7 +1544,7 @@ export default function PublicBookingPage() {
             : undefined,
         name: form.name,
         email: form.email,
-        phone: form.phone,
+        phone: composePhoneNumber(form.phoneCountry, form.phone),
         preferredFrom: waitlistDates.from,
         preferredTo: waitlistDates.to,
       });
@@ -2110,33 +2196,24 @@ export default function PublicBookingPage() {
                           <span className="text-rose-500">*</span>
                         </>
                       )}
-                      <div className="mt-1.5 flex items-center overflow-hidden rounded-md border border-[#E5E7EB] px-3 focus-within:border-[#006BFF] focus-within:ring-2 focus-within:ring-[#006BFF]/15">
-                        <Phone className="h-3.5 w-3.5 shrink-0 text-[#4D5865]" />
-                        <input
-                          value={form.phone}
-                          onChange={(e) =>
-                            setForm((c) => ({ ...c, phone: e.target.value }))
-                          }
-                          className="flex-1 px-2 py-2.5 text-sm text-[#1A1F36] outline-none"
-                          autoComplete="tel"
-                          placeholder="+1 (555) 123-4567"
-                        />
-                      </div>
+                      <PhoneNumberField
+                        country={form.phoneCountry}
+                        onCountryChange={(phoneCountry) => setForm((c) => ({ ...c, phoneCountry }))}
+                        value={form.phone}
+                        onValueChange={(phone) => setForm((c) => ({ ...c, phone }))}
+                        placeholder="(555) 123-4567"
+                      />
                       {meetingMode === "Phone" ? (
                         <span className="mt-1.5 block font-normal leading-5 text-[#6B7280]">
                           {info.agencyName} will call this number
                           {info.phoneCallerId
                             ? ` from ${info.phoneCallerId}`
                             : ""}
-                          . You do not need to call the office. Outside
-                          Canada? Include your country code, e.g. +44 7911
-                          123456.
+                          . You do not need to call the office.
                         </span>
                       ) : (
                         <span className="mt-1.5 block font-normal leading-5 text-[#6B7280]">
-                          So we can reach you about your appointment. Outside
-                          Canada? Include your country code, e.g. +44 7911
-                          123456.
+                          So we can reach you about your appointment.
                         </span>
                       )}
                     </motion.label>
@@ -2479,16 +2556,12 @@ export default function PublicBookingPage() {
                       ) : (
                         "(optional)"
                       )}
-                      <input
+                      <PhoneNumberField
+                        country={form.phoneCountry}
+                        onCountryChange={(phoneCountry) => setForm((current) => ({ ...current, phoneCountry }))}
                         value={form.phone}
-                        onChange={(event) =>
-                          setForm((current) => ({
-                            ...current,
-                            phone: event.target.value,
-                          }))
-                        }
-                        className={`mt-1.5 ${inputClass}`}
-                        autoComplete="tel"
+                        onValueChange={(phone) => setForm((current) => ({ ...current, phone }))}
+                        placeholder="(555) 123-4567"
                       />
                     </motion.label>
                   </motion.div>
