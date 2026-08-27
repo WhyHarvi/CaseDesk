@@ -171,3 +171,13 @@ test("an unconverted Case Easy search result unwraps the exact contact before re
   assert.match(page, /getCaseEasyImportContact\(requestedContactId\)[\s\S]*?data:\s*\[detail\.contact\]/);
   assert.doesNotMatch(page, /then\(\(contact\) => \(\{ data: \[contact\]/);
 });
+
+test("opening another Case Easy result syncs mounted search state before its debounce can clear the contact", async () => {
+  const page = await source("../../frontend/src/pages/CaseEasyImport.jsx");
+
+  assert.match(
+    page,
+    /if \(requestedContactId\) setSearchInput\(search\);[\s\S]*?\[requestedContactId, search\]/,
+  );
+  assert.match(page, /next\.delete\("contact"\)/);
+});

@@ -551,6 +551,14 @@ export default function CaseEasyImport() {
     }
   }, [searchParams]);
 
+  // Global search can navigate to another Case Easy contact while this page
+  // is already mounted. In that case useState keeps the previous input value;
+  // without syncing it first, the debounce below writes the stale value back
+  // to the URL and removes `contact`, replacing the selected row with page 1.
+  useEffect(() => {
+    if (requestedContactId) setSearchInput(search);
+  }, [requestedContactId, search]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const normalized = searchInput.trim();
