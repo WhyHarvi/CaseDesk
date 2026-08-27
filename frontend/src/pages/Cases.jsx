@@ -23,6 +23,7 @@ import CasesCommandBar from "../components/cases/CasesCommandBar";
 import { useAuth } from "../auth/AuthContext";
 import api from "../services/api";
 import CaseTypeCombobox from "../components/ui/CaseTypeCombobox";
+import LogoLoader from "../components/ui/LogoLoader";
 import StudyIntakeBadge from "../components/cases/StudyIntakeBadge";
 import StudyIntakeSelect from "../components/cases/StudyIntakeSelect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1346,7 +1347,7 @@ function CaseQuickViewDrawer({ item, onClose, onEdit, closing, canManage }) {
 
 export default function Cases() {
   const navigate = useNavigate();
-  const { role } = useAuth();
+  const { role, refreshIdentity } = useAuth();
   // Frontdesk can now look up and view any case, but editing its stage,
   // creating/removing applicants, and closing/archiving/deleting a case
   // remain admin/consultant only — enforced server-side too (caseRoutes.js).
@@ -1531,17 +1532,37 @@ export default function Cases() {
       } else {
         setLoading(true);
       }
+      setError("");
+
+      const loadCases = async () => {
+        let lastError;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            const get = quiet || attempt > 0 ? api.getFresh : api.get;
+            return await get("/cases", { params: { view, studyIntake, limit: 100 } });
+          } catch (requestError) {
+            lastError = requestError;
+            const status = Number(requestError?.response?.status);
+            if (status === 401) throw requestError;
+            if (status === 403 && attempt === 0) await refreshIdentity().catch(() => null);
+            if (attempt < 2) {
+              await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 500 : 1_200));
+            }
+          }
+        }
+        throw lastError;
+      };
 
       const requests = quiet
         ? [
-            api.getFresh("/cases", { params: { view, studyIntake, limit: 100 } }),
+            loadCases(),
             api.getFresh("/clients"),
             api.getFresh("/leads/staff"),
             api.getFresh("/client-documents"),
             api.getFresh("/cases/payment-summaries"),
           ]
         : [
-            api.get("/cases", { params: { view, studyIntake, limit: 100 } }),
+            loadCases(),
             api.get("/clients"),
             api.get("/leads/staff"),
             api.get("/client-documents"),
@@ -2178,13 +2199,10 @@ export default function Cases() {
               ) : null}
 
               {loading ? (
-                <div className="space-y-3 p-5 sm:p-6">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <div
-                      key={index}
-                      className="h-20 animate-pulse rounded-[1.5rem] border border-slate-200/60 bg-white/70"
-                    />
-                  ))}
+                <div className="flex min-h-80 flex-col items-center justify-center px-6 py-16 text-center" role="status" aria-live="polite">
+                  <LogoLoader size={72} />
+                  <p className="mt-5 text-sm font-semibold text-slate-700">Loading cases…</p>
+                  <p className="mt-1 text-xs text-slate-400">Fetching your assigned casework</p>
                 </div>
               ) : !enrichedCases.length ? (
                 <EmptyState onCreate={openCreateForm} view={registerView} />
