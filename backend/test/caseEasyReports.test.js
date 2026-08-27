@@ -150,6 +150,26 @@ test("report detection distinguishes milestone and financial exports", () => {
   );
 });
 
+test("invoice exports win over overlapping payment-request columns", () => {
+  const headers = [
+    "Case Number",
+    "Number",
+    "Invoice Date",
+    "Read",
+    "Surcharges",
+    "Paid Date",
+    "Taxable Amount",
+    "Tax Exempt Amount",
+    "Expense",
+  ];
+
+  assert.equal(detectCaseEasyReportType(headers).type, "invoices");
+  assert.equal(
+    inferCaseEasyReportTypeFromFileName("Invoices Export 2026-08-26.xlsx"),
+    "invoices",
+  );
+});
+
 test("official identity-only Case Information exports are accepted by filename", () => {
   const headers = [
     "Case Number",

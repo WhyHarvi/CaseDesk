@@ -233,10 +233,35 @@ export async function createCustomCaseForm(req, res) {
 async function storeUploadedCaseFormCopy(req, res, { versionSource, allowedCopyTypes, defaultCopyType, activityAction }) {
   await requireFormPermission(req, "canEdit");
   if (!req.file) throw createHttpError(400, "A form file is required");
-  const existing = await prisma.caseForm.findFirst({ where: caseFormAccessWhere(req, { id: req.params.id }) });
+  const existing = await prisma.caseForm.findFirst({
+    where: caseFormAccessWhere(req, { id: req.params.id }),
+    include: {
+      signatureRequests: {
+        where: { status: "Signed" },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
   if (!existing) throw createHttpError(404, "Case form not found");
   assertFormUnlocked(existing);
   const copyType = allowedCopyTypes.has(req.body.copyType) ? req.body.copyType : defaultCopyType;
+  // A signed request is durable even if an older browser autosave already
+  // changed the form's top-level copy pointer back to Working. Never let a
+  // browser/autofill save replace a client-signed or finalized current copy;
+  // the signed PDF remains the authoritative form unless staff explicitly
+  // uploads another ClientSigned copy.
+  if (
+    copyType !== "ClientSigned" &&
+    (["ClientSigned", "Finalized"].includes(existing.currentCopyType) ||
+      existing.signatureRequests.length > 0)
+  ) {
+    throw createHttpError(
+      423,
+      "This form has already been signed and cannot be replaced by a working copy.",
+      "SIGNED_FORM_IMMUTABLE",
+    );
+  }
   const extension = path.extname(req.file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "").slice(0, 12);
   const storageKey = path.posix.join(req.user.agencyId, existing.caseId, "forms", `${randomUUID()}${extension}`);
   await uploadStorageFile(DOCUMENT_BUCKET, storageKey, req.file.buffer, req.file.mimetype);

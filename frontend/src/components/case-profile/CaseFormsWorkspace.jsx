@@ -93,16 +93,37 @@ function FormActions({
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const menuRef = useRef(null);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 224, maxHeight: 320 });
   useEffect(() => {
     if (!open) return undefined;
     const place = () => {
       const rect = buttonRef.current?.getBoundingClientRect();
-      if (rect)
-        setPosition({
-          top: Math.min(rect.bottom + 7, window.innerHeight - 190),
-          left: Math.max(12, rect.right - 210),
-        });
+      if (!rect) return;
+      const padding = 12;
+      const gap = 7;
+      const width = Math.min(224, Math.max(40, window.innerWidth - padding * 2));
+      const maxHeight = Math.max(40, window.innerHeight - padding * 2);
+      const measuredHeight = Math.min(
+        menuRef.current?.getBoundingClientRect().height || 320,
+        maxHeight,
+      );
+      const roomBelow = window.innerHeight - rect.bottom - padding;
+      const roomAbove = rect.top - padding;
+      const preferredTop = roomBelow >= measuredHeight + gap || roomBelow >= roomAbove
+        ? rect.bottom + gap
+        : rect.top - measuredHeight - gap;
+      setPosition({
+        top: Math.min(
+          Math.max(padding, preferredTop),
+          window.innerHeight - measuredHeight - padding,
+        ),
+        left: Math.min(
+          Math.max(padding, rect.right - width),
+          window.innerWidth - width - padding,
+        ),
+        width,
+        maxHeight,
+      });
     };
     const outside = (event) => {
       if (
@@ -112,6 +133,11 @@ function FormActions({
         setOpen(false);
     };
     place();
+    const animationFrame = window.requestAnimationFrame(place);
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(place);
+    if (menuRef.current) resizeObserver?.observe(menuRef.current);
     document.addEventListener("pointerdown", outside);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
@@ -119,6 +145,8 @@ function FormActions({
       document.removeEventListener("pointerdown", outside);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver?.disconnect();
     };
   }, [open]);
   const action = (handler) => () => {
@@ -146,9 +174,10 @@ function FormActions({
                 position: "fixed",
                 top: position.top,
                 left: position.left,
-                width: 224,
+                width: position.width,
+                maxHeight: position.maxHeight,
               }}
-              className="z-[405] max-h-[min(32rem,calc(100vh-24px))] overflow-y-auto rounded-2xl border border-white/90 bg-white/95 p-1.5 shadow-[0_18px_55px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/5 backdrop-blur-xl"
+              className="z-[405] overflow-y-auto rounded-2xl border border-white/90 bg-white/95 p-1.5 shadow-[0_18px_55px_rgba(15,23,42,0.22)] ring-1 ring-slate-900/5 backdrop-blur-xl"
             >
               {item.source === "Catalog" ? (
                 <button

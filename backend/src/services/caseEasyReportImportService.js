@@ -30,6 +30,11 @@ export const CASE_EASY_REPORT_DEFINITIONS = {
   invoices: {
     label: "Invoices",
     signatures: ["Surcharges", "Paid Date", "Invoice Date", "Read"],
+    // Case Easy's invoice and payment-request exports otherwise share nearly
+    // every financial column. Paid Date is the stable invoice-only header in
+    // the real exports; without treating it as decisive, the three tax and
+    // expense columns make genuine invoices score as Payment Requests.
+    discriminator: "Paid Date",
     naturalKey: ["Case Number", "Number", "Invoice Date"],
   },
   payments: {
@@ -139,6 +144,8 @@ export function inferCaseEasyReportTypeFromFileName(fileName) {
     return "case_information";
   }
   if (normalized.includes("casetypesexport")) return "case_types";
+  if (normalized.includes("paymentrequest")) return "payment_requests";
+  if (normalized.includes("invoice")) return "invoices";
   return null;
 }
 
@@ -264,6 +271,18 @@ function chunksOf(items, size) {
 
 export function detectCaseEasyReportType(headers) {
   const normalized = new Set(headers.map(normalizeKey));
+  const discriminated = Object.entries(CASE_EASY_REPORT_DEFINITIONS)
+    .filter(([, definition]) => definition.discriminator)
+    .filter(([, definition]) =>
+      normalized.has(normalizeKey(definition.discriminator)),
+    );
+  if (discriminated.length === 1) {
+    return {
+      type: discriminated[0][0],
+      confidence: "detected",
+      matches: [discriminated[0][0]],
+    };
+  }
   const scored = Object.entries(CASE_EASY_REPORT_DEFINITIONS)
     .map(([type, definition]) => ({
       type,

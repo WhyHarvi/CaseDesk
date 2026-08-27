@@ -229,6 +229,28 @@ test("a client-signed or finalized IMM 5476 is served exactly as stored, even af
   assert.match(controller, /const buffer = isImm5476 && !isSignedCopy\s*\n\s*\? await stampXfaPdfFormValues/);
 });
 
+test("browser autosaves cannot downgrade a client-signed form to in progress", async () => {
+  const controller = await readFile(new URL("../src/controllers/caseFormController.js", import.meta.url), "utf8");
+  const storeCopy = controller.slice(
+    controller.indexOf("async function storeUploadedCaseFormCopy"),
+    controller.indexOf("export async function uploadCaseForm"),
+  );
+
+  assert.match(storeCopy, /signatureRequests:[\s\S]*?status:\s*"Signed"/);
+  assert.match(storeCopy, /existing\.signatureRequests\.length > 0/);
+  assert.match(storeCopy, /SIGNED_FORM_IMMUTABLE/);
+});
+
+test("case form action menus measure and stay inside the viewport", async () => {
+  const workspace = await source("../../frontend/src/components/case-profile/CaseFormsWorkspace.jsx");
+
+  assert.match(workspace, /menuRef\.current\?\.getBoundingClientRect\(\)\.height/);
+  assert.match(workspace, /window\.innerHeight - measuredHeight - padding/);
+  assert.match(workspace, /window\.innerWidth - width - padding/);
+  assert.match(workspace, /new ResizeObserver\(place\)/);
+  assert.match(workspace, /createPortal\(/);
+});
+
 test("preparing IMM 5476 fills the date beside both representative and client signatures", async () => {
   const renderer = await source("../src/services/pdfFormRenderService.js");
   assert.match(renderer, /const signedDate = existingDate \|\| new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/);
