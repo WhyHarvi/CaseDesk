@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import prisma from "./prisma/client.js";
 import {
+  caseEasyAssigneeNameMatches,
   normalizeKey,
   resolveCaseEasyLinks,
 } from "./caseEasyImportService.js";
@@ -899,6 +900,70 @@ export async function refreshCaseEasyReportProductionLinks(agencyId) {
     await resolveCaseEasyLinks(agencyId);
   }
   return resolveCaseEasyReportLinks(agencyId);
+}
+
+// Turns linked Activity Tracker rows into real Notes — the one report type
+// that carries genuine narrative case-note content (Case Easy's Cases
+// export only ever has a single "last note", no history; see
+// convertCaseEasyImportContact for that path). Idempotent via
+// materializedNoteId, so it's always safe to re-run: already-materialized
+// rows are skipped, so calling this again after a fresh upload only
+// processes what's newly linked. Rows with no real description are skipped
+// rather than creating an empty/noise note.
+export async function materializeCaseEasyActivityNotes(agencyId) {
+  const rows = await prisma.caseEasyImportReportRow.findMany({
+    where: {
+      agencyId,
+      reportType: "activity_tracker",
+      linkStatus: "linked",
+      materializedNoteId: null,
+      OR: [{ linkedClientId: { not: null } }, { linkedCaseId: { not: null } }],
+    },
+  });
+  const stats = { created: 0, skipped: 0 };
+  if (!rows.length) return stats;
+
+  // Same fail-safe as case assignee resolution: an unrecognized or
+  // ambiguous "Created By" name is left unattributed (userId: null) rather
+  // than guessed — the exact format Case Easy uses for this column isn't
+  // confirmed yet (no real Activity Tracker data has been imported), so
+  // this deliberately never trusts a loose match.
+  const users = await prisma.user.findMany({
+    where: { agencyId, status: "active", role: { in: ["admin", "consultant"] } },
+    select: { id: true, fullName: true },
+  });
+
+  for (const row of rows) {
+    const raw = row.rawData || {};
+    const description = String(raw["Description"] ?? "").trim();
+    if (!description) {
+      stats.skipped += 1;
+      continue;
+    }
+    const activityType = String(raw["Activity Type"] ?? "").trim();
+    const activityDateRaw = raw["Activity Date"];
+    const parsedActivityDate = activityDateRaw ? new Date(activityDateRaw) : null;
+    const noteDate = parsedActivityDate && !Number.isNaN(parsedActivityDate.getTime()) ? parsedActivityDate : row.importedAt;
+    const createdBy = String(raw["Created By"] ?? "").trim();
+    const matchedAuthor = createdBy
+      ? users.find((user) => caseEasyAssigneeNameMatches(createdBy, user.fullName))
+      : null;
+
+    const note = await prisma.note.create({
+      data: {
+        agencyId,
+        clientId: row.linkedClientId,
+        caseId: row.linkedCaseId,
+        content: `Imported from Case Easy Activity Tracker${activityType ? ` (${activityType})` : ""}, dated ${noteDate.toISOString().slice(0, 10)}:\n\n${description}`,
+        createdAt: noteDate,
+        userId: matchedAuthor?.id || null,
+        clientVisible: false,
+      },
+    });
+    await prisma.caseEasyImportReportRow.update({ where: { id: row.id }, data: { materializedNoteId: note.id } });
+    stats.created += 1;
+  }
+  return stats;
 }
 
 export async function importCaseEasyReport({

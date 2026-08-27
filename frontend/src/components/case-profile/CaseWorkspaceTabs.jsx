@@ -50,7 +50,9 @@ import CaseFormsWorkspace from "./CaseFormsWorkspace";
 import TasksWorkspace from "./TasksWorkspace";
 import AgreementsLettersWorkspace from "./AgreementsLettersWorkspace";
 import AppointmentsWorkspace from "./AppointmentsWorkspace";
+import CaseEasyOriginBadge from "../clients/CaseEasyOriginBadge";
 import CaseBillingWorkspace from "./CaseBillingWorkspace";
+import CaseEasyHistoricalLedgerCard from "./CaseEasyHistoricalLedgerCard";
 import CasePaymentScheduleWorkspace from "./CasePaymentScheduleWorkspace";
 import RetainerStatusCard from "./RetainerStatusCard";
 const CommunicationWorkspace = lazyWithRetry(
@@ -2560,6 +2562,12 @@ function ProfileDetailsGrid({
 
     return (
       <div className="space-y-4">
+        {caseItem.caseEasyImportCases?.length ? (
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
+            <p className="text-sm text-slate-600">This case was imported from Case Easy.</p>
+            <CaseEasyOriginBadge />
+          </div>
+        ) : null}
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <DetailField label="Full name" value={client.fullName} />
           <DetailField label="Email" value={client.email} />
@@ -2579,6 +2587,12 @@ function ProfileDetailsGrid({
             label="Assigned staff"
             value={caseItem.assignedUser?.fullName || "Unassigned"}
           />
+          {caseItem.additionalAssignedUsers?.length ? (
+            <DetailField
+              label="Also assigned"
+              value={caseItem.additionalAssignedUsers.map((user) => user.fullName).join(", ")}
+            />
+          ) : null}
           <DetailField label="Case type" value={caseItem.caseType} />
           <DetailField
             label="Case stage"
@@ -2588,6 +2602,9 @@ function ProfileDetailsGrid({
             label="Next action"
             value={caseItem.nextAction || "No action set"}
           />
+          {caseItem.openedAt ? (
+            <DetailField label="Opened" value={formatDate(caseItem.openedAt)} />
+          ) : null}
         </div>
         <ProfileQuestionnaireSection
           sectionId="applicantIdentity"
@@ -3410,6 +3427,8 @@ function BillingTabPanel({ caseItem, paymentSummary, highlightId, onOpenAgreemen
         </div>
         <RetainerStatusCard caseItem={caseItem} onOpenAgreementsTab={onOpenAgreementsTab} onStatusChange={setRetainerStatus} />
       </section>
+
+      <CaseEasyHistoricalLedgerCard caseId={caseItem.id} hasCaseEasyOrigin={Boolean(caseItem.caseEasyImportCases?.length)} />
     </div>
   );
 }

@@ -70,6 +70,10 @@ const include = {
     },
     orderBy: { assignedAt: "asc" },
   },
+  // take: 1 is enough to answer "did this case come from a Case Easy
+  // conversion" — the UI only needs a boolean, matching the same pattern
+  // clientController.js already uses for the client-level badge.
+  caseEasyImportCases: { select: { id: true }, take: 1 },
 };
 
 const fields = {
@@ -926,13 +930,26 @@ export const listCases = controller.list;
 
 // Unlike other case reads, the profile view must also load trashed cases so
 // staff can see the "in trash" state and restore from it.
+// additionalAssignedUserIds is a plain string array, not a real relation
+// Prisma can include (same pattern as AppointmentAdvice's own additional
+// assignees) — currently only ever populated by Case Easy conversion when
+// the legacy case named more than one assignee.
+async function withAdditionalAssignedUsers(data) {
+  if (!data) return data;
+  const ids = data.additionalAssignedUserIds || [];
+  if (!ids.length) return { ...data, additionalAssignedUsers: [] };
+  const users = await prisma.user.findMany({ where: { id: { in: ids }, agencyId: data.agencyId }, select: { id: true, fullName: true } });
+  const byId = new Map(users.map((user) => [user.id, user]));
+  return { ...data, additionalAssignedUsers: ids.map((id) => byId.get(id) || { id, fullName: "Former team member" }) };
+}
+
 export async function getCaseById(req, res) {
   const data = await prisma.case.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, ...caseAccessWhere(req), deletedAt: undefined },
     include,
   });
   if (!data) throw createHttpError(404, "Case not found.", "NOT_FOUND");
-  res.json({ data });
+  res.json({ data: await withAdditionalAssignedUsers(data) });
 }
 
 export async function softDeleteCase(req, res) {

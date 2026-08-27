@@ -10,6 +10,7 @@ import {
 import { useRef, useState } from "react";
 import api from "../../services/api";
 import Select from "../ui/Select";
+import { syncCaseEasyNotes } from "../../api/caseEasyImportApi";
 
 const REPORT_TYPES = [
   ["", "Auto-detect report"],
@@ -44,6 +45,22 @@ export default function CaseEasyReportImportPanel() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [syncError, setSyncError] = useState("");
+
+  async function runNoteSync() {
+    setSyncing(true);
+    setSyncError("");
+    setSyncResult(null);
+    try {
+      setSyncResult(await syncCaseEasyNotes());
+    } catch (reason) {
+      setSyncError(reason.response?.data?.message || "Notes could not be synced.");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   function chooseFile(nextFile) {
     setPreview(null);
@@ -117,6 +134,7 @@ export default function CaseEasyReportImportPanel() {
           </p>
           <p className="mt-1 text-sm text-emerald-700">
             All {result.stats.stored} source rows verified · {result.stats.created} added, {result.stats.updated} updated · {result.stats.aggregate || 0} aggregate, {result.stats.source_only || 0} source-only, {result.stats.linked} linked, {result.stats.standalone || 0} standalone companies, {result.stats.unlinked} unlinked, {result.stats.ambiguous} ambiguous.
+            {result.notesCreated ? ` ${result.notesCreated} note${result.notesCreated === 1 ? "" : "s"} added from Activity Tracker content.` : ""}
           </p>
           <button type="button" onClick={reset} className="mt-3 rounded-full border border-emerald-200 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-800">
             Import another report
@@ -229,6 +247,30 @@ export default function CaseEasyReportImportPanel() {
           ) : null}
         </div>
       )}
+
+      <div className="mt-6 border-t border-slate-100 pt-5">
+        <p className="text-sm font-semibold text-slate-900">Sync notes from imported data</p>
+        <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+          Adds real notes to converted clients/cases from any imported Case Easy data that hasn&apos;t been turned into a note yet — an already-converted case&apos;s last recorded note, or newly-linked Activity Tracker rows. Safe to run any time; already-synced notes are never duplicated.
+        </p>
+        {syncResult ? (
+          <p className="mt-2 text-xs font-medium text-emerald-700">
+            {syncResult.created
+              ? `${syncResult.created} note${syncResult.created === 1 ? "" : "s"} added (${syncResult.lastNoteStats.created} from converted cases, ${syncResult.activityStats.created} from Activity Tracker).`
+              : "Nothing new to sync — every available note is already in CaseDesk."}
+          </p>
+        ) : null}
+        {syncError ? <p className="mt-2 text-xs font-medium text-rose-600">{syncError}</p> : null}
+        <button
+          type="button"
+          disabled={syncing}
+          onClick={runNoteSync}
+          className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {syncing ? "Syncing…" : "Sync notes now"}
+        </button>
+      </div>
     </section>
   );
 }

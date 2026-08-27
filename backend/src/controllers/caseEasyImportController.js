@@ -12,12 +12,14 @@ import {
   classifyWorkbookHeaders,
   importCaseEasyExports,
   isUsableCaseEasyCaseType,
+  materializeCaseEasyLastNotes,
   readSheetRowsFromWorkbook,
 } from "../services/caseEasyImportService.js";
 import {
   CASE_EASY_REPORT_DEFINITIONS,
   inferCaseEasyReportTypeFromFileName,
   importCaseEasyReport,
+  materializeCaseEasyActivityNotes,
   refreshCaseEasyReportProductionLinks,
 } from "../services/caseEasyReportImportService.js";
 import { calculateCrsScore } from "./caseAssessmentController.js";
@@ -373,13 +375,43 @@ export async function previewCaseEasyReportUpload(req, res) {
 
 export async function confirmCaseEasyReportUpload(req, res) {
   const result = await runReportImport(req, true);
+  // Always attempted, not gated to reportType === "activity_tracker" — an
+  // unrelated upload (e.g. a fresh Client Listing) can newly link
+  // previously-unlinked activity_tracker rows too via the identifier
+  // backfill this same import triggers, and materializeCaseEasyActivityNotes
+  // is idempotent/cheap when there's nothing new to do.
+  const noteStats = await materializeCaseEasyActivityNotes(req.user.agencyId);
   await recordActivity({
     agencyId: req.user.agencyId,
     userId: req.user.id,
     action: "case_easy_report.uploaded",
-    details: `Imported ${result.rowCount} ${result.reportLabel} row(s) from Case Easy`,
+    details: `Imported ${result.rowCount} ${result.reportLabel} row(s) from Case Easy${noteStats.created ? ` — ${noteStats.created} note(s) added from Activity Tracker` : ""}`,
   });
-  res.status(201).json({ data: result });
+  res.status(201).json({ data: { ...result, notesCreated: noteStats.created } });
+}
+
+// Manual, explicitly-triggered action — deliberately not run automatically
+// against already-converted cases (only new conversions and new Activity
+// Tracker uploads trigger note creation on their own). Lets an admin decide
+// when to backfill notes for cases that were converted before this existed,
+// or re-run after fixing a linking issue, rather than it happening as a
+// surprise side effect of something else.
+export async function syncCaseEasyNotes(req, res) {
+  const agencyId = req.user.agencyId;
+  const [lastNoteStats, activityStats] = await Promise.all([
+    materializeCaseEasyLastNotes(agencyId),
+    materializeCaseEasyActivityNotes(agencyId),
+  ]);
+  const created = lastNoteStats.created + activityStats.created;
+  if (created) {
+    await recordActivity({
+      agencyId,
+      userId: req.user.id,
+      action: "case_easy_import.notes_synced",
+      details: `${created} note(s) synced from Case Easy import data (${lastNoteStats.created} from converted cases' last note, ${activityStats.created} from Activity Tracker)`,
+    });
+  }
+  res.json({ data: { lastNoteStats, activityStats, created } });
 }
 
 export async function listCaseEasyReportRows(req, res) {
@@ -520,6 +552,26 @@ export async function getCaseEasyReportsForClient(req, res) {
   res.json({ data: rows });
 }
 
+export async function getCaseEasyReportsForCase(req, res) {
+  const caseRecord = await prisma.case.findFirst({
+    where: { id: req.params.caseId, agencyId: req.user.agencyId },
+    select: { id: true },
+  });
+  if (!caseRecord) throw createHttpError(404, "Case not found.");
+  const rows = await prisma.caseEasyImportReportRow.findMany({
+    where: {
+      agencyId: req.user.agencyId,
+      OR: [
+        { linkedCaseId: caseRecord.id },
+        { linkedCaseId: null, linkedImportCase: { convertedCaseId: caseRecord.id } },
+      ],
+    },
+    orderBy: [{ reportType: "asc" }, { importedAt: "desc" }],
+    take: 250,
+  });
+  res.json({ data: rows });
+}
+
 export async function getCaseEasyImportContact(req, res) {
   const agencyId = req.user.agencyId;
   const contact = await prisma.caseEasyImportContact.findFirst({
@@ -639,9 +691,21 @@ export async function convertCaseEasyImportContact(req, res) {
         .filter(Boolean),
     ),
   ];
+  // Additional assignees are never explicitly overridden by the request
+  // (only the primary is, via caseInput.assignedUserId) — every staging
+  // case's resolvedAdditionalAssigneeUserIds needs the exact same
+  // active-admin/consultant recheck as the primary fallback, batched into
+  // the same query rather than a separate one per case.
+  const additionalAssigneeIds = [
+    ...new Set(
+      casesInput.flatMap(
+        (caseInput) => linkedCaseById.get(caseInput.caseEasyImportCaseId)?.resolvedAdditionalAssigneeUserIds || [],
+      ),
+    ),
+  ];
   const eligibleFallbackAssigneeIds = new Set(
-    fallbackAssigneeIds.length
-      ? (await prisma.user.findMany({ where: { id: { in: fallbackAssigneeIds }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
+    fallbackAssigneeIds.length || additionalAssigneeIds.length
+      ? (await prisma.user.findMany({ where: { id: { in: [...new Set([...fallbackAssigneeIds, ...additionalAssigneeIds])] }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
       : [],
   );
 
@@ -813,6 +877,17 @@ export async function convertCaseEasyImportContact(req, res) {
         if (!caseType) continue;
 
         const suggested = mapCaseEasyStatus(stagingCase.status);
+        const primaryAssigneeId = caseInput.assignedUserId || (eligibleFallbackAssigneeIds.has(stagingCase.resolvedAssigneeUserId) ? stagingCase.resolvedAssigneeUserId : null);
+        // A reviewer can override the additional assignees the same way they
+        // can already override the primary; otherwise falls back to what
+        // resolveCaseEasyLinks resolved. Either way, run through the exact
+        // same active-admin/consultant eligibility check as the primary, and
+        // never duplicate whoever ended up as this case's primary.
+        const requestedAdditionalIds = Array.isArray(caseInput.additionalAssignedUserIds)
+          ? caseInput.additionalAssignedUserIds.filter(Boolean)
+          : stagingCase.resolvedAdditionalAssigneeUserIds || [];
+        const additionalAssignedUserIds = [...new Set(requestedAdditionalIds)]
+          .filter((id) => id !== primaryAssigneeId && eligibleFallbackAssigneeIds.has(id));
         const newCase = await tx.case.create({
           data: {
             agencyId,
@@ -821,13 +896,37 @@ export async function convertCaseEasyImportContact(req, res) {
             stage: caseInput.stage || suggested.stage,
             status: caseInput.status || suggested.status,
             priority: caseInput.priority || "Normal",
-            assignedUserId: caseInput.assignedUserId || (eligibleFallbackAssigneeIds.has(stagingCase.resolvedAssigneeUserId) ? stagingCase.resolvedAssigneeUserId : null),
+            assignedUserId: primaryAssigneeId,
+            additionalAssignedUserIds,
             nextAction: caseInput.nextAction || null,
             submittedAt: caseInput.submittedAt ? new Date(caseInput.submittedAt) : stagingCase.submitted,
             decisionAt: caseInput.decisionAt ? new Date(caseInput.decisionAt) : stagingCase.approved || stagingCase.refused || null,
+            openedAt: stagingCase.opened || null,
             archivedAt: (caseInput.archived ?? suggested.archived) ? new Date() : null,
           },
         });
+        // Case Easy's Cases export only ever carries a single "last note" per
+        // case (no author, no history) — this is the one piece of narrative
+        // note content recoverable from that export, so it's copied over
+        // honestly: real historical date, no fabricated author. userId stays
+        // null (Note.userId is nullable) rather than crediting whoever
+        // happens to run the conversion — the UI already shows "Team note"
+        // for an author-less note.
+        let importedNoteId = null;
+        if (String(stagingCase.lastNote || "").trim()) {
+          const importedNote = await tx.note.create({
+            data: {
+              agencyId,
+              clientId: client.id,
+              caseId: newCase.id,
+              content: `Imported from Case Easy — last recorded note, dated ${(stagingCase.lastNoteDate || stagingCase.modified || newCase.createdAt).toISOString().slice(0, 10)}:\n\n${stagingCase.lastNote.trim()}`,
+              createdAt: stagingCase.lastNoteDate || stagingCase.modified || newCase.createdAt,
+              userId: null,
+              clientVisible: false,
+            },
+          });
+          importedNoteId = importedNote.id;
+        }
 
         // UCI remains case-scoped. Marital status is copied from the
         // canonical client profile into each case assessment so official
@@ -850,7 +949,7 @@ export async function convertCaseEasyImportContact(req, res) {
           caseType: newCase.caseType,
         });
 
-        await tx.caseEasyImportCase.update({ where: { id: stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id } });
+        await tx.caseEasyImportCase.update({ where: { id: stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id, materializedNoteId: importedNoteId } });
         await tx.caseEasyImportReportRow.updateMany({
           where: { agencyId, linkedImportCaseId: stagingCase.id },
           data: { linkedCaseId: newCase.id, linkedClientId: client.id },
@@ -929,7 +1028,10 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
   // rather than trusted as-is before it becomes a real Case's assignedUserId.
   const candidateFallbackAssigneeIds = [
     ...new Set(
-      contacts.flatMap((contact) => contact.linkedCases.map((stagingCase) => stagingCase.resolvedAssigneeUserId)).filter(Boolean),
+      contacts.flatMap((contact) => contact.linkedCases.flatMap((stagingCase) => [
+        stagingCase.resolvedAssigneeUserId,
+        ...(stagingCase.resolvedAdditionalAssigneeUserIds || []),
+      ])).filter(Boolean),
     ),
   ];
   const eligibleFallbackAssigneeIds = new Set(
@@ -1019,6 +1121,9 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
           const lockedStagingCase = await tx.caseEasyImportCase.findUnique({ where: { id: planned.stagingCase.id }, select: { importStatus: true } });
           if (lockedStagingCase?.importStatus === "converted") continue;
 
+          const bulkPrimaryAssigneeId = eligibleFallbackAssigneeIds.has(planned.stagingCase.resolvedAssigneeUserId) ? planned.stagingCase.resolvedAssigneeUserId : null;
+          const bulkAdditionalAssignedUserIds = [...new Set(planned.stagingCase.resolvedAdditionalAssigneeUserIds || [])]
+            .filter((id) => id !== bulkPrimaryAssigneeId && eligibleFallbackAssigneeIds.has(id));
           const newCase = await tx.case.create({
             data: {
               agencyId,
@@ -1027,13 +1132,30 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
               stage: planned.stage,
               status: planned.status,
               priority: "Normal",
-              assignedUserId: eligibleFallbackAssigneeIds.has(planned.stagingCase.resolvedAssigneeUserId) ? planned.stagingCase.resolvedAssigneeUserId : null,
+              assignedUserId: bulkPrimaryAssigneeId,
+              additionalAssignedUserIds: bulkAdditionalAssignedUserIds,
               nextAction: TERMINAL_CASE_STATUSES.has(planned.status) ? null : "Review imported case",
               submittedAt: planned.stagingCase.submitted,
               decisionAt: planned.stagingCase.approved || planned.stagingCase.refused || null,
+              openedAt: planned.stagingCase.opened || null,
               archivedAt: planned.archived ? new Date() : null,
             },
           });
+          let bulkImportedNoteId = null;
+          if (String(planned.stagingCase.lastNote || "").trim()) {
+            const importedNote = await tx.note.create({
+              data: {
+                agencyId,
+                clientId: client.id,
+                caseId: newCase.id,
+                content: `Imported from Case Easy — last recorded note, dated ${(planned.stagingCase.lastNoteDate || planned.stagingCase.modified || newCase.createdAt).toISOString().slice(0, 10)}:\n\n${planned.stagingCase.lastNote.trim()}`,
+                createdAt: planned.stagingCase.lastNoteDate || planned.stagingCase.modified || newCase.createdAt,
+                userId: null,
+                clientVisible: false,
+              },
+            });
+            bulkImportedNoteId = importedNote.id;
+          }
 
           const uci = planned.stagingCase.reportRows?.[0]?.uci || contact.uci;
           const formData = {};
@@ -1047,7 +1169,7 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
             caseType: newCase.caseType,
           });
 
-          await tx.caseEasyImportCase.update({ where: { id: planned.stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id } });
+          await tx.caseEasyImportCase.update({ where: { id: planned.stagingCase.id }, data: { importStatus: "converted", convertedCaseId: newCase.id, materializedNoteId: bulkImportedNoteId } });
           await tx.caseEasyImportReportRow.updateMany({
             where: { agencyId, linkedImportCaseId: planned.stagingCase.id },
             data: { linkedCaseId: newCase.id, linkedClientId: client.id },

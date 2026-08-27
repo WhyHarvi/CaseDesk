@@ -311,6 +311,7 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
           archived: suggested.archived || false,
           priority: "Normal",
           assignedUserId: kase.resolvedAssigneeUserId || "",
+          additionalAssignedUserIds: kase.resolvedAdditionalAssigneeUserIds || [],
           nextAction: "Review imported Case Easy file",
           uci: kase.reportRows?.[0]?.uci || full.uci || "",
           maritalStatus: full.maritalStatus || "",
@@ -354,6 +355,7 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
           status: form.status,
           priority: form.priority,
           assignedUserId: form.assignedUserId || null,
+          additionalAssignedUserIds: form.additionalAssignedUserIds || [],
           nextAction: form.nextAction || null,
           archived: form.archived,
           uci: form.uci || null,
@@ -460,11 +462,46 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
                           </label>
                           <label className="text-xs font-medium text-slate-600">
                             Assignee
-                            <Select className="mt-1 w-full" value={form.assignedUserId} onChange={(event) => updateCaseForm(index, { assignedUserId: event.target.value })}>
+                            <Select
+                              className="mt-1 w-full"
+                              value={form.assignedUserId}
+                              onChange={(event) => {
+                                const nextPrimary = event.target.value;
+                                updateCaseForm(index, {
+                                  assignedUserId: nextPrimary,
+                                  additionalAssignedUserIds: (form.additionalAssignedUserIds || []).filter((id) => id !== nextPrimary),
+                                });
+                              }}
+                            >
                               <option value="">Unassigned</option>
                               {staff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
                             </Select>
                           </label>
+                          {staff.length > 1 ? (
+                            <div className="text-xs font-medium text-slate-600 sm:col-span-2">
+                              Also assign (optional)
+                              <p className="mt-0.5 font-normal text-[11px] text-slate-400">Case Easy listed more than one person on this case — pick who else should stay attached. Purely informational; the assignee above is still the sole task owner.</p>
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {staff.filter((person) => person.id !== form.assignedUserId).map((person) => {
+                                  const checked = (form.additionalAssignedUserIds || []).includes(person.id);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={person.id}
+                                      onClick={() => updateCaseForm(index, {
+                                        additionalAssignedUserIds: checked
+                                          ? form.additionalAssignedUserIds.filter((id) => id !== person.id)
+                                          : [...(form.additionalAssignedUserIds || []), person.id],
+                                      })}
+                                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition ${checked ? "bg-slate-950 text-white ring-slate-950" : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300"}`}
+                                    >
+                                      {person.fullName}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
                           <label className="text-xs font-medium text-slate-600">
                             Stage
                             <Select value={form.stage} onChange={(event) => updateCaseForm(index, { stage: event.target.value })} className="mt-1 w-full">

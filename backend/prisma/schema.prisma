@@ -2296,6 +2296,12 @@ model Case {
   agencyId                     String                           @map("agency_id")
   clientId                     String                           @map("client_id")
   assignedUserId               String?                          @map("assigned_user_id")
+  // Extra consultants beyond assignedUserId (the primary owner) — currently
+  // only ever populated by Case Easy conversion, when the legacy case named
+  // more than one assignee. Purely informational: nothing outside display
+  // code reads this, unlike CaseAssignment (which incentives/notifications/
+  // access control all read live) — deliberately kept inert.
+  additionalAssignedUserIds    String[]                         @default([]) @map("additional_assigned_user_ids")
   caseType                     String                           @map("case_type")
   stage                        String
   status                       String
@@ -2303,6 +2309,11 @@ model Case {
   nextAction                   String?                          @map("next_action")
   submittedAt                  DateTime?                        @map("submitted_at")
   decisionAt                   DateTime?                        @map("decision_at")
+  // When this case actually opened, per its original source (currently only
+  // populated by Case Easy conversion) — distinct from createdAt, which is
+  // always the moment the real CaseDesk record was created, not when the
+  // underlying case genuinely began.
+  openedAt                     DateTime?                        @map("opened_at")
   studyIntakeMonth             DateTime?                        @map("study_intake_month") @db.Date
   creationIdempotencyKey       String?                          @map("creation_idempotency_key")
   // IRCC application number, once known — requested on nearly every
@@ -5529,7 +5540,19 @@ model CaseEasyImportCase {
   needsReviewReason          CaseEasyCaseReviewReason?  @map("needs_review_reason")
   needsReviewReasons         CaseEasyCaseReviewReason[] @default([]) @map("needs_review_reasons")
   resolvedAssigneeUserId     String?                    @map("resolved_assignee_user_id")
+  // Every other assignee name Case Easy listed that also resolved to a real
+  // active user, beyond the one held in resolvedAssigneeUserId above. A case
+  // used to need needsReviewReason: assignee_mismatch whenever it had more
+  // than one assignee at all — this is what lets a genuinely multi-assignee
+  // case (e.g. "Gagandeep Singh D.;Simar K.") resolve and convert instead of
+  // being stuck in review forever just because it named two people.
+  resolvedAdditionalAssigneeUserIds String[]            @default([]) @map("resolved_additional_assignee_user_ids")
   convertedCaseId            String?                    @map("converted_case_id")
+  // Set once this case's lastNote has been turned into a real Note (either
+  // at conversion time, or via the backfill for cases converted before this
+  // existed) — same idempotency purpose as CaseEasyImportReportRow's own
+  // materializedNoteId, so the backfill can always be safely re-run.
+  materializedNoteId         String?                    @map("materialized_note_id")
   createdAt                  DateTime                   @default(now()) @map("created_at")
   updatedAt                  DateTime                   @updatedAt @map("updated_at")
   agency                     Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -5576,6 +5599,11 @@ model CaseEasyImportReportRow {
   linkedImportCaseId String?                    @map("linked_import_case_id")
   linkedClientId     String?                    @map("linked_client_id")
   linkedCaseId       String?                    @map("linked_case_id")
+  // Set once this row's narrative content (currently only activity_tracker
+  // rows) has been turned into a real Note — makes materializing notes from
+  // linked report rows idempotent, so it can safely run again after every
+  // future report upload without ever double-creating the same note.
+  materializedNoteId String?                    @map("materialized_note_id")
   createdAt          DateTime                   @default(now()) @map("created_at")
   updatedAt          DateTime                   @updatedAt @map("updated_at")
   agency             Agency                     @relation(fields: [agencyId], references: [id], onDelete: Cascade)

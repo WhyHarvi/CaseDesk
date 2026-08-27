@@ -4,6 +4,7 @@ import {
   confirmCaseEasyImportUpload,
   confirmCaseEasyReportUpload,
   convertCaseEasyImportContact,
+  getCaseEasyReportsForCase,
   getCaseEasyReportsForClient,
   getCaseEasyReportSummary,
   getCaseEasyImportContact,
@@ -13,6 +14,7 @@ import {
   listUnlinkedCaseEasyImportCases,
   previewCaseEasyImportUpload,
   previewCaseEasyReportUpload,
+  syncCaseEasyNotes,
 } from "../controllers/caseEasyImportController.js";
 import { requireRole } from "../middleware/authorization.js";
 import {
@@ -34,6 +36,7 @@ router.post("/preview", uploadLimiter, receiveCaseEasyImportFiles, asyncHandler(
 router.post("/upload", uploadLimiter, receiveCaseEasyImportFiles, asyncHandler(confirmCaseEasyImportUpload));
 router.post("/reports/preview", uploadLimiter, receiveCaseEasyReportFile, asyncHandler(previewCaseEasyReportUpload));
 router.post("/reports/upload", uploadLimiter, receiveCaseEasyReportFile, asyncHandler(confirmCaseEasyReportUpload));
+router.post("/notes/sync", rateLimit({ windowMs: 60_000, max: 5 }), asyncHandler(syncCaseEasyNotes));
 
 router.get("/contacts", asyncHandler(listCaseEasyImportContacts));
 router.get("/unlinked-cases", asyncHandler(listUnlinkedCaseEasyImportCases));
@@ -41,6 +44,7 @@ router.get("/imported-cases", asyncHandler(listImportedCases));
 router.get("/reports/summary", asyncHandler(getCaseEasyReportSummary));
 router.get("/reports", asyncHandler(listCaseEasyReportRows));
 router.get("/clients/:clientId/reports", asyncHandler(getCaseEasyReportsForClient));
+router.get("/cases/:caseId/reports", asyncHandler(getCaseEasyReportsForCase));
 router.get("/contacts/:id", asyncHandler(getCaseEasyImportContact));
 router.post("/contacts/:id/convert", rateLimit({ windowMs: 60_000, max: 20 }), asyncHandler(convertCaseEasyImportContact));
 // Heavier per-call weight than a single convert (up to 200 client creations

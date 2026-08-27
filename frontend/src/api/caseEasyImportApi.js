@@ -58,3 +58,16 @@ export async function getCaseEasyReportsForClient(clientId) {
   );
   return response.data.data;
 }
+
+export async function syncCaseEasyNotes() {
+  const response = await api.post("/case-easy-import/notes/sync", {}, { timeout: 60_000 });
+  return response.data.data;
+}
+
+export async function getCaseEasyReportsForCase(caseId) {
+  const response = await api.get(
+    `/case-easy-import/cases/${caseId}/reports`,
+    { cache: false },
+  );
+  return response.data.data;
+}

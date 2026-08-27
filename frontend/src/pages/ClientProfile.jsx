@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  FileSpreadsheet,
   FileText,
   History,
   IdCard,
@@ -37,6 +38,7 @@ import { useAuth } from "../auth/AuthContext";
 import ClientAppointmentsCard from "../components/appointments/ClientAppointmentsCard";
 import AppointmentProfileOverlay from "../components/appointments/AppointmentProfileOverlay";
 import ClientBillingCard from "../components/clients/ClientBillingCard";
+import ClientCaseEasyLedgerCard from "../components/clients/ClientCaseEasyLedgerCard";
 import ClientCommunicationCard from "../components/clients/ClientCommunicationCard";
 import ClientEditDrawer from "../components/clients/ClientEditDrawer";
 import NoteDeleteOverlay from "../components/case-profile/notes/NoteDeleteOverlay";
@@ -301,14 +303,30 @@ function NoteForm({
   );
 }
 
+// The exact prefix every Case Easy note-materialization path writes
+// (conversion-time, materializeCaseEasyLastNotes, and
+// materializeCaseEasyActivityNotes) — a reliable way to label an imported
+// note without a separate schema field, since it's fully controlled by
+// that same code.
+const CASE_EASY_NOTE_PREFIX = "Imported from Case Easy";
+
 function NoteCard({ note, canManage, onEdit, onDelete, deletingId }) {
+  const isCaseEasyImported = note.content?.startsWith(CASE_EASY_NOTE_PREFIX);
   return (
     <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/80 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-slate-800">
-            {note.user?.fullName || "Team note"}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-slate-800">
+              {note.user?.fullName || "Team note"}
+            </p>
+            {isCaseEasyImported ? (
+              <span title="Imported from Case Easy" className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                <FileSpreadsheet className="h-2.5 w-2.5" />
+                Case Easy
+              </span>
+            ) : null}
+          </div>
           <p className="mt-1 text-xs text-slate-500">
             {formatDateTime(note.createdAt)}
           </p>
@@ -1190,6 +1208,10 @@ export default function ClientProfile() {
                 }}
                 onOpenStatement={() => setStatementOpen(true)}
               />
+            ) : null}
+
+            {canAccessFinancialData ? (
+              <ClientCaseEasyLedgerCard clientId={client.id} hasCaseEasyOrigin={Boolean(client.caseEasyImportContacts?.length)} />
             ) : null}
 
             {canAccessInternalNotes ? (

@@ -190,22 +190,30 @@ export function caseEasyAssigneeNameMatches(assigneeName, userFullName) {
   );
 }
 
-export function resolveCaseEasyAssigneeUserId(assignees, users) {
+// Resolves every assignee name independently rather than requiring exactly
+// one — a case naming two or more real people (e.g. "Gagandeep Singh
+// D.;Simar K.") used to be unresolvable purely because it had more than one
+// name, even when every single name matched a real active user cleanly. Each
+// name still only counts as resolved if it matches exactly one user (an
+// ambiguous name — matching 2+ people — is skipped, same fail-safe as
+// before); the case only needs manual review when NONE of its names match.
+export function resolveCaseEasyAssigneeUserIds(assignees, users) {
   const sourceNames = String(assignees || "")
     .split(/[,;]/)
     .map((name) => name.trim())
     .filter(Boolean);
-  if (sourceNames.length !== 1) return null;
-  const matches = [
-    ...new Set(
-      sourceNames.flatMap((name) =>
+  const resolvedIds = new Set();
+  for (const name of sourceNames) {
+    const matches = [
+      ...new Set(
         users
           .filter((user) => caseEasyAssigneeNameMatches(name, user.fullName))
           .map((user) => user.id),
       ),
-    ),
-  ];
-  return matches.length === 1 ? matches[0] : null;
+    ];
+    if (matches.length === 1) resolvedIds.add(matches[0]);
+  }
+  return [...resolvedIds];
 }
 
 function parseDateValue(value) {
@@ -750,18 +758,25 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
       .split(/[,;]/)
       .map((name) => name.trim())
       .filter(Boolean);
-    const resolvedAssigneeUserId = resolveCaseEasyAssigneeUserId(
+    // First-listed name that resolves becomes the primary; every other
+    // resolved name is an additional assignee. A name that doesn't match any
+    // real active user (or matches more than one, ambiguously) is simply
+    // dropped rather than blocking the whole case — only a total failure
+    // (zero names resolved out of one or more listed) needs manual review.
+    const resolvedAssigneeUserIds = resolveCaseEasyAssigneeUserIds(
       kase.assignees,
       users,
     );
+    const [resolvedAssigneeUserId = null, ...resolvedAdditionalAssigneeUserIds] = resolvedAssigneeUserIds;
 
     const reasons = [];
     if (!linkedContactId) reasons.push("unlinked_contact");
-    if (assigneeNames.length > 0 && !resolvedAssigneeUserId) reasons.push("assignee_mismatch");
+    if (assigneeNames.length > 0 && !resolvedAssigneeUserIds.length) reasons.push("assignee_mismatch");
     const reason = REVIEW_REASON_PRIORITY.find((candidate) => reasons.includes(candidate)) || null;
 
     kase.linkedContactId = linkedContactId;
     kase.resolvedAssigneeUserId = resolvedAssigneeUserId;
+    kase.resolvedAdditionalAssigneeUserIds = resolvedAdditionalAssigneeUserIds;
     kase.needsReviewReason = reason;
     kase.needsReviewReasons = reasons;
     kase.importStatus = reason ? "needs_review" : kase.importStatus === "reviewed" ? "reviewed" : "imported";
@@ -775,6 +790,7 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
     caseUpdates.set(kase.id, {
       linkedContactId,
       resolvedAssigneeUserId,
+      resolvedAdditionalAssigneeUserIds,
       needsReviewReason: reason,
       needsReviewReasons: reasons,
       importStatus: kase.importStatus,
@@ -832,6 +848,56 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
   const chunks = [];
   for (let offset = 0; offset < operations.length; offset += 100) chunks.push(operations.slice(offset, offset + 100));
   await runInConcurrentBatches(chunks, 8, (chunk) => prisma.$transaction(chunk));
+}
+
+// Backfills the imported Note as soon as the CONTACT is a real client —
+// deliberately not gated on the CASE itself being converted. A contact is
+// often converted to a client well before (or without) every one of its
+// cases ever being converted (that's a separate, deliberate staff decision —
+// see convertCaseEasyImportContact), and there's no reason a client's real
+// notes should wait on that: the note attaches to the client right away
+// (caseId only once/if that specific case has also been converted).
+// convertCaseEasyImportContact/bulkConvertCaseEasyImportContacts already
+// create this note directly at conversion time going forward; this backfills
+// every other case — converted earlier, or whose contact converted but the
+// case itself hasn't (yet, or ever). Idempotent via materializedNoteId.
+export async function materializeCaseEasyLastNotes(agencyId) {
+  const cases = await prisma.caseEasyImportCase.findMany({
+    where: {
+      agencyId,
+      materializedNoteId: null,
+      lastNote: { not: null },
+      linkedContact: { convertedClientId: { not: null } },
+    },
+    include: { linkedContact: { select: { convertedClientId: true } } },
+  });
+  const stats = { created: 0, skipped: 0 };
+  for (const kase of cases) {
+    if (!String(kase.lastNote || "").trim()) {
+      stats.skipped += 1;
+      continue;
+    }
+    const clientId = kase.linkedContact?.convertedClientId;
+    if (!clientId) {
+      stats.skipped += 1;
+      continue;
+    }
+    const noteDate = kase.lastNoteDate || kase.modified || kase.importedAt;
+    const note = await prisma.note.create({
+      data: {
+        agencyId,
+        clientId,
+        caseId: kase.convertedCaseId || null,
+        content: `Imported from Case Easy — last recorded note, dated ${noteDate.toISOString().slice(0, 10)}:\n\n${kase.lastNote.trim()}`,
+        createdAt: noteDate,
+        userId: null,
+        clientVisible: false,
+      },
+    });
+    await prisma.caseEasyImportCase.update({ where: { id: kase.id }, data: { materializedNoteId: note.id } });
+    stats.created += 1;
+  }
+  return stats;
 }
 
 /**

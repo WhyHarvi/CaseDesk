@@ -11,7 +11,7 @@ import {
   isUsableCaseEasyCaseType,
   linkImportedContactsToExistingClients,
   mapRow,
-  resolveCaseEasyAssigneeUserId,
+  resolveCaseEasyAssigneeUserIds,
 } from "../src/services/caseEasyImportService.js";
 
 const source = (relativePath) =>
@@ -107,17 +107,28 @@ test("Case Easy abbreviated assignees resolve only to one active staff identity"
     ),
     true,
   );
-  assert.equal(
-    resolveCaseEasyAssigneeUserId("Harpreet  K.", staff),
-    "harpreet",
+  assert.deepEqual(
+    resolveCaseEasyAssigneeUserIds("Harpreet  K.", staff),
+    ["harpreet"],
   );
-  assert.equal(
-    resolveCaseEasyAssigneeUserId("Afi M.;Gagandeep Singh D.", staff),
-    null,
+  // A case naming two real, active people must resolve BOTH — this used to
+  // return nothing at all just because there was more than one name, which
+  // left every genuinely multi-assignee case stuck in manual review forever
+  // even though every name on it matched cleanly.
+  assert.deepEqual(
+    resolveCaseEasyAssigneeUserIds("Afi M.;Gagandeep Singh D.", staff),
+    ["afi", "gagan"],
   );
-  assert.equal(
-    resolveCaseEasyAssigneeUserId("Afi M.;Former Staff X.", staff),
-    null,
+  // A name that matches nobody is simply dropped, not treated as a reason to
+  // discard every other name that did resolve.
+  assert.deepEqual(
+    resolveCaseEasyAssigneeUserIds("Afi M.;Former Staff X.", staff),
+    ["afi"],
+  );
+  // Nothing resolves only when literally none of the names match anyone.
+  assert.deepEqual(
+    resolveCaseEasyAssigneeUserIds("Former Staff X.;Former Staff Y.", staff),
+    [],
   );
 });
 
@@ -189,15 +200,50 @@ test("a staging case's resolvedAssigneeUserId is re-checked against admin/consul
   const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
   assert.match(singleFn, /const fallbackAssigneeIds = \[/);
   assert.match(singleFn, /role: \{ in: \["admin", "consultant"\] \}/);
-  assert.match(singleFn, /assignedUserId: caseInput\.assignedUserId \|\| \(eligibleFallbackAssigneeIds\.has\(stagingCase\.resolvedAssigneeUserId\) \? stagingCase\.resolvedAssigneeUserId : null\)/);
+  assert.match(singleFn, /const primaryAssigneeId = caseInput\.assignedUserId \|\| \(eligibleFallbackAssigneeIds\.has\(stagingCase\.resolvedAssigneeUserId\) \? stagingCase\.resolvedAssigneeUserId : null\);/);
+  assert.match(singleFn, /assignedUserId: primaryAssigneeId,/);
   assert.doesNotMatch(singleFn, /assignedUserId: caseInput\.assignedUserId \|\| stagingCase\.resolvedAssigneeUserId \|\| null/);
 
   // Bulk conversion: same staleness risk, checked once up front for the
   // whole batch instead of per-contact (avoids an N+1 query).
   const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
   assert.match(bulkFn, /const candidateFallbackAssigneeIds = \[/);
-  assert.match(bulkFn, /assignedUserId: eligibleFallbackAssigneeIds\.has\(planned\.stagingCase\.resolvedAssigneeUserId\) \? planned\.stagingCase\.resolvedAssigneeUserId : null/);
+  assert.match(bulkFn, /const bulkPrimaryAssigneeId = eligibleFallbackAssigneeIds\.has\(planned\.stagingCase\.resolvedAssigneeUserId\) \? planned\.stagingCase\.resolvedAssigneeUserId : null;/);
+  assert.match(bulkFn, /assignedUserId: bulkPrimaryAssigneeId,/);
   assert.doesNotMatch(bulkFn, /assignedUserId: planned\.stagingCase\.resolvedAssigneeUserId \|\| null/);
+});
+
+test("a case naming multiple Case Easy assignees converts with all of them instead of getting stuck in review — additional assignees get the same active-staff eligibility recheck as the primary", async () => {
+  const [service, controller] = await Promise.all([
+    source("../src/services/caseEasyImportService.js"),
+    source("../src/controllers/caseEasyImportController.js"),
+  ]);
+  // resolveCaseEasyLinks no longer treats "more than one name" as an
+  // automatic assignee_mismatch — only zero resolved names does.
+  assert.match(service, /if \(assigneeNames\.length > 0 && !resolvedAssigneeUserIds\.length\) reasons\.push\("assignee_mismatch"\);/);
+  assert.match(service, /kase\.resolvedAdditionalAssigneeUserIds = resolvedAdditionalAssigneeUserIds;/);
+
+  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(singleFn, /const additionalAssigneeIds = \[/);
+  assert.match(singleFn, /additionalAssignedUserIds: additionalAssignedUserIds,|additionalAssignedUserIds,/);
+  assert.match(singleFn, /\.filter\(\(id\) => id !== primaryAssigneeId && eligibleFallbackAssigneeIds\.has\(id\)\);/);
+
+  const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(bulkFn, /const bulkAdditionalAssignedUserIds = \[\.\.\.new Set\(planned\.stagingCase\.resolvedAdditionalAssigneeUserIds \|\| \[\]\)\]/);
+  assert.match(bulkFn, /\.filter\(\(id\) => id !== bulkPrimaryAssigneeId && eligibleFallbackAssigneeIds\.has\(id\)\);/);
+});
+
+test("Case Easy conversion carries over the original opened date and the one recoverable note, honestly marked and dated, instead of dropping them", async () => {
+  const controller = await source("../src/controllers/caseEasyImportController.js");
+  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(singleFn, /openedAt: stagingCase\.opened \|\| null,/);
+  assert.match(singleFn, /if \(String\(stagingCase\.lastNote \|\| ""\)\.trim\(\)\) \{/);
+  assert.match(singleFn, /Imported from Case Easy — last recorded note, dated/);
+  assert.match(singleFn, /userId: null,/);
+
+  const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(bulkFn, /openedAt: planned\.stagingCase\.opened \|\| null,/);
+  assert.match(bulkFn, /if \(String\(planned\.stagingCase\.lastNote \|\| ""\)\.trim\(\)\) \{/);
 });
 
 test("Case Easy conversion requires a real type instead of accepting its unassigned sentinel", async () => {
@@ -282,4 +328,111 @@ test("Case Easy is a main staff tab directly above Settings", async () => {
   );
   assert.doesNotMatch(settings, /id: "case-easy-import"/);
   assert.match(page, /<CaseEasyImportSettingsPanel \/>/);
+});
+
+test("materializeCaseEasyLastNotes attaches the note to the client as soon as its contact is converted — never waits on the specific case also being converted, since that stays a separate staff decision", async () => {
+  const service = await source("../src/services/caseEasyImportService.js");
+  const fn = service.slice(service.indexOf("export async function materializeCaseEasyLastNotes"), service.indexOf("export async function materializeCaseEasyLastNotes") + service.slice(service.indexOf("export async function materializeCaseEasyLastNotes")).indexOf("\nexport async function", 1));
+  // Gated on the linked CONTACT being converted (a real client exists), not
+  // on the case's own importStatus/convertedCaseId — this is the fix for a
+  // client like Anwari whose contact converted but whose case is still
+  // sitting unconverted by deliberate choice.
+  assert.doesNotMatch(fn, /importStatus: "converted",/);
+  assert.match(fn, /linkedContact: \{ convertedClientId: \{ not: null \} \},/);
+  assert.match(fn, /materializedNoteId: null,/);
+  assert.match(fn, /lastNote: \{ not: null \},/);
+  assert.match(fn, /caseId: kase\.convertedCaseId \|\| null,/);
+  assert.match(fn, /userId: null,/);
+  assert.match(fn, /await prisma\.caseEasyImportCase\.update\(\{ where: \{ id: kase\.id \}, data: \{ materializedNoteId: note\.id \} \}\);/);
+});
+
+test("materializeCaseEasyActivityNotes turns linked Activity Tracker rows into real notes, resolving the author the same conservative way as case assignees, idempotently", async () => {
+  const service = await source("../src/services/caseEasyReportImportService.js");
+  assert.match(service, /caseEasyAssigneeNameMatches,\s*\n\s*normalizeKey,/);
+  const fn = service.slice(service.indexOf("export async function materializeCaseEasyActivityNotes"));
+  assert.match(fn, /reportType: "activity_tracker",/);
+  assert.match(fn, /linkStatus: "linked",/);
+  assert.match(fn, /materializedNoteId: null,/);
+  // Rows with no real description are skipped, not turned into empty notes.
+  assert.match(fn, /if \(!description\) \{\s*\n\s*stats\.skipped \+= 1;\s*\n\s*continue;\s*\n\s*\}/);
+  // Same fail-safe matcher as case assignees — an author is only ever
+  // credited when the "Created By" name unambiguously matches one real
+  // active user, never guessed.
+  assert.match(fn, /users\.find\(\(user\) => caseEasyAssigneeNameMatches\(createdBy, user\.fullName\)\)/);
+  assert.match(fn, /userId: matchedAuthor\?\.id \|\| null,/);
+  assert.match(fn, /await prisma\.caseEasyImportReportRow\.update\(\{ where: \{ id: row\.id \}, data: \{ materializedNoteId: note\.id \} \}\);/);
+});
+
+test("uploading a Case Easy report always tries to materialize newly-linked Activity Tracker notes, not just when the upload itself is an Activity Tracker file", async () => {
+  const controller = await source("../src/controllers/caseEasyImportController.js");
+  const fn = controller.slice(controller.indexOf("export async function confirmCaseEasyReportUpload"), controller.indexOf("export async function syncCaseEasyNotes"));
+  assert.match(fn, /const noteStats = await materializeCaseEasyActivityNotes\(req\.user\.agencyId\);/);
+  assert.doesNotMatch(fn, /if \(result\.reportType === "activity_tracker"\)/);
+});
+
+test("Case Easy notes can be manually re-synced on demand — a deliberate action, never run automatically against already-converted cases in bulk", async () => {
+  const [controller, routes, api, panel] = await Promise.all([
+    source("../src/controllers/caseEasyImportController.js"),
+    source("../src/routes/caseEasyImportRoutes.js"),
+    source("../../frontend/src/api/caseEasyImportApi.js"),
+    source("../../frontend/src/components/settings/CaseEasyReportImportPanel.jsx"),
+  ]);
+  const fn = controller.slice(controller.indexOf("export async function syncCaseEasyNotes"));
+  assert.match(fn, /materializeCaseEasyLastNotes\(agencyId\),/);
+  assert.match(fn, /materializeCaseEasyActivityNotes\(agencyId\),/);
+  assert.match(routes, /router\.post\("\/notes\/sync", rateLimit\(\{ windowMs: 60_000, max: 5 \}\), asyncHandler\(syncCaseEasyNotes\)\);/);
+  assert.match(api, /export async function syncCaseEasyNotes\(\) \{/);
+  assert.match(panel, /Sync notes now/);
+  assert.match(panel, /onClick=\{runNoteSync\}/);
+});
+
+test("the case profile surfaces its Case Easy origin, its extra imported assignees, and a dedicated historical payment/invoice history — all previously missing from CaseProfile.jsx entirely", async () => {
+  const [caseController, tabs, ledgerCard, routes, api] = await Promise.all([
+    source("../src/controllers/caseController.js"),
+    source("../../frontend/src/components/case-profile/CaseWorkspaceTabs.jsx"),
+    source("../../frontend/src/components/case-profile/CaseEasyHistoricalLedgerCard.jsx"),
+    source("../src/routes/caseEasyImportRoutes.js"),
+    source("../../frontend/src/api/caseEasyImportApi.js"),
+  ]);
+  // Same take:1-boolean pattern already used for the client-level badge.
+  assert.match(caseController, /caseEasyImportCases: \{ select: \{ id: true \}, take: 1 \},/);
+  assert.match(caseController, /res\.json\(\{ data: await withAdditionalAssignedUsers\(data\) \}\);/);
+  assert.match(tabs, /import CaseEasyOriginBadge from "\.\.\/clients\/CaseEasyOriginBadge";/);
+  assert.match(tabs, /caseItem\.caseEasyImportCases\?\.length \? \(/);
+  assert.match(tabs, /caseItem\.additionalAssignedUsers\?\.length \? \(/);
+  assert.match(tabs, /<CaseEasyHistoricalLedgerCard caseId=\{caseItem\.id\} hasCaseEasyOrigin=\{Boolean\(caseItem\.caseEasyImportCases\?\.length\)\} \/>/);
+  // Strictly informational — never included in the tab's real payment
+  // totals, never anywhere near the real invoice-creation code.
+  assert.match(ledgerCard, /not included in the totals above and not connected to QuickBooks/);
+  assert.doesNotMatch(ledgerCard, /NewInvoiceSheet|CashPaymentRow|onRecordPayment/);
+  assert.match(routes, /router\.get\("\/cases\/:caseId\/reports", asyncHandler\(getCaseEasyReportsForCase\)\);/);
+  assert.match(api, /export async function getCaseEasyReportsForCase\(caseId\) \{/);
+});
+
+test("the client profile shows the same historical payment/invoice ledger as the case profile — visible even before any of the client's cases has been converted, since Case Easy report rows link to a client independently of case conversion", async () => {
+  const [clientProfile, clientCard, sharedModule] = await Promise.all([
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+    source("../../frontend/src/components/clients/ClientCaseEasyLedgerCard.jsx"),
+    source("../../frontend/src/components/case-easy/caseEasyLedgerShared.jsx"),
+  ]);
+  assert.match(clientProfile, /import ClientCaseEasyLedgerCard from "\.\.\/components\/clients\/ClientCaseEasyLedgerCard";/);
+  assert.match(clientProfile, /<ClientCaseEasyLedgerCard clientId=\{client\.id\} hasCaseEasyOrigin=\{Boolean\(client\.caseEasyImportContacts\?\.length\)\} \/>/);
+  assert.match(clientCard, /getCaseEasyReportsForClient\(clientId\)/);
+  assert.match(clientCard, /not connected to QuickBooks or any invoice\/payment record/);
+  // Both the case-level and client-level cards share the same row-rendering
+  // and report-type filtering logic, not two independently-drifting copies.
+  assert.match(sharedModule, /export const PAYMENT_REPORT_TYPES = new Set\(\[/);
+  assert.match(sharedModule, /export function LedgerRow\(/);
+});
+
+test("imported Case Easy notes carry a visible label wherever notes are shown, so they're never mistaken for something a real staff member wrote today", async () => {
+  const [clientProfile, caseNoteCard] = await Promise.all([
+    source("../../frontend/src/pages/ClientProfile.jsx"),
+    source("../../frontend/src/components/case-profile/notes/NoteCard.jsx"),
+  ]);
+  for (const source_ of [clientProfile, caseNoteCard]) {
+    assert.match(source_, /const CASE_EASY_NOTE_PREFIX = "Imported from Case Easy";/);
+    assert.match(source_, /note\.content\?\.startsWith\(CASE_EASY_NOTE_PREFIX\)/);
+    assert.match(source_, /title="Imported from Case Easy"/);
+  }
 });

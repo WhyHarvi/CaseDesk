@@ -1,8 +1,15 @@
-import { LoaderCircle, Pencil, Trash2 } from "lucide-react";
+import { FileSpreadsheet, LoaderCircle, Pencil, Trash2 } from "lucide-react";
 import { formatDateTime, getInitials } from "../caseProfileUtils";
+
+// Same exact prefix every Case Easy note-materialization path writes
+// (conversion-time, materializeCaseEasyLastNotes, and
+// materializeCaseEasyActivityNotes) — see the identical constant in
+// ClientProfile.jsx's own NoteCard.
+const CASE_EASY_NOTE_PREFIX = "Imported from Case Easy";
 
 export default function NoteCard({ note, canManage, deleting, onEdit, onDelete }) {
   const author = note.user?.fullName || "CaseDesk team";
+  const isCaseEasyImported = note.content?.startsWith(CASE_EASY_NOTE_PREFIX);
 
   return (
     <article className="rounded-[1.5rem] border border-white/90 bg-white/85 p-4 shadow-[0_12px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:p-5">
@@ -10,7 +17,15 @@ export default function NoteCard({ note, canManage, deleting, onEdit, onDelete }
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(145deg,#334155,#94a3b8)] text-[11px] font-bold text-white">{getInitials(author)}</div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-900">{author}</p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-slate-900">{author}</p>
+              {isCaseEasyImported ? (
+                <span title="Imported from Case Easy" className="inline-flex shrink-0 items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-inset ring-indigo-200">
+                  <FileSpreadsheet className="h-2.5 w-2.5" />
+                  Case Easy
+                </span>
+              ) : null}
+            </div>
             <p className="mt-0.5 text-xs text-slate-400">{formatDateTime(note.updatedAt || note.createdAt)}{note.updatedAt && note.createdAt && note.updatedAt !== note.createdAt ? " · Edited" : ""}</p>
           </div>
         </div>
