@@ -577,7 +577,10 @@ export default function CaseEasyImport() {
       const casePage = Math.max(1, Number.parseInt(searchParams.get("casePage"), 10) || 1);
       const [result, unlinked] = await Promise.all([
         requestedContactId
-          ? getCaseEasyImportContact(requestedContactId).then((contact) => ({ data: [contact], pagination: { page: 1, limit: 25, total: 1, pages: 1 } }))
+          ? getCaseEasyImportContact(requestedContactId).then((detail) => ({
+              data: [detail.contact],
+              pagination: { page: 1, limit: 25, total: 1, pages: 1 },
+            }))
           : getCaseEasyImportContacts({
               recordType: recordType || undefined,
               importStatus: importStatus || undefined,

@@ -164,3 +164,10 @@ test("client name search matches regardless of word order, and a converted Case 
   assert.match(controller, /convertedClient: \{ select: \{ id: true, clientNumber: true \} \}/);
   assert.match(controller, /url: contact\.convertedClient\?\.id\s*\n\s*\? `\/app\/clients\/\$\{contact\.convertedClient\.id\}`/);
 });
+
+test("an unconverted Case Easy search result unwraps the exact contact before rendering", async () => {
+  const page = await source("../../frontend/src/pages/CaseEasyImport.jsx");
+
+  assert.match(page, /getCaseEasyImportContact\(requestedContactId\)[\s\S]*?data:\s*\[detail\.contact\]/);
+  assert.doesNotMatch(page, /then\(\(contact\) => \(\{ data: \[contact\]/);
+});
