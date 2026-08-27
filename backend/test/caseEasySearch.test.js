@@ -40,3 +40,12 @@ test("Case Easy identity search extracts digits from formatted phone terms", () 
   assert.match(serialized, /"contains":"647"/);
   assert.match(serialized, /"contains":"9781987"/);
 });
+
+test("Case Easy identity search matches an unformatted number against formatted stored phones", () => {
+  const serialized = JSON.stringify(
+    buildCaseEasyContactSearchWhere("6047718098"),
+  );
+  assert.match(serialized, /"contains":"604"/);
+  assert.match(serialized, /"contains":"771"/);
+  assert.match(serialized, /"contains":"8098"/);
+});

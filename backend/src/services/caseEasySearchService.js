@@ -8,6 +8,18 @@ function contains(value) {
   return { contains: value, mode: "insensitive" };
 }
 
+function phoneParts(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (national.length !== 10) return [];
+  return [national.slice(0, 3), national.slice(3, 6), national.slice(6)];
+}
+
+function formattedPhoneMatch(field, value) {
+  const parts = phoneParts(value);
+  return parts.length ? { AND: parts.map((part) => ({ [field]: contains(part) })) } : null;
+}
+
 export function cleanCaseEasySearch(value) {
   return clean(value);
 }
@@ -25,6 +37,7 @@ export function buildCaseEasyContactSearchWhere(value) {
     AND: terms.map((term) => {
       const digits = term.replace(/\D/g, "");
       const phoneNeedle = digits.length >= 3 ? digits : null;
+      const contactFormattedPhone = formattedPhoneMatch("phone", term);
       const contactFields = [
         { firstName: contains(term) },
         { lastName: contains(term) },
@@ -38,6 +51,8 @@ export function buildCaseEasyContactSearchWhere(value) {
       if (phoneNeedle && phoneNeedle !== term) {
         contactFields.push({ phone: contains(phoneNeedle) });
       }
+      if (contactFormattedPhone) contactFields.push(contactFormattedPhone);
+      const linkedFormattedPhone = formattedPhoneMatch("phone", term);
       contactFields.push({
         linkedCases: {
           some: {
@@ -53,6 +68,7 @@ export function buildCaseEasyContactSearchWhere(value) {
               ...(phoneNeedle && phoneNeedle !== term
                 ? [{ phone: contains(phoneNeedle) }]
                 : []),
+              ...(linkedFormattedPhone ? [linkedFormattedPhone] : []),
             ],
           },
         },
