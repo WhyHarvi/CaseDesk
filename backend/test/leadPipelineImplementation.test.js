@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  consultationUpdateAccessWhere,
   qualificationWorkflow,
   recordLeadActivity,
   updateConsultation,
@@ -31,6 +32,17 @@ test("every qualification outcome produces an explicit next action", () => {
   }
 });
 
+test("consultation outcomes follow the consultation assignee instead of the lead owner", () => {
+  assert.deepEqual(
+    consultationUpdateAccessWhere({ auth: { role: "admin", userId: "admin-1" } }),
+    {},
+  );
+  assert.deepEqual(
+    consultationUpdateAccessWhere({ auth: { role: "consultant", userId: "consultant-1" } }),
+    { consultantUserId: "consultant-1" },
+  );
+});
+
 test("completing a consultation maps every outcome to the correct stage and replaces stale work", async () => {
   const expectedStages = {
     READY_TO_PROCEED: "RETAINER_PENDING",
@@ -54,11 +66,17 @@ test("completing a consultation maps every outcome to the correct stage and repl
     };
     const tx = {
       lead: {
-        findFirst: async () => ({ id: "lead-1", leadNumber: "LD-1", status: "OPEN", stage: "CONSULTATION_BOOKED" }),
+        findFirst: async ({ where }) => {
+          assert.deepEqual(where, { id: "lead-1", agencyId: "agency-1", deletedAt: null });
+          return { id: "lead-1", leadNumber: "LD-1", status: "OPEN", stage: "CONSULTATION_BOOKED" };
+        },
         update: async ({ data }) => calls.push(["lead", data]),
       },
       leadConsultation: {
-        findFirst: async () => existing,
+        findFirst: async ({ where }) => {
+          assert.equal(where.consultantUserId, "consultant-1");
+          return { ...existing, leadId: "lead-1" };
+        },
         update: async ({ data }) => ({ ...existing, ...data }),
       },
       leadStageHistory: { create: async ({ data }) => calls.push(["stage", data]) },

@@ -1087,6 +1087,16 @@ export function nextConsultationAction(status, outcome, startAt = null) {
   return { type: "FOLLOW_UP", description: "Review the consultation outcome and follow up", at: tomorrow };
 }
 
+// Consultation work follows the consultation assignment, not the lead-owner
+// scope. A consultant can be assigned to conduct an appointment while a
+// different staff member still owns the lead. Reusing requireLead() here made
+// that valid consultant see a misleading 404 when saving their outcome/notes.
+export function consultationUpdateAccessWhere(req) {
+  return req.auth.role === "admin"
+    ? {}
+    : { consultantUserId: req.auth.userId };
+}
+
 export async function listConsultations(req) {
   await requireLead(prisma, req, req.params.id);
   return prisma.leadConsultation.findMany({
@@ -1239,10 +1249,23 @@ export async function updateConsultation(req, db = prisma) {
   const agencyId = req.auth.agencyId;
   const actorId = req.auth.userId;
   const result = await db.$transaction(async (tx) => {
-    const lead = await requireLead(tx, req, req.params.id);
-    if (lead.status !== "OPEN") throw createHttpError(409, "Only open lead consultations can be updated.", "LEAD_NOT_OPEN");
-    const existing = await tx.leadConsultation.findFirst({ where: { id: req.params.consultationId, leadId: lead.id, agencyId } });
+    const existing = await tx.leadConsultation.findFirst({
+      where: {
+        id: req.params.consultationId,
+        leadId: req.params.id,
+        agencyId,
+        ...consultationUpdateAccessWhere(req),
+      },
+    });
     if (!existing) throw createHttpError(404, "Consultation not found.", "CONSULTATION_NOT_FOUND");
+    // The consultation query above proves the assigned consultant is allowed
+    // to perform this specific action. Fetch the linked lead agency-safely,
+    // without applying the unrelated lead-owner visibility scope again.
+    const lead = await tx.lead.findFirst({
+      where: { id: existing.leadId, agencyId, deletedAt: null },
+    });
+    if (!lead) throw createHttpError(404, "Lead not found.", "LEAD_NOT_FOUND");
+    if (lead.status !== "OPEN") throw createHttpError(409, "Only open lead consultations can be updated.", "LEAD_NOT_OPEN");
     const consultation = await tx.leadConsultation.update({ where: { id: existing.id }, data: values, include: consultationInclude });
     if (existing.appointmentId) {
       const appointmentStatus = values.status === "COMPLETED" ? "Completed" : values.status === "CANCELLED" ? "Cancelled" : values.status === "NO_SHOW" ? "NoShow" : "Scheduled";
