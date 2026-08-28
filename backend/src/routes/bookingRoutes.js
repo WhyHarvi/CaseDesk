@@ -6,7 +6,6 @@ import {
   deleteSessionType,
   getAvailability,
   getBookingSettings,
-  listCalendarAppointments,
   rescheduleBookingAppointment,
   updateBookingSettings,
   updateSessionType,
@@ -35,6 +34,7 @@ import {
   updatePaidAppointmentPaymentDetails,
   shortenAppointmentSubject,
 } from "../controllers/bookingController.js";
+import { listCalendarAppointments } from "../controllers/calendarController.js";
 import {
   getStaffPreConsultationIntake,
   getStaffPreConsultationSummary,
