@@ -292,6 +292,17 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   const activities = lead.activities || [];
   const callHistory = lead.callSessions || [];
   const followUps = lead.followUps || [];
+  const followUpAssignees = useMemo(() => {
+    const candidates = [
+      ...staff,
+      lead.owner,
+      ...(lead.collaborators || []).map((item) => item.user),
+      ...followUps.map((item) => item.assignedUser),
+      appUser,
+    ].filter((person) => person?.id && person?.fullName);
+    return [...new Map(candidates.map((person) => [person.id, person])).values()]
+      .sort((left, right) => left.fullName.localeCompare(right.fullName));
+  }, [staff, lead.owner, lead.collaborators, followUps, appUser]);
   const leadMessages = useMemo(() => [
     ...(lead.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "lead" })),
     ...(lead.appointments || []).flatMap((appointment) => (appointment.messageDeliveries || []).map((delivery) => ({ ...delivery, source: "appointment", appointment }))),
@@ -823,11 +834,11 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
       {activeAction === "edit-details" ? <EditLeadDetailsSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "qualify" ? <QualifyLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={qualificationCompleted} /> : null}
       {activeAction === "activity" ? <LogActivitySheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={staff} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
+      {activeAction === "follow-up" ? <CreateFollowUpSheet lead={lead} staff={followUpAssignees} currentUserId={appUser?.id} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "nurture" ? <NurtureLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
       {activeAction === "lost" ? <MarkLostSheet lead={lead} initialReasonCode={suggestedLostReason || "NO_RESPONSE"} onClose={() => { setActiveAction(null); setSuggestedLostReason(""); }} onSaved={() => { setSuggestedLostReason(""); actionCompleted(); }} /> : null}
       {activeAction === "reactivate" ? <ReactivateLeadSheet lead={lead} onClose={() => setActiveAction(null)} onSaved={actionCompleted} /> : null}
-      {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} staff={staff} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
+      {closingFollowUp ? <CloseFollowUpSheet lead={lead} followUp={closingFollowUp} staff={followUpAssignees} onClose={() => setClosingFollowUp(null)} onSaved={actionCompleted} /> : null}
       {commercialStatusOpen ? <LeadCommercialStatusSheet lead={lead} onClose={() => setCommercialStatusOpen(false)} onUpdated={(updated) => { setLead((current) => ({ ...current, ...updated })); setCommercialStatusOpen(false); }} /> : null}
       {conversionOpen ? <ConvertLeadSheet lead={lead} onClose={() => setConversionOpen(false)} onConverted={(conversion) => { setLead((current) => ({ ...current, status: "CONVERTED", convertedClientId: conversion.client.id, convertedCaseId: conversion.case.id, convertedAt: conversion.convertedAt, nextActionType: null, nextActionDescription: null, nextActionAt: null, conversion })); setConversionOpen(false); onChanged(); }} /> : null}
       {selectedAppointmentId ? <AppointmentProfileOverlay appointmentId={selectedAppointmentId} initialTab={selectedAppointmentTab} onClose={() => setSelectedAppointmentId(null)} onChanged={() => { api.get(`/leads/${lead.id}/consultations`).then((response) => setConsultations(response.data.data)).catch(() => {}); refreshLead(); }} /> : null}
