@@ -400,13 +400,17 @@ test("pressing Escape while completing a consultation does not discard the in-pr
     source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
   ]);
 
-  // The overlay's global Escape listener closes the whole appointment
-  // profile (discarding whatever was typed into the Complete Consultation
-  // sheet) unless it also checks completingConsultation, the same way it
-  // already checks `saving`.
+  // The overlay's global Escape listener routes through requestClose(),
+  // which guards on completingConsultation the same way it already guards
+  // on `saving` — and, since this file's own note composer/edit fields
+  // autosave on a debounce, also flushes any pending autosave before
+  // closing, so Escape can't discard a note that just hadn't hit its
+  // debounce yet either.
+  assert.match(overlay, /if \(saving \|\| completingConsultation\) return;/);
+  assert.match(overlay, /if \(event\.key === "Escape"\) requestClose\(\);/);
   assert.match(
     overlay,
-    /event\.key === "Escape" && !saving && !completingConsultation && onClose\(\)/,
+    /const results = await Promise\.all\(\[\s*flushNewNoteAutosave\(\),\s*flushNoteEditAutosave\(\),\s*\]\);\s*if \(results\.every\(\(result\) => result !== false\)\) onClose\(\);/,
   );
 
   // Same bug, same fix, in the lead detail sheet's Escape listener: it

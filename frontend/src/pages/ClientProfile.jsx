@@ -228,6 +228,8 @@ function NoteForm({
   onChange,
   onSubmit,
   onCancel,
+  onClose,
+  onBlur,
   saving,
   formError,
   isEditing,
@@ -249,7 +251,7 @@ function NoteForm({
           <button
             type="button"
             disabled={saving}
-            onClick={onCancel}
+            onClick={onClose}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 disabled:opacity-40"
             aria-label="Close"
           >
@@ -257,7 +259,7 @@ function NoteForm({
           </button>
         </div>
 
-        <form className="mt-4 space-y-3" onSubmit={onSubmit}>
+        <form className="mt-4 space-y-3" onSubmit={onSubmit} onBlur={onBlur}>
           <label className="block">
             <span className="mb-2 block text-sm font-semibold text-slate-700">
               Note
@@ -714,10 +716,11 @@ export default function ClientProfile() {
     });
   }
 
-  async function handleNoteSubmit(event, { keepOpen = false } = {}) {
+  async function handleNoteSubmit(event, { keepOpen = false, content: contentSnapshot } = {}) {
     event?.preventDefault();
 
-    if (savingNote || !noteFormState.content.trim()) return;
+    const content = String(contentSnapshot ?? noteFormState.content).trim();
+    if ((savingNote && contentSnapshot === undefined) || !content) return false;
 
     try {
       setSavingNote(true);
@@ -725,7 +728,7 @@ export default function ClientProfile() {
 
       const payload = {
         clientId: id,
-        content: noteFormState.content.trim(),
+        content,
       };
 
       const response = isEditingNote
@@ -739,21 +742,29 @@ export default function ClientProfile() {
       } else {
         resetNoteForm();
       }
+      return true;
     } catch (requestError) {
       setNoteFormError(
         requestError.response?.data?.message || "Unable to save note.",
       );
+      return false;
     } finally {
       setSavingNote(false);
     }
   }
 
-  useDebouncedAutosave({
+  const { flush: flushNoteAutosave } = useDebouncedAutosave({
     value: noteFormState.content,
     savedValue: editingNote?.content || "",
-    enabled: showNoteForm && !savingNote,
-    onSave: () => handleNoteSubmit(null, { keepOpen: true }),
+    enabled: showNoteForm,
+    onSave: (content) => handleNoteSubmit(null, { keepOpen: true, content }),
   });
+
+  async function closeNoteForm() {
+    if (savingNote) return;
+    const saved = await flushNoteAutosave();
+    if (saved !== false) resetNoteForm();
+  }
 
   async function handleDeleteNote(note) {
     try {
@@ -1242,6 +1253,10 @@ export default function ClientProfile() {
                     onChange={handleNoteChange}
                     onSubmit={handleNoteSubmit}
                     onCancel={resetNoteForm}
+                    onClose={closeNoteForm}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) flushNoteAutosave();
+                    }}
                     saving={savingNote}
                     formError={noteFormError}
                     isEditing={isEditingNote}
