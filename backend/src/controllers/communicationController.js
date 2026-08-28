@@ -403,6 +403,66 @@ export async function getPortalChatStatus(req, res) {
   });
 }
 
+export async function getClientEmailThread(req, res) {
+  const permissions = await requireCommunicationPermission(req, "canView");
+  const client = await prisma.client.findFirst({
+    where: {
+      id: req.params.clientId,
+      agencyId: req.user.agencyId,
+      ...clientAccessWhere(req),
+    },
+    select: { id: true, fullName: true, email: true },
+  });
+  if (!client) throw createHttpError(404, "Client not found");
+
+  const conversations = await prisma.communicationConversation.findMany({
+    where: {
+      agencyId: req.user.agencyId,
+      clientId: client.id,
+      channel: "Email",
+      deletedAt: null,
+      ...relatedRecordAccessWhere(req),
+      ...conversationOwnershipWhere(req, permissions),
+    },
+    select: {
+      id: true,
+      caseId: true,
+      subject: true,
+      lastMessageAt: true,
+      unreadCount: true,
+      case: { select: { id: true, caseType: true } },
+      _count: { select: { messages: { where: { deletedAt: null } } } },
+    },
+    orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
+    take: 100,
+  });
+  const conversationIds = conversations.map((conversation) => conversation.id);
+  const messages = conversationIds.length
+    ? await prisma.communicationMessage.findMany({
+        where: {
+          agencyId: req.user.agencyId,
+          conversationId: { in: conversationIds },
+          deletedAt: null,
+        },
+        include: messageInclude,
+        orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+        take: 500,
+      })
+    : [];
+
+  res.json({
+    data: {
+      client,
+      conversations,
+      messages,
+      totalMessages: conversations.reduce(
+        (total, conversation) => total + conversation._count.messages,
+        0,
+      ),
+    },
+  });
+}
+
 export async function getCommunicationRealtimeConfig(req, res) {
   await requireCommunicationPermission(req, "canUseChat");
   const caseItem = await scopedCase(req, req.params.caseId);
@@ -684,7 +744,7 @@ export async function createCommunicationMessage(req, res) {
           ...relatedRecordAccessWhere(req),
           ...conversationOwnershipWhere(req, communicationPermissions),
         },
-        select: { id: true, clientId: true, caseId: true, assignedToId: true, provider: true },
+        select: { id: true, clientId: true, caseId: true, channel: true, assignedToId: true, provider: true },
       })
     : null;
   if (requestedConversationId && !conversationContext) throw createHttpError(404, "Conversation not found");
@@ -716,6 +776,13 @@ export async function createCommunicationMessage(req, res) {
     ? req.body.direction
     : "Outbound";
   if (!channel) throw createHttpError(400, "Communication channel is required");
+  if (conversationContext && conversationContext.channel !== channel) {
+    throw createHttpError(
+      409,
+      `This is a ${conversationContext.channel} conversation. Start a separate ${channel} conversation for this client.`,
+      "CONVERSATION_CHANNEL_MISMATCH",
+    );
+  }
   await requireCommunicationPermission(
     req,
     direction === "Outbound" || direction === "Internal"

@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, LifeBuoy, Loader2, MessagesSquare, RotateCcw, Search, SquarePen, UserRound, Users, X } from "lucide-react";
+import { Check, ChevronLeft, LifeBuoy, Loader2, Mail, MailPlus, MessagesSquare, RotateCcw, Search, Send, SquarePen, UserRound, Users, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -32,6 +32,7 @@ import { playReceivedSound, playSentSound } from "../utils/chatSounds";
 import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from "../hooks/useNovaChat";
 import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "../components/chat/NovaChatPresentation";
 import SupportDeskPanel from "../components/chat/SupportDeskPanel";
+import CommunicationComposer from "../components/case-profile/communication/CommunicationComposer";
 
 const RECONCILE_POLL_MS = 45_000; // realtime connected — safety net only
 const FALLBACK_POLL_MS = 10_000; // realtime not configured
@@ -39,9 +40,13 @@ const LIST_POLL_MS = 30_000;
 
 const CATEGORY_FILTERS = [
   { key: "teams", label: "Team" },
-  { key: "clients", label: "Clients" },
+  { key: "portal", label: "Portal chat" },
+  { key: "email", label: "Email" },
   { key: "groups", label: "Groups" },
 ];
+
+const EMAIL_SUBJECT_MAX_WORDS = 10;
+const subjectWordCount = (value) => String(value || "").trim().split(/\s+/).filter(Boolean).length;
 
 const initials = (name) =>
   String(name || "?")
@@ -73,6 +78,9 @@ function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
   }
   if (item?.kind === "ai") {
     return <NovaAssistantAvatar className={className} />;
+  }
+  if (item?.kind === "email") {
+    return <span className={`flex shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-[#002FA7] ${className}`}><Mail className="h-4 w-4" /></span>;
   }
   if (avatarUrl) {
     return (
@@ -110,15 +118,14 @@ function KindBadge({ kind }) {
       </span>
     );
   }
-  const isClient = kind === "client";
+  if (kind === "email") {
+    return <span className="inline-flex shrink-0 items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-[#002FA7]">Email</span>;
+  }
+  if (kind === "client") {
+    return <span className="inline-flex shrink-0 items-center rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">Portal chat</span>;
+  }
   return (
-    <span
-      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-        isClient ? "bg-emerald-50 text-emerald-700" : "bg-sky-50 text-sky-700"
-      }`}
-    >
-      {isClient ? "Client" : "Team"}
-    </span>
+    <span className="inline-flex shrink-0 items-center rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">Team</span>
   );
 }
 
@@ -132,11 +139,17 @@ function ChatRow({ item, active, avatarUrl, onClick }) {
       <ChatAvatar item={item} avatarUrl={avatarUrl} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950">{item.name}</span>
+          <span className="min-w-0 truncate text-sm font-semibold text-slate-950">{item.name}</span>
+          {item.kind === "email" && item.messageCount ? (
+            <span className="shrink-0 rounded-full bg-blue-100/70 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-[#002FA7]">
+              {item.messageCount} {item.messageCount === 1 ? "email" : "emails"}
+            </span>
+          ) : null}
+          <span className="min-w-0 flex-1" />
           <span className="shrink-0 text-[10px] text-slate-400">{formatThreadTime(item.lastMessageAt)}</span>
         </span>
         <span className="mt-1 flex items-center gap-1.5">
-          <KindBadge kind={item.kind} />
+          {item.kind !== "email" ? <KindBadge kind={item.kind} /> : null}
           <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{item.preview || "Say hello"}</span>
           {item.unreadCount ? (
             <span className="inline-flex min-w-5 shrink-0 justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
@@ -267,6 +280,124 @@ function NewChatModal({ colleagues, loading, creating, onClose, onCreate }) {
   );
 }
 
+function NewEmailModal({ sending, provider, onClose, onSend }) {
+  const [search, setSearch] = useState("");
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [error, setError] = useState("");
+  const subjectWords = subjectWordCount(subject);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      api.get(`/clients?limit=20${search.trim() ? `&search=${encodeURIComponent(search.trim())}` : ""}`)
+        .then((response) => {
+          if (active) setClients(response.data.data || []);
+        })
+        .catch(() => {
+          if (active) setError("Clients could not be loaded.");
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [search]);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!selectedClient?.email || !subject.trim() || !body.trim() || subjectWords > EMAIL_SUBJECT_MAX_WORDS) return;
+    setError("");
+    const result = await onSend({ client: selectedClient, subject: subject.trim(), body: body.trim() });
+    if (result?.error) setError(result.error);
+  }
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <AnimatePresence>
+      <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/45 p-4" onMouseDown={(event) => event.target === event.currentTarget && !sending && onClose()}>
+        <motion.form
+          onSubmit={submit}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 12 }}
+          transition={{ duration: 0.16 }}
+          className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-2xl"
+        >
+          <header className="flex shrink-0 items-start justify-between border-b border-slate-300 px-5 py-4 sm:px-6">
+            <div>
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-[#002FA7]" />
+                <h2 className="text-lg font-semibold tracking-tight text-slate-950">New email</h2>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">Choose a client record. The email will stay linked to that client.</p>
+            </div>
+            <button type="button" disabled={sending} onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 disabled:opacity-40" aria-label="Close new email">
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <section className="grid border-b border-slate-300 lg:grid-cols-[220px_1fr]">
+              <div className="border-b border-slate-300 p-4 lg:border-b-0 lg:border-r">
+                <label className="block text-xs font-semibold text-slate-700" htmlFor="new-email-client-search">Client</label>
+                <div className="relative mt-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input id="new-email-client-search" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients" className="h-10 w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#002FA7] focus:ring-4 focus:ring-blue-100" />
+                </div>
+                <div className="mt-2 max-h-52 overflow-y-auto rounded-xl border border-slate-200">
+                  {loading ? <div className="flex justify-center py-7"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div> : clients.length ? clients.map((client) => {
+                    const active = selectedClient?.id === client.id;
+                    return (
+                      <button key={client.id} type="button" disabled={!client.email} onClick={() => setSelectedClient(client)} className={`w-full border-b border-slate-200 px-3 py-2.5 text-left last:border-b-0 disabled:cursor-not-allowed disabled:opacity-45 ${active ? "bg-blue-50" : "hover:bg-slate-50"}`}>
+                        <span className="block truncate text-sm font-semibold text-slate-900">{client.fullName}</span>
+                        <span className={`mt-0.5 block truncate text-xs ${client.email ? "text-slate-500" : "text-rose-600"}`}>{client.email || "No email on file"}</span>
+                      </button>
+                    );
+                  }) : <p className="px-3 py-7 text-center text-xs text-slate-500">No clients found.</p>}
+                </div>
+              </div>
+
+              <div className="p-4 sm:p-5">
+                <div className="grid grid-cols-[64px_1fr] items-center border-b border-slate-200 py-2 text-sm">
+                  <span className="text-xs font-semibold text-slate-500">To</span>
+                  <span className={selectedClient?.email ? "truncate font-medium text-slate-900" : "text-slate-400"}>{selectedClient?.email || "Select a client"}</span>
+                </div>
+                <label className="grid grid-cols-[64px_1fr] items-start border-b border-slate-200 py-2">
+                  <span className="pt-2 text-xs font-semibold text-slate-500">Subject</span>
+                  <span>
+                    <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Email subject" maxLength={300} className="h-9 w-full bg-transparent text-sm font-medium text-slate-950 outline-none placeholder:text-slate-400" />
+                    <span className={`block text-right text-[10px] ${subjectWords > EMAIL_SUBJECT_MAX_WORDS ? "font-semibold text-rose-600" : "text-slate-400"}`}>{subjectWords}/{EMAIL_SUBJECT_MAX_WORDS} words</span>
+                  </span>
+                </label>
+                <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={10} placeholder="Write your email" className="mt-4 w-full resize-y bg-transparent text-sm leading-6 text-slate-900 outline-none placeholder:text-slate-400" />
+              </div>
+            </section>
+            {error ? <p className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700">{error}</p> : null}
+            {!provider?.sendConfigured ? <p className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">Connect your email mailbox in Personal Settings before sending.</p> : null}
+          </div>
+
+          <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-300 px-5 py-4 sm:px-6">
+            <p className="truncate text-xs text-slate-500">{provider?.provider || "Email"}</p>
+            <button type="submit" disabled={sending || !provider?.sendConfigured || !selectedClient?.email || !subject.trim() || !body.trim() || subjectWords > EMAIL_SUBJECT_MAX_WORDS} className="inline-flex h-10 items-center gap-2 rounded-full bg-[#002FA7] px-5 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-40">
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {sending ? "Sending…" : "Send email"}
+            </button>
+          </footer>
+        </motion.form>
+      </div>
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
 export default function ChatsPage() {
   const { appUser } = useAuth();
   const myUserId = appUser?.id;
@@ -274,16 +405,17 @@ export default function ChatsPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedKind = searchParams.get("kind");
-  const initialKind = ["ai", "support", "client", "internal"].includes(requestedKind) ? requestedKind : "internal";
+  const initialKind = ["ai", "support", "client", "email", "internal"].includes(requestedKind) ? requestedKind : "internal";
   const requestedThreadId = searchParams.get("thread") || "";
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
+  const [emailConversations, setEmailConversations] = useState([]);
   const [listLoading, setListLoading] = useState(true);
   const [listSearch, setListSearch] = useState("");
   // Opens to Teams by default — unless a notification/deep-link landed us
   // directly on a client conversation, in which case that filter is active
   // so the opened item is actually visible (and highlighted) in the list.
-  const [categoryFilter, setCategoryFilter] = useState(initialKind === "client" ? "clients" : "teams");
+  const [categoryFilter, setCategoryFilter] = useState(initialKind === "client" ? "portal" : initialKind === "email" ? "email" : "teams");
   const [selectedKind, setSelectedKind] = useState(initialKind);
   const [selectedId, setSelectedId] = useState(initialKind === "ai" && requestedThreadId ? "nova" : requestedThreadId);
   const [activeDetail, setActiveDetail] = useState(null);
@@ -303,7 +435,10 @@ export default function ChatsPage() {
   const [editDraft, setEditDraft] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [commPermissions, setCommPermissions] = useState({});
+  const [communicationProviders, setCommunicationProviders] = useState({});
+  const [communicationTemplates, setCommunicationTemplates] = useState([]);
   const [groupProfileOpen, setGroupProfileOpen] = useState(false);
+  const [emailComposerOpen, setEmailComposerOpen] = useState(false);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
   const novaContextPath = searchParams.get("from") || location.pathname;
 
@@ -332,20 +467,29 @@ export default function ChatsPage() {
   }), []);
 
   useEffect(() => {
-    api.get("/communications/providers").then((response) => setCommPermissions(response.data.meta?.permissions || {})).catch(() => {});
+    Promise.all([
+      api.get("/communications/providers"),
+      api.get("/communications/templates"),
+    ]).then(([providerResponse, templateResponse]) => {
+      setCommunicationProviders(providerResponse.data.data || {});
+      setCommPermissions(providerResponse.data.meta?.permissions || {});
+      setCommunicationTemplates(templateResponse.data.data || []);
+    }).catch(() => {});
   }, []);
 
   const loadLists = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setListLoading(true);
-    const [internalResult, clientResult] = await Promise.allSettled([
+    const [internalResult, clientResult, emailResult] = await Promise.allSettled([
       getInternalChatThreads(),
-      api.get("/communications/inbox?scope=all&channel=Chat&limit=50").then((response) => response.data.data),
+      api.get("/communications/inbox?scope=all&channel=Chat&limit=100").then((response) => response.data.data),
+      api.get("/communications/inbox?scope=all&channel=Email&limit=100").then((response) => response.data.data),
     ]);
     // Each source degrades independently — a permissions edge case on one
     // (e.g. client-chat view restricted for this user) must never blank
     // out the other.
     if (internalResult.status === "fulfilled") setInternalThreads(internalResult.value);
     if (clientResult.status === "fulfilled") setClientConversations(clientResult.value);
+    if (emailResult.status === "fulfilled") setEmailConversations(emailResult.value);
     if (!silent) setListLoading(false);
   }, []);
 
@@ -358,16 +502,50 @@ export default function ChatsPage() {
       const data = await getInternalChatThread(id);
       return { kind: "internal", id, name: data.name, isGroup: data.isGroup, hasAvatar: data.hasAvatar, participants: data.participants, messages: data.messages, caseId: null };
     }
+    if (kind === "email") {
+      const response = await api.get(`/communications/clients/${id}/email-thread`);
+      const data = response.data.data;
+      const latestConversation = data.conversations?.[0];
+      const latestMessage = data.messages?.[0];
+      const conversationIds = (data.conversations || []).map((conversation) => conversation.id);
+      const unreadConversationIds = (data.conversations || [])
+        .filter((conversation) => conversation.unreadCount)
+        .map((conversation) => conversation.id);
+      if (unreadConversationIds.length) {
+        await Promise.all(unreadConversationIds.map((conversationId) =>
+          api.post(`/communications/conversations/${conversationId}/read`, { read: true }).catch(() => {}),
+        ));
+      }
+      return {
+        kind: "email",
+        channel: "Email",
+        id,
+        name: data.client?.fullName || "Client",
+        isGroup: false,
+        clientId: data.client?.id || id,
+        clientEmail: data.client?.email || null,
+        conversationIds,
+        replyConversationId: latestConversation?.id || null,
+        replyCaseId: latestConversation?.caseId || null,
+        replyParentMessageId: latestMessage?.id || null,
+        messageCount: data.totalMessages || data.messages?.length || 0,
+        subject: latestConversation?.subject || latestMessage?.subject || latestMessage?.conversation?.subject || "",
+        messages: data.messages || [],
+      };
+    }
     const response = await api.get(`/communications/conversations/${id}?limit=200`);
     const data = response.data.data;
     if (data.unreadCount) await api.post(`/communications/conversations/${id}/read`, { read: true });
     return {
-      kind: "client",
+      kind: data.channel === "Email" ? "email" : "client",
+      channel: data.channel,
       id,
       name: `${data.client?.fullName || "Client"}${data.case?.caseType ? ` · ${data.case.caseType}` : ""}`,
       isGroup: false,
       caseId: data.caseId || null,
       clientId: data.clientId,
+      clientEmail: data.client?.email || null,
+      subject: data.subject || data.messages?.find((message) => message.subject)?.subject || "",
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
@@ -458,6 +636,7 @@ export default function ChatsPage() {
 
   useEffect(() => {
     if (!selectedId || ["ai", "support"].includes(selectedKind) || document.visibilityState !== "visible") return;
+    if (selectedKind === "email") return;
     const markRead = selectedKind === "internal"
       ? () => markInternalChatThreadRead(selectedId)
       : () => api.post(`/communications/conversations/${selectedId}/read`, { read: true }).catch(() => {});
@@ -467,6 +646,8 @@ export default function ChatsPage() {
   function selectThread(kind, id) {
     setSelectedKind(kind);
     setSelectedId(id);
+    if (kind === "client") setCategoryFilter("portal");
+    if (kind === "email") setCategoryFilter("email");
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set("thread", id);
@@ -540,7 +721,7 @@ export default function ChatsPage() {
       const latest = conversation.messages?.[0];
       return {
         kind: "client",
-        category: "clients",
+        category: "portal",
         id: conversation.id,
         name: `${conversation.client?.fullName || "Client"}${conversation.case?.caseType ? ` · ${conversation.case.caseType}` : ""}`,
         isGroup: false,
@@ -549,15 +730,44 @@ export default function ChatsPage() {
         preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
       };
     });
-    return [novaItem, supportItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, novaItem, supportItem]);
+    const emailByClient = new Map();
+    emailConversations.forEach((conversation) => {
+      const clientId = conversation.clientId || conversation.client?.id;
+      if (!clientId) return;
+      const current = emailByClient.get(clientId) || [];
+      current.push(conversation);
+      emailByClient.set(clientId, current);
+    });
+    const email = [...emailByClient.entries()].map(([clientId, conversations]) => {
+      const sorted = [...conversations].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
+      const latestConversation = sorted[0];
+      const latest = latestConversation.messages?.[0];
+      const subject = latestConversation.subject || latest?.subject || "Email";
+      return {
+        kind: "email",
+        channel: "Email",
+        category: "email",
+        id: clientId,
+        name: latestConversation.client?.fullName || "Client",
+        email: latestConversation.client?.email || "",
+        subject,
+        messageCount: sorted.reduce((total, conversation) => total + (conversation._count?.messages || 0), 0),
+        conversationIds: sorted.map((conversation) => conversation.id),
+        isGroup: false,
+        lastMessageAt: latestConversation.lastMessageAt,
+        unreadCount: sorted.reduce((total, conversation) => total + (conversation.unreadCount || 0), 0),
+        preview: latest ? `${subject} — ${(latest.direction === "Outbound" ? "You: " : "")}${latest.bodyText || "Email message"}` : subject,
+      };
+    });
+    return [novaItem, supportItem, ...[...internal, ...client, ...email].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
+  }, [internalThreads, clientConversations, emailConversations, novaItem, supportItem]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
     return mergedItems.filter((item) => {
       if (!["ai", "support"].includes(item.kind) && categoryFilter && item.category !== categoryFilter) return false;
       if (!query) return true;
-      return `${item.name} ${item.preview}`.toLowerCase().includes(query);
+      return `${item.name} ${item.email || ""} ${item.subject || ""} ${item.preview}`.toLowerCase().includes(query);
     });
   }, [mergedItems, listSearch, categoryFilter]);
 
@@ -578,6 +788,11 @@ export default function ChatsPage() {
       await sendNovaMessage(bodyText, novaContextPath);
       return;
     }
+    const emailConversation = selectedKind === "email" || activeDetail?.channel === "Email";
+    if (emailConversation && !activeDetail?.clientEmail) {
+      setError("Add an email address to this client's profile before replying.");
+      return;
+    }
     const clientMessageId = crypto.randomUUID();
     const replyToId = replyTarget?.id || undefined;
     const optimistic = { id: `pending-${clientMessageId}`, clientMessageId, senderId: myUserId, direction: "Outbound", bodyText, occurredAt: new Date().toISOString(), pending: true };
@@ -591,20 +806,23 @@ export default function ChatsPage() {
       if (selectedKind === "internal") {
         await sendInternalChatMessage(selectedId, { bodyText, clientMessageId, replyToId });
       } else {
+        const conversationId = emailConversation ? activeDetail?.replyConversationId : selectedId;
+        if (!conversationId) throw new Error("This email conversation is not ready yet.");
         await api.post(
           "/communications/messages",
           {
-            conversationId: selectedId,
-            caseId: activeDetail?.caseId || undefined,
-            parentMessageId: replyToId || thread[thread.length - 1]?.id || undefined,
-            channel: "Chat",
+            conversationId,
+            caseId: emailConversation ? activeDetail?.replyCaseId || undefined : activeDetail?.caseId || undefined,
+            parentMessageId: replyToId || (emailConversation ? activeDetail?.replyParentMessageId : thread[thread.length - 1]?.id) || undefined,
+            channel: emailConversation ? "Email" : "Chat",
             direction: "Outbound",
-            recipients: [],
+            recipients: emailConversation ? [activeDetail.clientEmail] : [],
+            subject: emailConversation ? activeDetail.subject : undefined,
             bodyText,
             occurredAt: new Date().toISOString(),
             sendNow: true,
             idempotencyKey: clientMessageId,
-            portalAudience: true,
+            portalAudience: !emailConversation,
           },
           { timeout: 30_000 },
         );
@@ -627,7 +845,7 @@ export default function ChatsPage() {
   }
 
   async function attachFile(file) {
-    if (!selectedId || sending) return;
+    if (!selectedId || sending || selectedKind === "email") return;
     setSending(true);
     setError("");
     playSentSound();
@@ -806,6 +1024,14 @@ export default function ChatsPage() {
     }
   }
 
+  function handleEmailSaved(message, { client } = {}) {
+    setEmailComposerOpen(false);
+    setCategoryFilter("email");
+    const clientId = client?.id || message?.clientId;
+    if (clientId) selectThread("email", clientId);
+    void loadLists({ silent: true });
+  }
+
   function handleGroupUpdated({ avatarChanged } = {}) {
     if (avatarChanged) refreshThreadAvatar(selectedId);
     void loadDetail(selectedKind, selectedId, { silent: true });
@@ -827,7 +1053,7 @@ export default function ChatsPage() {
           transition={{ duration: reduceMotion ? 0 : 0.32, ease: [0.16, 1, 0.3, 1] }}
           className="text-[34px] font-semibold leading-[40px] tracking-[-0.035em] text-slate-950"
         >
-          Chats
+          Communications
         </motion.h1>
         <motion.p
           initial={reduceMotion ? false : { opacity: 0, y: -4 }}
@@ -835,9 +1061,9 @@ export default function ChatsPage() {
           transition={{ duration: reduceMotion ? 0 : 0.32, delay: reduceMotion ? 0 : 0.04, ease: [0.16, 1, 0.3, 1] }}
           className="mt-1 text-[13px] font-medium text-slate-500"
         >
-          Team, clients, and groups — switch between them below.
+          Team conversations, portal messages, and client email in one workspace.
         </motion.p>
-        <div className="mt-4 inline-flex items-center gap-1 rounded-full border border-slate-200/80 bg-slate-100 p-1">
+        <div className="mt-4 inline-flex max-w-full items-center overflow-x-auto rounded-xl border border-slate-300 bg-white">
           {CATEGORY_FILTERS.map((filter) => {
             const active = categoryFilter === filter.key;
             return (
@@ -846,37 +1072,35 @@ export default function ChatsPage() {
                 type="button"
                 onClick={() => setCategoryFilter(filter.key)}
                 aria-pressed={active}
-                className="relative rounded-full px-4 py-1.5 text-[13px] font-semibold"
+                className={`relative shrink-0 border-r border-slate-300 px-4 py-2 text-[13px] font-semibold last:border-r-0 ${active ? "bg-[#002FA7] text-white" : "bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}
               >
-                {active ? (
-                  <motion.span
-                    layoutId="chats-category-pill"
-                    className="absolute inset-0 rounded-full bg-gradient-to-br from-sky-600 to-indigo-600 shadow-[0_6px_16px_rgba(37,99,235,0.35)]"
-                    transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 34 }}
-                  />
-                ) : null}
-                <span className={`relative z-10 transition-colors ${active ? "text-white" : "text-slate-600 hover:text-slate-900"}`}>{filter.label}</span>
+                {filter.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden border-y border-slate-200/80 bg-white/75 shadow-[0_24px_70px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+      <div className="mx-4 mb-4 flex min-h-0 flex-1 overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white/75 shadow-[0_24px_70px_rgba(15,23,42,0.07)] backdrop-blur-xl">
         <aside className={`flex w-full max-w-[360px] shrink-0 flex-col border-r border-slate-200/80 bg-slate-50/40 ${selectedId ? "hidden lg:flex" : "flex"}`}>
           <header className="shrink-0 border-b border-slate-200/70 px-4 py-4">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Conversations</p>
-              <button type="button" onClick={openPicker} className="flex h-9 w-9 items-center justify-center rounded-full text-sky-600 transition hover:bg-sky-50" aria-label="New chat">
-                <SquarePen className="h-4.5 w-4.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => setEmailComposerOpen(true)} disabled={!commPermissions.canSendEmail} className="flex h-9 w-9 items-center justify-center rounded-full text-[#002FA7] transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-35" aria-label="New client email" title={commPermissions.canSendEmail ? "New client email" : "You do not have permission to send email"}>
+                  <MailPlus className="h-4.5 w-4.5" />
+                </button>
+                <button type="button" onClick={openPicker} className="flex h-9 w-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100" aria-label="New team chat" title="New team chat">
+                  <SquarePen className="h-4.5 w-4.5" />
+                </button>
+              </div>
             </div>
             <label className="relative mt-3 block">
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={listSearch}
                 onChange={(event) => setListSearch(event.target.value)}
-                placeholder="Search chats"
+                placeholder="Search conversations"
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
               />
             </label>
@@ -888,14 +1112,18 @@ export default function ChatsPage() {
               <div className="flex h-full flex-col items-center justify-center px-8 text-center">
                 <span className="flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><MessagesSquare className="h-6 w-6" /></span>
                 <h3 className="mt-4 text-sm font-semibold text-slate-800">
-                  {listSearch ? "No matching chats" : `No ${categoryFilter} yet`}
+                  {listSearch ? "No matching conversations" : categoryFilter === "portal" ? "No portal chats yet" : categoryFilter === "email" ? "No emails yet" : `No ${categoryFilter} yet`}
                 </h3>
                 <p className="mt-1.5 text-sm leading-6 text-slate-500">
-                  {listSearch ? "Try a different search." : categoryFilter === "clients" ? "Client conversations will show up here." : "Start a chat with a colleague."}
+                  {listSearch ? "Try a different search." : categoryFilter === "portal" ? "Portal conversations will appear when clients send or receive secure messages." : categoryFilter === "email" ? "Emails linked to client records will appear here." : "Start a chat with a colleague."}
                 </p>
-                {!listSearch && categoryFilter !== "clients" ? (
+                {!listSearch && categoryFilter === "email" ? (
+                  <button type="button" onClick={() => setEmailComposerOpen(true)} disabled={!commPermissions.canSendEmail} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-[#002FA7] px-5 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:opacity-40">
+                    <MailPlus className="h-4 w-4" />New email
+                  </button>
+                ) : !listSearch && !["portal"].includes(categoryFilter) ? (
                   <button type="button" onClick={openPicker} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-sky-600 px-5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(2,132,199,0.2)] transition hover:bg-sky-700">
-                    <SquarePen className="h-4 w-4" />New chat
+                    <SquarePen className="h-4 w-4" />New team chat
                   </button>
                 ) : null}
               </div>
@@ -965,16 +1193,18 @@ export default function ChatsPage() {
                         <h2 className="truncate text-sm font-semibold text-slate-950">{activeDetail?.name}</h2>
                         {activeDetail ? <KindBadge kind={activeDetail.kind} /> : null}
                       </span>
-                      {activeDetail?.kind === "client" ? (
-                        <p className="mt-0.5 truncate text-xs text-slate-500">Client · Secure messaging</p>
+                      {["client", "email"].includes(activeDetail?.kind) ? (
+                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                          {activeDetail.kind === "email" ? `${activeDetail.clientEmail || "No client email"} · ${activeDetail.messageCount || 0} ${(activeDetail.messageCount || 0) === 1 ? "email" : "emails"}` : "Client portal · Secure messaging"}
+                        </p>
                       ) : null}
                     </div>
-                    {activeDetail?.kind === "client" && activeDetail.clientId ? (
+                    {["client", "email"].includes(activeDetail?.kind) && activeDetail.clientId ? (
                       <Link
                         to={`/app/clients/${encodeURIComponent(activeDetail.clientId)}`}
                         aria-label={`Open ${activeDetail.name}'s client profile`}
                         title="Open client profile"
-                        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:border-emerald-200 hover:bg-emerald-100"
+                        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[#002FA7] hover:text-[#002FA7]"
                       >
                         <UserRound className="h-4 w-4" />
                         <span className="hidden sm:inline">Client profile</span>
@@ -993,16 +1223,16 @@ export default function ChatsPage() {
                 mineDirection="Outbound"
                 loading={detailLoading}
                 className="min-h-0 flex-1 px-4 py-5"
-                mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "client" ? "rounded-br-lg bg-[#d9fdd3] text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
+                mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "email" ? "rounded-br-sm border border-blue-200 bg-blue-50 text-slate-900" : activeDetail?.kind === "client" ? "rounded-br-sm border border-slate-300 bg-white text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
                 theirBubbleClassName={activeDetail?.kind === "ai" ? "rounded-bl-lg border border-brand-100 bg-white/95 text-slate-800 shadow-[0_8px_24px_rgba(73,104,149,0.12)]" : "rounded-bl-lg border border-slate-200 bg-white text-slate-800"}
                 attachmentFileUrl={attachmentFileUrl}
                 onAttachmentTap={handleAttachmentTap}
-                clientLastReadAt={readThreshold}
+                clientLastReadAt={activeDetail?.kind === "email" ? null : readThreshold}
                 senderLabelFor={activeDetail?.kind === "internal" && activeDetail.isGroup ? (message) => message.sender?.fullName : undefined}
-                mineSenderLabelFor={activeDetail?.kind === "client" ? (message) => message.senderUser?.fullName : undefined}
+                mineSenderLabelFor={["client", "email"].includes(activeDetail?.kind) ? (message) => message.senderUser?.fullName : undefined}
                 myUserId={myUserId}
-                onReply={activeDetail?.kind === "ai" ? undefined : startReply}
-                onToggleReaction={activeDetail?.kind === "ai" ? undefined : toggleReaction}
+                onReply={["ai", "email"].includes(activeDetail?.kind) ? undefined : startReply}
+                onToggleReaction={["ai", "email"].includes(activeDetail?.kind) ? undefined : toggleReaction}
                 canEditMessage={canEditMessage}
                 canDeleteMessage={canDeleteMessage}
                 editingMessageId={editingMessageId}
@@ -1021,13 +1251,20 @@ export default function ChatsPage() {
                   mine
                     ? <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
                     : <NovaMessageContent text={message.bodyText} animate={isNew} />
+                ) : activeDetail?.kind === "email" ? (message) => (
+                  <div>
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#002FA7]">
+                      {message.subject || message.conversation?.subject || "Email"}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
+                  </div>
                 ) : undefined}
                 onRetryMessage={activeDetail?.kind === "ai" ? retryNova : undefined}
                 emptyState={
                   <>
                     <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm"><MessagesSquare className="h-6 w-6" /></span>
-                    <h3 className="mt-4 text-sm font-semibold text-slate-800">Say hello</h3>
-                    <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Messages here are just between you and {activeDetail?.name}.</p>
+                    <h3 className="mt-4 text-sm font-semibold text-slate-800">{activeDetail?.kind === "email" ? "No email messages yet" : "Say hello"}</h3>
+                    <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{activeDetail?.kind === "email" ? `Replies will be sent to ${activeDetail.clientEmail || "the client's email address"}.` : `Messages here are just between you and ${activeDetail?.name}.`}</p>
                   </>
                 }
               />
@@ -1041,12 +1278,12 @@ export default function ChatsPage() {
                   value={draft}
                   onChange={setDraft}
                   onSend={send}
-                  onAttach={activeDetail?.kind === "ai" ? undefined : attachFile}
-                  allowAttach={activeDetail?.kind !== "ai"}
+                  onAttach={["ai", "email"].includes(activeDetail?.kind) ? undefined : attachFile}
+                  allowAttach={!["ai", "email"].includes(activeDetail?.kind)}
                   sending={activeDetail?.kind === "ai" ? novaSending : sending}
-                  placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : "Type a message"}
-                  accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-brand-600 to-brand-800" : activeDetail?.kind === "client" ? "bg-emerald-600" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
-                  sendLabel={activeDetail?.kind === "ai" ? "Ask Nova" : undefined}
+                  placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : activeDetail?.kind === "email" ? "Write an email reply" : "Type a message"}
+                  accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-brand-600 to-brand-800" : activeDetail?.kind === "email" ? "bg-[#002FA7]" : activeDetail?.kind === "client" ? "bg-slate-800" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
+                  sendLabel={activeDetail?.kind === "ai" ? "Ask Nova" : activeDetail?.kind === "email" ? "Send email" : undefined}
                   replyTarget={replyTarget}
                   replyTargetLabel={replyTargetLabel}
                   onCancelReply={cancelReply}
@@ -1063,6 +1300,21 @@ export default function ChatsPage() {
       {pickerOpen ? (
         <NewChatModal colleagues={colleagues} loading={colleaguesLoading} creating={creatingThread} onClose={() => setPickerOpen(false)} onCreate={handleCreateThread} />
       ) : null}
+      <AnimatePresence>
+        {emailComposerOpen ? (
+          <CommunicationComposer
+            initialChannel="Email"
+            caseItem={{ id: null, client: null }}
+            providers={communicationProviders}
+            permissions={commPermissions}
+            templates={communicationTemplates}
+            allowClientSelection
+            lockChannel
+            onClose={() => setEmailComposerOpen(false)}
+            onSaved={handleEmailSaved}
+          />
+        ) : null}
+      </AnimatePresence>
       {groupProfileOpen && activeDetail?.kind === "internal" && activeDetail.isGroup ? (
         <GroupProfilePanel
           thread={activeDetail}

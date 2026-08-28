@@ -134,7 +134,7 @@ test("client conversations link to the scoped client profile from full and float
     source("../src/controllers/communicationController.js"),
   ]);
   assert.match(controller, /client: \{ select: \{ id: true, fullName: true, email: true, phone: true \} \}/);
-  assert.match(page, /activeDetail\?\.kind === "client" && activeDetail\.clientId/);
+  assert.match(page, /\["client", "email"\]\.includes\(activeDetail\?\.kind\) && activeDetail\.clientId/);
   assert.match(page, /to=\{`\/app\/clients\/\$\{encodeURIComponent\(activeDetail\.clientId\)\}`\}/);
   assert.match(page, /title="Open client profile"/);
   assert.match(widget, /function openClientProfile\(\)/);
@@ -145,7 +145,7 @@ test("client conversations link to the scoped client profile from full and float
 
 test("refreshing a Nova deep link keeps it as AI instead of loading an internal thread named nova", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
-  assert.match(page, /\["ai", "support", "client", "internal"\]\.includes\(requestedKind\)/);
+  assert.match(page, /\["ai", "support", "client", "email", "internal"\]\.includes\(requestedKind\)/);
   assert.match(page, /const \[selectedKind, setSelectedKind\] = useState\(initialKind\);/);
   assert.match(page, /useState\(initialKind === "ai" && requestedThreadId \? "nova" : requestedThreadId\)/);
 });
@@ -351,7 +351,12 @@ test("message delete uses an in-app confirm popover, not window.confirm (which b
     source("../../frontend/src/components/chat/ChatMessageBubble.jsx"),
     source("../../frontend/src/pages/ChatsPage.jsx"),
   ]);
-  assert.match(bubble, /function DeleteConfirmPopover\(\{ onConfirm, onCancel \}\)/);
+  assert.match(bubble, /function DeleteConfirmPopover\(\{ anchorRef, onConfirm, onCancel \}\)/);
+  assert.match(bubble, /createPortal\(/);
+  assert.match(bubble, /getBoundingClientRect\(\)/);
+  assert.match(bubble, /window\.innerWidth - width - viewportGap/);
+  assert.match(bubble, /window\.innerHeight - height - viewportGap/);
+  assert.match(bubble, /window\.addEventListener\("scroll", placePopover, true\)/);
   assert.match(bubble, /const \[confirmingDelete, setConfirmingDelete\] = useState\(false\);/);
   // The trash button opens the popover; onDeleteMessage only fires from the
   // popover's own Delete button, once the user has explicitly confirmed.

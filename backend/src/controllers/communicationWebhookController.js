@@ -240,7 +240,9 @@ export async function ingestInboundCommunication(payload) {
       where: { agencyId, clientId: client.id },
       orderBy: { updatedAt: "desc" },
     }));
-  if (!caseItem)
+  // Email belongs to the client record even when that client does not have a
+  // case yet. Other provider channels retain their existing case requirement.
+  if (!caseItem && channel !== "Email")
     return storeUnmatched({
       agencyId,
       channel,
@@ -261,6 +263,9 @@ export async function ingestInboundCommunication(payload) {
 
   const providerThreadId =
     clean(payload.providerThreadId || payload.threadId, 300) || null;
+  const emailInReplyTo =
+    clean(payload.emailInReplyTo || payload.headers?.["in-reply-to"], 500) ||
+    null;
   const messageStatus =
     channel === "Call"
       ? clean(payload.disposition, 40).toLowerCase() === "missed"
@@ -270,15 +275,32 @@ export async function ingestInboundCommunication(payload) {
   const data = await prisma.$transaction(async (tx) => {
     let conversation = providerThreadId
       ? await tx.communicationConversation.findFirst({
-          where: { agencyId, provider, providerThreadId, deletedAt: null },
+          where: { agencyId, clientId: client.id, channel, provider, providerThreadId, deletedAt: null },
         })
       : null;
+    if (!conversation && channel === "Email" && emailInReplyTo) {
+      const parent = await tx.communicationMessage.findFirst({
+        where: {
+          agencyId,
+          channel: "Email",
+          deletedAt: null,
+          OR: [
+            { emailMessageId: emailInReplyTo },
+            { providerMessageId: emailInReplyTo },
+          ],
+        },
+        select: { conversation: true },
+      });
+      conversation = parent?.conversation?.clientId === client.id
+        ? parent.conversation
+        : null;
+    }
     if (!conversation && channel !== "Email") {
       conversation = await tx.communicationConversation.findFirst({
         where: {
           agencyId,
           clientId: client.id,
-          caseId: caseItem.id,
+          caseId: caseItem?.id || null,
           channel,
           state: { not: "Closed" },
           deletedAt: null,
@@ -291,7 +313,7 @@ export async function ingestInboundCommunication(payload) {
         data: {
           agencyId,
           clientId: client.id,
-          caseId: caseItem.id,
+          caseId: caseItem?.id || null,
           channel,
           subject,
           provider,
@@ -304,7 +326,7 @@ export async function ingestInboundCommunication(payload) {
           unreadCount: 0,
           state: "WaitingOnAgency",
           assignedToId:
-            caseItem.assignedUserId || client.assignedUserId || user.id,
+            caseItem?.assignedUserId || client.assignedUserId || user.id,
           createdById: user.id,
         },
       });
@@ -313,7 +335,7 @@ export async function ingestInboundCommunication(payload) {
       data: {
         agencyId,
         clientId: client.id,
-        caseId: caseItem.id,
+        caseId: caseItem?.id || null,
         conversationId: conversation.id,
         channel,
         direction: "Inbound",
@@ -330,11 +352,7 @@ export async function ingestInboundCommunication(payload) {
             payload.emailMessageId || payload.headers?.["message-id"],
             500,
           ) || null,
-        emailInReplyTo:
-          clean(
-            payload.emailInReplyTo || payload.headers?.["in-reply-to"],
-            500,
-          ) || null,
+        emailInReplyTo,
         emailReferences: array(
           payload.emailReferences || payload.headers?.references,
         ),

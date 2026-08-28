@@ -10,6 +10,7 @@ import {
   exportCommunication,
   getCommunicationConversation,
   getCommunicationProviders,
+  getClientEmailThread,
   getPortalChatStatus,
   getCommunicationRealtimeConfig,
   getCommunicationRetentionPolicy,
@@ -67,6 +68,10 @@ router.get("/providers", asyncHandler(getCommunicationProviders));
 router.get(
   "/clients/:clientId/portal-chat-status",
   asyncHandler(getPortalChatStatus),
+);
+router.get(
+  "/clients/:clientId/email-thread",
+  asyncHandler(getClientEmailThread),
 );
 router.get(
   "/realtime/case/:caseId",

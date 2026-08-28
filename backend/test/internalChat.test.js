@@ -179,17 +179,73 @@ test("Chats is the unified inbox route, replacing the old Team Chat naming every
   assert.match(mainLayout, /const isChats = location\.pathname === "\/app\/chats";/);
 });
 
-test("Chats merges internal threads with every client Chat conversation, agency-wide, not scoped to one client", async () => {
+test("Chats merges team threads, portal chats, and client-mapped email conversations", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
   // No clientId filter here on purpose — this is the whole point of the
   // merge: every client conversation the staff member can see, not just
   // one client's thread the way the client-profile drawer scopes it.
-  assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Chat&limit=50"\)/);
+  assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Chat&limit=100"\)/);
+  assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Email&limit=100"\)/);
   assert.match(page, /Promise\.allSettled\(\[/);
   assert.match(page, /kind: "internal"/);
   assert.match(page, /kind: "client"/);
-  assert.match(page, /\[\.\.\.internal, \.\.\.client\]\.sort\(\(a, b\) => new Date\(b\.lastMessageAt\) - new Date\(a\.lastMessageAt\)\)/);
+  assert.match(page, /kind: "email"/);
+  assert.match(page, /\[\.\.\.internal, \.\.\.client, \.\.\.email\]\.sort\(\(a, b\) => new Date\(b\.lastMessageAt\) - new Date\(a\.lastMessageAt\)\)/);
   // Per-row unread badge, for both kinds, driven by the same field.
   assert.match(page, /unreadCount: item\.unreadCount,/);
   assert.match(page, /unreadCount: conversation\.unreadCount \|\| 0,/);
+});
+
+test("Chats consolidates every email thread for one client into one soft-edged chat row", async () => {
+  const [page, routes, controller] = await Promise.all([
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../src/routes/communicationRoutes.js"),
+    source("../src/controllers/communicationController.js"),
+  ]);
+  assert.match(page, /const emailByClient = new Map\(\);/);
+  assert.match(page, /emailByClient\.get\(clientId\)/);
+  assert.match(page, /id: clientId,/);
+  assert.match(page, /messageCount: sorted\.reduce/);
+  assert.match(page, /item\.messageCount === 1 \? "email" : "emails"/);
+  assert.match(page, /item\.kind !== "email" \? <KindBadge kind=\{item\.kind\} \/> : null/);
+  assert.match(page, /rounded-2xl px-3 py-3/);
+  assert.match(page, /`\/communications\/clients\/\$\{id\}\/email-thread`/);
+  assert.match(routes, /"\/clients\/:clientId\/email-thread"/);
+  assert.match(controller, /export async function getClientEmailThread/);
+  assert.match(controller, /conversationId: \{ in: conversationIds \}/);
+  assert.match(controller, /totalMessages: conversations\.reduce/);
+});
+
+test("Chats starts email from a real client and keeps portal chat visually separate", async () => {
+  const [page, composer] = await Promise.all([
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/case-profile/communication/CommunicationComposer.jsx"),
+  ]);
+  assert.match(page, /<CommunicationComposer/);
+  assert.match(page, /allowClientSelection/);
+  assert.match(page, /lockChannel/);
+  assert.match(composer, /api\.get\(`\/clients\?limit=20/);
+  assert.match(composer, /clientId: effectiveCaseItem\.client\?\.id \|\| undefined/);
+  assert.match(composer, /bg-\[#002FA7\]/);
+  assert.match(page, />Email<\/span>/);
+  assert.match(page, />Portal chat<\/span>/);
+  assert.match(page, /activeDetail\.clientEmail/);
+});
+
+test("the communications API cannot mix email and portal messages in one conversation", async () => {
+  const controller = await source("../src/controllers/communicationController.js");
+  const createMessage = controller.slice(
+    controller.indexOf("export async function createCommunicationMessage"),
+    controller.indexOf("export async function updateCommunicationDraft"),
+  );
+  assert.match(createMessage, /conversationContext\.channel !== channel/);
+  assert.match(createMessage, /CONVERSATION_CHANNEL_MISMATCH/);
+});
+
+test("inbound email maps to a client without requiring a case and rejoins reply threads", async () => {
+  const controller = await source("../src/controllers/communicationWebhookController.js");
+  assert.match(controller, /if \(!caseItem && channel !== "Email"\)/);
+  assert.match(controller, /caseId: caseItem\?\.id \|\| null/);
+  assert.match(controller, /channel === "Email" && emailInReplyTo/);
+  assert.match(controller, /\{ emailMessageId: emailInReplyTo \}/);
 });

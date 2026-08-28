@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { Check, CheckCheck, CornerUpLeft, Download, FileText, Loader2, Pencil, SmilePlus, Trash2 } from "lucide-react";
 
@@ -83,10 +84,71 @@ function ReactionPicker({ onPick, onClose }) {
 // error, the call just returns false), which made delete look like it
 // did nothing at all. An inline popover, matching the reaction picker's
 // pattern right below, can't be suppressed and looks intentional.
-function DeleteConfirmPopover({ onConfirm, onCancel }) {
-  return (
+function DeleteConfirmPopover({ anchorRef, onConfirm, onCancel }) {
+  const popoverRef = useRef(null);
+  const [position, setPosition] = useState(null);
+
+  useLayoutEffect(() => {
+    function placePopover() {
+      const anchor = anchorRef.current;
+      const popover = popoverRef.current;
+      if (!anchor || !popover) return;
+      const anchorRect = anchor.getBoundingClientRect();
+      const width = popover.offsetWidth;
+      const height = popover.offsetHeight;
+      const viewportGap = 12;
+      const anchorGap = 8;
+      const left = Math.min(
+        Math.max(anchorRect.left + anchorRect.width / 2 - width / 2, viewportGap),
+        window.innerWidth - width - viewportGap,
+      );
+      const openAbove = anchorRect.top >= height + anchorGap + viewportGap;
+      const preferredTop = openAbove
+        ? anchorRect.top - height - anchorGap
+        : anchorRect.bottom + anchorGap;
+      const top = Math.min(
+        Math.max(preferredTop, viewportGap),
+        window.innerHeight - height - viewportGap,
+      );
+      setPosition({ left, top });
+    }
+
+    placePopover();
+    window.addEventListener("resize", placePopover);
+    window.addEventListener("scroll", placePopover, true);
+    return () => {
+      window.removeEventListener("resize", placePopover);
+      window.removeEventListener("scroll", placePopover, true);
+    };
+  }, [anchorRef]);
+
+  useEffect(() => {
+    function closeFromOutside(event) {
+      if (event.key === "Escape") {
+        onCancel();
+        return;
+      }
+      if (
+        event.type === "pointerdown" &&
+        !popoverRef.current?.contains(event.target) &&
+        !anchorRef.current?.contains(event.target)
+      ) onCancel();
+    }
+    document.addEventListener("keydown", closeFromOutside);
+    document.addEventListener("pointerdown", closeFromOutside, true);
+    return () => {
+      document.removeEventListener("keydown", closeFromOutside);
+      document.removeEventListener("pointerdown", closeFromOutside, true);
+    };
+  }, [anchorRef, onCancel]);
+
+  return createPortal(
     <div
-      className="absolute bottom-full z-20 mb-1.5 flex items-center gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-[0_8px_24px_rgba(15,23,42,0.14)]"
+      ref={popoverRef}
+      role="alertdialog"
+      aria-label="Delete this message?"
+      style={{ left: position?.left ?? 0, top: position?.top ?? 0 }}
+      className={`fixed z-[600] flex max-w-[calc(100vw-1.5rem)] items-center gap-2 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs shadow-[0_8px_24px_rgba(15,23,42,0.14)] ${position ? "opacity-100" : "pointer-events-none opacity-0"}`}
       onMouseLeave={onCancel}
     >
       <span className="font-medium text-slate-600">Delete this message?</span>
@@ -96,7 +158,8 @@ function DeleteConfirmPopover({ onConfirm, onCancel }) {
       <button type="button" onClick={onConfirm} className="rounded-full bg-rose-600 px-2.5 py-1 font-semibold text-white transition hover:bg-rose-700">
         Delete
       </button>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -152,6 +215,7 @@ export default function ChatMessageBubble({
   const reduceMotion = useReducedMotion();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteButtonRef = useRef(null);
   const attachments = message.attachmentRecords || [];
   const failed = Boolean(message.failed);
   const Container = failed ? "button" : "div";
@@ -228,6 +292,7 @@ export default function ChatMessageBubble({
             {onToggleReaction ? (
               <>
                 <button
+                  ref={deleteButtonRef}
                   type="button"
                   onClick={() => setPickerOpen((current) => !current)}
                   aria-label="React"
@@ -260,6 +325,7 @@ export default function ChatMessageBubble({
                 </button>
                 {confirmingDelete ? (
                   <DeleteConfirmPopover
+                    anchorRef={deleteButtonRef}
                     onConfirm={() => {
                       setConfirmingDelete(false);
                       onDeleteMessage?.(message);

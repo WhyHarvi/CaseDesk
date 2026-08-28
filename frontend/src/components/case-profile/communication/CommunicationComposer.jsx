@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   Paperclip,
   PhoneCall,
+  Search,
   Send,
   Sparkles,
   X,
@@ -21,7 +22,7 @@ const channels = {
   Email: {
     label: "Email",
     icon: Mail,
-    tone: "bg-blue-50 text-blue-600",
+    tone: "bg-blue-50 text-[#002FA7]",
     permission: "canSendEmail",
   },
   Sms: {
@@ -45,7 +46,7 @@ const channels = {
 };
 
 const inputClass =
-  "mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100/60";
+  "mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#002FA7] focus:ring-4 focus:ring-blue-100/70";
 const splitAddresses = (value) =>
   String(value || "")
     .split(/[;,]/)
@@ -105,11 +106,21 @@ export default function CommunicationComposer({
   templates,
   reply,
   prefill,
+  allowClientSelection = false,
+  lockChannel = false,
   onClose,
   onSaved,
 }) {
+  const [selectedClient, setSelectedClient] = useState(caseItem.client || null);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientResults, setClientResults] = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(allowClientSelection);
+  const effectiveCaseItem = useMemo(
+    () => ({ ...caseItem, client: selectedClient }),
+    [caseItem, selectedClient],
+  );
   const [values, setValues] = useState(() => ({
-    ...initialValues(initialChannel, caseItem, reply),
+    ...initialValues(initialChannel, effectiveCaseItem, reply),
     ...(prefill || {}),
   }));
   const [files, setFiles] = useState([]);
@@ -134,8 +145,37 @@ export default function CommunicationComposer({
   const update = (key, value) =>
     setValues((current) => ({ ...current, [key]: value }));
 
+  useEffect(() => {
+    if (!allowClientSelection || selectedClient) return undefined;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setClientsLoading(true);
+      api.get(`/clients?limit=20${clientSearch.trim() ? `&search=${encodeURIComponent(clientSearch.trim())}` : ""}`)
+        .then((response) => {
+          if (active) setClientResults(response.data.data || []);
+        })
+        .catch(() => {
+          if (active) setError("Clients could not be loaded.");
+        })
+        .finally(() => {
+          if (active) setClientsLoading(false);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [allowClientSelection, clientSearch, selectedClient]);
+
+  const chooseClient = (client) => {
+    setSelectedClient(client);
+    setValues((current) => ({ ...current, to: client.email || "" }));
+    setError("");
+  };
+
   const payload = (sendNow = false) => ({
-    caseId: caseItem.id,
+    caseId: effectiveCaseItem.id || undefined,
+    clientId: effectiveCaseItem.client?.id || undefined,
     conversationId: reply?.conversationId || undefined,
     parentMessageId: reply?.message?.id || undefined,
     channel: values.channel,
@@ -162,6 +202,7 @@ export default function CommunicationComposer({
   useEffect(() => {
     if (
       submitting.current ||
+      !effectiveCaseItem.client?.id ||
       !["Email", "Sms"].includes(values.channel) ||
       (!values.subject.trim() && !values.bodyText.trim())
     )
@@ -200,7 +241,7 @@ export default function CommunicationComposer({
   ]);
 
   const chooseChannel = (channel) => {
-    setValues(initialValues(channel, caseItem, null));
+    setValues(initialValues(channel, effectiveCaseItem, null));
     setDraftId(null);
     setFiles([]);
     idempotencyKey.current = crypto.randomUUID();
@@ -212,8 +253,8 @@ export default function CommunicationComposer({
     if (!template) return;
     setValues((current) => ({
       ...current,
-      subject: mergeTemplate(template.subject, caseItem),
-      bodyText: mergeTemplate(template.bodyText, caseItem),
+      subject: mergeTemplate(template.subject, effectiveCaseItem),
+      bodyText: mergeTemplate(template.bodyText, effectiveCaseItem),
     }));
   };
 
@@ -269,6 +310,10 @@ export default function CommunicationComposer({
 
   const submit = async (event) => {
     event.preventDefault();
+    if (!effectiveCaseItem.client?.id) {
+      setError("Select a client before composing this email.");
+      return;
+    }
     const intent = event.nativeEvent.submitter?.value || "send";
     if (intent !== "draft" && values.channel === "Email") {
       const trimmedSubject = values.subject.trim();
@@ -311,7 +356,7 @@ export default function CommunicationComposer({
         );
         message = response.data.data;
       }
-      onSaved(message, { intent });
+      onSaved(message, { intent, client: effectiveCaseItem.client });
       onClose();
     } catch (requestError) {
       setError(
@@ -342,13 +387,15 @@ export default function CommunicationComposer({
       >
         <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-600">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#002FA7]">
               Client communication
             </p>
             <h2 id="communication-composer-title" className="mt-1 text-xl font-semibold tracking-tight">
               {reply
-                ? `Reply to ${caseItem.client?.fullName}`
-                : `New communication — ${caseItem.client?.fullName || "Client"}`}
+                ? `Reply to ${effectiveCaseItem.client?.fullName}`
+                : effectiveCaseItem.client?.fullName
+                  ? `New communication — ${effectiveCaseItem.client.fullName}`
+                  : "New client email"}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
               Drafts save automatically. Provider delivery runs safely in the
@@ -364,7 +411,7 @@ export default function CommunicationComposer({
           </button>
         </header>
         <main className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/60 p-5">
-          {!reply ? (
+          {!reply && !lockChannel ? (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {Object.entries(channels).map(([channel, item]) => {
                 const Icon = item.icon;
@@ -375,7 +422,7 @@ export default function CommunicationComposer({
                     type="button"
                     disabled={disabled}
                     onClick={() => chooseChannel(channel)}
-                    className={`rounded-2xl border p-3 text-left transition disabled:opacity-40 ${values.channel === channel ? "border-slate-900 bg-white shadow-sm" : "border-slate-100 bg-white/70"}`}
+                    className={`rounded-2xl border p-3 text-left transition disabled:opacity-40 ${values.channel === channel ? "border-[#002FA7] bg-white shadow-sm" : "border-slate-100 bg-white/70"}`}
                   >
                     <span
                       className={`flex h-9 w-9 items-center justify-center rounded-xl ${item.tone}`}
@@ -389,6 +436,59 @@ export default function CommunicationComposer({
                 );
               })}
             </div>
+          ) : null}
+          {allowClientSelection ? (
+            <section className="rounded-[1.5rem] border border-slate-100 bg-white p-4 shadow-sm">
+              <p className="text-sm font-semibold text-slate-800">Client</p>
+              {selectedClient ? (
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-950">{selectedClient.fullName}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{selectedClient.email}</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={Boolean(draftId)}
+                    onClick={() => {
+                      setSelectedClient(null);
+                      setValues((current) => ({ ...current, to: "" }));
+                    }}
+                    className="shrink-0 rounded-full border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#002FA7] disabled:opacity-40"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label className="relative mt-2 block">
+                    <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      autoFocus
+                      value={clientSearch}
+                      onChange={(event) => setClientSearch(event.target.value)}
+                      placeholder="Search clients"
+                      className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-[#002FA7] focus:ring-4 focus:ring-blue-100/70"
+                    />
+                  </label>
+                  <div className="mt-2 max-h-52 overflow-y-auto rounded-2xl border border-slate-200">
+                    {clientsLoading ? (
+                      <div className="flex justify-center py-8"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div>
+                    ) : clientResults.length ? clientResults.map((client) => (
+                      <button
+                        key={client.id}
+                        type="button"
+                        disabled={!client.email}
+                        onClick={() => chooseClient(client)}
+                        className="block w-full border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-blue-50/60 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        <span className="block truncate text-sm font-semibold text-slate-900">{client.fullName}</span>
+                        <span className={`mt-0.5 block truncate text-xs ${client.email ? "text-slate-500" : "text-rose-600"}`}>{client.email || "No email on file"}</span>
+                      </button>
+                    )) : <p className="px-4 py-8 text-center text-xs text-slate-500">No clients found.</p>}
+                  </div>
+                </>
+              )}
+            </section>
           ) : null}
           {error ? (
             <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -421,6 +521,7 @@ export default function CommunicationComposer({
                 {values.channel === "Email" ? "To" : "Phone number"}
                 <input
                   required
+                  readOnly={allowClientSelection}
                   value={values.to}
                   onChange={(event) => update("to", event.target.value)}
                   className={inputClass}
@@ -437,7 +538,7 @@ export default function CommunicationComposer({
                 <button
                   type="button"
                   onClick={() => setShowEmailOptions((open) => !open)}
-                  className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-sky-700"
+                  className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#002FA7]"
                 >
                   CC, BCC & reply address{" "}
                   <ChevronDown
@@ -517,7 +618,7 @@ export default function CommunicationComposer({
                     type="button"
                     onClick={shortenSubject}
                     disabled={shorteningSubject}
-                    className="inline-flex items-center gap-1 font-semibold text-sky-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 font-semibold text-[#002FA7] disabled:opacity-50"
                   >
                     {shorteningSubject ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -530,7 +631,7 @@ export default function CommunicationComposer({
               </div>
             ) : null}
             {values.channel === "Email" && subjectSuggestion ? (
-              <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-900">
                 <span className="min-w-0 flex-1">
                   Nova suggests: <span className="font-semibold">“{subjectSuggestion}”</span>
                 </span>
@@ -538,7 +639,7 @@ export default function CommunicationComposer({
                   <button
                     type="button"
                     onClick={acceptSubjectSuggestion}
-                    className="font-semibold text-sky-700"
+                    className="font-semibold text-[#002FA7]"
                   >
                     Use this
                   </button>
@@ -597,7 +698,7 @@ export default function CommunicationComposer({
               </label>
             ) : (
               <div className="mt-4 space-y-4">
-                <p className="rounded-2xl bg-sky-50 px-4 py-3 text-xs leading-5 text-sky-800">
+                <p className="rounded-2xl bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-900">
                   Log a completed call here. Use the Twilio dialpad for live calls.
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -706,7 +807,7 @@ export default function CommunicationComposer({
               <button
                 type="submit"
                 value="draft"
-                disabled={saving}
+                disabled={saving || !effectiveCaseItem.client?.id}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold"
               >
                 <FileText className="h-4 w-4" /> Save draft
@@ -717,13 +818,14 @@ export default function CommunicationComposer({
               value="send"
               disabled={
                 saving ||
+                !effectiveCaseItem.client?.id ||
                 !allowed ||
                 (values.channel !== "Call" ? !provider.sendConfigured : false) ||
                 (values.channel === "Email" &&
                   (!values.subject.trim() ||
                     subjectWords > EMAIL_SUBJECT_MAX_WORDS))
               }
-              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-full bg-[#002FA7] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:opacity-50"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
