@@ -51,7 +51,17 @@ export default function LeadIntakePage() {
       setStaleOutreach(staleOutreachResult.data.data);
       setImportSource((value) => value || sourceResult.data.data.find((item) => item.type === "CSV_IMPORT")?.id || sourceResult.data.data[0]?.id || "");
       setImportOwner((value) => value || staffResult.data.data[0]?.id || ""); setError("");
-    } catch (requestError) { setError(requestError.response?.data?.message || "Lead intake could not be loaded."); }
+    } catch (requestError) {
+      // In local development, nodemon restarts the API after a backend edit.
+      // A page load landing in that short window has no HTTP response at all;
+      // retry once with fresh queries instead of leaving a misleading error.
+      if (!fresh && !requestError.response) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        return load(true);
+      }
+      const status = requestError.response?.status;
+      setError(requestError.response?.data?.message || (status ? `Lead intake request failed (${status}).` : "The local API did not respond. Confirm the backend is running on port 5001, then refresh."));
+    }
     finally { setLoading(false); }
   }, [role]);
   useEffect(() => { load(); }, [load]);

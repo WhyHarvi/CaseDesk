@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/http.js";
-import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, bulkReassignLeads, changeLeadPriority, changeLeadStage, convertLead, createClientForPayment, createConsultation, createLead, createLeadFollowUp, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getStaleLeadOutreachOverview, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, listLeadTransferRequests, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordAppointmentAdviceOutcome, recordLeadActivity, rejectLeadTransferRequest, requestLeadTransfer, runStaleLeadOutreach, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadNote, updateLeadSettings } from "./lead.controller.js";
+import { approveLeadTransferRequest, assignLead, bulkPromoteLeadsToPipeline, bulkReassignLeads, changeLeadPriority, changeLeadStage, convertLead, createClientForPayment, createConsultation, createLead, createLeadFollowUp, delegateLeadBacklog, getAgeingReport, getConversionTrendReport, getEmployeeReport, getFunnelReport, getLead, getLeadDashboard, getLeadDashboardDrilldown, getLeadSettings, getLostReport, getResponseTimeReport, getSourceReport, getStaleLeadOutreachOverview, getWorkloadReport, listConsultations, listLeads, listLeadImmigrationInterests, listLeadSources, listLeadStaff, listLeadTransferRequests, markLeadLost, moveLeadToNurture, promoteLeadToPipeline, qualifyLead, reactivateLead, recordAppointmentAdviceOutcome, recordLeadActivity, rejectLeadTransferRequest, requestLeadTransfer, runStaleLeadOutreach, updateCommercialStatus, updateConsultation, updateLeadDetails, updateLeadFollowUp, updateLeadNote, updateLeadSettings } from "./lead.controller.js";
 import { commitImport, createForm, forceCreateFromEvent, getDuplicateReview, getImport, getOperations, listEvents, listForms, listImports, previewImport, resolveDuplicate, retryEvent, updateForm } from "./lead.intake.controller.js";
 import { createLeadRoutingRule, deleteLeadRoutingRule, listLeadRoutingBacklog, listLeadRoutingRules, reviewLeadRoutingBacklog, updateLeadRoutingRule } from "./lead.routing.controller.js";
 import { receiveLeadCsv } from "./lead.intake.upload.js";
@@ -75,6 +75,7 @@ router.post("/:id/reactivate", asyncHandler(reactivateLead));
 router.post("/:id/promote", asyncHandler(promoteLeadToPipeline));
 router.post("/promote-bulk", asyncHandler(bulkPromoteLeadsToPipeline));
 router.post("/reassign-bulk", requireRole("admin"), asyncHandler(bulkReassignLeads));
+router.post("/delegate-backlog", requireRole("admin"), asyncHandler(delegateLeadBacklog));
 router.post("/:id/qualify", requireRole("admin", "consultant"), asyncHandler(qualifyLead));
 router.patch("/:id/stage", requireRole("admin", "consultant"), asyncHandler(changeLeadStage));
 router.patch("/:id/priority", requireRole("admin", "consultant"), asyncHandler(changeLeadPriority));

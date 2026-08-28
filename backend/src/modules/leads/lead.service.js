@@ -5,7 +5,7 @@ import { nextClientNumber } from "../../services/clientNumberService.js";
 import { assertLeadWorkflowEditable, canCreateLead, leadAccessWhere, leadSegmentWhere } from "./lead.permissions.js";
 import { reportingBounds } from "./lead.metrics.js";
 import { nextLeadNumber, requireLead } from "./lead.repository.js";
-import { parseBulkReassignment, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadReactivation, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
+import { parseBacklogDelegation, parseBulkReassignment, parseCommercialStatus, parseCreateConsultation, parseCreateLead, parseLeadActivity, parseLeadAssignment, parseLeadConversion, parseLeadFollowUp, parseLeadFollowUpOutcome, parseLeadListQuery, parseLeadLost, parseLeadNurture, parseLeadPriorityChange, parseLeadQualification, parseLeadReactivation, parseLeadStageChange, parseUpdateConsultation, parseUpdateLeadDetails } from "./lead.validation.js";
 import { DEFAULT_LEAD_SOURCES } from "./lead.constants.js";
 import { resolveRoutedOwner } from "./lead.routing.service.js";
 import { assertNoContactDuplicate, lockAgencyContactIntake } from "../../services/contactDuplicateService.js";
@@ -971,6 +971,79 @@ export async function bulkReassignLeads(req, db = prisma) {
   }
 
   return { reassigned, skipped };
+}
+
+const DELEGATED_OUTREACH_DESCRIPTION = "Collaborative lead outreach";
+
+// A pending follow-up already grants its assignee working access to a lead.
+// Delegating through that boundary leaves ownerUserId (and therefore lead-owner
+// incentive attribution) untouched. The exact task marker also makes reruns
+// idempotent for every lead that still has collaborative work in progress.
+export async function delegateLeadBacklog(req, db = prisma) {
+  const { targetUserIds, ownerUserId, limit, preview } = parseBacklogDelegation(req.body);
+  const agencyId = req.auth.agencyId;
+  const actorId = req.auth.userId;
+  const targets = await db.user.findMany({
+    where: { id: { in: targetUserIds }, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: "consultant" } } },
+    select: { id: true },
+  });
+  if (targets.length !== targetUserIds.length) throw createHttpError(400, "Select active consultants only.", "INVALID_LEAD_COLLABORATOR");
+
+  const workloadRows = await db.leadFollowUp.groupBy({
+    by: ["assignedUserId"],
+    where: { agencyId, assignedUserId: { in: targetUserIds }, status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION },
+    _count: true,
+  });
+  const workloads = new Map(targetUserIds.map((id) => [id, 0]));
+  for (const row of workloadRows) workloads.set(row.assignedUserId, row._count);
+
+  const leads = await db.lead.findMany({
+    where: {
+      agencyId,
+      deletedAt: null,
+      pipelineSegment: "STANDARD",
+      status: { in: ["OPEN", "NURTURE"] },
+      ...(ownerUserId ? { ownerUserId } : {}),
+      followUps: { none: { status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION } },
+    },
+    select: { id: true, leadNumber: true, ownerUserId: true },
+    orderBy: [{ priority: "desc" }, { nextActionAt: "asc" }, { createdAt: "asc" }],
+    take: limit,
+  });
+
+  const eligibleLeads = leads.filter((lead) => targetUserIds.some((id) => id !== lead.ownerUserId));
+  if (preview) return { eligibleCount: eligibleLeads.length, capped: leads.length === limit };
+
+  const delegated = [];
+  const skipped = [];
+  for (const lead of leads) {
+    const eligible = targetUserIds.filter((id) => id !== lead.ownerUserId);
+    if (!eligible.length) {
+      skipped.push({ id: lead.id, leadNumber: lead.leadNumber, reason: "The selected consultant already owns this lead." });
+      continue;
+    }
+    const assignedUserId = eligible.sort((a, b) => workloads.get(a) - workloads.get(b) || targetUserIds.indexOf(a) - targetUserIds.indexOf(b))[0];
+    const dueAt = new Date(Date.now() + 24 * 60 * 60_000);
+    try {
+      const followUp = await db.$transaction(async (tx) => {
+        const existing = await tx.leadFollowUp.findFirst({ where: { agencyId, leadId: lead.id, status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION }, select: { id: true } });
+        if (existing) return null;
+        const created = await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId, type: "PHONE_CALL", description: DELEGATED_OUTREACH_DESCRIPTION, dueAt } });
+        await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "FOLLOW_UP_CREATED", direction: "INTERNAL", channel: "SYSTEM", title: DELEGATED_OUTREACH_DESCRIPTION, description: `Delegated without changing lead ownership; due ${dueAt.toISOString()}`, performedById: actorId, metadata: { followUpId: created.id, assignedUserId, preservesOwnerUserId: lead.ownerUserId } } });
+        await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.backlog_delegated", details: `${lead.leadNumber}: outreach delegated without ownership change`, entityType: "lead", entityId: lead.id, metadata: { followUpId: created.id, assignedUserId, ownerUserId: lead.ownerUserId } } });
+        return created;
+      }, leadTransactionOptions);
+      if (!followUp) {
+        skipped.push({ id: lead.id, leadNumber: lead.leadNumber, reason: "Collaborative work is already assigned." });
+        continue;
+      }
+      workloads.set(assignedUserId, workloads.get(assignedUserId) + 1);
+      delegated.push({ id: lead.id, leadNumber: lead.leadNumber, ownerUserId: lead.ownerUserId, assignedUserId, followUpId: followUp.id });
+    } catch (error) {
+      skipped.push({ id: lead.id, leadNumber: lead.leadNumber, reason: error.message || "Could not delegate this lead." });
+    }
+  }
+  return { delegated, skipped, remainingCapacityReached: leads.length === limit };
 }
 
 export async function changeLeadStage(req, db = prisma) {

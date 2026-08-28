@@ -171,6 +171,10 @@ export async function assignLead(req, res) {
   res.json({ data: await service.assignLead(req) });
 }
 
+export async function delegateLeadBacklog(req, res) {
+  res.json({ data: await service.delegateLeadBacklog(req) });
+}
+
 export async function recordAppointmentAdviceOutcome(req, res) {
   res.json({ data: await recordAdviceOutcome(req, req.params.id, req.params.adviceId, req.body?.outcome) });
 }

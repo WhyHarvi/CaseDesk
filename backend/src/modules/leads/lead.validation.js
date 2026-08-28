@@ -344,6 +344,16 @@ export function parseBulkReassignment(body = {}) {
   return { leadIds, targetUserIds };
 }
 
+export function parseBacklogDelegation(body = {}) {
+  const targetUserIds = [...new Set((Array.isArray(body.targetUserIds) ? body.targetUserIds : []).filter((id) => typeof id === "string" && id))].slice(0, 50);
+  const ownerUserId = text(body.ownerUserId, "ownerUserId", { max: 100 }) || null;
+  const limit = body.limit === undefined ? 500 : Number(body.limit);
+  const preview = body.preview === true;
+  if (!targetUserIds.length) throw createHttpError(400, "Select at least one consultant to receive work.", "VALIDATION_ERROR");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw createHttpError(400, "limit must be between 1 and 500.", "VALIDATION_ERROR");
+  return { targetUserIds, ownerUserId, limit, preview };
+}
+
 export function parseLeadNurture(body = {}) {
   const nurtureUntil = dateValue(body.nurtureUntil, "nurtureUntil", { required: true });
   if (nurtureUntil <= new Date()) throw createHttpError(400, "nurtureUntil must be in the future.", "VALIDATION_ERROR");

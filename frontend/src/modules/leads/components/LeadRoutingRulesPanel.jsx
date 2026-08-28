@@ -307,6 +307,12 @@ export default function LeadRoutingRulesPanel({ staff }) {
   const [editorError, setEditorError] = useState("");
   const [busyId, setBusyId] = useState("");
   const [backlogRule, setBacklogRule] = useState(null);
+  const [delegating, setDelegating] = useState(false);
+  const [delegationOwnerId, setDelegationOwnerId] = useState("");
+  const [delegationAssistantId, setDelegationAssistantId] = useState("");
+  const [delegationLimit, setDelegationLimit] = useState(500);
+  const [delegationPreview, setDelegationPreview] = useState(null);
+  const [previewingDelegation, setPreviewingDelegation] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -321,6 +327,29 @@ export default function LeadRoutingRulesPanel({ staff }) {
     }
   }
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!delegationOwnerId || !delegationAssistantId) {
+      setDelegationPreview(null);
+      return undefined;
+    }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setPreviewingDelegation(true);
+      try {
+        const response = await api.post("/leads/delegate-backlog", { ownerUserId: delegationOwnerId, targetUserIds: [delegationAssistantId], limit: delegationLimit, preview: true });
+        if (active) setDelegationPreview(response.data.data);
+      } catch (requestError) {
+        if (active) {
+          setDelegationPreview(null);
+          setError(requestError.response?.data?.message || "Eligible leads could not be counted.");
+        }
+      } finally {
+        if (active) setPreviewingDelegation(false);
+      }
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [delegationOwnerId, delegationAssistantId, delegationLimit]);
 
   function openCreate() {
     setForm({ name: "", targetUserId: "", matchMode: "ANY", isActive: true, conditions: [emptyCondition()] });
@@ -402,6 +431,44 @@ export default function LeadRoutingRulesPanel({ staff }) {
     }
   }
 
+  async function delegateBacklog() {
+    const consultants = staff.filter((person) => person.role === "consultant");
+    if (!consultants.length) return;
+    if (!window.confirm(`Distribute up to 500 open leads across ${consultants.length} consultant${consultants.length === 1 ? "" : "s"}? Lead owners and incentive credit will not change.`)) return;
+    setDelegating(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await api.post("/leads/delegate-backlog", { targetUserIds: consultants.map((person) => person.id), limit: 500 });
+      const result = response.data.data;
+      setNotice(`${result.delegated.length} lead${result.delegated.length === 1 ? "" : "s"} delegated. Ownership and incentive credit were preserved.${result.remainingCapacityReached ? " Run again to process the next batch." : ""}`);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "The lead backlog could not be delegated.");
+    } finally {
+      setDelegating(false);
+    }
+  }
+
+  async function delegateOwnerBacklog() {
+    const owner = staff.find((person) => person.id === delegationOwnerId);
+    const assistant = staff.find((person) => person.id === delegationAssistantId);
+    if (!owner || !assistant || !delegationPreview?.eligibleCount) return;
+    if (!window.confirm(`Give ${assistant.fullName} outreach work on ${delegationPreview.eligibleCount} of ${owner.fullName}'s leads? ${owner.fullName} will remain the owner and keep lead-owner incentive credit.`)) return;
+    setDelegating(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await api.post("/leads/delegate-backlog", { ownerUserId: owner.id, targetUserIds: [assistant.id], limit: delegationLimit });
+      const result = response.data.data;
+      setNotice(`${result.delegated.length} of ${owner.fullName}'s leads delegated to ${assistant.fullName}. Ownership and incentive credit were preserved.`);
+      setDelegationPreview((current) => current ? { ...current, eligibleCount: Math.max(0, current.eligibleCount - result.delegated.length) } : current);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "The selected lead backlog could not be delegated.");
+    } finally {
+      setDelegating(false);
+    }
+  }
+
   const ordered = [...rules].sort((a, b) => a.sortOrder - b.sortOrder);
 
   return (
@@ -415,6 +482,40 @@ export default function LeadRoutingRulesPanel({ staff }) {
           </div>
         </div>
         <button type="button" disabled={!staff.length} onClick={openCreate} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"><Plus className="h-4 w-4" />New rule</button>
+      </section>
+
+      <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h2 className="font-semibold text-slate-950">Delegate the existing backlog</h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">Give another consultant working access without changing the lead owner, conversion attribution, or lead-owner incentive credit.</p>
+        </div>
+        <div className="grid gap-px bg-slate-200 lg:grid-cols-[1fr_48px_1fr_150px_180px]">
+          <label className="bg-white p-4 text-xs font-semibold text-slate-500">Lead owner
+            <select value={delegationOwnerId} onChange={(event) => setDelegationOwnerId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-brand-400">
+              <option value="">Select owner</option>
+              {staff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
+            </select>
+          </label>
+          <div className="hidden items-center justify-center bg-white text-slate-300 lg:flex" aria-hidden="true"><ArrowRight className="h-5 w-5" /></div>
+          <label className="bg-white p-4 text-xs font-semibold text-slate-500">Assisting consultant
+            <select value={delegationAssistantId} onChange={(event) => setDelegationAssistantId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-brand-400">
+              <option value="">Select consultant</option>
+              {staff.filter((person) => person.role === "consultant" && person.id !== delegationOwnerId).map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
+            </select>
+          </label>
+          <label className="bg-white p-4 text-xs font-semibold text-slate-500">Maximum leads
+            <input type="number" min="1" max="500" value={delegationLimit} onChange={(event) => setDelegationLimit(Math.min(500, Math.max(1, Number(event.target.value) || 1)))} className="mt-2 h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-900 outline-none focus:border-brand-400" />
+          </label>
+          <div className="flex flex-col justify-center bg-slate-50 p-4">
+            <p className="text-xs font-semibold text-slate-500">Eligible now</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{previewingDelegation ? "…" : delegationPreview ? `${delegationPreview.eligibleCount}${delegationPreview.capped ? "+" : ""}` : "—"}</p>
+            <button type="button" disabled={delegating || previewingDelegation || !delegationPreview?.eligibleCount} onClick={delegateOwnerBacklog} className="mt-3 h-10 rounded-full bg-brand-600 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{delegating ? "Delegating…" : "Delegate leads"}</button>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-slate-500">Need to share work across the whole team instead?</p>
+          <button type="button" disabled={delegating || !staff.some((person) => person.role === "consultant")} onClick={delegateBacklog} className="h-9 rounded-full border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-700 disabled:opacity-50">Distribute across all consultants</button>
+        </div>
       </section>
 
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{notice}</div> : null}
