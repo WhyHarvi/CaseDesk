@@ -123,13 +123,16 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     };
   }, [requestedLeadId, selectedLead?.id, setParams]);
   useEffect(() => {
-    Promise.all([api.get("/leads/sources"), api.get("/leads/staff")])
-      .then(([sourceResponse, staffResponse]) => {
-        setSources(sourceResponse.data.data);
-        setStaff(staffResponse.data.data);
-        setSupportingDataError("");
-      })
-      .catch((requestError) => setSupportingDataError(requestError.response?.data?.message || "Lead sources and employees could not be loaded."));
+    Promise.allSettled([api.get("/leads/sources"), api.get("/leads/staff")])
+      .then(([sourceResult, staffResult]) => {
+        if (sourceResult.status === "fulfilled") setSources(sourceResult.value.data.data || []);
+        if (staffResult.status === "fulfilled") setStaff(staffResult.value.data.data || []);
+        const failures = [
+          sourceResult.status === "rejected" ? "lead sources" : null,
+          staffResult.status === "rejected" ? "employees" : null,
+        ].filter(Boolean);
+        setSupportingDataError(failures.length ? `${failures.join(" and ")} could not be loaded. Refresh the page.` : "");
+      });
   }, []);
 
   const loadTransferRequests = useCallback(async () => {

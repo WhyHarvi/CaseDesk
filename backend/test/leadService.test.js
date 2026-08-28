@@ -408,11 +408,24 @@ test("listing sources provisions the standard agency catalog when it is missing"
     },
   };
 
-  const data = await listLeadSources({ auth: { agencyId: "agency-1" } }, db);
+  const data = await listLeadSources({ auth: { role: "admin", agencyId: "agency-1" } }, db);
 
   assert.ok(data.length >= 10);
   assert.ok(data.some((source) => source.type === "PHONE"));
   assert.ok(data.every((source) => source.agencyId === "agency-1"));
+});
+
+test("listing sources is read-only for consultants", async () => {
+  let attemptedWrite = false;
+  const db = {
+    leadSource: {
+      createMany: async () => { attemptedWrite = true; },
+      findMany: async () => [{ id: "source-1", name: "Referral", type: "REFERRAL" }],
+    },
+  };
+  const data = await listLeadSources({ auth: { role: "consultant", agencyId: "agency-1" } }, db);
+  assert.equal(attemptedWrite, false);
+  assert.equal(data.length, 1);
 });
 
 test("booking a consultation updates the lead work queue in the same transaction", async () => {

@@ -335,7 +335,10 @@ export async function getLead(req) {
 }
 
 export async function listLeadSources(req, db = prisma) {
-  if (req.auth.role !== "frontdesk") {
+  // Catalog provisioning is a write operation and therefore admin-only.
+  // Consultants/frontdesk only read the agency's existing catalog; trying
+  // createMany here made their otherwise-valid GET fail under RLS.
+  if (req.auth.role === "admin") {
     await db.leadSource.createMany({
       data: DEFAULT_LEAD_SOURCES.map(([name, type]) => ({ agencyId: req.auth.agencyId, name, type })),
       skipDuplicates: true,
