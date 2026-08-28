@@ -12,9 +12,11 @@ import {
   Table,
   TableCell,
   TableRow,
+  Textbox,
   TextRun,
   WidthType,
 } from "docx";
+import JSZip from "jszip";
 
 const headingMap = { H1: HeadingLevel.HEADING_1, H2: HeadingLevel.HEADING_2, H3: HeadingLevel.HEADING_3 };
 const alignmentMap = { center: AlignmentType.CENTER, right: AlignmentType.RIGHT, justify: AlignmentType.JUSTIFIED };
@@ -60,11 +62,38 @@ function tableFrom(node) {
   return new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } });
 }
 
+function pixelsToInches(value) {
+  return `${(Math.max(0, Number(value) || 0) / 96).toFixed(3)}in`;
+}
+
+function textboxFrom(node) {
+  const content = [...node.children]
+    .filter((child) => ["P", "H1", "H2", "H3", "BLOCKQUOTE"].includes(child.nodeName))
+    .map((child) => paragraphFrom(child, { compact: true }));
+  return new Textbox({
+    children: content.length ? content : [new Paragraph("")],
+    style: {
+      width: pixelsToInches(node.dataset.width || 320),
+      height: pixelsToInches(node.dataset.height || 96),
+      position: "absolute",
+      left: pixelsToInches(node.dataset.x),
+      top: pixelsToInches(node.dataset.y),
+      positionHorizontal: "absolute",
+      positionHorizontalRelative: "margin",
+      positionVertical: "absolute",
+      positionVerticalRelative: "margin",
+      wrapStyle: "none",
+      zIndex: 10,
+    },
+  });
+}
+
 function documentChildren(html) {
   const parsed = new DOMParser().parseFromString(`<body>${html || ""}</body>`, "text/html");
   const children = [];
   for (const node of [...parsed.body.children]) {
-    if (["P", "H1", "H2", "H3", "BLOCKQUOTE"].includes(node.nodeName)) children.push(paragraphFrom(node));
+    if (node.matches?.('div[data-declaration-box="true"]')) children.push(textboxFrom(node));
+    else if (["P", "H1", "H2", "H3", "BLOCKQUOTE"].includes(node.nodeName)) children.push(paragraphFrom(node));
     else if (node.nodeName === "TABLE") children.push(tableFrom(node));
     else if (node.nodeName === "UL" || node.nodeName === "OL") {
       [...node.children].forEach((item) => children.push(paragraphFrom(item, { bullet: node.nodeName === "UL", numbering: node.nodeName === "OL" })));
@@ -90,6 +119,24 @@ export async function createDocxFile({ title, html, headerText, footerText, show
     }],
   });
   const blob = await Packer.toBlob(documentFile);
+  let finalBlob = blob;
+  if (html.includes('data-declaration-box="true"')) {
+    const archive = await JSZip.loadAsync(await blob.arrayBuffer());
+    const documentXmlFile = archive.file("word/document.xml");
+    if (documentXmlFile) {
+      const documentXml = await documentXmlFile.async("string");
+      // Word's legacy textbox shape defaults to a visible outline and fill.
+      // Declaration boxes must remain invisible when printed or opened in Word.
+      archive.file(
+        "word/document.xml",
+        documentXml.replace(
+          /<v:shape(?=[^>]*type="#_x0000_t202")/g,
+          '<v:shape stroked="f" filled="f"',
+        ),
+      );
+      finalBlob = await archive.generateAsync({ type: "blob" });
+    }
+  }
   const safeName = String(title || "document").replace(/[^a-z0-9 _-]/gi, "").trim() || "document";
-  return new File([blob], `${safeName}.docx`, { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  return new File([finalBlob], `${safeName}.docx`, { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
 }

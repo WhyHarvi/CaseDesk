@@ -18,6 +18,7 @@ import {
   Settings2,
   Signature,
   Table2,
+  TextCursorInput,
   Underline,
   Undo2,
   X,
@@ -38,6 +39,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
 import { createDocxFile } from "../utils/writtenDocumentExport";
+import { DeclarationBox } from "../components/documents/DeclarationBoxNode";
 
 function writerStatusOptions(document) {
   if (document?.correspondenceStatus === "Finalized") return [["Finalized", "Finalized"]];
@@ -73,7 +75,7 @@ const StyledImage = Image.extend({
 });
 
 const toolButton =
-  "flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 disabled:opacity-35";
+  "writer-tool-button relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 disabled:opacity-35";
 const templates = [
   {
     id: "client-letter",
@@ -164,6 +166,7 @@ export default function DocumentComposer() {
       TableHeader,
       TableCell,
       StyledImage.configure({ inline: false }),
+      DeclarationBox,
       Placeholder.configure({ placeholder: "Start writing your document…" }),
     ],
     content: "",
@@ -289,6 +292,28 @@ export default function DocumentComposer() {
   function updateSetting(setter, value) {
     setter(value);
     markChanged();
+  }
+
+  function insertDeclarationBox() {
+    const documentJson = editor.getJSON();
+    const existingBoxes = (documentJson.content || []).filter(
+      (node) => node.type === "declarationBox",
+    ).length;
+    const offset = (existingBoxes % 5) * 18;
+    editor
+      .chain()
+      .focus()
+      .insertContent({
+        type: "declarationBox",
+        attrs: { x: 24 + offset, y: 72 + offset, width: 320, height: 96 },
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Type declaration here" }],
+          },
+        ],
+      })
+      .run();
   }
 
   async function saveDocument(name, saveAsCopy = false) {
@@ -473,6 +498,21 @@ export default function DocumentComposer() {
         .writer-page .ProseMirror ol,.writer-page .ProseMirror ul{margin:0 0 10px 22px;padding:0;}
         .writer-page .ProseMirror li{margin-bottom:5px;}
         .writer-page .ProseMirror li p{margin:0;}
+        .writer-page .ProseMirror{position:relative;}
+        .writer-page .declaration-box{position:absolute;z-index:10;box-sizing:border-box;border:1px solid transparent;background:transparent;padding:8px 10px;color:#0f172a;}
+        .writer-page .declaration-box:hover,.writer-page .declaration-box.is-selected{border-color:#2563eb;outline:2px solid rgba(37,99,235,.12);outline-offset:1px;}
+        .writer-page .declaration-box-content{display:block;min-height:100%;outline:none;}
+        .writer-page .declaration-box-content p{margin:0 0 6px;}
+        .writer-page .declaration-box-controls{position:absolute;left:-1px;top:-29px;display:none;height:28px;align-items:center;overflow:hidden;border:1px solid #2563eb;border-bottom:0;border-radius:8px 8px 0 0;background:#2563eb;color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.2);}
+        .writer-page .declaration-box:hover .declaration-box-controls,.writer-page .declaration-box.is-selected .declaration-box-controls{display:flex;}
+        .writer-page .declaration-box-move,.writer-page .declaration-box-delete{display:flex;height:27px;width:30px;align-items:center;justify-content:center;}
+        .writer-page .declaration-box-move{cursor:move;touch-action:none;}
+        .writer-page .declaration-box-delete{border-left:1px solid rgba(255,255,255,.3);}
+        .writer-page .declaration-box-resize{position:absolute;right:-6px;bottom:-6px;display:none;height:15px;width:15px;cursor:nwse-resize;touch-action:none;align-items:center;justify-content:center;border-radius:4px;background:#2563eb;color:#fff;}
+        .writer-page .declaration-box:hover .declaration-box-resize,.writer-page .declaration-box.is-selected .declaration-box-resize{display:flex;}
+        .writer-tool-button::after{content:attr(data-tooltip);position:absolute;left:50%;top:calc(100% + 7px);z-index:100;display:block;width:max-content;max-width:190px;transform:translate(-50%,-2px);pointer-events:none;border:1px solid #dbe3ef;border-radius:8px;background:#fff;padding:5px 8px;color:#1e3a5f;font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap;box-shadow:0 6px 18px rgba(15,23,42,.14);opacity:0;visibility:hidden;transition:opacity 70ms ease,transform 70ms ease,visibility 0ms linear 70ms;}
+        .writer-tool-button:hover::after,.writer-tool-button:focus-visible::after{opacity:1;visibility:visible;transform:translate(-50%,0);transition-delay:0ms;}
+        @media print{.writer-page .declaration-box{border-color:transparent!important;outline:none!important}.declaration-box-controls,.declaration-box-resize{display:none!important}}
       `}</style>
       <header className="writer-chrome border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
@@ -578,6 +618,8 @@ export default function DocumentComposer() {
             onClick={() => editor.chain().focus().undo().run()}
             disabled={!editor.can().undo()}
             className={toolButton}
+            data-tooltip="Undo"
+            aria-label="Undo"
           >
             <Undo2 className="h-4 w-4" />
           </button>
@@ -585,6 +627,8 @@ export default function DocumentComposer() {
             onClick={() => editor.chain().focus().redo().run()}
             disabled={!editor.can().redo()}
             className={toolButton}
+            data-tooltip="Redo"
+            aria-label="Redo"
           >
             <Redo2 className="h-4 w-4" />
           </button>
@@ -610,18 +654,24 @@ export default function DocumentComposer() {
           <button
             onClick={() => editor.chain().focus().toggleBold().run()}
             className={`${toolButton} ${editor.isActive("bold") ? "bg-slate-950 text-white" : ""}`}
+            data-tooltip="Bold"
+            aria-label="Bold"
           >
             <Bold className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().toggleItalic().run()}
             className={`${toolButton} ${editor.isActive("italic") ? "bg-slate-950 text-white" : ""}`}
+            data-tooltip="Italic"
+            aria-label="Italic"
           >
             <Italic className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().toggleUnderline().run()}
             className={`${toolButton} ${editor.isActive("underline") ? "bg-slate-950 text-white" : ""}`}
+            data-tooltip="Underline"
+            aria-label="Underline"
           >
             <Underline className="h-4 w-4" />
           </button>
@@ -631,6 +681,8 @@ export default function DocumentComposer() {
               setLinkOpen(true);
             }}
             className={toolButton}
+            data-tooltip="Insert link"
+            aria-label="Insert link"
           >
             <Link2 className="h-4 w-4" />
           </button>
@@ -638,30 +690,40 @@ export default function DocumentComposer() {
           <button
             onClick={() => editor.chain().focus().setTextAlign("left").run()}
             className={toolButton}
+            data-tooltip="Align left"
+            aria-label="Align left"
           >
             <AlignLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().setTextAlign("center").run()}
             className={toolButton}
+            data-tooltip="Align center"
+            aria-label="Align center"
           >
             <AlignCenter className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().setTextAlign("right").run()}
             className={toolButton}
+            data-tooltip="Align right"
+            aria-label="Align right"
           >
             <AlignRight className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().toggleBulletList().run()}
             className={toolButton}
+            data-tooltip="Bulleted list"
+            aria-label="Bulleted list"
           >
             <List className="h-4 w-4" />
           </button>
           <button
             onClick={() => editor.chain().focus().toggleOrderedList().run()}
             className={toolButton}
+            data-tooltip="Numbered list"
+            aria-label="Numbered list"
           >
             <ListOrdered className="h-4 w-4" />
           </button>
@@ -674,15 +736,27 @@ export default function DocumentComposer() {
                 .run()
             }
             className={toolButton}
+            data-tooltip="Insert table"
+            aria-label="Insert table"
           >
             <Table2 className="h-4 w-4" />
+          </button>
+          <button
+            onClick={insertDeclarationBox}
+            disabled={documentLocked}
+            className={toolButton}
+            data-tooltip="Insert declaration box"
+            aria-label="Insert movable declaration"
+          >
+            <TextCursorInput className="h-4 w-4" />
           </button>
           <span className="mx-1 h-6 w-px bg-slate-200" />
           <button
             onClick={() => setTemplatesOpen(true)}
             disabled={documentLocked}
             className={toolButton}
-            title="Insert template"
+            data-tooltip="Insert template"
+            aria-label="Insert template"
           >
             <BookTemplate className="h-4 w-4" />
           </button>
@@ -693,7 +767,8 @@ export default function DocumentComposer() {
             }}
             disabled={documentLocked}
             className={toolButton}
-            title="Insert signature"
+            data-tooltip="Insert signature"
+            aria-label="Insert signature"
           >
             <Signature className="h-4 w-4" />
           </button>
@@ -701,21 +776,24 @@ export default function DocumentComposer() {
             onClick={() => setSettingsOpen(true)}
             disabled={documentLocked}
             className={toolButton}
-            title="Page setup"
+            data-tooltip="Page setup"
+            aria-label="Page setup"
           >
             <Settings2 className="h-4 w-4" />
           </button>
           <button
             onClick={() => setVersionsOpen(true)}
             className={toolButton}
-            title="Version history"
+            data-tooltip="Version history"
+            aria-label="Version history"
           >
             <Clock3 className="h-4 w-4" />
           </button>
           <button
             onClick={() => window.print()}
             className={toolButton}
-            title="Print or save PDF"
+            data-tooltip="Print or save PDF"
+            aria-label="Print or save PDF"
           >
             <Printer className="h-4 w-4" />
           </button>
