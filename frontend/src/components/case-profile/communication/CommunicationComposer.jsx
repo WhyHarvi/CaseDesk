@@ -325,7 +325,7 @@ export default function CommunicationComposer({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[440] flex items-center justify-center bg-slate-950/25 p-3 backdrop-blur-md">
+    <div className="fixed inset-0 z-[440] flex justify-end bg-slate-950/20 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="communication-composer-title">
       <button
         type="button"
         className="absolute inset-0"
@@ -333,18 +333,19 @@ export default function CommunicationComposer({
         aria-label="Close communication composer"
       />
       <motion.form
-        initial={{ opacity: 0, y: 18, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 12, scale: 0.985 }}
+        initial={{ x: "100%" }}
+        animate={{ x: 0 }}
+        exit={{ x: "100%" }}
+        transition={{ type: "spring", stiffness: 330, damping: 34 }}
         onSubmit={submit}
-        className="relative flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-[2rem] border border-white/80 bg-white shadow-[0_34px_100px_rgba(15,23,42,0.28)]"
+        className="relative flex h-full w-full max-w-3xl flex-col overflow-hidden border-l border-slate-200 bg-white shadow-[-24px_0_70px_rgba(15,23,42,0.18)]"
       >
         <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-600">
               Client communication
             </p>
-            <h2 className="mt-1 text-xl font-semibold tracking-tight">
+            <h2 id="communication-composer-title" className="mt-1 text-xl font-semibold tracking-tight">
               {reply
                 ? `Reply to ${caseItem.client?.fullName}`
                 : `New communication — ${caseItem.client?.fullName || "Client"}`}

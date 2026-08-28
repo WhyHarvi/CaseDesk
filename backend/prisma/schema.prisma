@@ -700,6 +700,7 @@ model Agency {
   leadSources                     LeadSource[]
   leadCampaigns                   LeadCampaign[]
   leads                           Lead[]
+  leadCollaborators               LeadCollaborator[]
   leadActivities                  LeadActivity[]
   leadMessageDeliveries           LeadMessageDelivery[]
   leadStageHistory                LeadStageHistory[]
@@ -1936,6 +1937,7 @@ model User {
   generatedAccountStatements           AccountStatementGeneration[]    @relation("GeneratedAccountStatementUser")
   ownedLeads                           Lead[]                          @relation("LeadOwnerUser")
   nextActionLeads                      Lead[]                          @relation("LeadNextActionOwnerUser")
+  leadCollaborations                   LeadCollaborator[]
   performedLeadActivities              LeadActivity[]                  @relation("LeadActivityPerformerUser")
   changedLeadStages                    LeadStageHistory[]              @relation("LeadStageActorUser")
   changedCaseStages                    CaseStageHistory[]              @relation("CaseStageActorUser")
@@ -4698,6 +4700,7 @@ model Lead {
   earlyClient              Client?                  @relation("LeadEarlyClient", fields: [earlyClientId], references: [id], onDelete: SetNull)
   earlyCase                Case?                    @relation("LeadEarlyCase", fields: [earlyCaseId], references: [id], onDelete: SetNull)
   activities               LeadActivity[]
+  collaborators            LeadCollaborator[]
   messageDeliveries        LeadMessageDelivery[]
   stageHistory             LeadStageHistory[]
   assignmentHistory        LeadAssignmentHistory[]
@@ -4729,6 +4732,21 @@ model Lead {
   @@index([agencyId, originalSourceId])
   @@index([agencyId, campaignId])
   @@map("leads")
+}
+
+model LeadCollaborator {
+  id        String   @id @default(uuid())
+  agencyId  String   @map("agency_id")
+  leadId    String   @map("lead_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, userId])
+  @@index([agencyId, userId])
+  @@map("lead_collaborators")
 }
 
 model LeadActivity {

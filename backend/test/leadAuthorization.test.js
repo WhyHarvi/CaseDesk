@@ -12,6 +12,7 @@ test("admin sees agency leads while consultants see owned leads and leads with a
       {
         OR: [
           { ownerUserId: "user-a" },
+          { collaborators: { some: { userId: "user-a" } } },
           { followUps: { some: { assignedUserId: "user-a", status: "PENDING" } } },
         ],
       },

@@ -5,7 +5,11 @@ import { delegateLeadBacklog } from "../src/modules/leads/lead.service.js";
 
 function fakeDb(leads) {
   const created = [];
+  const collaborators = [];
   const tx = {
+    leadCollaborator: {
+      upsert: async ({ create }) => { collaborators.push(create); return create; },
+    },
     leadFollowUp: {
       findFirst: async ({ where }) => created.find((item) => item.leadId === where.leadId) || null,
       create: async ({ data }) => { const row = { id: `task-${created.length + 1}`, ...data }; created.push(row); return row; },
@@ -15,6 +19,7 @@ function fakeDb(leads) {
   };
   return {
     created,
+    collaborators,
     user: { findMany: async ({ where }) => where.id.in.map((id) => ({ id })) },
     leadFollowUp: { groupBy: async () => [] },
     lead: { findMany: async () => leads },
@@ -32,6 +37,7 @@ test("backlog delegation balances work without changing lead ownership", async (
   const result = await delegateLeadBacklog({ auth: { agencyId: "agency", userId: "admin" }, body: { targetUserIds: ["c1", "c2"] } }, db);
   assert.deepEqual(result.delegated.map((item) => item.assignedUserId), ["c1", "c2", "c1"]);
   assert.deepEqual(leads.map((lead) => lead.ownerUserId), ["owner", "owner", "owner"]);
+  assert.deepEqual(db.collaborators.map((item) => item.userId), ["c1", "c2", "c1"]);
   assert.ok(db.created.every((item) => item.description === "Collaborative lead outreach" && item.type === "PHONE_CALL"));
 });
 
@@ -65,4 +71,14 @@ test("delegation endpoint is admin-only and UI explains incentive preservation",
   assert.match(routes, /router\.post\("\/delegate-backlog", requireRole\("admin"\), asyncHandler\(delegateLeadBacklog\)\)/);
   assert.match(panel, /Ownership and incentive credit were preserved/);
   assert.match(incentives, /leadOwnerUserId:\s*lead\?\.ownerUserId/);
+});
+
+test("a durable collaborator can close the owner's overdue follow-ups without taking ownership", async () => {
+  const [service, detailSheet] = await Promise.all([
+    readFile(new URL("../src/modules/leads/lead.service.js", import.meta.url), "utf8"),
+    readFile(new URL("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(service, /leadCollaborator\.findUnique\(\{ where: \{ leadId_userId:/);
+  assert.match(service, /delegated collaborator, or an administrator can close this follow-up/);
+  assert.match(detailSheet, /role === "admin" \|\| ownsLead \|\| collaboratesOnLead \|\| item\.assignedUserId === appUser\?\.id/);
 });

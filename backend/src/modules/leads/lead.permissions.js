@@ -25,6 +25,7 @@ export function leadAccessWhere(req) {
         {
           OR: [
             { ownerUserId: req.auth.userId },
+            { collaborators: { some: { userId: req.auth.userId } } },
             { followUps: { some: { assignedUserId: req.auth.userId, status: "PENDING" } } },
           ],
         },

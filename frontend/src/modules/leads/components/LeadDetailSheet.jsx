@@ -34,7 +34,6 @@ import ConvertLeadSheet from "./ConvertLeadSheet";
 import { CloseFollowUpSheet, CreateFollowUpSheet, EditLeadDetailsSheet, LogActivitySheet, MarkLostSheet, NurtureLeadSheet, QualifyLeadSheet, ReactivateLeadSheet } from "./LeadActionSheets";
 import AppointmentProfileOverlay from "../../../components/appointments/AppointmentProfileOverlay";
 import CompleteConsultationSheet, { getDraftConsultationId } from "./CompleteConsultationSheet";
-import useDebouncedAutosave from "../../../hooks/useDebouncedAutosave";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: ClipboardList },
@@ -299,6 +298,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   ].sort((left, right) => new Date(right.sentAt || right.failedAt || right.createdAt).getTime() - new Date(left.sentAt || left.failedAt || left.createdAt).getTime()), [lead.appointments, lead.messageDeliveries]);
   const isWorkable = ["OPEN", "NURTURE"].includes(lead.status);
   const ownsLead = lead.ownerUserId === appUser?.id;
+  const collaboratesOnLead = (lead.collaborators || []).some((item) => item.userId === appUser?.id);
   // Owner changes are admin-only and may target any active lead-team member,
   // including front desk. Stage and priority remain editable only by an admin
   // or the consultant currently responsible for the lead.
@@ -314,7 +314,12 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     (person) => ["admin", "consultant", "frontdesk"].includes(person.role),
   );
   const canEditWorkflow = isWorkable && (role === "admin" || (role === "consultant" && ownsLead));
-  const canCloseFollowUp = (item) => item.status === "PENDING" && (!isFrontdesk || item.assignedUserId === appUser?.id);
+  // Mirrors updateLeadFollowUp() exactly: admins, the owner, and durable
+  // collaborators can resolve the lead's backlog; other staff can close only
+  // work explicitly assigned to them.
+  const canCloseFollowUp = (item) => item.status === "PENDING" && (
+    role === "admin" || ownsLead || collaboratesOnLead || item.assignedUserId === appUser?.id
+  );
   // The three separate things convertLead() checks server-side, mirrored
   // here so the UI never shows a Convert button the backend would reject —
   // and so the path-to-conversion checklist below can show each on its own.
@@ -365,8 +370,13 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
             title: "Lead note",
             description,
           });
-      setSavedNote(response.data.data);
-      await refreshLead();
+      const saved = response.data.data;
+      setLead((current) => ({
+        ...current,
+        activities: savedNote
+          ? (current.activities || []).map((item) => item.id === saved.id ? saved : item)
+          : [saved, ...(current.activities || [])],
+      }));
       if (!keepOpen) {
         setNote("");
         setSavedNote(null);
@@ -379,12 +389,6 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
     }
   }
 
-  useDebouncedAutosave({
-    value: note,
-    savedValue: savedNote?.description || "",
-    enabled: noteOpen && !noteSaving,
-    onSave: () => saveNote(null, { keepOpen: true }),
-  });
   // The consultation fee (paid at booking time) is a separate amount from
   // the initial case payment tracked above — flagged here so a paid
   // consultation doesn't read as "payment received" toward conversion.
@@ -740,7 +744,7 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
 
                   <section>
                     <div className="mb-3"><h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CheckCircle2 className="h-4 w-4 text-slate-400" />Follow-ups</h3><p className="mt-1 text-xs text-slate-500">{followUps.length} records</p></div>
-                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{followUps.length ? followUps.map((item, index) => { const itemDue = formatDueDate(item.dueAt); return <div key={item.id} className={`flex items-start justify-between gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div><p className="text-sm font-medium text-slate-800">{item.description}</p><p className="mt-1 text-xs text-slate-500">{humanize(item.status)} · {humanize(item.type)}{item.completionOutcome ? ` · ${item.completionOutcome}` : ""}</p></div><div className="flex shrink-0 items-center gap-3"><span className="text-xs text-slate-400">{itemDue.label}</span>{canCloseFollowUp(item) ? <button type="button" onClick={() => setClosingFollowUp(item)} className="h-8 rounded-full border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700">Close</button> : null}</div></div>; }) : <EmptyState>No follow-ups recorded.</EmptyState>}</div>
+                    <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white">{followUps.length ? followUps.map((item, index) => { const itemDue = formatDueDate(item.dueAt); const assignedToMe = item.assignedUserId === appUser?.id; return <div key={item.id} className={`flex items-start justify-between gap-4 px-5 py-4 ${index ? "border-t border-slate-100" : ""}`}><div><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-800">{item.description}</p>{assignedToMe ? <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-700">Assigned to you</span> : null}</div><p className="mt-1 text-xs text-slate-500">{humanize(item.status)} · {humanize(item.type)}{item.assignedUser?.fullName ? ` · ${item.assignedUser.fullName}` : ""}{item.completionOutcome ? ` · ${item.completionOutcome}` : ""}</p></div><div className="flex shrink-0 items-center gap-3"><span className="text-xs text-slate-400">{itemDue.label}</span>{canCloseFollowUp(item) ? <button type="button" onClick={() => setClosingFollowUp(item)} className="h-8 rounded-full border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700">Close</button> : null}</div></div>; }) : <EmptyState>No follow-ups recorded.</EmptyState>}</div>
                   </section>
                 </div>
               ) : null}

@@ -234,7 +234,8 @@ export async function getLead(req) {
     where: { id: req.params.id, agencyId: req.auth.agencyId, deletedAt: null, ...leadAccessWhere(req) },
     include: {
       ...leadInclude,
-      activities: { orderBy: { occurredAt: "desc" }, take: 100 },
+      collaborators: { select: { userId: true, user: { select: { id: true, fullName: true } } } },
+      activities: { orderBy: { occurredAt: "desc" }, take: 100, include: { performedBy: { select: { id: true, fullName: true } } } },
       callSessions: {
         where: { provider: "TWILIO" },
         orderBy: { startedAt: "desc" },
@@ -251,7 +252,10 @@ export async function getLead(req) {
           requestedBy: { select: { id: true, fullName: true } },
         },
       },
-      followUps: { orderBy: { dueAt: "asc" } },
+      followUps: {
+        orderBy: { dueAt: "asc" },
+        include: { assignedUser: { select: { id: true, fullName: true } } },
+      },
       messageDeliveries: {
         orderBy: { createdAt: "desc" },
         take: 100,
@@ -524,7 +528,10 @@ export async function recordLeadActivity(req, db = prisma) {
     const lead = await requireLead(tx, req, req.params.id);
     if (["CONVERTED", "ARCHIVED"].includes(lead.status)) throw createHttpError(409, "This lead no longer accepts contact activity.", "LEAD_CLOSED");
     const { connected, ...activityValues } = values;
-    const activity = await tx.leadActivity.create({ data: { ...activityValues, agencyId, leadId: lead.id, performedById: actorId } });
+    const activity = await tx.leadActivity.create({
+      data: { ...activityValues, agencyId, leadId: lead.id, performedById: actorId },
+      include: { performedBy: { select: { id: true, fullName: true } } },
+    });
     const contactActivity = values.activityType !== "INTERNAL_NOTE";
     const connectionTypes = ["INCOMING_CALL", "OUTGOING_CALL", "WHATSAPP_RECEIVED", "WHATSAPP_SENT", "SMS_RECEIVED", "SMS_SENT", "EMAIL_RECEIVED", "EMAIL_SENT"];
     const isConnection = connected && connectionTypes.includes(values.activityType);
@@ -595,8 +602,11 @@ export async function updateLeadFollowUp(req, db = prisma) {
     const lead = await requireLead(tx, req, req.params.id);
     const existing = await tx.leadFollowUp.findFirst({ where: { id: req.params.followUpId, leadId: lead.id, agencyId } });
     if (!existing) throw createHttpError(404, "Lead follow-up not found.", "FOLLOW_UP_NOT_FOUND");
-    if (req.auth.role !== "admin" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId) {
-      throw createHttpError(403, "You can only close a follow-up assigned to you.", "FORBIDDEN");
+    const collaborator = req.auth.role === "consultant" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId
+      ? await tx.leadCollaborator.findUnique({ where: { leadId_userId: { leadId: lead.id, userId: actorId } }, select: { id: true } })
+      : null;
+    if (req.auth.role !== "admin" && lead.ownerUserId !== actorId && existing.assignedUserId !== actorId && !collaborator) {
+      throw createHttpError(403, "Only the assignee, lead owner, delegated collaborator, or an administrator can close this follow-up.", "FORBIDDEN");
     }
     if (existing.status !== "PENDING") throw createHttpError(409, "This lead follow-up is already closed.", "FOLLOW_UP_CLOSED");
     const followUp = await tx.leadFollowUp.update({ where: { id: existing.id }, data: { status: values.status, completionOutcome: values.completionOutcome, completedAt: new Date(), completedById: actorId } });
@@ -1004,7 +1014,7 @@ export async function delegateLeadBacklog(req, db = prisma) {
       pipelineSegment: "STANDARD",
       status: { in: ["OPEN", "NURTURE"] },
       ...(ownerUserId ? { ownerUserId } : {}),
-      followUps: { none: { status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION } },
+      collaborators: { none: { userId: { in: targetUserIds } } },
     },
     select: { id: true, leadNumber: true, ownerUserId: true },
     orderBy: [{ priority: "desc" }, { nextActionAt: "asc" }, { createdAt: "asc" }],
@@ -1026,17 +1036,17 @@ export async function delegateLeadBacklog(req, db = prisma) {
     const dueAt = new Date(Date.now() + 24 * 60 * 60_000);
     try {
       const followUp = await db.$transaction(async (tx) => {
-        const existing = await tx.leadFollowUp.findFirst({ where: { agencyId, leadId: lead.id, status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION }, select: { id: true } });
-        if (existing) return null;
-        const created = await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId, type: "PHONE_CALL", description: DELEGATED_OUTREACH_DESCRIPTION, dueAt } });
+        await tx.leadCollaborator.upsert({
+          where: { leadId_userId: { leadId: lead.id, userId: assignedUserId } },
+          create: { agencyId, leadId: lead.id, userId: assignedUserId },
+          update: {},
+        });
+        const existing = await tx.leadFollowUp.findFirst({ where: { agencyId, leadId: lead.id, assignedUserId, status: "PENDING", description: DELEGATED_OUTREACH_DESCRIPTION }, select: { id: true } });
+        const created = existing || await tx.leadFollowUp.create({ data: { agencyId, leadId: lead.id, assignedUserId, type: "PHONE_CALL", description: DELEGATED_OUTREACH_DESCRIPTION, dueAt } });
         await tx.leadActivity.create({ data: { agencyId, leadId: lead.id, activityType: "FOLLOW_UP_CREATED", direction: "INTERNAL", channel: "SYSTEM", title: DELEGATED_OUTREACH_DESCRIPTION, description: `Delegated without changing lead ownership; due ${dueAt.toISOString()}`, performedById: actorId, metadata: { followUpId: created.id, assignedUserId, preservesOwnerUserId: lead.ownerUserId } } });
         await tx.activityLog.create({ data: { agencyId, userId: actorId, action: "lead.backlog_delegated", details: `${lead.leadNumber}: outreach delegated without ownership change`, entityType: "lead", entityId: lead.id, metadata: { followUpId: created.id, assignedUserId, ownerUserId: lead.ownerUserId } } });
         return created;
       }, leadTransactionOptions);
-      if (!followUp) {
-        skipped.push({ id: lead.id, leadNumber: lead.leadNumber, reason: "Collaborative work is already assigned." });
-        continue;
-      }
       workloads.set(assignedUserId, workloads.get(assignedUserId) + 1);
       delegated.push({ id: lead.id, leadNumber: lead.leadNumber, ownerUserId: lead.ownerUserId, assignedUserId, followUpId: followUp.id });
     } catch (error) {
