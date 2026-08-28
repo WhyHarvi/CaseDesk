@@ -151,6 +151,10 @@ import {
   stopAppointmentMeetingWorker,
 } from "./services/appointmentMeetingService.js";
 import {
+  startOutlookCalendarSyncWorker,
+  stopOutlookCalendarSyncWorker,
+} from "./services/outlookCalendarSyncService.js";
+import {
   startZoomConnectionMaintenance,
   stopZoomConnectionMaintenance,
   zoomConfigured,
@@ -530,6 +534,7 @@ function onListening() {
   startPaymentHoldExpiryWorker();
   startQuickBooksWebhookWorker();
   startAppointmentMeetingWorker();
+  startOutlookCalendarSyncWorker();
   startZoomConnectionMaintenance();
   startNotificationScheduler();
   startNotificationDeliveryWorker();
@@ -579,6 +584,7 @@ async function shutdown(signal) {
   stopPaymentHoldExpiryWorker();
   stopQuickBooksWebhookWorker();
   stopAppointmentMeetingWorker();
+  stopOutlookCalendarSyncWorker();
   stopZoomConnectionMaintenance();
   stopNotificationScheduler();
   stopNotificationDeliveryWorker();

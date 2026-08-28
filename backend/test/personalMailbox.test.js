@@ -35,6 +35,22 @@ test("team members connect a user-owned Microsoft mailbox instead of sharing age
   assert.match(panel, /Unrelated personal mail stays private/);
 });
 
+test("connecting Outlook also grants calendar access via the same button — incremental consent means only people who connected before this scope existed need a one-time reconnect", async () => {
+  const [service, panel] = await Promise.all([
+    source("../src/services/microsoftMailboxService.js"),
+    source("../../frontend/src/components/settings/PersonalMailboxSettingsPanel.jsx"),
+  ]);
+  assert.match(service, /const SCOPES = \[.*"Calendars\.ReadWrite".*\];/);
+  assert.match(service, /export function mailboxGrantsCalendarAccess\(grantedScopes\)/);
+  assert.match(service, /calendarSyncReady: Boolean\(connection\?\.status === "connected" && mailboxGrantsCalendarAccess\(connection\.grantedScopes\)\)/);
+  // The exact same "Connect Outlook" flow (startPersonalMailboxConnect →
+  // microsoftMailboxAuthorizeUrl) is reused for the reconnect — there's no
+  // separate calendar-only OAuth path to keep in sync with the mail one.
+  assert.match(panel, /mailbox\.calendarSyncReady/);
+  assert.match(panel, /Grant calendar access/);
+  assert.match(panel, /onClick=\{connect\}/);
+});
+
 test("user-authored CRM email uses its sender mailbox while automation keeps the agency sender", async () => {
   const [provider, outbox, inbound, agencyMail] = await Promise.all([
     source("../src/services/communicationProviderService.js"),

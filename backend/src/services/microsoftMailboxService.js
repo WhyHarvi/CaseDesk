@@ -5,7 +5,12 @@ import { createHttpError } from "../utils/http.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const STATE_TTL_MS = 10 * 60_000;
-const SCOPES = ["openid", "profile", "email", "offline_access", "User.Read", "Mail.Read", "Mail.Send"];
+// Calendars.ReadWrite lets outlookCalendarSyncService.js mirror appointments
+// onto a staff member's own Outlook calendar. Microsoft requires incremental
+// consent for it — anyone who connected before this scope was added needs to
+// reconnect once (same "Connect Outlook" button; Microsoft just shows one
+// extra permission line) before their appointments start syncing.
+const SCOPES = ["openid", "profile", "email", "offline_access", "User.Read", "Mail.Read", "Mail.Send", "Calendars.ReadWrite"];
 
 const tenant = () => String(process.env.MS_MAIL_TENANT_ID || "organizations").trim();
 const authority = () => `https://login.microsoftonline.com/${encodeURIComponent(tenant())}/oauth2/v2.0`;
@@ -527,6 +532,14 @@ export async function disconnectAgencyMicrosoftMailbox(agencyId) {
   await prisma.agencyMicrosoftMailboxConnection.delete({ where: { agencyId } }).catch(() => {});
 }
 
+// Incremental consent means a connection made before Calendars.ReadWrite was
+// added to SCOPES only carries the old, narrower grant until the person
+// reconnects — this is what lets the Settings UI tell those two states apart
+// without guessing.
+export function mailboxGrantsCalendarAccess(grantedScopes) {
+  return String(grantedScopes || "").toLowerCase().includes("calendars.");
+}
+
 export async function personalMailboxStatus(userId) {
   const connection = await prisma.userMailboxConnection.findUnique({
     where: { userId },
@@ -542,9 +555,15 @@ export async function personalMailboxStatus(userId) {
       lastSyncStatus: true,
       lastSyncMessage: true,
       lastError: true,
+      grantedScopes: true,
     },
   });
-  return { configured: microsoftMailboxConfigured(), connected: connection?.status === "connected", ...(connection || {}) };
+  return {
+    configured: microsoftMailboxConfigured(),
+    connected: connection?.status === "connected",
+    calendarSyncReady: Boolean(connection?.status === "connected" && mailboxGrantsCalendarAccess(connection.grantedScopes)),
+    ...(connection || {}),
+  };
 }
 
 export async function updatePersonalMailbox(userId, values) {

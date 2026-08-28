@@ -2490,6 +2490,15 @@ model Appointment {
   meetingProviderHostId  String?                  @map("meeting_provider_host_id")
   meetingSyncStatus      String                   @default("NotRequired") @map("meeting_sync_status")
   meetingSyncError       String?                  @map("meeting_sync_error")
+  // One-way mirror of this appointment into the assigned staff member's own
+  // Outlook calendar (outlookCalendarSyncService.js) — a busy-block on their
+  // personal calendar, never a meeting invite to the client. Reconciled by a
+  // poller comparing updatedAt to calendarSyncedAt, not by hooking every
+  // booking/reschedule/cancel call site individually.
+  calendarSyncStatus     String                   @default("NotSynced") @map("calendar_sync_status")
+  calendarSyncedAt       DateTime?                @map("calendar_synced_at")
+  calendarEventId        String?                  @map("calendar_event_id")
+  calendarSyncError      String?                  @map("calendar_sync_error")
   manageToken            String?                  @unique @default(uuid()) @map("manage_token")
   reminderSentAt         DateTime?                @map("reminder_sent_at")
   reminderDueAt          DateTime?                @map("reminder_due_at")
