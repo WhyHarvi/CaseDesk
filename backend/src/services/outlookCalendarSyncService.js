@@ -14,12 +14,17 @@ import { microsoftGraphClient, mailboxGrantsCalendarAccess } from "./microsoftMa
 // viewer's own syncedAt, rather than hooking the ~20 booking/reschedule/
 // cancel call sites spread across bookingController/publicBookingController/
 // lead.service/etc. — any mutation there already bumps updatedAt for free.
-// The poll interval matches appointmentMeetingService.js's own cadence, and
-// enqueueAppointmentMeetingJob (called at every one of those ~20 sites)
-// also kicks a poll immediately when it isn't running inside an open
-// transaction, so most bookings/reschedules/cancellations sync within
-// seconds rather than waiting for the interval.
-const POLL_MS = 5_000;
+//
+// The interval poll below is a safety net, not the primary freshness
+// mechanism: scheduleImmediateOutlookCalendarSync (kicked from
+// enqueueAppointmentMeetingJob, the one function every one of those ~20
+// sites already calls) already syncs a fresh change within ~1.5s. That's
+// why this runs every 10 minutes rather than every few seconds — a real
+// booking never waits on this interval, so shortening it further only adds
+// steady-state database load (a handful of queries per tick, every tick,
+// for every agency using this feature, whether or not anything actually
+// changed) without making anything feel more responsive.
+const POLL_MS = 10 * 60_000;
 const BATCH_SIZE = 50;
 const MEETING_MODE_LABEL = { InPerson: "In person", Phone: "Phone call", Online: "Jitsi video call", Zoom: "Zoom video call" };
 let timer = null;
