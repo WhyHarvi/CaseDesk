@@ -754,15 +754,14 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
       }
     }
 
-    const assigneeNames = (kase.assignees || "")
-      .split(/[,;]/)
-      .map((name) => name.trim())
-      .filter(Boolean);
-    // First-listed name that resolves becomes the primary; every other
-    // resolved name is an additional assignee. A name that doesn't match any
-    // real active user (or matches more than one, ambiguously) is simply
-    // dropped rather than blocking the whole case — only a total failure
-    // (zero names resolved out of one or more listed) needs manual review.
+    // Resolved purely for reference (shown next to the raw Case Easy
+    // "Assignees" text in the staging/review UI) — imported cases are never
+    // actually assigned to anyone at conversion (see
+    // convertCaseEasyImportContact): they land archived, view-only, and a
+    // real assignment only ever happens later as a deliberate, separate
+    // staff action from the normal case UI. So an unresolved/ambiguous name
+    // here is no longer a reason to block conversion — nothing depends on
+    // it resolving.
     const resolvedAssigneeUserIds = resolveCaseEasyAssigneeUserIds(
       kase.assignees,
       users,
@@ -771,7 +770,6 @@ export async function resolveCaseEasyLinks(agencyId, stats = { casesLinked: 0, n
 
     const reasons = [];
     if (!linkedContactId) reasons.push("unlinked_contact");
-    if (assigneeNames.length > 0 && !resolvedAssigneeUserIds.length) reasons.push("assignee_mismatch");
     const reason = REVIEW_REASON_PRIORITY.find((candidate) => reasons.includes(candidate)) || null;
 
     kase.linkedContactId = linkedContactId;

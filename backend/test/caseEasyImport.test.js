@@ -137,11 +137,8 @@ test("Case Easy abbreviated assignees resolve only to one active staff identity"
 // front desk staffer showing up here as auto-matchable or pickable used to
 // mean a case would always fail its real assignee check at conversion time
 // with a confusing "not active" error, even though the account was active.
-test("Case Easy assignee resolution and the conversion screen's picker exclude front desk, matching the app-wide case-assignee rule", async () => {
-  const [service, page] = await Promise.all([
-    source("../src/services/caseEasyImportService.js"),
-    source("../../frontend/src/pages/CaseEasyImport.jsx"),
-  ]);
+test("Case Easy assignee resolution (for reference only) still excludes front desk, matching the app-wide case-assignee rule", async () => {
+  const service = await source("../src/services/caseEasyImportService.js");
   assert.match(
     service,
     /agencyId,\s*status: "active",\s*role: \{ in: \["admin", "consultant"\] \},/,
@@ -149,10 +146,6 @@ test("Case Easy assignee resolution and the conversion screen's picker exclude f
   assert.doesNotMatch(
     service.slice(service.indexOf("resolveCaseEasyLinks")),
     /role: \{ in: \["admin", "consultant", "frontdesk"\] \}/,
-  );
-  assert.match(
-    page,
-    /filter\(\(person\) => \["admin", "consultant"\]\.includes\(person\.role\)\)/,
   );
   assert.equal(caseEasyAssigneeNameMatches("Simar K.", "Harpreet Kaur"), false);
 });
@@ -176,10 +169,6 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   );
   assert.match(controller, /formData\.profile = \{ maritalStatus \}/);
   assert.match(controller, /maritalStatus: importedMaritalStatus/);
-  assert.match(
-    controller,
-    /agencyId,[\s\S]*status: "active"[\s\S]*role: \{ in: \["admin", "consultant"\] \}/,
-  );
   assert.match(controller, /CASE_STAGES\.includes\(stage\)/);
   assert.match(controller, /Next action is required/);
   assert.match(controller, /FOR UPDATE/);
@@ -190,47 +179,32 @@ test("Case Easy conversion writes assessment paths and validates agency staff", 
   assert.doesNotMatch(controller, /identificationNumber:\s*(contact\.uci|uci)/);
 });
 
-test("a staging case's resolvedAssigneeUserId is re-checked against admin/consultant at conversion time, not trusted as a stale fallback straight onto the real Case", async () => {
+test("imported cases are never assigned to anyone at conversion — no RCIC, no case worker, no primary, no additional assignees. They land archived and unassigned; a real assignment only ever happens later as a separate, manual action from the normal case UI", async () => {
   const controller = await source("../src/controllers/caseEasyImportController.js");
-  // Single-contact conversion: cases without an explicit assignedUserId
-  // fall back to resolvedAssigneeUserId, but only if it's still eligible —
-  // resolveCaseEasyLinks only recomputes non-converted rows, so a value
-  // computed before candidates were restricted to admin/consultant can
-  // still be sitting there stale.
-  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
-  assert.match(singleFn, /const fallbackAssigneeIds = \[/);
-  assert.match(singleFn, /role: \{ in: \["admin", "consultant"\] \}/);
-  assert.match(singleFn, /const primaryAssigneeId = caseInput\.assignedUserId \|\| \(eligibleFallbackAssigneeIds\.has\(stagingCase\.resolvedAssigneeUserId\) \? stagingCase\.resolvedAssigneeUserId : null\);/);
-  assert.match(singleFn, /assignedUserId: primaryAssigneeId,/);
-  assert.doesNotMatch(singleFn, /assignedUserId: caseInput\.assignedUserId \|\| stagingCase\.resolvedAssigneeUserId \|\| null/);
 
-  // Bulk conversion: same staleness risk, checked once up front for the
-  // whole batch instead of per-contact (avoids an N+1 query).
+  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
+  assert.match(singleFn, /assignedUserId: null,/);
+  assert.match(singleFn, /additionalAssignedUserIds: \[\],/);
+  // The whole eligibility-check machinery this used to need is gone —
+  // nothing here should even be querying which staff are eligible
+  // assignees, since nothing gets assigned.
+  assert.doesNotMatch(singleFn, /eligibleFallbackAssigneeIds/);
+  assert.doesNotMatch(singleFn, /caseInput\.assignedUserId/);
+
   const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
-  assert.match(bulkFn, /const candidateFallbackAssigneeIds = \[/);
-  assert.match(bulkFn, /const bulkPrimaryAssigneeId = eligibleFallbackAssigneeIds\.has\(planned\.stagingCase\.resolvedAssigneeUserId\) \? planned\.stagingCase\.resolvedAssigneeUserId : null;/);
-  assert.match(bulkFn, /assignedUserId: bulkPrimaryAssigneeId,/);
-  assert.doesNotMatch(bulkFn, /assignedUserId: planned\.stagingCase\.resolvedAssigneeUserId \|\| null/);
+  assert.match(bulkFn, /assignedUserId: null,/);
+  assert.match(bulkFn, /additionalAssignedUserIds: \[\],/);
+  assert.doesNotMatch(bulkFn, /eligibleFallbackAssigneeIds/);
 });
 
-test("a case naming multiple Case Easy assignees converts with all of them instead of getting stuck in review — additional assignees get the same active-staff eligibility recheck as the primary", async () => {
-  const [service, controller] = await Promise.all([
-    source("../src/services/caseEasyImportService.js"),
-    source("../src/controllers/caseEasyImportController.js"),
-  ]);
-  // resolveCaseEasyLinks no longer treats "more than one name" as an
-  // automatic assignee_mismatch — only zero resolved names does.
-  assert.match(service, /if \(assigneeNames\.length > 0 && !resolvedAssigneeUserIds\.length\) reasons\.push\("assignee_mismatch"\);/);
-  assert.match(service, /kase\.resolvedAdditionalAssigneeUserIds = resolvedAdditionalAssigneeUserIds;/);
-
-  const singleFn = controller.slice(controller.indexOf("export async function convertCaseEasyImportContact"), controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
-  assert.match(singleFn, /const additionalAssigneeIds = \[/);
-  assert.match(singleFn, /additionalAssignedUserIds: additionalAssignedUserIds,|additionalAssignedUserIds,/);
-  assert.match(singleFn, /\.filter\(\(id\) => id !== primaryAssigneeId && eligibleFallbackAssigneeIds\.has\(id\)\);/);
-
-  const bulkFn = controller.slice(controller.indexOf("export async function bulkConvertCaseEasyImportContacts"));
-  assert.match(bulkFn, /const bulkAdditionalAssignedUserIds = \[\.\.\.new Set\(planned\.stagingCase\.resolvedAdditionalAssigneeUserIds \|\| \[\]\)\]/);
-  assert.match(bulkFn, /\.filter\(\(id\) => id !== bulkPrimaryAssigneeId && eligibleFallbackAssigneeIds\.has\(id\)\);/);
+test("resolveCaseEasyLinks still resolves Case Easy's assignee names for reference, but an unresolved/ambiguous name no longer blocks conversion — nothing depends on it resolving since imported cases are never actually assigned", async () => {
+  const service = await source("../src/services/caseEasyImportService.js");
+  const fn = service.slice(service.indexOf("export async function resolveCaseEasyLinks"));
+  // Still computed and stored (useful reference next to the raw text in the
+  // staging/review UI) — just never gates whether the case can convert.
+  assert.match(fn, /const resolvedAssigneeUserIds = resolveCaseEasyAssigneeUserIds\(/);
+  assert.match(fn, /kase\.resolvedAdditionalAssigneeUserIds = resolvedAdditionalAssigneeUserIds;/);
+  assert.doesNotMatch(fn, /reasons\.push\("assignee_mismatch"\)/);
 });
 
 test("Case Easy conversion carries over the original opened date and the one recoverable note, honestly marked and dated, instead of dropping them", async () => {

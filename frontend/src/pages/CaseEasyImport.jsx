@@ -1,7 +1,6 @@
 import { AlertTriangle, Archive, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Loader2, RefreshCw, Search, UploadCloud, UserCheck, UsersRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import api from "../services/api";
 import {
   bulkConvertCaseEasyImportContacts,
   convertCaseEasyImportContact,
@@ -274,7 +273,7 @@ function ContactRow({ contact, expanded, onToggle, onConvert, selected, onToggle
   );
 }
 
-function ConversionModal({ contact, staff, onClose, onConverted }) {
+function ConversionModal({ contact, onClose, onConverted }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -310,8 +309,11 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
           statusRecognized: suggested.recognized !== false,
           archived: suggested.archived || false,
           priority: "Normal",
-          assignedUserId: kase.resolvedAssigneeUserId || "",
-          additionalAssignedUserIds: kase.resolvedAdditionalAssigneeUserIds || [],
+          // Reference only — imported cases are never auto-assigned (see
+          // convertCaseEasyImportContact). Shown read-only so a reviewer can
+          // still see who Case Easy listed, in case they want to manually
+          // assign someone themselves later from the case's own page.
+          caseEasyAssignees: kase.assignees || "",
           nextAction: "Review imported Case Easy file",
           uci: kase.reportRows?.[0]?.uci || full.uci || "",
           maritalStatus: full.maritalStatus || "",
@@ -354,8 +356,6 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
           stage: form.stage,
           status: form.status,
           priority: form.priority,
-          assignedUserId: form.assignedUserId || null,
-          additionalAssignedUserIds: form.additionalAssignedUserIds || [],
           nextAction: form.nextAction || null,
           archived: form.archived,
           uci: form.uci || null,
@@ -460,48 +460,15 @@ function ConversionModal({ contact, staff, onClose, onConverted }) {
                             Case type
                             <input required value={form.caseType} onChange={(event) => updateCaseForm(index, { caseType: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           </label>
-                          <label className="text-xs font-medium text-slate-600">
+                          <div className="text-xs font-medium text-slate-600 sm:col-span-2">
                             Assignee
-                            <Select
-                              className="mt-1 w-full"
-                              value={form.assignedUserId}
-                              onChange={(event) => {
-                                const nextPrimary = event.target.value;
-                                updateCaseForm(index, {
-                                  assignedUserId: nextPrimary,
-                                  additionalAssignedUserIds: (form.additionalAssignedUserIds || []).filter((id) => id !== nextPrimary),
-                                });
-                              }}
-                            >
-                              <option value="">Unassigned</option>
-                              {staff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
-                            </Select>
-                          </label>
-                          {staff.length > 1 ? (
-                            <div className="text-xs font-medium text-slate-600 sm:col-span-2">
-                              Also assign (optional)
-                              <p className="mt-0.5 font-normal text-[11px] text-slate-400">Case Easy listed more than one person on this case — pick who else should stay attached. Purely informational; the assignee above is still the sole task owner.</p>
-                              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                {staff.filter((person) => person.id !== form.assignedUserId).map((person) => {
-                                  const checked = (form.additionalAssignedUserIds || []).includes(person.id);
-                                  return (
-                                    <button
-                                      type="button"
-                                      key={person.id}
-                                      onClick={() => updateCaseForm(index, {
-                                        additionalAssignedUserIds: checked
-                                          ? form.additionalAssignedUserIds.filter((id) => id !== person.id)
-                                          : [...(form.additionalAssignedUserIds || []), person.id],
-                                      })}
-                                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition ${checked ? "bg-slate-950 text-white ring-slate-950" : "bg-white text-slate-600 ring-slate-200 hover:ring-slate-300"}`}
-                                    >
-                                      {person.fullName}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : null}
+                            <p className="mt-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-normal text-slate-500">
+                              {form.caseEasyAssignees ? (
+                                <>Case Easy listed: {form.caseEasyAssignees}. </>
+                              ) : null}
+                              This case will convert unassigned and archived — assign a team member manually from the case page later if anyone needs to work on it.
+                            </p>
+                          </div>
                           <label className="text-xs font-medium text-slate-600">
                             Stage
                             <Select value={form.stage} onChange={(event) => updateCaseForm(index, { stage: event.target.value })} className="mt-1 w-full">
@@ -556,7 +523,6 @@ export default function CaseEasyImport() {
   const [pagination, setPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
   const [unlinkedCases, setUnlinkedCases] = useState([]);
   const [unlinkedPagination, setUnlinkedPagination] = useState({ page: 1, limit: 25, total: 0, pages: 1 });
-  const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [recordType, setRecordType] = useState("");
@@ -711,12 +677,6 @@ export default function CaseEasyImport() {
       setBulkConverting(false);
     }
   }
-  // /leads/staff includes front desk (valid for lead ownership), but a case
-  // can only ever be assigned to an admin or consultant (validateCaseAssignee
-  // in caseController.js) — filtering here keeps front desk from ever being
-  // picked or auto-matched as a case assignee during conversion.
-  useEffect(() => { api.get("/leads/staff").then((response) => setStaff((response.data.data || []).filter((person) => ["admin", "consultant"].includes(person.role)))).catch(() => {}); }, []);
-
   const needsReviewTotal = useMemo(
     () => unlinkedCases.length + contacts.reduce((sum, contact) => sum + contact.linkedCases.filter((kase) => kase.needsReviewReason && kase.importStatus !== "converted").length, 0),
     [contacts, unlinkedCases],
@@ -895,7 +855,6 @@ export default function CaseEasyImport() {
       {convertingContact ? (
         <ConversionModal
           contact={convertingContact}
-          staff={staff}
           onClose={() => setConvertingContact(null)}
           onConverted={(result) => {
             setConvertingContact(null);

@@ -654,61 +654,6 @@ export async function convertCaseEasyImportContact(req, res) {
     throw createHttpError(409, "This contact has already been converted.", "ALREADY_CONVERTED");
   }
 
-  const requestedAssigneeIds = [
-    ...new Set(
-      casesInput
-        .map((caseInput) => caseInput.assignedUserId)
-        .filter(Boolean),
-    ),
-  ];
-  if (requestedAssigneeIds.length) {
-    const validAssigneeCount = await prisma.user.count({
-      where: {
-        id: { in: requestedAssigneeIds },
-        agencyId,
-        status: "active",
-        role: { in: ["admin", "consultant"] },
-      },
-    });
-    if (validAssigneeCount !== requestedAssigneeIds.length) {
-      throw createHttpError(
-        400,
-        "One or more selected assignees are not active staff in this agency.",
-        "VALIDATION_ERROR",
-      );
-    }
-  }
-  // Cases without an explicit assignedUserId fall back to the staging row's
-  // resolvedAssigneeUserId below — that value can be stale (computed before
-  // resolveCaseEasyLinks started restricting candidates to admin/consultant
-  // only), so it needs the same eligibility check as an explicit selection
-  // rather than a free pass straight onto a real Case.
-  const fallbackAssigneeIds = [
-    ...new Set(
-      casesInput
-        .filter((caseInput) => !caseInput.assignedUserId)
-        .map((caseInput) => linkedCaseById.get(caseInput.caseEasyImportCaseId)?.resolvedAssigneeUserId)
-        .filter(Boolean),
-    ),
-  ];
-  // Additional assignees are never explicitly overridden by the request
-  // (only the primary is, via caseInput.assignedUserId) — every staging
-  // case's resolvedAdditionalAssigneeUserIds needs the exact same
-  // active-admin/consultant recheck as the primary fallback, batched into
-  // the same query rather than a separate one per case.
-  const additionalAssigneeIds = [
-    ...new Set(
-      casesInput.flatMap(
-        (caseInput) => linkedCaseById.get(caseInput.caseEasyImportCaseId)?.resolvedAdditionalAssigneeUserIds || [],
-      ),
-    ),
-  ];
-  const eligibleFallbackAssigneeIds = new Set(
-    fallbackAssigneeIds.length || additionalAssigneeIds.length
-      ? (await prisma.user.findMany({ where: { id: { in: [...new Set([...fallbackAssigneeIds, ...additionalAssigneeIds])] }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
-      : [],
-  );
-
   for (const caseInput of casesInput) {
     const stagingCase = linkedCaseById.get(caseInput.caseEasyImportCaseId);
     if (!stagingCase || stagingCase.importStatus === "converted") continue;
@@ -877,17 +822,12 @@ export async function convertCaseEasyImportContact(req, res) {
         if (!caseType) continue;
 
         const suggested = mapCaseEasyStatus(stagingCase.status);
-        const primaryAssigneeId = caseInput.assignedUserId || (eligibleFallbackAssigneeIds.has(stagingCase.resolvedAssigneeUserId) ? stagingCase.resolvedAssigneeUserId : null);
-        // A reviewer can override the additional assignees the same way they
-        // can already override the primary; otherwise falls back to what
-        // resolveCaseEasyLinks resolved. Either way, run through the exact
-        // same active-admin/consultant eligibility check as the primary, and
-        // never duplicate whoever ended up as this case's primary.
-        const requestedAdditionalIds = Array.isArray(caseInput.additionalAssignedUserIds)
-          ? caseInput.additionalAssignedUserIds.filter(Boolean)
-          : stagingCase.resolvedAdditionalAssigneeUserIds || [];
-        const additionalAssignedUserIds = [...new Set(requestedAdditionalIds)]
-          .filter((id) => id !== primaryAssigneeId && eligibleFallbackAssigneeIds.has(id));
+        // Deliberately never assigned to anyone — imported cases land
+        // archived/view-only, and a real RCIC/case worker only ever gets
+        // attached later as a separate, manual decision from the normal
+        // case UI, not as part of the import. Case Easy's own "Assignees"
+        // text stays visible as reference only (resolvedAssigneeUserId on
+        // the staging row, shown next to the raw text in the review UI).
         const newCase = await tx.case.create({
           data: {
             agencyId,
@@ -896,8 +836,8 @@ export async function convertCaseEasyImportContact(req, res) {
             stage: caseInput.stage || suggested.stage,
             status: caseInput.status || suggested.status,
             priority: caseInput.priority || "Normal",
-            assignedUserId: primaryAssigneeId,
-            additionalAssignedUserIds,
+            assignedUserId: null,
+            additionalAssignedUserIds: [],
             nextAction: caseInput.nextAction || null,
             submittedAt: caseInput.submittedAt ? new Date(caseInput.submittedAt) : stagingCase.submitted,
             decisionAt: caseInput.decisionAt ? new Date(caseInput.decisionAt) : stagingCase.approved || stagingCase.refused || null,
@@ -912,8 +852,15 @@ export async function convertCaseEasyImportContact(req, res) {
         // null (Note.userId is nullable) rather than crediting whoever
         // happens to run the conversion — the UI already shows "Team note"
         // for an author-less note.
-        let importedNoteId = null;
-        if (String(stagingCase.lastNote || "").trim()) {
+        // materializeCaseEasyLastNotes may already have attached this exact
+        // note to the client (it doesn't wait on case conversion — see that
+        // function) before this specific case ever got converted. Re-link
+        // that existing note onto the new case instead of creating a
+        // second, duplicate copy of the same text.
+        let importedNoteId = stagingCase.materializedNoteId;
+        if (importedNoteId) {
+          await tx.note.updateMany({ where: { id: importedNoteId, caseId: null }, data: { caseId: newCase.id } });
+        } else if (String(stagingCase.lastNote || "").trim()) {
           const importedNote = await tx.note.create({
             data: {
               agencyId,
@@ -1022,24 +969,6 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
   });
   const foundIds = new Set(contacts.map((contact) => contact.id));
 
-  // Same staleness concern as convertCaseEasyImportContact above: a staging
-  // case's resolvedAssigneeUserId can predate resolveCaseEasyLinks
-  // restricting candidates to admin/consultant, so it's re-checked here
-  // rather than trusted as-is before it becomes a real Case's assignedUserId.
-  const candidateFallbackAssigneeIds = [
-    ...new Set(
-      contacts.flatMap((contact) => contact.linkedCases.flatMap((stagingCase) => [
-        stagingCase.resolvedAssigneeUserId,
-        ...(stagingCase.resolvedAdditionalAssigneeUserIds || []),
-      ])).filter(Boolean),
-    ),
-  ];
-  const eligibleFallbackAssigneeIds = new Set(
-    candidateFallbackAssigneeIds.length
-      ? (await prisma.user.findMany({ where: { id: { in: candidateFallbackAssigneeIds }, agencyId, status: "active", role: { in: ["admin", "consultant"] } }, select: { id: true } })).map((user) => user.id)
-      : [],
-  );
-
   const results = [];
   for (const contactId of contactIds) {
     if (!foundIds.has(contactId)) {
@@ -1121,9 +1050,8 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
           const lockedStagingCase = await tx.caseEasyImportCase.findUnique({ where: { id: planned.stagingCase.id }, select: { importStatus: true } });
           if (lockedStagingCase?.importStatus === "converted") continue;
 
-          const bulkPrimaryAssigneeId = eligibleFallbackAssigneeIds.has(planned.stagingCase.resolvedAssigneeUserId) ? planned.stagingCase.resolvedAssigneeUserId : null;
-          const bulkAdditionalAssignedUserIds = [...new Set(planned.stagingCase.resolvedAdditionalAssigneeUserIds || [])]
-            .filter((id) => id !== bulkPrimaryAssigneeId && eligibleFallbackAssigneeIds.has(id));
+          // Deliberately never assigned — see the identical note in
+          // convertCaseEasyImportContact above.
           const newCase = await tx.case.create({
             data: {
               agencyId,
@@ -1132,8 +1060,8 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
               stage: planned.stage,
               status: planned.status,
               priority: "Normal",
-              assignedUserId: bulkPrimaryAssigneeId,
-              additionalAssignedUserIds: bulkAdditionalAssignedUserIds,
+              assignedUserId: null,
+              additionalAssignedUserIds: [],
               nextAction: TERMINAL_CASE_STATUSES.has(planned.status) ? null : "Review imported case",
               submittedAt: planned.stagingCase.submitted,
               decisionAt: planned.stagingCase.approved || planned.stagingCase.refused || null,
@@ -1141,8 +1069,13 @@ export async function bulkConvertCaseEasyImportContacts(req, res) {
               archivedAt: planned.archived ? new Date() : null,
             },
           });
-          let bulkImportedNoteId = null;
-          if (String(planned.stagingCase.lastNote || "").trim()) {
+          // Same re-link-instead-of-duplicate handling as
+          // convertCaseEasyImportContact above — materializeCaseEasyLastNotes
+          // may already have attached this note to the client.
+          let bulkImportedNoteId = planned.stagingCase.materializedNoteId;
+          if (bulkImportedNoteId) {
+            await tx.note.updateMany({ where: { id: bulkImportedNoteId, caseId: null }, data: { caseId: newCase.id } });
+          } else if (String(planned.stagingCase.lastNote || "").trim()) {
             const importedNote = await tx.note.create({
               data: {
                 agencyId,
