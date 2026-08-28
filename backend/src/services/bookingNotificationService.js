@@ -280,7 +280,6 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
               ${detailRow("Format", modeLabel)}
               ${inPerson ? detailRow("Location", inPerson) : ""}
               ${phoneSummary ? detailRow("Call details", phoneSummary) : ""}
-              ${appointment.assignedTo?.fullName ? detailRow("With", appointment.assignedTo.fullName) : ""}
               ${appointment.referenceCode ? detailRow("Reference", appointment.referenceCode) : ""}
             </table>
           </td></tr>
@@ -323,7 +322,6 @@ export function bookingEmailContent({ appointment, kind, agency, timezone, conta
     `Format: ${modeLabel}`,
     accessLine,
     mode === MEETING_MODES.PHONE && phoneCallInstructions ? `Phone instructions: ${phoneCallInstructions}` : null,
-    appointment.assignedTo?.fullName ? `With: ${appointment.assignedTo.fullName}` : null,
     appointment.referenceCode ? `Reference: ${appointment.referenceCode}` : null,
     appointment.sessionType?.preparationInstructions ? `Preparation: ${appointment.sessionType.preparationInstructions}` : null,
     appointment.sessionType?.preparationChecklist?.length ? `Bring: ${appointment.sessionType.preparationChecklist.join("; ")}` : null,

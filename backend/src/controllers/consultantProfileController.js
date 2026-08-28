@@ -6,6 +6,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere, clientAccessWhere } from "../middleware/authorization.js";
 import { avatarPresetBuffer, normalizeAvatarPreset, resolvedAvatarPreset } from "../services/staffAvatarPresetService.js";
+import { clearAuthContextCache } from "../middleware/authMiddleware.js";
 
 const profileSelect = {
   id: true,
@@ -167,6 +168,7 @@ export async function updateMyProfile(req, res) {
       await removeStoredAvatar(existing.avatarStorageKey);
     }
     if (removeUploadedAvatar) await removeStoredAvatar(existing.avatarStorageKey);
+    clearAuthContextCache(req.auth.authUserId);
     await recordActivity({
       agencyId: req.auth.agencyId,
       userId: req.auth.userId,
@@ -208,6 +210,7 @@ export async function deleteMyAvatar(req, res) {
     where: { id: req.auth.userId },
     data: { avatarStorageKey: null, avatarMimeType: null },
   });
+  clearAuthContextCache(req.auth.authUserId);
   await removeStoredAvatar(existing.avatarStorageKey);
   res.json({ success: true, data: { avatarPreset: resolvedAvatarPreset(existing), hasAvatar: true, hasUploadedAvatar: false } });
 }

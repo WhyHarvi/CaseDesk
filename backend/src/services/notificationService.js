@@ -6,6 +6,49 @@ import {
 } from "./notificationAccessService.js";
 import { hasPushSubscription } from "./webPushService.js";
 
+const configuredDedupeCacheTtl = Number(process.env.NOTIFICATION_DEDUPE_CACHE_TTL_MS);
+const NOTIFICATION_DEDUPE_CACHE_TTL_MS = Math.min(
+  Math.max(Number.isFinite(configuredDedupeCacheTtl) ? configuredDedupeCacheTtl : 6 * 60 * 60_000, 0),
+  24 * 60 * 60_000,
+);
+const NOTIFICATION_DEDUPE_CACHE_MAX_ENTRIES = Math.max(
+  Number(process.env.NOTIFICATION_DEDUPE_CACHE_MAX_ENTRIES) || 50_000,
+  100,
+);
+const knownNotificationDedupeKeys = new Map();
+
+function notificationDedupeCacheKey(agencyId, recipientUserId, dedupeKey) {
+  return JSON.stringify([agencyId, recipientUserId, dedupeKey]);
+}
+
+export function clearNotificationDedupeCache() {
+  knownNotificationDedupeKeys.clear();
+}
+
+export function hasKnownNotificationDedupe(agencyId, recipientUserId, dedupeKey, now = Date.now()) {
+  if (NOTIFICATION_DEDUPE_CACHE_TTL_MS === 0) return false;
+  const key = notificationDedupeCacheKey(agencyId, recipientUserId, dedupeKey);
+  const expiresAt = knownNotificationDedupeKeys.get(key);
+  if (!expiresAt || expiresAt <= now) {
+    if (expiresAt) knownNotificationDedupeKeys.delete(key);
+    return false;
+  }
+  // Refresh insertion order so the size bound behaves as a small LRU.
+  knownNotificationDedupeKeys.delete(key);
+  knownNotificationDedupeKeys.set(key, expiresAt);
+  return true;
+}
+
+export function rememberNotificationDedupe(agencyId, recipientUserId, dedupeKey, now = Date.now()) {
+  if (NOTIFICATION_DEDUPE_CACHE_TTL_MS === 0) return;
+  const key = notificationDedupeCacheKey(agencyId, recipientUserId, dedupeKey);
+  knownNotificationDedupeKeys.delete(key);
+  knownNotificationDedupeKeys.set(key, now + NOTIFICATION_DEDUPE_CACHE_TTL_MS);
+  while (knownNotificationDedupeKeys.size > NOTIFICATION_DEDUPE_CACHE_MAX_ENTRIES) {
+    knownNotificationDedupeKeys.delete(knownNotificationDedupeKeys.keys().next().value);
+  }
+}
+
 const INTERNAL_CASE_ACTIONS = [
   "case.created",
   "case.updated",
@@ -355,13 +398,20 @@ export async function notifyUsers({
   // recipients before doing any of that work.
   let candidateRecipients = uniqueRecipients;
   if (!aggregate && dedupeKey) {
+    candidateRecipients = candidateRecipients.filter(
+      (recipientUserId) => !hasKnownNotificationDedupe(agencyId, recipientUserId, dedupeKey),
+    );
+    if (!candidateRecipients.length) return [];
     const alreadyNotified = await prisma.notification.findMany({
-      where: { agencyId, dedupeKey, recipientUserId: { in: uniqueRecipients } },
+      where: { agencyId, dedupeKey, recipientUserId: { in: candidateRecipients } },
       select: { recipientUserId: true },
     });
     if (alreadyNotified.length) {
       const notifiedIds = new Set(alreadyNotified.map((item) => item.recipientUserId));
-      candidateRecipients = uniqueRecipients.filter((id) => !notifiedIds.has(id));
+      for (const recipientUserId of notifiedIds) {
+        rememberNotificationDedupe(agencyId, recipientUserId, dedupeKey);
+      }
+      candidateRecipients = candidateRecipients.filter((id) => !notifiedIds.has(id));
     }
     if (!candidateRecipients.length) return [];
   }
@@ -503,6 +553,9 @@ export async function notifyUsers({
           }
         : {},
     });
+    if (!aggregate && dedupeKey) {
+      rememberNotificationDedupe(agencyId, recipientUserId, dedupeKey);
+    }
     const deliveryChannels = enabledChannels.filter((channel) => channel !== "in_app");
     if (deliveryChannels.length) {
       const rearmDelivery = Boolean(

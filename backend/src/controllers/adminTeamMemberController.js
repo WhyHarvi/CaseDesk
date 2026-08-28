@@ -21,6 +21,7 @@ import {
 import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
 import { defaultAvatarPreset, normalizeAvatarPreset, resolvedAvatarPreset } from "../services/staffAvatarPresetService.js";
 import { AVATAR_BUCKET, removeStorageFile } from "../services/supabaseStorage.js";
+import { clearAuthContextCache } from "../middleware/authMiddleware.js";
 
 const managedRoles = new Set(["consultant", "frontdesk"]);
 const teamMemberSelect = {
@@ -474,7 +475,7 @@ export async function listIncentiveRoleMembers(req, res) {
 export async function updateMemberProfile(req, res) {
   const existing = await prisma.user.findFirst({
     where: { id: req.params.id, agencyId: req.auth.agencyId, status: "active", role: { in: incentiveEligibleRoles } },
-    select: { id: true, fullName: true, email: true, role: true, avatarPreset: true, avatarStorageKey: true },
+    select: { id: true, authUserId: true, fullName: true, email: true, role: true, avatarPreset: true, avatarStorageKey: true },
   });
   if (!existing) throw createHttpError(404, "Team member not found.", "NOT_FOUND");
   const incentiveRoleIds = await validateIncentiveRoleIds(
@@ -497,6 +498,7 @@ export async function updateMemberProfile(req, res) {
       await tx.user.update({ where: { id: existing.id }, data: { avatarPreset, avatarStorageKey: null, avatarMimeType: null } });
     }
   });
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
@@ -546,6 +548,7 @@ export async function updateTeamMemberPortalAccess(req, res) {
     where: { id: membership.id },
     data: { permissions },
   });
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
   await reconcileNotificationAccessForUser({
     agencyId: req.auth.agencyId,
     userId: existing.id,
@@ -651,6 +654,7 @@ export async function updateTeamMember(req, res) {
     await updateAuthUser(existing.authUserId, {
       user_metadata: { full_name: input.fullName },
     }).catch(() => {});
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
   await recordActivity({
     agencyId: req.auth.agencyId,
     userId: req.auth.userId,
@@ -705,6 +709,7 @@ export async function disableTeamMember(req, res) {
       data: { isActive: false },
     }),
   ]);
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
   if (existing.authUserId)
     await updateAuthUser(existing.authUserId, {
       ban_duration: "876000h",

@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   caseNotificationActionUrl,
   caseTabFromNotification,
+  clearNotificationDedupeCache,
   destinationFromNotification,
+  hasKnownNotificationDedupe,
+  rememberNotificationDedupe,
 } from "../src/services/notificationService.js";
 import {
   NOTIFICATION_AUDIENCES,
@@ -35,6 +38,15 @@ test("notifications are durable, tenant scoped, deduplicated, and user owned", a
   assert.match(routes, /\/read-all/);
   assert.match(routes, /\/preferences\/:category/);
   assert.match(server, /app\.use\("\/api\/notifications", requireAuth, notificationRoutes\)/);
+});
+
+test("known non-aggregate notification dedupe keys skip repeated scheduler database checks", () => {
+  clearNotificationDedupeCache();
+  assert.equal(hasKnownNotificationDedupe("agency-a", "user-a", "task:1", 1_000), false);
+  rememberNotificationDedupe("agency-a", "user-a", "task:1", 1_000);
+  assert.equal(hasKnownNotificationDedupe("agency-a", "user-a", "task:1", 2_000), true);
+  assert.equal(hasKnownNotificationDedupe("agency-a", "user-b", "task:1", 2_000), false);
+  assert.equal(hasKnownNotificationDedupe("agency-b", "user-a", "task:1", 2_000), false);
 });
 
 test("deadline scheduler covers actionable work without duplicating appointment reminders", async () => {
@@ -88,6 +100,11 @@ test("notification policy groups incidents, separates actions, expires noise, an
   assert.match(item, /related updates/);
   assert.match(scheduler, /sendDailyDigests/);
   assert.match(scheduler, /resolveCompletedAndExpiredNotifications/);
+  assert.match(scheduler, /NOTIFICATION_RESOLUTION_BATCH_SIZE/);
+  assert.match(scheduler, /NOTIFICATION_ENTITY_RECHECK_MS/);
+  assert.match(scheduler, /notificationResolutionCursor/);
+  assert.doesNotMatch(scheduler, /take:\s*2000/);
+  assert.match(scheduler, /notificationId: \{ in: expiredIds \}/);
   assert.match(booking, /kind === "attended"/);
   assert.match(booking, /schedulingCoordinatorRecipientIds/);
   assert.match(inbound, /aggregate: true/);

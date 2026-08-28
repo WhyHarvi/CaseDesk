@@ -5408,6 +5408,7 @@ model Notification {
   @@index([recipientUserId, readAt, createdAt])
   @@index([recipientUserId, attentionLevel, resolvedAt, lastOccurredAt])
   @@index([recipientUserId, destinationKey, resolvedAt, readAt])
+  @@index([resolvedAt, id])
   @@index([expiresAt])
   @@index([agencyId, category, createdAt])
   @@map("notifications")

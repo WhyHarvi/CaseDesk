@@ -6,6 +6,10 @@ import {
   clientAccessWhere,
   requireRole,
 } from "../src/middleware/authorization.js";
+import {
+  clearAuthContextCache,
+  loadAuthenticationContext,
+} from "../src/middleware/authMiddleware.js";
 
 const auth = (role, userId = "user-a", agencyId = "agency-a") => ({
   auth: { role, userId, agencyId },
@@ -78,6 +82,42 @@ test("inactive membership is rejected by authentication middleware", async () =>
   );
   assert.match(source, /where: \{ isActive: true \}/);
   assert.match(source, /ACCOUNT_INACTIVE/);
+});
+
+test("authentication coalesces repeated identity lookups and selects only required agency fields", async () => {
+  clearAuthContextCache();
+  let calls = 0;
+  let query;
+  const appUser = { id: "user-a", memberships: [] };
+  const db = {
+    user: {
+      async findUnique(value) {
+        calls += 1;
+        query = value;
+        return appUser;
+      },
+    },
+  };
+
+  const first = await loadAuthenticationContext("auth-user-a", { db, now: 1_000 });
+  const second = await loadAuthenticationContext("auth-user-a", { db, now: 2_000 });
+  const afterExpiry = await loadAuthenticationContext("auth-user-a", { db, now: 16_001 });
+
+  assert.equal(first, appUser);
+  assert.equal(second, appUser);
+  assert.equal(afterExpiry, appUser);
+  assert.equal(calls, 2);
+  assert.equal(query.select.memberships.include, undefined);
+  assert.deepEqual(Object.keys(query.select.memberships.select.agency.select).sort(), [
+    "accessStatus",
+    "avatarMimeType",
+    "id",
+    "name",
+    "onboardingStatus",
+    "status",
+    "timezone",
+    "updatedAt",
+  ]);
 });
 
 test("frontend-provided agency_id is ignored", async () => {

@@ -32,7 +32,8 @@ test("booking email presents branded appointment details and safe actions", () =
   assert.match(email.html, /North Star Immigration/);
   assert.match(email.html, /Open directions/);
   assert.match(email.html, /Reschedule or cancel/);
-  assert.match(email.html, /Avery Singh/);
+  assert.doesNotMatch(email.html, /Avery Singh/);
+  assert.doesNotMatch(email.text, /Avery Singh/);
   assert.match(email.text, /Add|Directions:/);
 });
 
@@ -271,7 +272,7 @@ test("a format-only change does not tell the client their appointment time moved
   assert.match(email.text, /Format: Phone call/);
 });
 
-test("a consultant-only change explains that the appointment time and format stay the same", () => {
+test("a consultant-only change explains the update without disclosing the consultant name", () => {
   const email = bookingEmailContent({
     appointment: {
       ...baseAppointment,
@@ -287,6 +288,39 @@ test("a consultant-only change explains that the appointment time and format sta
   assert.match(email.subject, /Appointment consultant updated/);
   assert.match(email.text, /consultant for your appointment has changed/i);
   assert.match(email.text, /date, time, and format remain the same/i);
-  assert.match(email.text, /With: New Consultant/);
+  assert.doesNotMatch(email.html, /New Consultant/);
+  assert.doesNotMatch(email.text, /New Consultant/);
   assert.doesNotMatch(email.text, /appointment has been moved/i);
+});
+
+test("no client booking email template discloses the assigned consultant name", () => {
+  const kinds = [
+    "booked",
+    "rescheduled",
+    "format_updated",
+    "assignment_updated",
+    "meeting_updated",
+    "cancelled",
+    "reminder",
+    "confirmed",
+    "attended",
+    "no_show",
+    "payment_requested",
+  ];
+
+  for (const kind of kinds) {
+    const email = bookingEmailContent({
+      appointment: baseAppointment,
+      kind,
+      agency,
+      timezone: "America/Toronto",
+      contactName: "Jordan Lee",
+      manageUrl: "https://case-desk.example/book/manage/token-1",
+      payNowUrl: "https://payments.example.test/invoice/1001",
+      amount: 150,
+    });
+
+    assert.doesNotMatch(email.html, /Avery Singh/, `${kind} HTML disclosed the consultant name`);
+    assert.doesNotMatch(email.text, /Avery Singh/, `${kind} text disclosed the consultant name`);
+  }
 });

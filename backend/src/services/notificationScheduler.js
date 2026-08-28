@@ -12,8 +12,18 @@ import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
 import { reconcileMissingAppointmentPaymentAlerts } from "./bookingPaymentHoldService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
+const NOTIFICATION_RESOLUTION_BATCH_SIZE = Math.min(
+  Math.max(Number(process.env.NOTIFICATION_RESOLUTION_BATCH_SIZE) || 250, 25),
+  1_000,
+);
+const NOTIFICATION_ENTITY_RECHECK_MS = Math.max(
+  Number(process.env.NOTIFICATION_ENTITY_RECHECK_MS) || 5 * 60_000,
+  INTERVAL_MS,
+);
 let timer = null;
 let running = false;
+let nextEntityResolutionAt = 0;
+let notificationResolutionCursor = null;
 
 const isoKey = (value) => new Date(value).toISOString();
 const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (character) => ({
@@ -197,24 +207,48 @@ async function followUpNotifications(now, horizon) {
 }
 
 export async function resolveCompletedAndExpiredNotifications(now = new Date()) {
-  await prisma.notification.updateMany({
+  // Expiry stays responsive on every scheduler tick, but is bounded so a
+  // backlog can never turn one pass into an unbounded update/egress spike.
+  const expired = await prisma.notification.findMany({
     where: { resolvedAt: null, expiresAt: { lte: now } },
-    data: { resolvedAt: now, readAt: now },
+    select: { id: true },
+    orderBy: { expiresAt: "asc" },
+    take: NOTIFICATION_RESOLUTION_BATCH_SIZE,
   });
+  const expiredIds = expired.map((item) => item.id);
+  if (expiredIds.length) {
+    await prisma.notification.updateMany({
+      where: { id: { in: expiredIds }, resolvedAt: null },
+      data: { resolvedAt: now, readAt: now },
+    });
+    await prisma.notificationDelivery.updateMany({
+      where: { notificationId: { in: expiredIds }, status: { in: ["pending", "retry"] } },
+      data: { status: "cancelled", lastError: "Cancelled because the notification was resolved" },
+    });
+  }
+
+  // Entity reconciliation is a safety net for state changes that did not
+  // resolve their notification at write time. Walk a small rotating batch
+  // every few minutes rather than rereading up to thousands of open rows on
+  // every 60-second scheduler pass.
+  if (now.getTime() < nextEntityResolutionAt) return { expired: expiredIds.length, checked: 0 };
+  nextEntityResolutionAt = now.getTime() + NOTIFICATION_ENTITY_RECHECK_MS;
 
   const open = await prisma.notification.findMany({
     where: {
       resolvedAt: null,
       entityId: { not: null },
+      ...(notificationResolutionCursor ? { id: { gt: notificationResolutionCursor } } : {}),
       entityType: {
         in: ["task", "follow_up", "document", "questionnaire_assignment", "questionnaire_collection", "conversation"],
       },
     },
-    select: { entityType: true, entityId: true },
-    distinct: ["entityType", "entityId"],
-    take: 2000,
+    select: { id: true, entityType: true, entityId: true },
+    orderBy: { id: "asc" },
+    take: NOTIFICATION_RESOLUTION_BATCH_SIZE,
   });
-  const idsFor = (type) => open.filter((item) => item.entityType === type).map((item) => item.entityId);
+  notificationResolutionCursor = open.length === NOTIFICATION_RESOLUTION_BATCH_SIZE ? open.at(-1).id : null;
+  const idsFor = (type) => [...new Set(open.filter((item) => item.entityType === type).map((item) => item.entityId))];
   const [tasks, followUps, documents, questionnaires, questionnaireCollections, conversations] = await Promise.all([
     idsFor("task").length ? prisma.caseWorkflowStep.findMany({ where: { id: { in: idsFor("task") }, OR: [{ isActive: false }, { status: { in: ["Completed", "Cancelled"] } }] }, select: { id: true } }) : [],
     idsFor("follow_up").length ? prisma.followUp.findMany({ where: { id: { in: idsFor("follow_up") }, status: { in: ["Completed", "Cancelled"] } }, select: { id: true } }) : [],
@@ -237,17 +271,15 @@ export async function resolveCompletedAndExpiredNotifications(now = new Date()) 
       where: { resolvedAt: null, entityType, entityId: { in: entityIds } },
       data: { resolvedAt: now, readAt: now },
     });
+    await prisma.notificationDelivery.updateMany({
+      where: {
+        status: { in: ["pending", "retry"] },
+        notification: { resolvedAt: { not: null }, entityType, entityId: { in: entityIds } },
+      },
+      data: { status: "cancelled", lastError: "Cancelled because the notification was resolved" },
+    });
   }
-  await prisma.notificationDelivery.updateMany({
-    where: {
-      status: { in: ["pending", "retry"] },
-      notification: { resolvedAt: { not: null } },
-    },
-    data: {
-      status: "cancelled",
-      lastError: "Cancelled because the notification was resolved",
-    },
-  });
+  return { expired: expiredIds.length, checked: open.length };
 }
 
 async function documentNotifications(now, horizon) {

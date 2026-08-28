@@ -14,6 +14,7 @@ import { recordActivity } from "../utils/prismaCrud.js";
 import { publicAppUrl } from "../utils/publicAppUrl.js";
 import { logger } from "../services/logger.js";
 import { defaultPortalAccess } from "../services/portalAccessService.js";
+import { clearAuthContextCache } from "../middleware/authMiddleware.js";
 import {
   approveCollaborationRequest,
   declineCollaborationRequest,
@@ -272,7 +273,7 @@ export async function getConsultant(req, res) {
 }
 
 export async function updateConsultant(req, res) {
-  await getConsultantRecord(req);
+  const existing = await getConsultantRecord(req);
   const profile = consultantPayload(req.body || {});
   const data = await prisma.user.update({
     where: { id: req.params.id },
@@ -298,6 +299,7 @@ export async function updateConsultant(req, res) {
     },
     select: consultantSelect,
   });
+  if (existing.authUserId) clearAuthContextCache(existing.authUserId);
   res.json({ success: true, data });
 }
 
@@ -329,6 +331,7 @@ export async function disableConsultant(req, res) {
       data: { isActive: false },
     }),
   ]);
+  if (user.authUserId) clearAuthContextCache(user.authUserId);
   if (user.authUserId)
     await updateAuthUser(user.authUserId, { ban_duration: "876000h" }).catch(
       () => {},
