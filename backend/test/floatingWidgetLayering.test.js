@@ -87,9 +87,9 @@ test("the phone and chat floating buttons hide behind any open curtain, whether 
 
   assert.match(hook, /const CURTAIN_SELECTOR = "\.fixed\.inset-0";/);
   assert.doesNotMatch(hook, /:scope >/);
-  assert.match(hook, /document\.querySelector\(CURTAIN_SELECTOR\)/);
-  assert.match(hook, /new MutationObserver\(update\)/);
-  assert.match(hook, /observer\.observe\(document\.body, \{ childList: true, subtree: true \}\)/);
+  assert.match(hook, /document\.querySelectorAll\(CURTAIN_SELECTOR\)\)\.some\(isVisible\)/);
+  assert.match(hook, /observer\.observe\(document\.body, \{/);
+  assert.match(hook, /subtree: true,/);
   assert.match(hook, /export default function useAnyCurtainOpen\(\)/);
 
   assert.match(globalDialpad, /import useAnyCurtainOpen from "\.\.\/\.\.\/hooks\/useAnyCurtainOpen";/);
@@ -114,4 +114,38 @@ test("the phone and chat floating buttons hide behind any open curtain, whether 
   ]);
   assert.match(clientsPage, /fixed inset-0 z-50 flex justify-end bg-slate-950\/30/);
   assert.match(casesPage, /fixed inset-0 z-50 flex justify-end bg-slate-950\/30/);
+});
+
+// Real bug (second regression on the same fix): matching by DOM presence
+// alone, with no visibility check, made this permanently true and hid both
+// floating buttons everywhere, always — Sidebar's mobile-nav backdrop has
+// the exact same "fixed inset-0" combo but is ALWAYS mounted, toggling
+// purely via opacity-0/opacity-100 rather than actually unmounting.
+// Verified in a real browser (not just reasoned about) that: the backdrop
+// present-but-invisible reads as closed, genuinely opening it reads as
+// open, and a real curtain mounting on top still works.
+test("matching by DOM presence alone isn't enough — an always-mounted, opacity-toggled overlay (Sidebar's mobile-nav backdrop) must read as closed until it's actually visible", async () => {
+  const [hook, sidebar] = await Promise.all([
+    source("../../frontend/src/hooks/useAnyCurtainOpen.js"),
+    source("../../frontend/src/components/layout/Sidebar.jsx"),
+  ]);
+  assert.match(sidebar, /fixed inset-0 z-40 bg-slate-950\/35 backdrop-blur-sm transition-all duration-300 lg:hidden/);
+  assert.match(sidebar, /pointer-events-none opacity-0/);
+
+  assert.match(hook, /function isVisible\(node\)/);
+  assert.match(hook, /node\.checkVisibility\(\{ opacityProperty: true, visibilityProperty: true \}\)/);
+  // Fallback path for browsers predating checkVisibility (Safari < 17.4)
+  // still has to catch the same opacity-0 case.
+  assert.match(hook, /style\.opacity !== "0"/);
+  assert.match(hook, /\.some\(isVisible\)/);
+
+  // className-only toggles (like the backdrop's opacity-0 <-> opacity-100)
+  // never fire a childList mutation — attributes must be observed too, or
+  // the hook would never notice the mobile nav actually opening.
+  assert.match(hook, /attributes: true,/);
+  assert.match(hook, /attributeFilter: \["class", "style"\],/);
+  // attributes+subtree on document.body can fire very often in a busy
+  // page — coalesced to at most one evaluation per animation frame rather
+  // than evaluating on every single mutation.
+  assert.match(hook, /requestAnimationFrame\(\(\) => \{/);
 });
