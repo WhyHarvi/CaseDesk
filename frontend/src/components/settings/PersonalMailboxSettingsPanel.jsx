@@ -13,6 +13,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../services/api";
 
+const emptyCalendarStats = { active: false, scope: null, synced: 0, pending: 0, failed: 0, lastSyncedAt: null };
+
 const empty = {
   configured: false,
   connected: false,
@@ -48,6 +50,7 @@ export default function PersonalMailboxSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [calendarToggling, setCalendarToggling] = useState(false);
+  const [calendarStats, setCalendarStats] = useState(emptyCalendarStats);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -70,6 +73,29 @@ export default function PersonalMailboxSettingsPanel() {
       setError(searchParams.get("message") || "The Microsoft mailbox could not be connected.");
     }
   }, []);
+
+  const loadCalendarStats = async () => {
+    try {
+      const response = await api.get("/mailboxes/me/calendar-sync-status");
+      setCalendarStats(response.data.data);
+    } catch {
+      // Silent — this is a background live-status poll, not a user action;
+      // the calendar sync card just keeps showing its last-known numbers.
+    }
+  };
+
+  // Real counts instead of a static "Syncing" badge, refreshed every few
+  // seconds so the card visibly moves while appointments are still catching
+  // up — this only runs while the card is actually showing a ready state.
+  useEffect(() => {
+    if (!mailbox.calendarSyncReady) {
+      setCalendarStats(emptyCalendarStats);
+      return undefined;
+    }
+    void loadCalendarStats();
+    const interval = setInterval(loadCalendarStats, 4_000);
+    return () => clearInterval(interval);
+  }, [mailbox.calendarSyncReady]);
 
   const connect = async () => {
     try {
@@ -227,10 +253,28 @@ export default function PersonalMailboxSettingsPanel() {
                   : calendarToggling
                     ? "Updating…"
                     : mailbox.calendarSyncReady
-                      ? "Stop calendar sync"
+                      ? "Cancel sync"
                       : "Turn on calendar sync"}
               </button>
             </div>
+
+            {mailbox.calendarSyncReady ? (
+              <div className="mt-5 rounded-2xl border border-white/90 bg-white/55 px-4 py-3 text-xs leading-5 text-slate-500">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                    {calendarStats.pending > 0 ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    )}
+                    {calendarStats.pending > 0 ? `Syncing ${calendarStats.pending} more…` : "All caught up"}
+                  </span>
+                  <span>{calendarStats.synced} synced{calendarStats.scope === "agency" ? " across the agency" : ""}</span>
+                  {calendarStats.failed > 0 ? <span className="font-semibold text-rose-600">{calendarStats.failed} failed</span> : null}
+                </div>
+                {calendarStats.lastSyncedAt ? <p className="mt-1.5">Last synced {new Date(calendarStats.lastSyncedAt).toLocaleTimeString()}</p> : null}
+              </div>
+            ) : null}
           </section>
 
           <section className="rounded-[2rem] border border-white/90 bg-white/60 p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:p-6">

@@ -18,6 +18,7 @@ import {
   updateAgencyMicrosoftMailbox,
   updatePersonalMailbox,
 } from "../services/microsoftMailboxService.js";
+import { getOutlookCalendarSyncStats } from "../services/outlookCalendarSyncService.js";
 
 function frontendBase() {
   return String(process.env.FRONTEND_URL || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
@@ -37,6 +38,10 @@ function systemSettingsUrl(result, message = "") {
 
 export async function getPersonalMailbox(req, res) {
   res.json({ data: await personalMailboxStatus(req.auth.userId) });
+}
+
+export async function getPersonalCalendarSyncStatus(req, res) {
+  res.json({ data: await getOutlookCalendarSyncStats(req.auth.userId) });
 }
 
 export async function startPersonalMailboxConnect(req, res) {

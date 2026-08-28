@@ -192,6 +192,36 @@ async function deleteOneForViewer(viewer, sync) {
   }
 }
 
+// Real numbers for the Settings panel — replaces a bare on/off badge that
+// gave no way to tell "nothing has synced yet" apart from "everything's
+// already caught up." "pending" reuses dueAppointmentsForViewer, the exact
+// same query the poller itself runs next, so the count in the UI can never
+// drift from what the poller will actually do.
+export async function getOutlookCalendarSyncStats(userId) {
+  const connection = await prisma.userMailboxConnection.findUnique({
+    where: { userId },
+    select: { agencyId: true, status: true, calendarSyncEnabled: true, grantedScopes: true, user: { select: { role: true } } },
+  });
+  const active = Boolean(connection?.status === "connected" && connection.calendarSyncEnabled && mailboxGrantsCalendarAccess(connection.grantedScopes));
+  if (!active) return { active: false, scope: null, synced: 0, pending: 0, failed: 0, lastSyncedAt: null };
+
+  const viewer = { userId, agencyId: connection.agencyId, isAdmin: connection.user?.role === "admin" };
+  const [statusCounts, due, lastSynced] = await Promise.all([
+    prisma.appointmentCalendarSync.groupBy({ by: ["syncStatus"], where: { userId }, _count: { _all: true } }),
+    dueAppointmentsForViewer(viewer),
+    prisma.appointmentCalendarSync.findFirst({ where: { userId, syncedAt: { not: null } }, orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
+  ]);
+  const countFor = (status) => statusCounts.find((row) => row.syncStatus === status)?._count?._all || 0;
+  return {
+    active: true,
+    scope: viewer.isAdmin ? "agency" : "own",
+    synced: countFor("Synced"),
+    pending: due.length,
+    failed: countFor("Failed"),
+    lastSyncedAt: lastSynced?.syncedAt || null,
+  };
+}
+
 export async function processPendingOutlookCalendarSyncs() {
   if (running) return;
   running = true;

@@ -65,9 +65,33 @@ test("calendar sync has its own on/off toggle, independent of the Microsoft gran
   // OAuth; grant already exists → this is purely our own preference, a
   // plain PATCH with no Microsoft round trip.
   assert.match(panel, /onClick=\{mailbox\.calendarScopeGranted \? toggleCalendarSync : connect\}/);
-  assert.match(panel, /"Stop calendar sync"/);
+  assert.match(panel, /"Cancel sync"/);
   assert.match(panel, /"Turn on calendar sync"/);
   assert.doesNotMatch(panel, /connected before calendar sync existed/);
+});
+
+test("the Settings panel shows real sync counts instead of a static badge, polling live while the card is ready — a bare 'Syncing' badge gave no way to tell '0 have synced yet' apart from 'everything's already caught up'", async () => {
+  const [service, controller, routes, panel] = await Promise.all([
+    source("../src/services/outlookCalendarSyncService.js"),
+    source("../src/controllers/personalMailboxController.js"),
+    source("../src/routes/personalMailboxRoutes.js"),
+    source("../../frontend/src/components/settings/PersonalMailboxSettingsPanel.jsx"),
+  ]);
+  const statsFn = service.slice(service.indexOf("export async function getOutlookCalendarSyncStats"), service.indexOf("export async function processPendingOutlookCalendarSyncs"));
+  // "pending" reuses dueAppointmentsForViewer — the exact same query the
+  // poller itself runs next — so the UI's count can never drift from what
+  // will actually happen on the next tick.
+  assert.match(statsFn, /dueAppointmentsForViewer\(viewer\)/);
+  assert.match(statsFn, /pending: due\.length/);
+  assert.match(controller, /getPersonalCalendarSyncStatus/);
+  assert.match(routes, /router\.get\("\/me\/calendar-sync-status", requireAuth, teamMember, asyncHandler\(getPersonalCalendarSyncStatus\)\)/);
+
+  assert.match(panel, /setInterval\(loadCalendarStats, 4_000\)/);
+  assert.match(panel, /calendarStats\.pending > 0 \? `Syncing \$\{calendarStats\.pending\} more…` : "All caught up"/);
+  // The poll only runs while the card is actually in a ready state — no
+  // background timer left ticking once sync is off or the panel unmounts.
+  assert.match(panel, /if \(!mailbox\.calendarSyncReady\) \{\s*setCalendarStats\(emptyCalendarStats\);\s*return undefined;\s*\}/);
+  assert.match(panel, /return \(\) => clearInterval\(interval\);/);
 });
 
 test("user-authored CRM email uses its sender mailbox while automation keeps the agency sender", async () => {

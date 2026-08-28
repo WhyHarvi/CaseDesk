@@ -7,6 +7,7 @@ import {
   deleteAgencyMicrosoftMailbox,
   deletePersonalMailbox,
   getAgencyMicrosoftMailbox,
+  getPersonalCalendarSyncStatus,
   getPersonalMailbox,
   patchAgencyMicrosoftMailbox,
   patchPersonalMailbox,
@@ -22,6 +23,7 @@ const admin = requireRole("admin");
 
 router.get("/microsoft/callback", rateLimit({ windowMs: 15 * 60_000, max: 30 }), asyncHandler(personalMailboxCallback));
 router.get("/me", requireAuth, teamMember, asyncHandler(getPersonalMailbox));
+router.get("/me/calendar-sync-status", requireAuth, teamMember, asyncHandler(getPersonalCalendarSyncStatus));
 router.post("/microsoft/connect", requireAuth, teamMember, rateLimit({ windowMs: 15 * 60_000, max: 10 }), asyncHandler(startPersonalMailboxConnect));
 router.patch("/me", requireAuth, teamMember, asyncHandler(patchPersonalMailbox));
 router.delete("/me", requireAuth, teamMember, asyncHandler(deletePersonalMailbox));
