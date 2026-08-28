@@ -87,7 +87,12 @@ export function warmAppCache(role) {
   cancelAppWarmup();
   const generation = warmupGeneration;
   const home = role === "frontdesk" ? "/leads" : "/app/dashboard";
-  prefetchRoute(home, role);
+  // Authentication already releases the current route, whose page fetches
+  // its own data immediately. Starting the home route's API requests here
+  // created an unrelated request burst on hard reloads (for example a
+  // consultant opening /leads also fetched /dashboard). Only preload the
+  // route code; sidebar intent prefetch remains responsible for API data.
+  preloadRouteModule(home);
 
   // Deliberately minimal: with real-world API latency, bulk-warming every
   // route saturates the browser's 6-connections-per-origin budget and slows

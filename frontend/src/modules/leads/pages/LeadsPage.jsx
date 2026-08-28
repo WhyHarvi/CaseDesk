@@ -54,6 +54,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
   const [searchDraft, setSearchDraft] = useState(params.get("search") || "");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [supportingDataError, setSupportingDataError] = useState("");
+  const [supportingDataLoading, setSupportingDataLoading] = useState(false);
   const [selectedLead, setSelectedLead] = useState(null);
   const [deepLinkError, setDeepLinkError] = useState("");
   const requestedLeadId = params.get("lead") || "";
@@ -101,7 +102,37 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     }
   }, [queryString]);
 
-  useEffect(() => { loadLeads(); }, [loadLeads]);
+  const loadSupportingData = useCallback(async () => {
+    setSupportingDataLoading(true);
+    const [sourceResult, staffResult, interestResult] = await Promise.allSettled([
+      api.getFresh("/leads/sources"),
+      api.getFresh("/leads/staff"),
+      api.getFresh("/leads/immigration-interests"),
+    ]);
+
+    if (sourceResult.status === "fulfilled") setSources(sourceResult.value.data.data || []);
+    if (staffResult.status === "fulfilled") setStaff(staffResult.value.data.data || []);
+    if (interestResult.status === "fulfilled") setImmigrationInterests(interestResult.value.data.data || []);
+
+    const failures = [
+      sourceResult.status === "rejected" ? "lead sources" : null,
+      staffResult.status === "rejected" ? "employees" : null,
+      interestResult.status === "rejected" ? "immigration interests" : null,
+    ].filter(Boolean);
+    setSupportingDataError(failures.length ? `${failures.join(", ")} could not be loaded.` : "");
+    setSupportingDataLoading(false);
+  }, []);
+
+  const loadLeadPage = useCallback(async () => {
+    // /leads performs a list and count query. Let those release their DB
+    // connections before loading the three small catalogs; firing all four
+    // endpoints together could exhaust the production connection pool on a
+    // hard reload and leave every browser request without an HTTP response.
+    await loadLeads();
+    await loadSupportingData();
+  }, [loadLeads, loadSupportingData]);
+
+  useEffect(() => { void loadLeadPage(); }, [loadLeadPage]);
   // Selection is page/filter-scoped — leaving it around after the visible
   // set changes would let someone "promote" a lead they can no longer see.
   useEffect(() => { setSelectedIds(new Set()); setBulkResult(null); }, [leads]);
@@ -122,19 +153,6 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       active = false;
     };
   }, [requestedLeadId, selectedLead?.id, setParams]);
-  useEffect(() => {
-    Promise.allSettled([api.get("/leads/sources"), api.get("/leads/staff")])
-      .then(([sourceResult, staffResult]) => {
-        if (sourceResult.status === "fulfilled") setSources(sourceResult.value.data.data || []);
-        if (staffResult.status === "fulfilled") setStaff(staffResult.value.data.data || []);
-        const failures = [
-          sourceResult.status === "rejected" ? "lead sources" : null,
-          staffResult.status === "rejected" ? "employees" : null,
-        ].filter(Boolean);
-        setSupportingDataError(failures.length ? `${failures.join(" and ")} could not be loaded. Refresh the page.` : "");
-      });
-  }, []);
-
   const loadTransferRequests = useCallback(async () => {
     if (role !== "admin" || segment !== "STANDARD") return;
     try {
@@ -159,13 +177,6 @@ export default function LeadsPage({ segment = "STANDARD" }) {
       window.removeEventListener("focus", loadTransferRequests);
     };
   }, [loadTransferRequests, role, segment]);
-  useEffect(() => {
-    api
-      .get("/leads/immigration-interests")
-      .then((response) => setImmigrationInterests(response.data.data || []))
-      .catch(() => setImmigrationInterests([]));
-  }, []);
-
   const pageCount = Math.max(Math.ceil(meta.total / meta.limit), 1);
   const hasFilters = ["search", "status", "stage", "sourceId", "ownerUserId", "month"].some((key) => params.get(key));
   const range = useMemo(() => meta.total ? `${(meta.page - 1) * meta.limit + 1}–${Math.min(meta.page * meta.limit, meta.total)} of ${meta.total}` : "0 leads", [meta]);
@@ -288,7 +299,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
         {segment === "STANDARD" ? <div className="flex flex-wrap items-center gap-2">{role === "admin" ? <button type="button" onClick={() => setTransferDrawerOpen(true)} className="relative inline-flex h-11 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-200 hover:text-brand-700"><ClipboardCheck className="h-4 w-4" />Transfers{transferLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" /> : transferRequests.length ? <span className="min-w-5 rounded-full bg-brand-600 px-1.5 py-0.5 text-center text-[10px] font-bold text-white">{transferRequests.length}</span> : null}</button> : null}<button type="button" disabled={Boolean(supportingDataError) || !sources.length || !staff.length} onClick={() => setQuickAddOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white shadow-[0_8px_22px_rgba(73,104,149,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"><CirclePlus className="h-4 w-4" />Quick add</button></div> : null}
       </header>
 
-      {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{supportingDataError} Refresh the page before adding a lead.</div> : null}
+      {supportingDataError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><p>{supportingDataError}</p><button type="button" disabled={supportingDataLoading} onClick={loadLeadPage} className="mt-2 font-semibold underline disabled:opacity-60">{supportingDataLoading ? "Trying again…" : "Try again"}</button></div> : null}
       {deepLinkError ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><p>{deepLinkError}</p><button type="button" onClick={() => window.location.reload()} className="mt-2 text-xs font-semibold underline">Refresh and try again</button></div> : null}
       {callError ? <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{callError}</span><button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button></div> : null}
 
@@ -340,7 +351,7 @@ export default function LeadsPage({ segment = "STANDARD" }) {
           </div>
         ) : null}
 
-        {error ? <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><p>{error}</p><button type="button" onClick={loadLeads} className="mt-2 font-semibold">Try again</button></div> : null}
+        {error ? <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"><p>{error}</p><button type="button" disabled={loading || supportingDataLoading} onClick={loadLeadPage} className="mt-2 font-semibold disabled:opacity-60">{loading || supportingDataLoading ? "Trying again…" : "Try again"}</button></div> : null}
         {loading ? <ListSkeleton /> : !leads.length ? (
           <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><UserRoundSearch className="h-5 w-5" /></div><h2 className="mt-4 text-base font-semibold text-slate-900">{hasFilters ? "No matching leads" : copy.emptyTitle}</h2><p className="mt-1 max-w-sm text-sm text-slate-500">{hasFilters ? "Adjust or clear the filters to see more results." : copy.emptyDescription}</p></div>
         ) : (
