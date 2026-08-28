@@ -58,7 +58,7 @@ export async function createTwilioVoiceLine(req, res) {
   const numberSid = String(req.body?.numberSid || "").trim();
   const data = await provisionTwilioVoiceLine(
     req.user.agencyId,
-    { numberSid, label: String(req.body?.label || ""), routing: String(req.body?.routing || "STAFF"), assignedUserId: req.body?.assignedUserId },
+    { numberSid, label: String(req.body?.label || ""), routing: String(req.body?.routing || "STAFF"), assignedUserIds: req.body?.assignedUserIds },
     req,
   );
   await recordActivity({
@@ -76,7 +76,7 @@ export async function patchTwilioVoiceLine(req, res) {
     label: req.body?.label,
     routing: req.body?.routing,
     enabled: req.body?.enabled,
-    assignedUserId: req.body?.assignedUserId,
+    assignedUserIds: req.body?.assignedUserIds,
   });
   await recordActivity({
     agencyId: req.user.agencyId,

@@ -107,7 +107,7 @@ export async function twilioVoiceConnectionStatus(agencyId) {
 export async function issueTwilioAccessToken(agencyId, userId) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId);
   const directLine = await prisma.agencyTwilioVoiceLine.findFirst({
-    where: { agencyId, assignedUserId: userId, routing: "DIRECT", enabled: true },
+    where: { agencyId, routing: "DIRECT", enabled: true, assignments: { some: { userId } } },
     select: { phoneNumber: true },
   });
   const AccessToken = twilio.jwt.AccessToken;
@@ -173,11 +173,16 @@ export async function listTwilioVoiceNumbers(agencyId) {
 }
 
 export async function listAgencyTwilioVoiceLines(agencyId) {
-  return prisma.agencyTwilioVoiceLine.findMany({
+  const lines = await prisma.agencyTwilioVoiceLine.findMany({
     where: { agencyId },
-    include: { assignedUser: { select: { id: true, fullName: true, role: true, status: true } } },
+    include: { assignments: { include: { user: { select: { id: true, fullName: true, role: true, status: true } } }, orderBy: { createdAt: "asc" } } },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
   });
+  return lines.map(({ assignments, ...line }) => ({
+    ...line,
+    assignedUserIds: assignments.map((assignment) => assignment.userId),
+    assignedUsers: assignments.map((assignment) => assignment.user),
+  }));
 }
 
 // Twilio's REST errors carry a specific, human-readable .message (e.g. "The
@@ -195,27 +200,30 @@ function friendlyTwilioVoiceError(error, fallback) {
 // Application (outbound), points the number's Voice webhook at the line's own
 // inbound endpoint, and records the routing rule. The first line becomes the
 // primary callerId; the INTERNAL line is the office line transfers ring from.
-async function requireCallableAssignee(agencyId, assignedUserId) {
-  const userId = clean(assignedUserId, 100);
-  if (!userId) throw createHttpError(400, "Choose a team member for this direct line.");
-  const user = await prisma.user.findFirst({
-    where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
+async function requireCallableAssignees(agencyId, assignedUserIds, { lineId } = {}) {
+  const userIds = [...new Set((Array.isArray(assignedUserIds) ? assignedUserIds : []).map((value) => clean(value, 100)).filter(Boolean))].slice(0, 50);
+  if (!userIds.length) throw createHttpError(400, "Choose at least one team member for this shared line.");
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds }, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
     select: { id: true, fullName: true },
   });
-  if (!user) throw createHttpError(400, "Choose an active staff member for this direct line.");
-  const existing = await prisma.agencyTwilioVoiceLine.findFirst({ where: { assignedUserId: user.id }, select: { id: true } });
-  if (existing) throw createHttpError(409, "That team member already has a direct phone line.");
-  return user;
+  if (users.length !== userIds.length) throw createHttpError(400, "Every assigned person must be an active staff member.");
+  const existing = await prisma.agencyTwilioVoiceLineAssignee.findFirst({
+    where: { userId: { in: userIds }, ...(lineId ? { lineId: { not: lineId } } : {}) },
+    include: { user: { select: { fullName: true } }, line: { select: { phoneNumber: true } } },
+  });
+  if (existing) throw createHttpError(409, `${existing.user.fullName} is already assigned to ${existing.line.phoneNumber}. Remove that assignment first.`);
+  return users;
 }
 
-export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, routing, assignedUserId }, req) {
+export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, routing, assignedUserIds }, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId, { requireNumber: false });
   const client = twilioClient(config.settings);
   const numberSidClean = clean(numberSid, 64);
   if (!numberSidClean) throw createHttpError(400, "Choose a Twilio number to configure.");
   const routingClean = LINE_ROUTINGS.has(clean(routing)) ? clean(routing) : "STAFF";
   const labelClean = clean(label, 40) || "Line";
-  const assignee = routingClean === "DIRECT" ? await requireCallableAssignee(agencyId, assignedUserId) : null;
+  const assignees = routingClean === "DIRECT" ? await requireCallableAssignees(agencyId, assignedUserIds) : [];
 
   const existing = await prisma.agencyTwilioVoiceLine.findUnique({ where: { numberSid: numberSidClean } });
   if (existing) throw createHttpError(409, "That number is already configured as a voice line.");
@@ -240,7 +248,14 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   }
 
   const line = await prisma.agencyTwilioVoiceLine.create({
-    data: { agencyId, numberSid: numberSidClean, phoneNumber: "pending", label: labelClean, routing: routingClean, assignedUserId: assignee?.id || null },
+    data: {
+      agencyId,
+      numberSid: numberSidClean,
+      phoneNumber: "pending",
+      label: labelClean,
+      routing: routingClean,
+      assignments: { create: assignees.map((user) => ({ userId: user.id })) },
+    },
   });
   let updated;
   try {
@@ -283,8 +298,8 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   };
 }
 
-export async function updateTwilioVoiceLine(agencyId, lineId, { label, routing, enabled, assignedUserId } = {}) {
-  const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId } });
+export async function updateTwilioVoiceLine(agencyId, lineId, { label, routing, enabled, assignedUserIds } = {}) {
+  const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId }, include: { assignments: { select: { userId: true } } } });
   if (!line) throw createHttpError(404, "Voice line not found.");
   const data = {};
   if (label !== undefined) data.label = clean(label, 40) || line.label;
@@ -295,11 +310,11 @@ export async function updateTwilioVoiceLine(agencyId, lineId, { label, routing, 
   }
   const nextRouting = data.routing || line.routing;
   if (nextRouting === "DIRECT") {
-    const nextUserId = assignedUserId !== undefined ? clean(assignedUserId, 100) : line.assignedUserId;
-    if (nextUserId !== line.assignedUserId) data.assignedUserId = (await requireCallableAssignee(agencyId, nextUserId)).id;
-    else if (!nextUserId) throw createHttpError(400, "Choose a team member for this direct line.");
-  } else if (assignedUserId !== undefined || data.routing) {
-    data.assignedUserId = null;
+    const nextUserIds = assignedUserIds !== undefined ? assignedUserIds : line.assignments.map((assignment) => assignment.userId);
+    const assignees = await requireCallableAssignees(agencyId, nextUserIds, { lineId: line.id });
+    data.assignments = { deleteMany: {}, create: assignees.map((user) => ({ userId: user.id })) };
+  } else if (assignedUserIds !== undefined || data.routing) {
+    data.assignments = { deleteMany: {} };
   }
   if (enabled !== undefined) data.enabled = enabled === true;
   return prisma.agencyTwilioVoiceLine.update({ where: { id: line.id }, data });
@@ -328,18 +343,19 @@ export async function inboundTwiML(agencyId, lineId, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
   if (!config) return unavailableTwiML;
   let roles = null;
-  let assignedUserId = null;
+  let assignedUserIds = null;
   if (lineId) {
-    const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId, enabled: true } });
+    const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId, enabled: true }, include: { assignments: { select: { userId: true } } } });
     if (!line) return unavailableTwiML;
     if (line.routing === "FRONTDESK") roles = ["frontdesk"];
     if (line.routing === "DIRECT") {
-      const assignee = line.assignedUserId ? await prisma.user.findFirst({
-        where: { id: line.assignedUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
+      const configuredUserIds = line.assignments.map((assignment) => assignment.userId);
+      const assignees = configuredUserIds.length ? await prisma.user.findMany({
+        where: { id: { in: configuredUserIds }, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
         select: { id: true },
-      }) : null;
-      if (!assignee) return unavailableTwiML;
-      assignedUserId = assignee.id;
+      }) : [];
+      if (!assignees.length) return unavailableTwiML;
+      assignedUserIds = assignees.map((assignee) => assignee.id);
     }
   }
   // Twilio's statusCallback on <Dial> reports on the leg it creates (the
@@ -366,8 +382,8 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // allowed to appear in element 'Dial'") was flagging on this exact
   // endpoint, and per handleTwilioCallStatus's own notes below, an
   // attribute Twilio's parser rejects also just never reliably fires.
-  const identities = assignedUserId
-    ? [clientIdentity(assignedUserId)]
+  const identities = assignedUserIds
+    ? assignedUserIds.map((userId) => clientIdentity(userId))
     : await staffClientIdentities(agencyId, { roles });
   const clients = identities.map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
@@ -386,7 +402,7 @@ export async function outboundTwiML(agencyId, req) {
   const [config, internalLine, directLine] = await Promise.all([
     resolveAgencyTwilioVoiceConfig(agencyId, { optional: true }),
     prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } }),
-    agentIdentity ? prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "DIRECT", enabled: true, assignedUserId: agentIdentity } }) : null,
+    agentIdentity ? prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "DIRECT", enabled: true, assignments: { some: { userId: agentIdentity } } } }) : null,
   ]);
   if (!config) return `<Response><Say voice="alice" language="en-US">Calling is not configured. Please contact your administrator.</Say></Response>`;
   const toRaw = clean(req.body?.To, 40);

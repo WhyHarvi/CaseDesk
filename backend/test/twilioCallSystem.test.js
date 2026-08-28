@@ -22,6 +22,8 @@ test("Twilio voice schema and migrations add API key, toggles, lines, and a shar
   assert.match(migration, /ADD COLUMN IF NOT EXISTS "provider" TEXT NOT NULL DEFAULT 'OOMA'/);
   // Voice lines: per-number routing (frontdesk-only, all staff, internal).
   assert.match(schema, /model AgencyTwilioVoiceLine/);
+  assert.match(schema, /model AgencyTwilioVoiceLineAssignee/);
+  assert.match(schema, /userId\s+String\s+@unique/);
   assert.match(schema, /routing\s+String\s+@default\("STAFF"\)\s+@map\("routing"\)/);
   assert.match(schema, /numberSid\s+String\s+@unique\s+@map\("number_sid"\)/);
   assert.match(schema, /twilioVoiceLines\s+AgencyTwilioVoiceLine\[\]/);
@@ -120,8 +122,8 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(service, /export async function inboundTwiML\(agencyId, lineId, req\)/);
   assert.match(service, /if \(line\.routing === "FRONTDESK"\) roles = \["frontdesk"\];/);
   assert.match(service, /if \(line\.routing === "DIRECT"\)/);
-  assert.match(service, /assignedUserId = assignee\.id;/);
-  assert.match(service, /assignedUserId: agentIdentity/);
+  assert.match(service, /assignedUserIds = assignees\.map/);
+  assert.match(service, /assignments: \{ some: \{ userId: agentIdentity \} \}/);
   assert.match(service, /const outboundCallerId = directLine\?\.phoneNumber \|\| config\.voiceNumber/);
   // Dialing the internal office line rings the whole team instead of an
   // external number; transfers ring the target agent's softphone directly.
@@ -341,8 +343,9 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(panel, /Enable calling for this workspace/);
   assert.match(panel, /FRONTDESK/);
   assert.match(panel, /Internal line/);
-  assert.match(panel, /Specific staff member/);
-  assert.match(panel, /Direct · \{person\.fullName\}/);
+  assert.match(panel, /Staff using this number/);
+  assert.match(panel, /assignedUserIds/);
+  assert.match(panel, /Everyone assigned receives its calls and uses it automatically for outbound caller ID/);
   // The global dialpad's in-call screen exposes transfer and the picker
   // fetches transferable staff — the active-call UI lives there, not on the
   // softphone provider, so it shares one phone surface instead of two

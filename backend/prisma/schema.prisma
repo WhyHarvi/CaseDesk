@@ -1669,7 +1669,7 @@ model UserMailboxConnection {
 }
 
 // One Twilio phone number configured for voice, with its inbound routing
-// rule. FRONTDESK rings frontdesk staff, DIRECT rings its assigned member,
+// rule. FRONTDESK rings frontdesk staff, DIRECT rings its assigned members,
 // and STAFF/INTERNAL ring everyone. The INTERNAL line is the office line
 // staff dial to reach each other and the number transfers ring from.
 model AgencyTwilioVoiceLine {
@@ -1681,14 +1681,25 @@ model AgencyTwilioVoiceLine {
   routing        String   @default("STAFF") @map("routing")
   enabled        Boolean  @default(true) @map("enabled")
   isPrimary      Boolean  @default(false) @map("is_primary")
-  assignedUserId String?  @unique @map("assigned_user_id")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
   agency         Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  assignedUser   User?    @relation("TwilioVoiceLineAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignments    AgencyTwilioVoiceLineAssignee[]
 
   @@index([agencyId])
   @@map("agency_twilio_voice_line")
+}
+
+model AgencyTwilioVoiceLineAssignee {
+  lineId    String                @map("line_id")
+  userId    String                @unique @map("user_id")
+  createdAt DateTime              @default(now()) @map("created_at")
+  line      AgencyTwilioVoiceLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([lineId, userId])
+  @@index([lineId])
+  @@map("agency_twilio_voice_line_assignees")
 }
 
 model AgencyTwilioSettings {
@@ -1842,7 +1853,7 @@ model User {
   updatedAt                            DateTime                        @updatedAt @map("updated_at")
   agency                               Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   memberships                          AgencyMember[]
-  assignedTwilioVoiceLine              AgencyTwilioVoiceLine?          @relation("TwilioVoiceLineAssignee")
+  twilioVoiceLineAssignment            AgencyTwilioVoiceLineAssignee?
   consultantProfiles                   ConsultantProfile[]
   clientUsers                          ClientUser[]
   caseAssignments                      CaseAssignment[]                @relation("AssignedConsultant")
