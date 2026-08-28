@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import api from "../../services/api";
 
@@ -39,7 +39,12 @@ const STATUS_META = {
 
 function FieldRow({ field, onSave, saving }) {
   const [draft, setDraft] = useState(field.value || "");
-  useEffect(() => setDraft(field.value || ""), [field.value]);
+  const lastServerValue = useRef(field.value || "");
+  useEffect(() => {
+    const nextServerValue = field.value || "";
+    setDraft((current) => current === lastServerValue.current ? nextServerValue : current);
+    lastServerValue.current = nextServerValue;
+  }, [field.value]);
   const statusMeta = STATUS_META[field.status] || STATUS_META.Unset;
   const ownerMeta = OWNER_META[field.owner] || OWNER_META.Manual;
   const dirty = draft !== (field.value || "");

@@ -527,11 +527,6 @@ export default function AssessmentOverlay({ caseItem, assessment, saving, error,
   const [formData, setFormData] = useState(() => mergeFormData(buildDefaultFormData(caseItem), assessment?.formData));
   const [declaredComplete, setDeclaredComplete] = useState(Boolean(assessment?.declaredComplete));
 
-  useEffect(() => {
-    setFormData(mergeFormData(buildDefaultFormData(caseItem), assessment?.formData));
-    setDeclaredComplete(Boolean(assessment?.declaredComplete));
-  }, [assessment, caseItem]);
-
   function updateField(sectionId, fieldName, value) {
     setFormData((current) => normalizeDependentAnswers(current, sectionId, fieldName, value));
   }

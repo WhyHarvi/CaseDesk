@@ -22,7 +22,17 @@ export default function ProfileQuestionnaireSection({ sectionId, initialData, sa
   const [values, setValues] = useState(initialData || {});
   const [editing, setEditing] = useState(false);
   const fieldRefs = useRef({});
-  useEffect(() => { setValues(initialData || {}); }, [initialData, sectionId]);
+  const previousSectionId = useRef(sectionId);
+  useEffect(() => {
+    const sectionChanged = previousSectionId.current !== sectionId;
+    previousSectionId.current = sectionId;
+    // Case Profile refreshes supporting data in the background, and callers
+    // use a fresh empty object for sections without saved data. Synchronizing
+    // every new object identity used to erase an open form while someone was
+    // typing (UCI was a common casualty). Keep the active draft authoritative;
+    // once the editor closes, synchronize it with the latest saved response.
+    if (!editing || sectionChanged) setValues(initialData || {});
+  }, [editing, initialData, sectionId]);
   useEffect(() => {
     const field = focusRequest?.field;
     if (!focusRequest?.requestId || !field || !config?.fields.some(([key]) => key === field)) return undefined;
