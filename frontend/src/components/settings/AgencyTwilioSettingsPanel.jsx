@@ -92,8 +92,10 @@ export default function AgencyTwilioSettingsPanel() {
   const [numbersLoading, setNumbersLoading] = useState(false);
   const [lines, setLines] = useState([]);
   const [linesLoading, setLinesLoading] = useState(false);
+  const [staff, setStaff] = useState([]);
   const [addLabel, setAddLabel] = useState("Frontdesk");
   const [addRouting, setAddRouting] = useState("FRONTDESK");
+  const [addAssignedUserId, setAddAssignedUserId] = useState("");
   const [addingSid, setAddingSid] = useState("");
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceTesting, setVoiceTesting] = useState(false);
@@ -131,7 +133,10 @@ export default function AgencyTwilioSettingsPanel() {
       .then((response) => {
         if (active) {
           mergeSettings(response.data.data);
-          if (response.data.data?.configured) void loadLines();
+          if (response.data.data?.configured) {
+            void loadLines();
+            void loadStaff();
+          }
         }
       })
       .catch((reason) => {
@@ -252,6 +257,15 @@ export default function AgencyTwilioSettingsPanel() {
     }
   };
 
+  const loadStaff = async () => {
+    try {
+      const response = await api.get("/twilio-calls/staff");
+      setStaff(response.data.data || []);
+    } catch (reason) {
+      setLinesError(errorMessage(reason, "Team members could not be loaded for direct-line assignment."));
+    }
+  };
+
   const loadNumbers = async () => {
     try {
       setNumbersLoading(true);
@@ -270,7 +284,12 @@ export default function AgencyTwilioSettingsPanel() {
       setAddingSid(numberSid);
       setLinesError("");
       setLinesNotice("");
-      const response = await api.post("/twilio-calls/lines", { numberSid, label: addLabel, routing: addRouting });
+      const response = await api.post("/twilio-calls/lines", {
+        numberSid,
+        label: addLabel,
+        routing: addRouting,
+        assignedUserId: addRouting === "DIRECT" ? addAssignedUserId : null,
+      });
       const data = response.data.data;
       mergeSettings({ ...form, callsEnabled: true, voiceNumber: data.line.phoneNumber, twimlAppSid: data.twimlAppSid, lastCallTestStatus: "Connected" });
       setLinesNotice(`${data.line.label} line is live on ${data.line.phoneNumber}.`);
@@ -290,6 +309,25 @@ export default function AgencyTwilioSettingsPanel() {
       await loadLines();
     } catch (reason) {
       setLinesError(errorMessage(reason, "The line could not be updated."));
+    }
+  };
+
+  const routeLine = async (line, destination) => {
+    try {
+      setLinesError("");
+      setLinesNotice("");
+      const direct = !destination.startsWith("routing:");
+      const routing = direct ? "DIRECT" : destination.slice("routing:".length);
+      await api.patch(`/twilio-calls/lines/${line.id}`, {
+        routing,
+        assignedUserId: direct ? destination : null,
+      });
+      const person = staff.find((item) => item.id === destination);
+      const routingLabel = routing === "FRONTDESK" ? "frontdesk staff" : routing === "INTERNAL" ? "the full team as an internal line" : "all staff";
+      setLinesNotice(direct ? `${line.phoneNumber} is now assigned to ${person?.fullName || "that team member"}.` : `${line.phoneNumber} now rings ${routingLabel}.`);
+      await loadLines();
+    } catch (reason) {
+      setLinesError(errorMessage(reason, "The staff line assignment could not be updated."));
     }
   };
 
@@ -589,8 +627,8 @@ export default function AgencyTwilioSettingsPanel() {
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Voice lines</p>
                         <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">
-                          Each number rings only its routing group. A frontdesk line rings frontdesk staff only; the
-                          internal line is the office line staff dial and transfers ring from.
+                          Route a number to frontdesk, the full team, or one assigned staff member. Direct lines ring
+                          only their owner and are automatically used as that person's outbound caller ID.
                         </p>
                       </div>
                       <button type="button" disabled={numbersLoading || linesLoading || !form.canManage} onClick={loadNumbers} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
@@ -609,13 +647,24 @@ export default function AgencyTwilioSettingsPanel() {
                                 <p className="text-sm font-semibold text-slate-900">{line.label}</p>
                                 {line.isPrimary ? <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700">Primary</span> : null}
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${line.routing === "FRONTDESK" ? "bg-rose-50 text-rose-700" : line.routing === "INTERNAL" ? "bg-indigo-50 text-indigo-700" : "bg-emerald-50 text-emerald-700"}`}>
-                                  {line.routing === "FRONTDESK" ? "Frontdesk only" : line.routing === "INTERNAL" ? "Internal line" : "All staff"}
+                                  {line.routing === "FRONTDESK" ? "Frontdesk only" : line.routing === "INTERNAL" ? "Internal line" : line.routing === "DIRECT" ? line.assignedUser?.fullName || "Direct line" : "All staff"}
                                 </span>
                                 {!line.enabled ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Paused</span> : null}
                               </div>
                               <p className="mt-0.5 truncate text-xs text-slate-500">{line.phoneNumber}</p>
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <select
+                                value={line.routing === "DIRECT" ? line.assignedUserId || "routing:STAFF" : `routing:${line.routing}`}
+                                onChange={(event) => routeLine(line, event.target.value)}
+                                className="h-8 max-w-48 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none focus:border-sky-300"
+                                aria-label={`Route ${line.phoneNumber}`}
+                              >
+                                <option value="routing:FRONTDESK">Frontdesk only</option>
+                                <option value="routing:STAFF">All staff</option>
+                                <option value="routing:INTERNAL">Internal line</option>
+                                {staff.map((person) => <option key={person.id} value={person.id}>Direct · {person.fullName}</option>)}
+                              </select>
                               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
                                 <input type="checkbox" checked={line.enabled} onChange={(event) => toggleLine(line, event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-sky-600" />Ringing
                               </label>
@@ -640,9 +689,16 @@ export default function AgencyTwilioSettingsPanel() {
                               <select value={addRouting} onChange={(event) => setAddRouting(event.target.value)} className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-900 outline-none focus:border-sky-300">
                                 <option value="FRONTDESK">Frontdesk only</option>
                                 <option value="STAFF">All staff</option>
+                                <option value="DIRECT">Specific staff member</option>
                                 <option value="INTERNAL">Internal line</option>
                               </select>
-                              <button type="button" disabled={addingSid === item.sid} onClick={() => addLine(item.sid)} className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:opacity-50">
+                              {addRouting === "DIRECT" ? (
+                                <select value={addAssignedUserId} onChange={(event) => setAddAssignedUserId(event.target.value)} className="h-9 max-w-44 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-900 outline-none focus:border-sky-300" aria-label="Staff member for new direct line">
+                                  <option value="">Choose staff member</option>
+                                  {staff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
+                                </select>
+                              ) : null}
+                              <button type="button" disabled={addingSid === item.sid || (addRouting === "DIRECT" && !addAssignedUserId)} onClick={() => addLine(item.sid)} className="inline-flex h-9 items-center gap-2 rounded-full bg-sky-600 px-4 text-xs font-semibold text-white transition hover:bg-sky-500 disabled:opacity-50">
                                 {addingSid === item.sid ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Phone className="h-3.5 w-3.5" />}Add line
                               </button>
                             </div>

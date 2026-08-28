@@ -106,6 +106,10 @@ export async function twilioVoiceConnectionStatus(agencyId) {
 
 export async function issueTwilioAccessToken(agencyId, userId) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId);
+  const directLine = await prisma.agencyTwilioVoiceLine.findFirst({
+    where: { agencyId, assignedUserId: userId, routing: "DIRECT", enabled: true },
+    select: { phoneNumber: true },
+  });
   const AccessToken = twilio.jwt.AccessToken;
   const VoiceGrant = AccessToken.VoiceGrant;
   const identity = clientIdentity(userId);
@@ -122,7 +126,7 @@ export async function issueTwilioAccessToken(agencyId, userId) {
     token: token.toJwt(),
     identity,
     accountSid: config.accountSid,
-    voiceNumber: config.voiceNumber,
+    voiceNumber: directLine?.phoneNumber || config.voiceNumber,
     outboundReady: Boolean(config.twimlAppSid),
     expiresIn: 3600,
   };
@@ -130,7 +134,7 @@ export async function issueTwilioAccessToken(agencyId, userId) {
 
 // ---- Voice lines & TwiML Application provisioning --------------------------
 
-const LINE_ROUTINGS = new Set(["FRONTDESK", "STAFF", "INTERNAL"]);
+const LINE_ROUTINGS = new Set(["FRONTDESK", "STAFF", "INTERNAL", "DIRECT"]);
 const staffRoleWhere = { in: ["admin", "consultant", "frontdesk"] };
 const unavailableTwiML = `<Response><Say voice="alice" language="en-US">This business is not available right now. Goodbye.</Say></Response>`;
 
@@ -171,6 +175,7 @@ export async function listTwilioVoiceNumbers(agencyId) {
 export async function listAgencyTwilioVoiceLines(agencyId) {
   return prisma.agencyTwilioVoiceLine.findMany({
     where: { agencyId },
+    include: { assignedUser: { select: { id: true, fullName: true, role: true, status: true } } },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
   });
 }
@@ -190,13 +195,27 @@ function friendlyTwilioVoiceError(error, fallback) {
 // Application (outbound), points the number's Voice webhook at the line's own
 // inbound endpoint, and records the routing rule. The first line becomes the
 // primary callerId; the INTERNAL line is the office line transfers ring from.
-export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, routing }, req) {
+async function requireCallableAssignee(agencyId, assignedUserId) {
+  const userId = clean(assignedUserId, 100);
+  if (!userId) throw createHttpError(400, "Choose a team member for this direct line.");
+  const user = await prisma.user.findFirst({
+    where: { id: userId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
+    select: { id: true, fullName: true },
+  });
+  if (!user) throw createHttpError(400, "Choose an active staff member for this direct line.");
+  const existing = await prisma.agencyTwilioVoiceLine.findFirst({ where: { assignedUserId: user.id }, select: { id: true } });
+  if (existing) throw createHttpError(409, "That team member already has a direct phone line.");
+  return user;
+}
+
+export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, routing, assignedUserId }, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId, { requireNumber: false });
   const client = twilioClient(config.settings);
   const numberSidClean = clean(numberSid, 64);
   if (!numberSidClean) throw createHttpError(400, "Choose a Twilio number to configure.");
   const routingClean = LINE_ROUTINGS.has(clean(routing)) ? clean(routing) : "STAFF";
   const labelClean = clean(label, 40) || "Line";
+  const assignee = routingClean === "DIRECT" ? await requireCallableAssignee(agencyId, assignedUserId) : null;
 
   const existing = await prisma.agencyTwilioVoiceLine.findUnique({ where: { numberSid: numberSidClean } });
   if (existing) throw createHttpError(409, "That number is already configured as a voice line.");
@@ -221,7 +240,7 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   }
 
   const line = await prisma.agencyTwilioVoiceLine.create({
-    data: { agencyId, numberSid: numberSidClean, phoneNumber: "pending", label: labelClean, routing: routingClean },
+    data: { agencyId, numberSid: numberSidClean, phoneNumber: "pending", label: labelClean, routing: routingClean, assignedUserId: assignee?.id || null },
   });
   let updated;
   try {
@@ -264,15 +283,23 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
   };
 }
 
-export async function updateTwilioVoiceLine(agencyId, lineId, { label, routing, enabled } = {}) {
+export async function updateTwilioVoiceLine(agencyId, lineId, { label, routing, enabled, assignedUserId } = {}) {
   const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId } });
   if (!line) throw createHttpError(404, "Voice line not found.");
   const data = {};
   if (label !== undefined) data.label = clean(label, 40) || line.label;
   if (routing !== undefined) {
     const value = clean(routing);
-    if (!LINE_ROUTINGS.has(value)) throw createHttpError(400, "Routing must be FRONTDESK, STAFF, or INTERNAL.");
+    if (!LINE_ROUTINGS.has(value)) throw createHttpError(400, "Routing must be FRONTDESK, STAFF, INTERNAL, or DIRECT.");
     data.routing = value;
+  }
+  const nextRouting = data.routing || line.routing;
+  if (nextRouting === "DIRECT") {
+    const nextUserId = assignedUserId !== undefined ? clean(assignedUserId, 100) : line.assignedUserId;
+    if (nextUserId !== line.assignedUserId) data.assignedUserId = (await requireCallableAssignee(agencyId, nextUserId)).id;
+    else if (!nextUserId) throw createHttpError(400, "Choose a team member for this direct line.");
+  } else if (assignedUserId !== undefined || data.routing) {
+    data.assignedUserId = null;
   }
   if (enabled !== undefined) data.enabled = enabled === true;
   return prisma.agencyTwilioVoiceLine.update({ where: { id: line.id }, data });
@@ -294,17 +321,26 @@ export async function deleteTwilioVoiceLine(agencyId, lineId) {
 
 // ---- TwiML handlers --------------------------------------------------------
 
-// Incoming call to a line → ring only the staff its routing rule targets. A
-// FRONTDESK line rings frontdesk-role staff exclusively; STAFF and INTERNAL
-// lines ring the whole team (Twilio rings the registered clients sequentially).
+// Incoming call to a line → ring only the staff its routing rule targets.
+// DIRECT rings its assigned member, FRONTDESK rings frontdesk-role staff, and
+// STAFF/INTERNAL ring the whole team.
 export async function inboundTwiML(agencyId, lineId, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
   if (!config) return unavailableTwiML;
   let roles = null;
+  let assignedUserId = null;
   if (lineId) {
     const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId, enabled: true } });
     if (!line) return unavailableTwiML;
     if (line.routing === "FRONTDESK") roles = ["frontdesk"];
+    if (line.routing === "DIRECT") {
+      const assignee = line.assignedUserId ? await prisma.user.findFirst({
+        where: { id: line.assignedUserId, agencyId, status: "active", memberships: { some: { agencyId, isActive: true, role: staffRoleWhere } } },
+        select: { id: true },
+      }) : null;
+      if (!assignee) return unavailableTwiML;
+      assignedUserId = assignee.id;
+    }
   }
   // Twilio's statusCallback on <Dial> reports on the leg it creates (the
   // browser <Client> leg). We map that event back to the inbound parent SID,
@@ -330,7 +366,10 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // allowed to appear in element 'Dial'") was flagging on this exact
   // endpoint, and per handleTwilioCallStatus's own notes below, an
   // attribute Twilio's parser rejects also just never reliably fires.
-  const clients = (await staffClientIdentities(agencyId, { roles })).map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
+  const identities = assignedUserId
+    ? [clientIdentity(assignedUserId)]
+    : await staffClientIdentities(agencyId, { roles });
+  const clients = identities.map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
   if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
   return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25">${clients}</Dial></Response>`;
 }
@@ -343,9 +382,11 @@ export async function outboundTwiML(agencyId, req) {
   // Configuration and internal-line routing are independent reads. Resolve
   // them together so the TwiML webhook can tell Twilio where to dial without
   // paying for two sequential database round trips on every call.
-  const [config, internalLine] = await Promise.all([
+  const agentIdentity = identityFromClient(req.body?.From);
+  const [config, internalLine, directLine] = await Promise.all([
     resolveAgencyTwilioVoiceConfig(agencyId, { optional: true }),
     prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } }),
+    agentIdentity ? prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "DIRECT", enabled: true, assignedUserId: agentIdentity } }) : null,
   ]);
   if (!config) return `<Response><Say voice="alice" language="en-US">Calling is not configured. Please contact your administrator.</Say></Response>`;
   const toRaw = clean(req.body?.To, 40);
@@ -365,7 +406,6 @@ export async function outboundTwiML(agencyId, req) {
     return `<Response><Dial callerId="${escapeXml(internalLine.phoneNumber)}" timeout="30" answerOnBridge="true">${clients}</Dial></Response>`;
   }
 
-  const agentIdentity = identityFromClient(req.body?.From);
   // The softphone dials with the lead/client id as a custom parameter so the
   // status callbacks (which repeat this URL's query params in their POST
   // body) can link the session to the record even when the number alone is
@@ -397,7 +437,8 @@ export async function outboundTwiML(agencyId, req) {
   // real dialed number rides along as `dialedNumber` since the action
   // request's own To/From describe the leg executing the Dial (the agent's
   // Client→Application leg), not the number actually dialed.
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="30" answerOnBridge="true" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
+  const outboundCallerId = directLine?.phoneNumber || config.voiceNumber;
+  return `<Response><Dial callerId="${escapeXml(outboundCallerId)}" timeout="30" answerOnBridge="true" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
 }
 
 // ---- Call transfer ---------------------------------------------------------

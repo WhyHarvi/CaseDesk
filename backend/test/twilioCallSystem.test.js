@@ -68,7 +68,7 @@ test("statusCallback/statusCallbackEvent live on <Client>/<Number>, never on <Di
   // stay on <Dial> (still the authoritative outbound source). Keeping the
   // browser leg unanswered until the destination answers makes the SDK's
   // accept event—and therefore CaseDesk's call timer—represent a real answer.
-  assert.match(service, /<Dial callerId="\$\{escapeXml\(config\.voiceNumber\)\}" timeout="30" answerOnBridge="true" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
+  assert.match(service, /<Dial callerId="\$\{escapeXml\(outboundCallerId\)\}" timeout="30" answerOnBridge="true" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
   // None of the four <Dial ...> opening tags carry statusCallback directly.
   const dialTags = service.match(/<Dial [^>]*>/g) || [];
   assert.ok(dialTags.length >= 4, "expected at least 4 <Dial> tags across inbound/outbound/transfer");
@@ -119,6 +119,10 @@ test("voice lines route inbound calls to their group and the internal line bridg
   // The inbound handler takes the line id and only rings that line's group.
   assert.match(service, /export async function inboundTwiML\(agencyId, lineId, req\)/);
   assert.match(service, /if \(line\.routing === "FRONTDESK"\) roles = \["frontdesk"\];/);
+  assert.match(service, /if \(line\.routing === "DIRECT"\)/);
+  assert.match(service, /assignedUserId = assignee\.id;/);
+  assert.match(service, /assignedUserId: agentIdentity/);
+  assert.match(service, /const outboundCallerId = directLine\?\.phoneNumber \|\| config\.voiceNumber/);
   // Dialing the internal office line rings the whole team instead of an
   // external number; transfers ring the target agent's softphone directly.
   assert.match(service, /routing: "INTERNAL", enabled: true/);
@@ -337,6 +341,8 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(panel, /Enable calling for this workspace/);
   assert.match(panel, /FRONTDESK/);
   assert.match(panel, /Internal line/);
+  assert.match(panel, /Specific staff member/);
+  assert.match(panel, /Direct · \{person\.fullName\}/);
   // The global dialpad's in-call screen exposes transfer and the picker
   // fetches transferable staff — the active-call UI lives there, not on the
   // softphone provider, so it shares one phone surface instead of two

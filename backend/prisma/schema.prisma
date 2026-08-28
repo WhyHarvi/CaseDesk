@@ -1669,21 +1669,23 @@ model UserMailboxConnection {
 }
 
 // One Twilio phone number configured for voice, with its inbound routing
-// rule. A call to a FRONTDESK line rings only frontdesk staff; STAFF/INTERNAL
-// lines ring everyone. The INTERNAL line is the office line staff dial to
-// reach each other and the number transfers ring from.
+// rule. FRONTDESK rings frontdesk staff, DIRECT rings its assigned member,
+// and STAFF/INTERNAL ring everyone. The INTERNAL line is the office line
+// staff dial to reach each other and the number transfers ring from.
 model AgencyTwilioVoiceLine {
-  id          String   @id @default(uuid())
-  agencyId    String   @map("agency_id")
-  numberSid   String   @unique @map("number_sid")
-  phoneNumber String   @map("phone_number")
-  label       String   @default("Line") @map("label")
-  routing     String   @default("STAFF") @map("routing")
-  enabled     Boolean  @default(true) @map("enabled")
-  isPrimary   Boolean  @default(false) @map("is_primary")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  agency      Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid())
+  agencyId       String   @map("agency_id")
+  numberSid      String   @unique @map("number_sid")
+  phoneNumber    String   @map("phone_number")
+  label          String   @default("Line") @map("label")
+  routing        String   @default("STAFF") @map("routing")
+  enabled        Boolean  @default(true) @map("enabled")
+  isPrimary      Boolean  @default(false) @map("is_primary")
+  assignedUserId String?  @unique @map("assigned_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  agency         Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  assignedUser   User?    @relation("TwilioVoiceLineAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@map("agency_twilio_voice_line")
@@ -1840,6 +1842,7 @@ model User {
   updatedAt                            DateTime                        @updatedAt @map("updated_at")
   agency                               Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   memberships                          AgencyMember[]
+  assignedTwilioVoiceLine              AgencyTwilioVoiceLine?          @relation("TwilioVoiceLineAssignee")
   consultantProfiles                   ConsultantProfile[]
   clientUsers                          ClientUser[]
   caseAssignments                      CaseAssignment[]                @relation("AssignedConsultant")
