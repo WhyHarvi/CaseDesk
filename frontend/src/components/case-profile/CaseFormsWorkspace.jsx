@@ -31,6 +31,7 @@ import XfaPdfPreviewOverlay from "./XfaPdfPreviewOverlay";
 import { buildCaseFormAutofill } from "./formAutofillMappings";
 import FormFieldChecklistOverlay from "./FormFieldChecklistOverlay";
 import FormFieldMappingOverlay from "./FormFieldMappingOverlay";
+import FileOptimizationStatus, { beginOptimizedUpload, uploadFileError } from "../documents/FileOptimizationStatus";
 
 const acceptedTypes = ".pdf,.doc,.docx,.txt,.rtf";
 const statuses = [
@@ -331,6 +332,7 @@ function AddFormsOverlay({
   templates,
   assigned,
   saving,
+  uploadStatus,
   error,
   onClose,
   onAssign,
@@ -597,6 +599,7 @@ function AddFormsOverlay({
                 onChange={(event) => setFile(event.target.files?.[0] || null)}
               />
             </label>
+            <FileOptimizationStatus status={uploadStatus} />
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-hidden px-6 py-4">
@@ -1659,6 +1662,7 @@ export default function CaseFormsWorkspace({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState("");
+  const [uploadStatus, setUploadStatus] = useState(null);
   const [error, setError] = useState("");
   const [versionNotice, setVersionNotice] = useState("");
   const [addOpen, setAddOpen] = useState(false);
@@ -1809,6 +1813,11 @@ export default function CaseFormsWorkspace({
 
   async function createCustom(values, file) {
     try {
+      const localError = uploadFileError(file);
+      if (localError) {
+        setError(localError);
+        return;
+      }
       setSaving(true);
       setError("");
       if (values.saveAsTemplate && file) {
@@ -1825,9 +1834,10 @@ export default function CaseFormsWorkspace({
         const templateResponse = await api.post(
           "/form-templates/upload",
           templateBody,
-          { timeout: 60000 },
+          beginOptimizedUpload(file, setUploadStatus),
         );
         const template = templateResponse.data.data;
+        setUploadStatus({ stage: "complete", progress: 100, originalSize: file.size, finalSize: template.fileSize, fileName: file.name });
         const assignedResponse = await api.post(
           `/form-templates/${template.id}/add-to-case`,
           { caseId, requirement: values.requirement },
@@ -1847,8 +1857,9 @@ export default function CaseFormsWorkspace({
         .forEach(([key, value]) => body.append(key, value));
       if (file) body.append("file", file);
       const response = await api.post("/case-forms/custom", body, {
-        timeout: 60000,
+        ...(file ? beginOptimizedUpload(file, setUploadStatus) : { timeout: 300_000 }),
       });
+      if (file) setUploadStatus({ stage: "complete", progress: 100, originalSize: file.size, finalSize: response.data.data.fileSize, fileName: file.name });
       setForms((current) => [response.data.data, ...current]);
       setAddOpen(false);
     } catch (requestError) {
@@ -1858,6 +1869,7 @@ export default function CaseFormsWorkspace({
       );
     } finally {
       setSaving(false);
+      setUploadStatus(null);
     }
   }
 
@@ -2240,14 +2252,20 @@ export default function CaseFormsWorkspace({
 
   async function upload(item, file, copyType = "Working") {
     try {
+      const localError = uploadFileError(file);
+      if (localError) {
+        setError(localError);
+        return;
+      }
       setBusyId(item.id);
       setError("");
       const body = new FormData();
       body.append("file", file);
       body.append("copyType", copyType);
       const response = await api.post(`/case-forms/${item.id}/upload`, body, {
-        timeout: 60000,
+        ...beginOptimizedUpload(file, setUploadStatus),
       });
+      setUploadStatus({ stage: "complete", progress: 100, originalSize: file.size, finalSize: response.data.data.fileSize, fileName: file.name });
       setForms((current) =>
         current.map((entry) =>
           entry.id === item.id ? response.data.data : entry,
@@ -2262,6 +2280,7 @@ export default function CaseFormsWorkspace({
       );
     } finally {
       setBusyId("");
+      setUploadStatus(null);
     }
   }
 
@@ -2450,6 +2469,7 @@ export default function CaseFormsWorkspace({
           {error}
         </p>
       ) : null}
+      <FileOptimizationStatus status={uploadStatus} className="mx-3 mt-3" />
       {versionNotice ? (
         <div className="mx-3 mt-3 flex items-start justify-between gap-3 rounded-xl border border-sky-100 bg-sky-50 px-3 py-2.5 text-xs text-sky-800">
           <p>{versionNotice}</p>
@@ -2692,6 +2712,7 @@ export default function CaseFormsWorkspace({
             templates={templates}
             assigned={forms}
             saving={saving}
+            uploadStatus={uploadStatus}
             error={error}
             onClose={() => setAddOpen(false)}
             onAssign={assign}

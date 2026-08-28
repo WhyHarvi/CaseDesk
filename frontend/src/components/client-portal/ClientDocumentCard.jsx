@@ -2,6 +2,7 @@ import { FileText, FileUp, Loader2, Paperclip } from "lucide-react";
 import { useRef, useState } from "react";
 import { uploadPortalDocument, portalErrorMessage } from "../../api/clientPortalApi";
 import InlineActionError from "../ui/inline-action-error";
+import FileOptimizationStatus, { beginOptimizedUpload, uploadFileError } from "../documents/FileOptimizationStatus";
 import { usePortalToast } from "./ClientPortalToast";
 import { formatPortalDate } from "./ClientStatusCard";
 
@@ -16,12 +17,12 @@ export const DOCUMENT_STATUS_TONE = {
 
 const UPLOADABLE = new Set(["Required", "Needs Changes", "Uploaded", "Under Review"]);
 const ACCEPTED_TYPES = ".pdf,.jpg,.jpeg,.png,image/jpeg,image/png,application/pdf";
-const isPdf = (file) => file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
 
 export default function ClientDocumentCard({ document, onUploaded }) {
   const { showToast } = usePortalToast();
   const inputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState(null);
   const [error, setError] = useState("");
 
   const canUpload = UPLOADABLE.has(document.status);
@@ -31,24 +32,24 @@ export default function ClientDocumentCard({ document, onUploaded }) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (isPdf(file) && file.size > 5 * 1024 * 1024) {
-      setError("This PDF is larger than 5 MB. Choose a smaller PDF, then press Upload again.");
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setError("This file is larger than 25 MB. Choose a smaller file, then press Upload again.");
+    const localError = uploadFileError(file);
+    if (localError) {
+      setError(localError);
       return;
     }
     setUploading(true);
     setError("");
     try {
-      await uploadPortalDocument(document.id, file);
-      showToast(`${document.name} uploaded. We'll review it shortly.`);
+      const uploaded = await uploadPortalDocument(document.id, file, beginOptimizedUpload(file, setUploadStatus));
+      setUploadStatus({ stage: "complete", progress: 100, originalSize: file.size, finalSize: uploaded.fileSize, fileName: file.name });
+      const reduced = uploaded.fileSize && uploaded.fileSize < file.size;
+      showToast(`${document.name} uploaded${reduced ? ` and optimized to ${(uploaded.fileSize / (1024 * 1024)).toFixed(1)} MB` : ""}. We'll review it shortly.`);
       await onUploaded?.();
     } catch (reason) {
       setError(portalErrorMessage(reason, "The file could not be uploaded. Please try again."));
     } finally {
       setUploading(false);
+      setUploadStatus(null);
     }
   }
 
@@ -94,6 +95,7 @@ export default function ClientDocumentCard({ document, onUploaded }) {
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
             {uploading ? "Uploading…" : document.uploadedFileName ? "Replace file" : "Upload now"}
           </button>
+          <FileOptimizationStatus status={uploadStatus} className="mt-2.5" />
           <InlineActionError id={`document-upload-error-${document.id}`} message={error} className="mt-2.5" />
         </>
       ) : null}

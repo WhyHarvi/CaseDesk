@@ -10,10 +10,10 @@ import {
   compressUploadedCasePdf,
 } from "../src/services/pdfCompressionService.js";
 
-test("case PDF upload policy uses 3 MB target, 4 MB saved maximum, and 5 MB input maximum", () => {
-  assert.equal(PDF_COMPRESSION_TARGET_BYTES, 3 * 1024 * 1024);
-  assert.equal(PDF_SAVED_MAX_BYTES, 4 * 1024 * 1024);
-  assert.equal(PDF_UPLOAD_MAX_BYTES, 5 * 1024 * 1024);
+test("case upload policy optimizes toward 3.25 MB, stores at most 3.5 MB, and accepts 25 MB sources", () => {
+  assert.equal(PDF_COMPRESSION_TARGET_BYTES, Math.floor(3.25 * 1024 * 1024));
+  assert.equal(PDF_SAVED_MAX_BYTES, Math.floor(3.5 * 1024 * 1024));
+  assert.equal(PDF_UPLOAD_MAX_BYTES, 25 * 1024 * 1024);
 });
 
 test("small readable PDFs pass through byte-for-byte", async () => {
@@ -28,17 +28,40 @@ test("small readable PDFs pass through byte-for-byte", async () => {
   assert.deepEqual(result.buffer, buffer);
 });
 
-test("PDFs over 5 MB are rejected before compression", async () => {
+test("source files over 25 MB are rejected before compression", async () => {
   const buffer = Buffer.alloc(PDF_UPLOAD_MAX_BYTES + 1);
   await assert.rejects(
     compressUploadedCasePdf({ originalname: "large.pdf", mimetype: "application/pdf", size: buffer.length, buffer }),
-    (error) => error.statusCode === 413 && error.code === "PDF_TOO_LARGE",
+    (error) => error.statusCode === 413 && error.code === "FILE_INPUT_TOO_LARGE",
   );
 });
 
-test("non-PDF uploads retain the existing upload behavior", async () => {
+test("small non-PDF uploads retain the existing upload behavior", async () => {
   const file = { originalname: "photo.jpg", mimetype: "image/jpeg", size: 64, buffer: Buffer.alloc(64) };
   assert.equal(await compressUploadedCasePdf(file), file);
+});
+
+test("oversized fillable PDFs are never flattened to satisfy the storage limit", async () => {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const form = pdf.getForm();
+  const field = form.createTextField("client.name");
+  field.addToPage(page, { x: 72, y: 700, width: 220, height: 24 });
+  const validPdf = Buffer.from(await pdf.save());
+  const buffer = Buffer.concat([validPdf, Buffer.alloc(PDF_SAVED_MAX_BYTES)]);
+
+  await assert.rejects(
+    compressUploadedCasePdf({ originalname: "fillable.pdf", mimetype: "application/pdf", size: buffer.length, buffer }),
+    (error) => error.statusCode === 413 && error.code === "FILE_OPTIMIZATION_LIMIT" && /form fields/.test(error.message),
+  );
+});
+
+test("large Word files receive a specific safe-compression explanation", async () => {
+  const buffer = Buffer.alloc(PDF_SAVED_MAX_BYTES + 1);
+  await assert.rejects(
+    compressUploadedCasePdf({ originalname: "form.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: buffer.length, buffer }),
+    (error) => error.statusCode === 413 && error.code === "FILE_OPTIMIZATION_LIMIT" && /already internally compressed/.test(error.message),
+  );
 });
 
 test("a scan-sized PDF is raster-compressed to a readable PDF below the target", async () => {

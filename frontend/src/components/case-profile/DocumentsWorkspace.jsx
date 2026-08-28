@@ -30,19 +30,13 @@ import api from "../../services/api";
 import { deduplicateDocuments, normalizeDocumentName } from "./documentNames";
 import { buildDocumentPreview, releaseDocumentPreview } from "./documentPreview";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
+import FileOptimizationStatus, { uploadFileError } from "../documents/FileOptimizationStatus";
 
 const myDocumentMarker = "[MY_DOCUMENT]";
 const acceptedDocumentTypes = ".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif,.txt";
 const documentPageSize = 10;
 const sharedLibraryCategories = ["Templates", "IRCC Guides", "Checklists", "Letters & Agreements", "Sample Affidavits", "Internal Precedents", "General"];
 const lockedWrittenDocumentStatuses = new Set(["Issued", "Signed", "Finalized"]);
-const isPdfUpload = (file) => file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
-const exceedsCaseUploadLimit = (file) => isPdfUpload(file)
-  ? file.size > 5 * 1024 * 1024
-  : file.size > 25 * 1024 * 1024;
-const caseUploadLimitError = (file) => isPdfUpload(file)
-  ? `“${file.name}” is larger than 5 MB. Choose a smaller PDF, then press Upload again.`
-  : `“${file.name}” is larger than 25 MB. Choose a smaller file, then press Upload again.`;
 const requestErrorMessage = (reason, fallback) => reason?.response?.data?.message || fallback;
 const documentStatusOptions = [
   { value: "Requested", label: "Requested", message: "Waiting for client upload", requiresFile: false, pill: "border-slate-200 bg-slate-100/90 text-slate-700", dot: "bg-slate-400", icon: "bg-slate-100 text-slate-600" },
@@ -638,7 +632,7 @@ function DocumentRow({ document, uploading, uploadError, updating, selectable, s
           <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${received ? "bg-emerald-50 text-emerald-600" : unassigned ? "bg-amber-50 text-amber-600" : "bg-slate-100 text-slate-400"}`}>{received ? <CheckCircle2 className="h-4 w-4" /> : unassigned ? <RotateCcw className="h-4 w-4" /> : <FilePlus2 className="h-4 w-4" />}</span>
           <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-semibold text-slate-900">{document.documentName}</p>{document.status === "ChangesRequested" ? <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">Changes requested</span> : null}</div><p className={`mt-0.5 text-xs ${document.status === "ChangesRequested" ? "font-medium text-amber-600" : "text-slate-500"}`}>{internal ? "Internal staff document" : statusMeta.message}</p>{metadata ? <p className="mt-1 truncate text-[10px] text-slate-400">{metadata}</p> : null}</div>
         </div>
-        {uploading !== undefined ? <div className="mt-2 ml-10"><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><motion.div animate={{ width: `${uploading}%` }} className="h-full rounded-full bg-sky-500" /></div><p className="mt-1 text-[10px] font-semibold text-slate-400">Uploading {uploading}%</p></div> : null}
+        {uploading !== undefined ? <FileOptimizationStatus status={uploading} className="ml-10 mt-2" /> : null}
       </div>
       <div className="flex min-w-0 max-w-md flex-col items-end gap-2" onClick={(event) => event.stopPropagation()}>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -998,14 +992,15 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
   }, [caseId, onRefreshDocuments]);
 
   async function upload(document, file) {
-    if (exceedsCaseUploadLimit(file)) {
-      setDocumentUploadErrors((current) => ({ ...current, [document.id]: caseUploadLimitError(file) }));
+    const localError = uploadFileError(file);
+    if (localError) {
+      setDocumentUploadErrors((current) => ({ ...current, [document.id]: localError }));
       return;
     }
     setDocumentUploadErrors((current) => ({ ...current, [document.id]: "" }));
-    setUploading((current) => ({ ...current, [document.id]: 1 }));
+    setUploading((current) => ({ ...current, [document.id]: { stage: "uploading", progress: 1, originalSize: file.size, fileName: file.name } }));
     try {
-      await onMarkReceived(document.id, file, (progress) => setUploading((current) => ({ ...current, [document.id]: progress })));
+      await onMarkReceived(document.id, file, (status) => setUploading((current) => ({ ...current, [document.id]: status })));
     } catch (reason) {
       setDocumentUploadErrors((current) => ({
         ...current,
@@ -1018,13 +1013,13 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
 
   async function uploadMyDocuments(files) {
     const queued = Array.from(files);
-    const oversized = queued.filter(exceedsCaseUploadLimit);
-    const toUpload = queued.filter((file) => !exceedsCaseUploadLimit(file));
+    const oversized = queued.filter((file) => Boolean(uploadFileError(file)));
+    const toUpload = queued.filter((file) => !uploadFileError(file));
     setFileActionError(
       oversized.length
         ? oversized.length === 1
-          ? caseUploadLimitError(oversized[0]).replace("press Upload again", "press Upload Documents again")
-          : `${oversized.length} files were not uploaded because PDFs must be 5 MB or smaller and other files must be 25 MB or smaller. Choose smaller files, then press Upload Documents again. Skipped: ${oversized.map((file) => file.name).join(", ")}.`
+          ? uploadFileError(oversized[0])
+          : `${oversized.length} files were not uploaded because CaseDesk can optimize source files up to 25 MB. Skipped: ${oversized.map((file) => file.name).join(", ")}.`
         : "",
     );
     if (!toUpload.length) return;
@@ -1033,7 +1028,7 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
       setMyDocumentTotal(toUpload.length);
       for (const [index, file] of toUpload.entries()) {
         setMyDocumentIndex(index + 1);
-        setMyDocumentProgress(1);
+        setMyDocumentProgress({ stage: "uploading", progress: 1, originalSize: file.size, fileName: file.name });
         // Sequential, not parallel — keeps a single, honest progress readout
         // and avoids a burst of simultaneous large uploads against the
         // storage backend when someone selects a whole folder at once.
@@ -1340,10 +1335,11 @@ export default function DocumentsWorkspace({ caseId, caseType, documents, assign
                   <div className="flex flex-wrap items-center justify-end gap-2">
                   {actionDocuments.length ? <button type="button" onClick={toggleSelectAll} disabled={bulkUpdating} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">{allVisibleSelected ? "Clear page" : "Select page"}</button> : null}
                   {openFolder === "client" ? <button type="button" onClick={() => setRequestOpen(true)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">Add document</button> : null}
-                  {openFolder === "mine" ? <><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/new`, "_blank", "noopener,noreferrer")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"><FilePenLine className="h-3.5 w-3.5" />New Written Document</button><button type="button" onClick={() => myDocumentInput.current?.click()} disabled={myDocumentUploading} aria-describedby={fileActionError && myFolderItems.length ? "my-documents-upload-error" : undefined} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />{myDocumentUploading ? (myDocumentTotal > 1 ? `Uploading ${myDocumentIndex} of ${myDocumentTotal} — ${myDocumentProgress}%` : `Uploading ${myDocumentProgress}%`) : "Upload Documents"}</button></> : null}
+                  {openFolder === "mine" ? <><button type="button" onClick={() => window.open(`/cases/${caseId}/documents/new`, "_blank", "noopener,noreferrer")} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"><FilePenLine className="h-3.5 w-3.5" />New Written Document</button><button type="button" onClick={() => myDocumentInput.current?.click()} disabled={myDocumentUploading} aria-describedby={fileActionError && myFolderItems.length ? "my-documents-upload-error" : undefined} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><UploadCloud className="h-3.5 w-3.5" />{myDocumentUploading ? (myDocumentTotal > 1 ? `Processing ${myDocumentIndex} of ${myDocumentTotal}` : myDocumentProgress?.stage === "optimizing" ? "Optimizing…" : `Uploading ${myDocumentProgress?.progress || 0}%`) : "Upload Documents"}</button></> : null}
                   {openFolder === "shared" && sharedCanManage ? <button type="button" onClick={() => setSharedUploadOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"><Plus className="h-3.5 w-3.5" />Add Resource</button> : null}
                   </div>
                   {openFolder === "mine" && myFolderItems.length ? <InlineActionError id="my-documents-upload-error" message={fileActionError} /> : null}
+                  {openFolder === "mine" ? <FileOptimizationStatus status={myDocumentProgress || null} className="w-full" /> : null}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/45 px-4 py-2.5">

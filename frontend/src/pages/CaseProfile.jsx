@@ -1091,13 +1091,19 @@ export default function CaseProfile() {
       formData.append("file", file);
       formData.append("documentId", documentId);
       const response = await api.post("/client-documents/upload", formData, {
-        timeout: 60000,
+        timeout: 300000,
         onUploadProgress: (event) => {
           if (event.total && onProgress)
-            onProgress(Math.round((event.loaded / event.total) * 100));
+            onProgress({
+              stage: event.loaded >= event.total ? "optimizing" : "uploading",
+              progress: Math.round((event.loaded / event.total) * 100),
+              originalSize: file.size,
+              fileName: file.name,
+            });
         },
       });
       const updated = response.data.data;
+      onProgress?.({ stage: "complete", progress: 100, originalSize: file.size, finalSize: updated.fileSize, fileName: file.name });
       setDocuments((current) =>
         current.map((item) => (item.id === documentId ? updated : item)),
       );
@@ -1121,13 +1127,19 @@ export default function CaseProfile() {
       formData.append("visibility", "Internal");
       if (folderId) formData.append("folderId", folderId);
       const response = await api.post("/client-documents/upload", formData, {
-        timeout: 60000,
+        timeout: 300000,
         onUploadProgress: (event) => {
           if (event.total && onProgress)
-            onProgress(Math.round((event.loaded / event.total) * 100));
+            onProgress({
+              stage: event.loaded >= event.total ? "optimizing" : "uploading",
+              progress: Math.round((event.loaded / event.total) * 100),
+              originalSize: file.size,
+              fileName: file.name,
+            });
         },
       });
       const created = response.data.data;
+      onProgress?.({ stage: "complete", progress: 100, originalSize: file.size, finalSize: created.fileSize, fileName: file.name });
       setDocuments((current) => [...current, created]);
       return created;
     } catch (requestError) {

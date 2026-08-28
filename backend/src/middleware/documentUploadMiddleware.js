@@ -1,5 +1,5 @@
 import multer from "multer";
-import { compressUploadedCasePdf } from "../services/pdfCompressionService.js";
+import { optimizeUploadedCaseFile } from "../services/pdfCompressionService.js";
 
 const allowedMimeTypes = new Set([
   "application/pdf",
@@ -37,14 +37,13 @@ const upload = multer({
 
 export const receiveDocumentFile = upload.single("file");
 
-// Case/client evidence has an IRCC-friendly PDF policy: accept up to 5 MB,
-// then compress before any controller writes the bytes or records fileSize.
-// Other uploads keep the existing 25 MB policy and, importantly, editable
-// government form templates are never rasterized by this middleware.
+// Optimize before any controller writes bytes or records fileSize. Source
+// files may be up to 25 MB, but stored files must fit below 3.5 MB. Fillable
+// PDFs are never rasterized because doing so would destroy their fields.
 export function receiveCompressedCaseDocument(req, res, next) {
   receiveDocumentFile(req, res, (uploadError) => {
     if (uploadError) return next(uploadError);
-    Promise.resolve(compressUploadedCasePdf(req.file))
+    Promise.resolve(optimizeUploadedCaseFile(req.file))
       .then((file) => {
         req.file = file;
         next();

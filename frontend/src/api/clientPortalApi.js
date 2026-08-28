@@ -8,11 +8,11 @@ export function getPortalDocuments() {
   return api.get("/client-portal/documents").then((response) => response.data.data);
 }
 
-export function uploadPortalDocument(documentId, file) {
+export function uploadPortalDocument(documentId, file, config = {}) {
   const data = new FormData();
   data.append("file", file);
   return api
-    .post(`/client-portal/documents/${documentId}/upload`, data, { timeout: 60_000 })
+    .post(`/client-portal/documents/${documentId}/upload`, data, { timeout: 300_000, ...config })
     .then((response) => response.data.data);
 }
 

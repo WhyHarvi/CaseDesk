@@ -3,7 +3,7 @@ import { assignCatalogForms, checkCaseFormVersion, createCaseFormReviewComment, 
 import { getChecklist, getClientRequests, listRepresentativeOptions, patchFieldValue, patchReviewClientRequest, postClientRequest, runAutofill, setApplicant, setRepresentative } from "../controllers/caseFormFieldController.js";
 import { generateFilledCaseFormPdf } from "../controllers/caseFormRenderController.js";
 import { listFormSignatureRequests, sendFormSignatureRequest } from "../controllers/caseFormSignatureController.js";
-import { receiveDocumentFile } from "../middleware/documentUploadMiddleware.js";
+import { receiveCompressedCaseDocument } from "../middleware/documentUploadMiddleware.js";
 import { asyncHandler } from "../utils/http.js";
 
 const router = Router();
@@ -13,9 +13,9 @@ router.patch("/permissions/:userId", asyncHandler(updateUserFormPermissions));
 router.get("/representative-options", asyncHandler(listRepresentativeOptions));
 router.get("/", asyncHandler(listCaseForms));
 router.post("/assign", asyncHandler(assignCatalogForms));
-router.post("/custom", receiveDocumentFile, asyncHandler(createCustomCaseForm));
-router.post("/:id/upload", receiveDocumentFile, asyncHandler(uploadCaseForm));
-router.post("/:id/copies", receiveDocumentFile, asyncHandler(saveBrowserCaseFormCopy));
+router.post("/custom", receiveCompressedCaseDocument, asyncHandler(createCustomCaseForm));
+router.post("/:id/upload", receiveCompressedCaseDocument, asyncHandler(uploadCaseForm));
+router.post("/:id/copies", receiveCompressedCaseDocument, asyncHandler(saveBrowserCaseFormCopy));
 router.post("/:id/import", asyncHandler(importOfficialCaseForm));
 router.post("/:id/check-version", asyncHandler(checkCaseFormVersion));
 router.post("/:id/finalize", asyncHandler(finalizeCaseForm));
