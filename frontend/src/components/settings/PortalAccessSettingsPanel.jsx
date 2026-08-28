@@ -39,7 +39,7 @@ const pageCopy = {
   clients: ["Clients", "Client list and profile pages"],
   cases: ["Cases", "Case list and case workspaces"],
   followUps: ["Follow-ups", "Tasks and follow-up queue"],
-  calendar: ["Calendar", "Appointments and scheduling"],
+  calendar: ["Calendar", "Shared workspace appointments — always available to staff"],
   documents: ["Documents", "Agency-wide document workspace"],
   payments: ["Payments", "Agency-wide billing and transaction report"],
   workload: ["Workload", "Team capacity and assignments"],
@@ -84,15 +84,16 @@ const initials = (name) =>
     .slice(0, 2)
     .toUpperCase();
 
-function Switch({ checked, onChange, label }) {
+function Switch({ checked, onChange, label, disabled = false }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 shrink-0 rounded-full p-0.5 outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 ${checked ? "bg-primary" : "bg-muted"}`}
+      className={`relative h-6 w-11 shrink-0 rounded-full p-0.5 outline-none transition focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 ${checked ? "bg-primary" : "bg-muted"}`}
     >
       <motion.span
         layout
@@ -393,11 +394,15 @@ function StaffPortalAccessSettingsPanel() {
                             {detail}
                           </p>
                         </div>
-                        <Switch
-                          label={label}
-                          checked={draft.pages[key] === true}
-                          onChange={(value) => setBoolean("pages", key, value)}
-                        />
+                        {key === "calendar" ? (
+                          <Badge variant="secondary">Always available</Badge>
+                        ) : (
+                          <Switch
+                            label={label}
+                            checked={draft.pages[key] === true}
+                            onChange={(value) => setBoolean("pages", key, value)}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>

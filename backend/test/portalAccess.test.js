@@ -52,6 +52,7 @@ test("saved portal access overrides role defaults without accepting unknown valu
   assert.equal(access.data.clients, "assigned");
   assert.equal(access.data.cases, "all");
   assert.equal(access.capabilities.internalNotes, true);
+  assert.equal(normalizePortalAccess("frontdesk", { pages: { calendar: false } }).pages.calendar, true);
 });
 
 test("page middleware and data scopes enforce the membership policy", () => {
@@ -99,6 +100,20 @@ test("page middleware and data scopes enforce the membership policy", () => {
   assert.equal(status, 403);
 });
 
+test("Calendar is workspace-wide for every staff role", async () => {
+  for (const role of ["admin", "consultant", "frontdesk"]) {
+    const req = { auth: { role, userId: `${role}-1`, permissions: { portalAccess: { pages: { calendar: false } } } } };
+    assert.equal(hasPortalPageAccess(req, "calendar"), true);
+    assert.deepEqual(appointmentProfileAccessWhere(req), {});
+  }
+  const booking = await source("../src/controllers/bookingController.js");
+  const calendarFeed = booking.slice(booking.indexOf("export async function listCalendarAppointments"), booking.indexOf("export async function createBookingAppointment"));
+  const registry = booking.slice(booking.indexOf("export async function buildAppointmentRegistry"), booking.indexOf("export async function listAppointmentRegistry"));
+  assert.doesNotMatch(calendarFeed, /assignedToId: req\.auth\.userId/);
+  assert.doesNotMatch(registry, /req\.auth\.role === "consultant"/);
+  assert.match(registry, /query\.assignedToId \? \{ assignedToId: String\(query\.assignedToId\) \}/);
+});
+
 test("all-client scope exposes client-linked follow-ups without an empty relation filter", () => {
   const req = {
     auth: {
@@ -117,7 +132,7 @@ test("all-client scope exposes client-linked follow-ups without an empty relatio
   assert.ok(access.OR.some((branch) => branch.clientId?.not === null));
   assert.ok(access.OR.some((branch) => branch.assignedUserId === "consultant-1"));
   assert.ok(access.OR.some((branch) => branch.createdById === "consultant-1"));
-  assert.ok(appointmentAccess.OR.some((branch) => branch.clientId?.not === null));
+  assert.deepEqual(appointmentAccess, {});
   assert.doesNotMatch(JSON.stringify(access), /"client":\{\}/);
 });
 

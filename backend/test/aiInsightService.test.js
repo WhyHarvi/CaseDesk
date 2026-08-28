@@ -68,14 +68,14 @@ test("an affirmative follow-up groups upcoming appointments by local calendar da
   assert.match(result.answer, /\/app\/calendar/);
 });
 
-test("appointment insight respects Calendar access", async () => {
+test("saved access overrides cannot hide the shared staff Calendar", async () => {
   const permissions = { portalAccess: { pages: { calendar: false } } };
   const result = await resolveCaseDeskAIInsight(
     request("frontdesk", permissions),
     [{ role: "user", content: "How many upcoming appointments are there?" }],
     { db: database() },
   );
-  assert.match(result.answer, /don’t currently have access to the Calendar/);
+  assert.match(result.answer, /10 upcoming appointments/);
 });
 
 test("consultants are always limited to their own appointment scope", () => {

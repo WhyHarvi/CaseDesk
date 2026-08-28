@@ -197,12 +197,9 @@ test("a no-show can be corrected to attended when the consultation happened outs
   assert.match(controller, /status === "Completed" && req\.auth\.role === "frontdesk"/);
 });
 
-test("appointment profile limits consultants to assigned or related appointments", () => {
+test("appointment profile is visible across the staff calendar", () => {
   const where = appointmentProfileAccessWhere({ auth: { role: "consultant", userId: "user-1" } });
-  assert.ok(Array.isArray(where.OR));
-  assert.equal(where.OR[0].assignedToId, "user-1");
-  assert.equal(where.OR[1].client.OR[0].assignedUserId, "user-1");
-  assert.equal(where.OR[2].case.OR[0].assignedUserId, "user-1");
+  assert.deepEqual(where, {});
 });
 
 test("appointment profile preserves legacy purpose and hides staff records from front desk", async () => {

@@ -1,24 +1,11 @@
 import prisma from "./prisma/client.js";
-import {
-  caseAccessWhere,
-  clientAccessWhere,
-} from "../middleware/authorization.js";
+import { clientAccessWhere } from "../middleware/authorization.js";
 import { createHttpError } from "../utils/http.js";
-import { hasPortalCapability, portalDataScope } from "./portalAccessService.js";
+import { hasPortalCapability } from "./portalAccessService.js";
 import { PRE_CONSULTATION_EVENT, preConsultationStatus } from "./preConsultationIntakeService.js";
 
 export function appointmentProfileAccessWhere(req) {
-  if (["admin", "frontdesk"].includes(req.auth.role)) return {};
-  if (req.auth.role === "consultant") {
-    const branches = [{ assignedToId: req.auth.userId }];
-    const clientScope = portalDataScope(req, "clients");
-    const caseScope = portalDataScope(req, "cases");
-    if (clientScope === "all") branches.push({ clientId: { not: null } });
-    else if (clientScope === "assigned") branches.push({ client: clientAccessWhere(req) });
-    if (caseScope === "all") branches.push({ caseId: { not: null } });
-    else if (caseScope === "assigned") branches.push({ case: caseAccessWhere(req) });
-    return { OR: branches };
-  }
+  if (["admin", "frontdesk", "consultant"].includes(req.auth.role)) return {};
   return { id: "__appointment_access_denied__" };
 }
 

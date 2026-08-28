@@ -626,7 +626,6 @@ export async function listCalendarAppointments(req, res) {
       agencyId: req.auth.agencyId,
       startsAt: { lt: to },
       endsAt: { gt: from },
-      ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
     },
     include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } },
     orderBy: { startsAt: "asc" },
@@ -1939,8 +1938,7 @@ export async function buildAppointmentRegistry(req, query) {
             : {};
   const where = {
     agencyId: req.auth.agencyId,
-    ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
-    ...(query.assignedToId && req.auth.role !== "consultant" ? { assignedToId: String(query.assignedToId) } : {}),
+    ...(query.assignedToId ? { assignedToId: String(query.assignedToId) } : {}),
     AND: [
       statusWhere,
       ...(from && attendance !== "upcoming" ? [{ startsAt: { gte: from } }] : []),

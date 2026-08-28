@@ -160,6 +160,10 @@ export function normalizePortalAccess(role, value, legacyPermissions = {}) {
       ]),
     ),
   };
+  // Calendar is a shared operational schedule. Every authenticated staff
+  // member must be able to see it even if an older per-user portal policy
+  // saved calendar:false before workspace-wide visibility was introduced.
+  if (["admin", "consultant", "frontdesk"].includes(role)) normalized.pages.calendar = true;
   if (
     !Object.hasOwn(savedCapabilities, "manageClientPortal") &&
     typeof legacyPermissions.createClientPortal === "boolean"
@@ -181,6 +185,7 @@ export function portalAccessForRequest(req) {
 
 export function hasPortalPageAccess(req, page) {
   if (!portalPageKeys.includes(page)) return false;
+  if (page === "calendar" && ["admin", "consultant", "frontdesk"].includes(req.auth?.role)) return true;
   return (
     req.auth?.role === "admin" ||
     portalAccessForRequest(req).pages[page] === true

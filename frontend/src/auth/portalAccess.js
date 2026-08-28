@@ -99,7 +99,7 @@ export function getPortalAccess(role, permissions = {}) {
   if (role === "admin") return defaultPortalAccess(role);
   const defaults = defaultPortalAccess(role);
   const saved = permissions?.portalAccess || {};
-  return {
+  const access = {
     version: 1,
     pages: { ...defaults.pages, ...(saved.pages || {}) },
     caseTabs: { ...defaults.caseTabs, ...(saved.caseTabs || {}) },
@@ -112,10 +112,14 @@ export function getPortalAccess(role, permissions = {}) {
       ...(saved.capabilities || {}),
     },
   };
+  // Calendar is workspace-wide for staff. Ignore stale saved overrides that
+  // used to let an administrator hide the shared schedule from one person.
+  if (["admin", "consultant", "frontdesk"].includes(role)) access.pages.calendar = true;
+  return access;
 }
 
 export const canAccessPage = (role, permissions, page) =>
-  role === "admin" || getPortalAccess(role, permissions).pages[page] === true;
+  role === "admin" || (page === "calendar" && ["consultant", "frontdesk"].includes(role)) || getPortalAccess(role, permissions).pages[page] === true;
 export const canAccessCaseTab = (role, permissions, tab) =>
   role === "admin" || getPortalAccess(role, permissions).caseTabs[tab] === true;
 export const hasCapability = (role, permissions, capability) =>
