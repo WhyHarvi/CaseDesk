@@ -691,7 +691,14 @@ export function startIncentiveRetryWorker() {
   if (retryTimer) return;
   const run = () => void reconcilePendingIncentiveCredits().catch((error) => logger.warn("incentive.retry_sweep_failed", { reason: error.message }));
   run();
-  retryTimer = setInterval(run, 60_000);
+  // Pure drift reconciliation, not the primary crediting path: every real
+  // payment/webhook trigger (quickbooksWebhookService.js, caseInvoiceService.js
+  // MANUAL_PAYMENT/LAZY_RESYNC) already calls creditCaseInvoiceCollection
+  // directly and synchronously — this sweep only exists to catch a cursor
+  // left out of sync after one of those calls failed. Nobody is watching a
+  // screen waiting for a commission credit to post, so an hour of drift is
+  // no different in practice than a minute.
+  retryTimer = setInterval(run, 60 * 60_000);
   retryTimer.unref?.();
 }
 

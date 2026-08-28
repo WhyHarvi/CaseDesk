@@ -980,7 +980,13 @@ export async function evaluateStageTriggers(agencyId, caseId, oldStage, newStage
   return results;
 }
 
-const DATE_TRIGGER_POLL_MS = 15 * 60_000;
+// Stage-type installments already fire immediately via evaluateStageTriggers
+// (caseLifecycleController.js/caseController.js call it directly on a stage
+// change) — this pass only covers Date-type ones, gated on a calendar date
+// (triggerDate: { lte: now }), not a precise time. Checking hourly instead
+// of every 15 minutes still guarantees same-day firing; nobody is watching
+// a clock waiting for a scheduled invoice to generate at a specific minute.
+const DATE_TRIGGER_POLL_MS = 60 * 60_000;
 let dateTriggerTimer = null;
 
 export async function runDateTriggerPass() {

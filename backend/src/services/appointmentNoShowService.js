@@ -12,7 +12,11 @@ import { applyAppointmentStatusChange } from "../controllers/bookingController.j
 // no-show" button uses — so this gets every side effect a human-triggered
 // no-show gets (payment-hold voiding included), with nothing to drift out
 // of sync between the two paths.
-const NO_SHOW_POLL_MS = Math.max(Number(process.env.APPOINTMENT_NO_SHOW_POLL_MS) || 30 * 60_000, 60_000);
+// The threshold itself is a full calendar day, so checking every 30 minutes
+// vs. every hour makes no practical difference to when this fires — the
+// worst case just shifts from "up to 30 minutes after the day fully
+// elapsed" to "up to 60 minutes after."
+const NO_SHOW_POLL_MS = Math.max(Number(process.env.APPOINTMENT_NO_SHOW_POLL_MS) || 60 * 60_000, 60_000);
 let noShowPollTimer = null;
 let noShowPollRunning = false;
 
