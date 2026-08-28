@@ -31,9 +31,13 @@ export function HomeRedirect() {
 }
 
 export function InternalRoute({ children, allowFrontdesk = false }) {
-  const { loading, isAuthenticated, role, appUser } = useAuth();
+  const { loading, accessReady, isAuthenticated, role, appUser } = useAuth();
   const location = useLocation();
-  if (loading) return <AuthLoading />;
+  // A cached identity is enough to paint the loading shell, but not enough
+  // to mount MainLayout: it starts authenticated API consumers of its own.
+  // Wait for /auth/me to verify the session and establish the final API
+  // cache scope before any workspace page or layout can issue requests.
+  if (loading || (isAuthenticated && !accessReady)) return <AuthLoading />;
   if (!isAuthenticated)
     return <Navigate to="/login" state={{ from: location }} replace />;
   if (appUser?.mustChangePassword)
