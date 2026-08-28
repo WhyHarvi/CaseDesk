@@ -4,6 +4,7 @@ import { processBookingMessageDeliveries, sendBookingMessages } from "./bookingN
 import { notifyUsers, schedulingCoordinatorRecipientIds } from "./notificationService.js";
 import { createZoomMeeting, deleteZoomMeeting, updateZoomMeeting } from "./zoomService.js";
 import { syncLeadConsultationFromAppointment } from "./leadConsultationAppointmentService.js";
+import { scheduleImmediateOutlookCalendarSync } from "./outlookCalendarSyncService.js";
 
 const POLL_MS = 5_000;
 let timer = null;
@@ -81,6 +82,13 @@ export async function enqueueAppointmentMeetingJob(db, {
     update: {},
   });
   if (db === prisma) void processAppointmentMeetingJobs();
+  // Every booking/reschedule/cancel call site already calls this function —
+  // it's the one universal choke point — so this is what makes calendar
+  // sync feel immediate without hooking each of those ~20 sites separately.
+  // Scheduled with a short delay (not called inline) because most callers
+  // are still inside an open db.$transaction here; firing before it commits
+  // would read stale/uncommitted appointment state.
+  scheduleImmediateOutlookCalendarSync();
   return job;
 }
 

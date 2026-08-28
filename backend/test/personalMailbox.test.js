@@ -35,20 +35,39 @@ test("team members connect a user-owned Microsoft mailbox instead of sharing age
   assert.match(panel, /Unrelated personal mail stays private/);
 });
 
-test("connecting Outlook also grants calendar access via the same button — incremental consent means only people who connected before this scope existed need a one-time reconnect", async () => {
-  const [service, panel] = await Promise.all([
+test("reconnecting to pick up a newly-added scope forces Microsoft to re-show consent, so grantedScopes actually changes instead of silently staying stale", async () => {
+  const service = await source("../src/services/microsoftMailboxService.js");
+  assert.match(service, /const SCOPES = \[.*"Calendars\.ReadWrite".*\];/);
+  // "select_account" alone lets Microsoft reuse a prior consent without
+  // showing the new scope — the granted token then still carries the OLD
+  // scope, so grantedScopes never updates and the UI never flips to ready,
+  // no matter how many times the person reconnects or refreshes. "consent"
+  // forces the approval screen (and its accurate scope) every time.
+  assert.match(service, /prompt: "select_account consent"/);
+  assert.match(service, /export function mailboxGrantsCalendarAccess\(grantedScopes\)/);
+});
+
+test("calendar sync has its own on/off toggle, independent of the Microsoft grant — same relationship syncEnabled already has to email", async () => {
+  const [schema, migration, service, controller, panel] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260828170000_mailbox_calendar_sync_toggle/migration.sql"),
     source("../src/services/microsoftMailboxService.js"),
+    source("../src/controllers/personalMailboxController.js"),
     source("../../frontend/src/components/settings/PersonalMailboxSettingsPanel.jsx"),
   ]);
-  assert.match(service, /const SCOPES = \[.*"Calendars\.ReadWrite".*\];/);
-  assert.match(service, /export function mailboxGrantsCalendarAccess\(grantedScopes\)/);
-  assert.match(service, /calendarSyncReady: Boolean\(connection\?\.status === "connected" && mailboxGrantsCalendarAccess\(connection\.grantedScopes\)\)/);
-  // The exact same "Connect Outlook" flow (startPersonalMailboxConnect →
-  // microsoftMailboxAuthorizeUrl) is reused for the reconnect — there's no
-  // separate calendar-only OAuth path to keep in sync with the mail one.
-  assert.match(panel, /mailbox\.calendarSyncReady/);
-  assert.match(panel, /Grant calendar access/);
-  assert.match(panel, /onClick=\{connect\}/);
+  assert.match(schema, /calendarSyncEnabled\s+Boolean\s+@default\(true\) @map\("calendar_sync_enabled"\)/);
+  assert.match(migration, /ADD COLUMN\s+"calendar_sync_enabled" BOOLEAN NOT NULL DEFAULT true/);
+  assert.match(service, /const calendarScopeGranted = Boolean\(connection\?\.status === "connected" && mailboxGrantsCalendarAccess\(connection\.grantedScopes\)\);/);
+  assert.match(service, /calendarSyncReady: calendarScopeGranted && connection\?\.calendarSyncEnabled !== false/);
+  assert.match(service, /values\.calendarSyncEnabled !== undefined \? \{ calendarSyncEnabled: values\.calendarSyncEnabled === true \} : \{\}/);
+  assert.match(controller, /calendarSyncEnabled: req\.body\.calendarSyncEnabled/);
+  // The button reads the two flags apart: no Microsoft grant yet → start
+  // OAuth; grant already exists → this is purely our own preference, a
+  // plain PATCH with no Microsoft round trip.
+  assert.match(panel, /onClick=\{mailbox\.calendarScopeGranted \? toggleCalendarSync : connect\}/);
+  assert.match(panel, /"Stop calendar sync"/);
+  assert.match(panel, /"Turn on calendar sync"/);
+  assert.doesNotMatch(panel, /connected before calendar sync existed/);
 });
 
 test("user-authored CRM email uses its sender mailbox while automation keeps the agency sender", async () => {

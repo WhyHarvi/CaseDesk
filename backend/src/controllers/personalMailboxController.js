@@ -131,6 +131,7 @@ export async function deleteAgencyMicrosoftMailbox(req, res) {
 export async function patchPersonalMailbox(req, res) {
   const updated = await updatePersonalMailbox(req.auth.userId, {
     syncEnabled: req.body.syncEnabled,
+    calendarSyncEnabled: req.body.calendarSyncEnabled,
     signatureHtml: req.body.signatureHtml,
   });
   await recordActivity({

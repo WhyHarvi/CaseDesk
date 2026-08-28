@@ -1,20 +1,35 @@
-import { Prisma } from "@prisma/client";
 import prisma from "./prisma/client.js";
 import { logger } from "./logger.js";
 import { microsoftGraphClient, mailboxGrantsCalendarAccess } from "./microsoftMailboxService.js";
 
-// One-way mirror of CaseDesk appointments onto the assigned staff member's
-// own Outlook calendar — a busy-block on their personal calendar, never a
-// meeting invite sent to the client (no attendees are added). Reconciled by
-// polling for appointments whose updatedAt has moved past calendarSyncedAt,
-// rather than hooking the ~20 booking/reschedule/cancel call sites spread
-// across bookingController/publicBookingController/lead.service/etc. — any
-// mutation there already bumps updatedAt for free, so this needs no changes
-// there at all.
-const POLL_MS = 30_000;
-const BATCH_SIZE = 25;
+// Mirrors appointments onto Outlook calendars — a busy-block with the full
+// client/case context in the body, never a meeting invite (no attendees are
+// ever added, so nothing emails the client). One row per (appointment,
+// viewer) in AppointmentCalendarSync, because "who should see this on their
+// own calendar" isn't 1:1 with the appointment: the assigned staff member
+// always gets one event, and an admin with calendar sync on gets one for
+// EVERY appointment in the agency, not just their own.
+//
+// Reconciled by polling for appointments whose updatedAt has moved past a
+// viewer's own syncedAt, rather than hooking the ~20 booking/reschedule/
+// cancel call sites spread across bookingController/publicBookingController/
+// lead.service/etc. — any mutation there already bumps updatedAt for free.
+// The poll interval matches appointmentMeetingService.js's own cadence, and
+// enqueueAppointmentMeetingJob (called at every one of those ~20 sites)
+// also kicks a poll immediately when it isn't running inside an open
+// transaction, so most bookings/reschedules/cancellations sync within
+// seconds rather than waiting for the interval.
+const POLL_MS = 5_000;
+const BATCH_SIZE = 50;
+const MEETING_MODE_LABEL = { InPerson: "In person", Phone: "Phone call", Online: "Jitsi video call", Zoom: "Zoom video call" };
 let timer = null;
 let running = false;
+let pendingImmediateSync = null;
+// Long enough for the enclosing db.$transaction() most booking/reschedule/
+// cancel call sites run inside (enqueueAppointmentMeetingJob is called from
+// within it) to have committed by the time this fires, short enough to feel
+// immediate rather than waiting for the next POLL_MS tick.
+const IMMEDIATE_SYNC_DELAY_MS = 1_500;
 
 function graphDateTime(value) {
   // Graph's dateTimeTimeZone resource wants a plain local datetime string
@@ -37,6 +52,9 @@ function outlookEventPayload(appointment) {
   const bodyLines = [
     `CaseDesk appointment ${appointment.referenceCode || appointment.id}`,
     personName ? `With: ${personName}` : null,
+    appointment.sessionType?.name ? `Consultation type: ${appointment.sessionType.name}` : null,
+    `Format: ${MEETING_MODE_LABEL[appointment.meetingMode] || appointment.meetingMode || "In person"}`,
+    appointment.assignedTo?.fullName ? `Assigned to: ${appointment.assignedTo.fullName}` : null,
     appointment.purpose || appointment.description || null,
   ].filter(Boolean);
   return {
@@ -49,16 +67,14 @@ function outlookEventPayload(appointment) {
   };
 }
 
-// Creates or updates the mirrored event. Callers decide whether an
-// appointment is currently eligible (Scheduled, assigned to a user with a
-// calendar-scoped mailbox) — this function only does the Graph call.
-export async function pushAppointmentToOutlookCalendar(appointment) {
-  const { request } = await microsoftGraphClient(appointment.assignedToId);
+// Creates or updates the mirrored event on one specific viewer's calendar.
+export async function pushAppointmentToOutlookCalendar(viewerId, appointment, existingEventId) {
+  const { request } = await microsoftGraphClient(viewerId);
   const payload = outlookEventPayload(appointment);
-  if (appointment.calendarEventId) {
+  if (existingEventId) {
     try {
-      await request(`/me/events/${encodeURIComponent(appointment.calendarEventId)}`, { method: "PATCH", body: JSON.stringify(payload) });
-      return appointment.calendarEventId;
+      await request(`/me/events/${encodeURIComponent(existingEventId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+      return existingEventId;
     } catch (error) {
       // The event may have been deleted on the Outlook side directly (the
       // person cleaned up their own calendar) — Graph 404s a PATCH to a
@@ -71,48 +87,108 @@ export async function pushAppointmentToOutlookCalendar(appointment) {
   return created.id;
 }
 
-export async function removeAppointmentFromOutlookCalendar(appointment) {
-  const { request } = await microsoftGraphClient(appointment.assignedToId);
+export async function removeAppointmentFromOutlookCalendar(viewerId, eventId) {
+  const { request } = await microsoftGraphClient(viewerId);
   try {
-    await request(`/me/events/${encodeURIComponent(appointment.calendarEventId)}`, { method: "DELETE" });
+    await request(`/me/events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
   } catch (error) {
     if (error.graphStatus !== 404) throw error;
   }
 }
 
-async function eligibleAssigneeIds(agencyIds) {
+// Admins see every agency appointment on their own Outlook calendar, not
+// just the ones assigned to them — everyone else only sees their own.
+async function eligibleViewers(agencyIds) {
   const connections = await prisma.userMailboxConnection.findMany({
-    where: { status: "connected", agencyId: { in: agencyIds } },
-    select: { userId: true, grantedScopes: true },
+    where: { status: "connected", calendarSyncEnabled: true, agencyId: { in: agencyIds } },
+    select: { userId: true, agencyId: true, grantedScopes: true, user: { select: { role: true } } },
   });
-  return connections.filter((connection) => mailboxGrantsCalendarAccess(connection.grantedScopes)).map((connection) => connection.userId);
+  return connections
+    .filter((connection) => mailboxGrantsCalendarAccess(connection.grantedScopes))
+    .map((connection) => ({ userId: connection.userId, agencyId: connection.agencyId, isAdmin: connection.user?.role === "admin" }));
 }
 
-async function syncOne(appointment) {
+const APPOINTMENT_INCLUDE = {
+  client: { select: { fullName: true } },
+  lead: { select: { firstName: true, lastName: true } },
+  sessionType: { select: { name: true } },
+  assignedTo: { select: { fullName: true } },
+};
+
+// A cutoff keeps a stray old "Scheduled" row from being dragged into an
+// admin's full-agency scope forever — appointments normally transition to
+// Completed/NoShow well before this.
+function scheduledSinceCutoff() {
+  return new Date(Date.now() - 24 * 60 * 60 * 1000);
+}
+
+async function dueAppointmentsForViewer(viewer) {
+  const candidates = await prisma.appointment.findMany({
+    where: {
+      agencyId: viewer.agencyId,
+      status: "Scheduled",
+      startsAt: { gte: scheduledSinceCutoff() },
+      ...(viewer.isAdmin ? {} : { assignedToId: viewer.userId }),
+    },
+    orderBy: { updatedAt: "asc" },
+    take: BATCH_SIZE,
+    include: APPOINTMENT_INCLUDE,
+  });
+  if (!candidates.length) return [];
+  const syncRows = await prisma.appointmentCalendarSync.findMany({
+    where: { userId: viewer.userId, appointmentId: { in: candidates.map((appointment) => appointment.id) } },
+  });
+  const syncByAppointmentId = new Map(syncRows.map((row) => [row.appointmentId, row]));
+  return candidates
+    .filter((appointment) => {
+      const sync = syncByAppointmentId.get(appointment.id);
+      return !sync || !sync.syncedAt || sync.syncedAt < appointment.updatedAt;
+    })
+    .map((appointment) => ({ appointment, sync: syncByAppointmentId.get(appointment.id) || null }));
+}
+
+async function dueDeletionsForViewer(viewer) {
+  return prisma.appointmentCalendarSync.findMany({
+    where: {
+      userId: viewer.userId,
+      calendarEventId: { not: null },
+      appointment: { agencyId: viewer.agencyId, status: "Cancelled", ...(viewer.isAdmin ? {} : { assignedToId: viewer.userId }) },
+    },
+    take: BATCH_SIZE,
+  });
+}
+
+async function syncOneForViewer(viewer, appointment, sync) {
   try {
-    if (appointment.status === "Cancelled") {
-      if (appointment.calendarEventId) await removeAppointmentFromOutlookCalendar(appointment);
-      await prisma.appointment.update({
-        where: { id: appointment.id },
-        data: { calendarSyncStatus: "Deleted", calendarSyncedAt: new Date(), calendarEventId: null, calendarSyncError: null },
-      });
-      return;
-    }
-    const eventId = await pushAppointmentToOutlookCalendar(appointment);
-    await prisma.appointment.update({
-      where: { id: appointment.id },
-      data: { calendarSyncStatus: "Synced", calendarSyncedAt: new Date(), calendarEventId: eventId, calendarSyncError: null },
+    const eventId = await pushAppointmentToOutlookCalendar(viewer.userId, appointment, sync?.calendarEventId || null);
+    await prisma.appointmentCalendarSync.upsert({
+      where: { appointmentId_userId: { appointmentId: appointment.id, userId: viewer.userId } },
+      create: { appointmentId: appointment.id, userId: viewer.userId, calendarEventId: eventId, syncStatus: "Synced", syncedAt: new Date() },
+      update: { calendarEventId: eventId, syncStatus: "Synced", syncedAt: new Date(), syncError: null },
     });
   } catch (error) {
-    // Deliberately does not bump calendarSyncedAt on failure, so the next
-    // poll retries automatically — except a mailbox reauth requirement,
-    // which eligibleAssigneeIds already excludes up front, so this file
-    // never busy-retries a connection it knows is broken.
-    await prisma.appointment.update({
-      where: { id: appointment.id },
-      data: { calendarSyncStatus: "Failed", calendarSyncError: String(error.message || error).slice(0, 500) },
+    // Deliberately does not set syncedAt on failure, so the next poll
+    // retries automatically — except a mailbox reauth requirement, which
+    // eligibleViewers already excludes up front, so this never busy-retries
+    // a connection it knows is broken.
+    await prisma.appointmentCalendarSync.upsert({
+      where: { appointmentId_userId: { appointmentId: appointment.id, userId: viewer.userId } },
+      create: { appointmentId: appointment.id, userId: viewer.userId, syncStatus: "Failed", syncError: String(error.message || error).slice(0, 500) },
+      update: { syncStatus: "Failed", syncError: String(error.message || error).slice(0, 500) },
     }).catch(() => {});
-    logger.warn("outlook_calendar.sync_failed", { appointmentId: appointment.id, reason: error.message });
+    logger.warn("outlook_calendar.sync_failed", { appointmentId: appointment.id, viewerId: viewer.userId, reason: error.message });
+  }
+}
+
+async function deleteOneForViewer(viewer, sync) {
+  try {
+    if (sync.calendarEventId) await removeAppointmentFromOutlookCalendar(viewer.userId, sync.calendarEventId);
+    await prisma.appointmentCalendarSync.update({
+      where: { id: sync.id },
+      data: { calendarEventId: null, syncStatus: "Deleted", syncedAt: new Date(), syncError: null },
+    });
+  } catch (error) {
+    logger.warn("outlook_calendar.delete_failed", { appointmentId: sync.appointmentId, viewerId: viewer.userId, reason: error.message });
   }
 }
 
@@ -122,47 +198,32 @@ export async function processPendingOutlookCalendarSyncs() {
   try {
     const agencies = await prisma.userMailboxConnection.findMany({ where: { status: "connected" }, select: { agencyId: true }, distinct: ["agencyId"] });
     if (!agencies.length) return;
-    const agencyIds = agencies.map((row) => row.agencyId);
-    const assigneeIds = await eligibleAssigneeIds(agencyIds);
-    if (!assigneeIds.length) return;
-
-    // "Needs a (re)sync" is calendar_synced_at < updated_at — a column-to-
-    // column comparison Prisma's query builder can't express, so the id
-    // lookup goes through a raw query (parameterized via Prisma.sql, same
-    // pattern as workload.report.service.js) and the actual fetch (with its
-    // includes) stays a normal Prisma call.
-    const dueIds = await prisma.$queryRaw(Prisma.sql`
-      SELECT "id" FROM "appointments"
-      WHERE "agency_id" IN (${Prisma.join(agencyIds)})
-        AND "assigned_to_id" IN (${Prisma.join(assigneeIds)})
-        AND "status" = 'Scheduled'
-        AND ("calendar_synced_at" IS NULL OR "calendar_synced_at" < "updated_at")
-      ORDER BY "updated_at" ASC
-      LIMIT ${BATCH_SIZE}
-    `);
-    const dueForPush = dueIds.length
-      ? await prisma.appointment.findMany({
-          where: { id: { in: dueIds.map((row) => row.id) } },
-          include: { client: { select: { fullName: true } }, lead: { select: { firstName: true, lastName: true } } },
-        })
-      : [];
-    const dueForDeletion = await prisma.appointment.findMany({
-      where: {
-        agencyId: { in: agencyIds },
-        assignedToId: { in: assigneeIds },
-        status: "Cancelled",
-        calendarEventId: { not: null },
-      },
-      take: BATCH_SIZE,
-    });
-    for (const appointment of [...dueForPush, ...dueForDeletion]) {
-      await syncOne(appointment);
+    const viewers = await eligibleViewers(agencies.map((row) => row.agencyId));
+    for (const viewer of viewers) {
+      const due = await dueAppointmentsForViewer(viewer);
+      for (const { appointment, sync } of due) await syncOneForViewer(viewer, appointment, sync);
+      const dueDeletions = await dueDeletionsForViewer(viewer);
+      for (const sync of dueDeletions) await deleteOneForViewer(viewer, sync);
     }
   } catch (error) {
     logger.warn("outlook_calendar.worker_failed", { reason: error.message });
   } finally {
     running = false;
   }
+}
+
+// Called from enqueueAppointmentMeetingJob — the one function every
+// booking/reschedule/cancel call site already goes through — so a fresh
+// change gets picked up within ~1.5s instead of waiting for the next poll.
+// Debounced to one pending timer: several mutations in quick succession
+// (e.g. a recurring series) still only trigger one extra sync pass.
+export function scheduleImmediateOutlookCalendarSync() {
+  if (pendingImmediateSync) return;
+  pendingImmediateSync = setTimeout(() => {
+    pendingImmediateSync = null;
+    void processPendingOutlookCalendarSyncs();
+  }, IMMEDIATE_SYNC_DELAY_MS);
+  if (pendingImmediateSync.unref) pendingImmediateSync.unref();
 }
 
 export function startOutlookCalendarSyncWorker() {
@@ -177,4 +238,6 @@ export function startOutlookCalendarSyncWorker() {
 export function stopOutlookCalendarSyncWorker() {
   if (timer) clearInterval(timer);
   timer = null;
+  if (pendingImmediateSync) clearTimeout(pendingImmediateSync);
+  pendingImmediateSync = null;
 }

@@ -78,7 +78,14 @@ export function microsoftMailboxAuthorizeUrl(state) {
     response_mode: "query",
     scope: SCOPES.join(" "),
     state,
-    prompt: "select_account",
+    // "select_account" alone lets Microsoft silently reuse a prior consent
+    // instead of showing the permission screen again — someone reconnecting
+    // to pick up a newly-added scope (e.g. Calendars.ReadWrite) would get a
+    // token back carrying the SAME old scope, with no visible error, and
+    // grantedScopes in the database would never actually change. Forcing
+    // "consent" alongside it means Microsoft always re-displays (and the
+    // person always re-approves) the current full scope list.
+    prompt: "select_account consent",
   });
   return `${authority()}/authorize?${params}`;
 }
@@ -549,6 +556,7 @@ export async function personalMailboxStatus(userId) {
       displayName: true,
       status: true,
       syncEnabled: true,
+      calendarSyncEnabled: true,
       signatureHtml: true,
       connectedAt: true,
       lastSyncedAt: true,
@@ -558,10 +566,12 @@ export async function personalMailboxStatus(userId) {
       grantedScopes: true,
     },
   });
+  const calendarScopeGranted = Boolean(connection?.status === "connected" && mailboxGrantsCalendarAccess(connection.grantedScopes));
   return {
     configured: microsoftMailboxConfigured(),
     connected: connection?.status === "connected",
-    calendarSyncReady: Boolean(connection?.status === "connected" && mailboxGrantsCalendarAccess(connection.grantedScopes)),
+    calendarScopeGranted,
+    calendarSyncReady: calendarScopeGranted && connection?.calendarSyncEnabled !== false,
     ...(connection || {}),
   };
 }
@@ -571,6 +581,7 @@ export async function updatePersonalMailbox(userId, values) {
     where: { userId },
     data: {
       ...(values.syncEnabled !== undefined ? { syncEnabled: values.syncEnabled === true } : {}),
+      ...(values.calendarSyncEnabled !== undefined ? { calendarSyncEnabled: values.calendarSyncEnabled === true } : {}),
       ...(values.signatureHtml !== undefined ? { signatureHtml: String(values.signatureHtml || "").trim().slice(0, 10000) || null } : {}),
     },
   });

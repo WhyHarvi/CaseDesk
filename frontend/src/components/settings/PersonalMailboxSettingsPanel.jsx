@@ -19,7 +19,9 @@ const empty = {
   emailAddress: "",
   displayName: "",
   status: "disconnected",
+  calendarScopeGranted: false,
   calendarSyncReady: false,
+  calendarSyncEnabled: true,
   syncEnabled: true,
   signatureHtml: "",
   lastSyncedAt: null,
@@ -45,6 +47,7 @@ export default function PersonalMailboxSettingsPanel() {
   const [connecting, setConnecting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [calendarToggling, setCalendarToggling] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -77,6 +80,21 @@ export default function PersonalMailboxSettingsPanel() {
     } catch (reason) {
       setConnecting(false);
       setError(reason.response?.data?.message || "Microsoft sign-in could not be started.");
+    }
+  };
+
+  const toggleCalendarSync = async () => {
+    // Already have Microsoft's permission — this is just our own on/off
+    // switch, so it's a plain preference save, not another OAuth round trip.
+    try {
+      setCalendarToggling(true);
+      setError("");
+      const response = await api.patch("/mailboxes/me", { calendarSyncEnabled: !mailbox.calendarSyncEnabled });
+      setMailbox((current) => ({ ...current, ...response.data.data }));
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Calendar sync could not be updated.");
+    } finally {
+      setCalendarToggling(false);
     }
   };
 
@@ -177,26 +195,41 @@ export default function PersonalMailboxSettingsPanel() {
           <section className="rounded-[2rem] border border-white/90 bg-white/60 p-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex gap-4">
-                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${mailbox.calendarSyncReady ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${mailbox.calendarSyncReady ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
                   <CalendarClock className="h-5 w-5" />
                 </span>
                 <div>
                   <h3 className="font-semibold text-slate-950">Outlook calendar sync</h3>
-                  {mailbox.calendarSyncReady ? (
-                    <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500">Your CaseDesk appointments are mirrored onto your Outlook calendar as busy blocks — one way, nothing is read back, and clients are never emailed a Microsoft invite.</p>
-                  ) : (
-                    <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500">You connected before calendar sync existed, so Microsoft only granted mail access. Reconnect once — same button, one extra permission line — to also mirror your appointments.</p>
-                  )}
+                  <p className="mt-1 max-w-lg text-sm leading-6 text-slate-500">
+                    {mailbox.calendarSyncReady
+                      ? "Your CaseDesk appointments are mirrored onto your Outlook calendar as busy blocks — one way, nothing is read back, and clients are never emailed a Microsoft invite."
+                      : "Mirror your CaseDesk appointments onto your Outlook calendar as busy blocks. One way — nothing is read back, and clients are never emailed a Microsoft invite."}
+                  </p>
                 </div>
               </div>
-              {!mailbox.calendarSyncReady ? (
-                <button type="button" disabled={connecting} onClick={connect} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:opacity-50">
-                  {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                  {connecting ? "Opening Microsoft…" : "Grant calendar access"}
-                </button>
-              ) : (
-                <span className="w-fit shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">Syncing</span>
-              )}
+              <button
+                type="button"
+                disabled={connecting || calendarToggling}
+                onClick={mailbox.calendarScopeGranted ? toggleCalendarSync : connect}
+                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold shadow-lg transition hover:-translate-y-0.5 disabled:opacity-50 ${
+                  mailbox.calendarSyncReady ? "border border-rose-100 bg-rose-50/80 text-rose-700 hover:bg-rose-100" : "bg-slate-950 text-white hover:bg-slate-800"
+                }`}
+              >
+                {connecting || calendarToggling ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : mailbox.calendarSyncReady ? (
+                  <CalendarClock className="h-4 w-4" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+                {connecting
+                  ? "Opening Microsoft…"
+                  : calendarToggling
+                    ? "Updating…"
+                    : mailbox.calendarSyncReady
+                      ? "Stop calendar sync"
+                      : "Turn on calendar sync"}
+              </button>
             </div>
           </section>
 

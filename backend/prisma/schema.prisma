@@ -1651,6 +1651,11 @@ model UserMailboxConnection {
   grantedScopes         String    @map("granted_scopes")
   status                String    @default("connected")
   syncEnabled           Boolean   @default(true) @map("sync_enabled")
+  // Independent of whether Microsoft has granted the Calendars scope — this
+  // is the person's own on/off switch for outlookCalendarSyncService.js,
+  // same relationship syncEnabled has to email. Turning it off pauses future
+  // pushes; it doesn't retroactively delete events already mirrored.
+  calendarSyncEnabled   Boolean   @default(true) @map("calendar_sync_enabled")
   signatureHtml         String?   @map("signature_html")
   lastSyncedAt          DateTime? @map("last_synced_at")
   lastSyncStatus        String?   @map("last_sync_status")
@@ -1907,6 +1912,7 @@ model User {
   assignedAppointments                 Appointment[]                   @relation("AssignedAppointmentUser")
   createdAppointments                  Appointment[]                   @relation("CreatedAppointmentUser")
   cancelledAppointments                Appointment[]                   @relation("CancelledAppointmentUser")
+  appointmentCalendarSyncs             AppointmentCalendarSync[]
   assignedBookingPaymentHolds          BookingPaymentHold[]            @relation("AssignedBookingPaymentHoldUser")
   createdBookingPaymentHolds           BookingPaymentHold[]            @relation("CreatedBookingPaymentHoldUser")
   submittedPaymentApprovals            PaymentApproval[]               @relation("SubmittedPaymentApprovalUser")
@@ -2490,15 +2496,6 @@ model Appointment {
   meetingProviderHostId  String?                  @map("meeting_provider_host_id")
   meetingSyncStatus      String                   @default("NotRequired") @map("meeting_sync_status")
   meetingSyncError       String?                  @map("meeting_sync_error")
-  // One-way mirror of this appointment into the assigned staff member's own
-  // Outlook calendar (outlookCalendarSyncService.js) — a busy-block on their
-  // personal calendar, never a meeting invite to the client. Reconciled by a
-  // poller comparing updatedAt to calendarSyncedAt, not by hooking every
-  // booking/reschedule/cancel call site individually.
-  calendarSyncStatus     String                   @default("NotSynced") @map("calendar_sync_status")
-  calendarSyncedAt       DateTime?                @map("calendar_synced_at")
-  calendarEventId        String?                  @map("calendar_event_id")
-  calendarSyncError      String?                  @map("calendar_sync_error")
   manageToken            String?                  @unique @default(uuid()) @map("manage_token")
   reminderSentAt         DateTime?                @map("reminder_sent_at")
   reminderDueAt          DateTime?                @map("reminder_due_at")
@@ -2539,6 +2536,7 @@ model Appointment {
   cashTransactions       CashTransaction[]
   meetingJobs            AppointmentMeetingJob[]
   advice                 AppointmentAdvice?
+  calendarSyncs          AppointmentCalendarSync[]
 
   @@unique([agencyId, idempotencyKey])
   @@index([agencyId])
@@ -2554,6 +2552,30 @@ model Appointment {
   @@index([agencyId, meetingProvider, meetingProviderId])
   @@index([agencyId, createdById, createdAt])
   @@map("appointments")
+}
+
+// One row per (appointment, viewer) — an appointment isn't mirrored onto a
+// single external event, it's mirrored once per staff member who should see
+// it on their own Outlook calendar: the assigned staff member always gets
+// one, and an admin who's turned calendar sync on gets one for every
+// appointment in the agency, not just their own. Never a meeting invite —
+// no attendees are ever added, so nothing emails the client.
+model AppointmentCalendarSync {
+  id             String       @id @default(uuid())
+  appointmentId  String       @map("appointment_id")
+  userId         String       @map("user_id")
+  calendarEventId String?     @map("calendar_event_id")
+  syncStatus     String       @default("NotSynced") @map("sync_status")
+  syncedAt       DateTime?    @map("synced_at")
+  syncError      String?      @map("sync_error")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  appointment    Appointment  @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, userId])
+  @@index([userId, syncStatus])
+  @@map("appointment_calendar_syncs")
 }
 
 model BookingSettings {
