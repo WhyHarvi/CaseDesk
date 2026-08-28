@@ -334,6 +334,24 @@ export async function deleteTwilioVoiceLine(agencyId, lineId) {
   return { deleted: true };
 }
 
+// The default calling number: outboundTwiML falls back to it for any staff
+// member not on their own DIRECT line, and it's what a fresh workspace's
+// very first line becomes automatically. This is the explicit "make this the
+// default" action for switching it later.
+export async function setPrimaryTwilioVoiceLine(agencyId, lineId) {
+  const line = await prisma.agencyTwilioVoiceLine.findFirst({ where: { id: lineId, agencyId } });
+  if (!line) throw createHttpError(404, "Voice line not found.");
+  if (!line.enabled) throw createHttpError(400, "Enable this line before making it the default calling number.");
+  if (line.isPrimary) return line;
+  await prisma.$transaction([
+    prisma.agencyTwilioVoiceLine.updateMany({ where: { agencyId, isPrimary: true }, data: { isPrimary: false } }),
+    prisma.agencyTwilioVoiceLine.update({ where: { id: line.id }, data: { isPrimary: true } }),
+    prisma.agencyTwilioSettings.update({ where: { agencyId }, data: { voiceNumber: line.phoneNumber } }),
+  ]);
+  logger.info("twilio.voice_line_made_primary", { agencyId, lineId: line.id, phoneNumber: line.phoneNumber });
+  return { ...line, isPrimary: true };
+}
+
 // ---- TwiML handlers --------------------------------------------------------
 
 // Incoming call to a line → ring only the staff its routing rule targets.

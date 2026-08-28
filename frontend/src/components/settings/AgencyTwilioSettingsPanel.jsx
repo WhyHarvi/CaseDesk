@@ -8,15 +8,19 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Star,
   Trash2,
-  UsersRound,
+  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import api from "../../services/api";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { FieldLegend, FieldSet } from "../ui/field";
+import { Field, FieldLabel } from "../ui/field";
+import { Input } from "../ui/input";
+import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 
 const inputClass =
   "mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100/70 disabled:bg-slate-100 disabled:text-slate-400";
@@ -80,25 +84,118 @@ function ConnectionBadge({ connected, pendingLabel = "Not connected" }) {
   );
 }
 
-function StaffAssignmentPicker({ staff, selectedIds, assignedElsewhere = new Map(), onToggle, disabled = false }) {
-  const selected = new Set(selectedIds || []);
+// Type-to-search, click-to-add multi-select — mirrors MultiCaseTypeCombobox's
+// chip pattern (same visual language elsewhere in the app) rather than a
+// checkbox grid, so assigning people to a shared line reads the same way as
+// every other "pick some people/tags" control in CaseDesk.
+function StaffAssignCombobox({ staff, value = [], assignedElsewhere = new Map(), onAdd, onRemove, disabled = false, placeholder = "Search team members…" }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [panelRect, setPanelRect] = useState(null);
+  const containerRef = useRef(null);
+  const panelRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onClickOutside(event) {
+      if (containerRef.current?.contains(event.target)) return;
+      if (panelRef.current?.contains(event.target)) return;
+      setOpen(false);
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function updatePanelRect() {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPanelRect({ top: rect.bottom + 6, left: rect.left, width: rect.width });
+    }
+    updatePanelRect();
+    window.addEventListener("resize", updatePanelRect);
+    window.addEventListener("scroll", updatePanelRect, true);
+    return () => {
+      window.removeEventListener("resize", updatePanelRect);
+      window.removeEventListener("scroll", updatePanelRect, true);
+    };
+  }, [open]);
+
+  const selected = new Set(value);
+  const assignedPeople = value.map((id) => staff.find((person) => person.id === id)).filter(Boolean);
+  const needle = query.trim().toLowerCase();
+  const matches = staff.filter((person) => !selected.has(person.id) && (!needle || person.fullName.toLowerCase().includes(needle)));
+
   return (
-    <FieldSet className="gap-2">
-      <FieldLegend variant="label" className="mb-1">Staff using this number</FieldLegend>
-      <div data-slot="checkbox-group" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {staff.map((person) => {
-          const otherLine = assignedElsewhere.get(person.id);
-          const unavailable = Boolean(otherLine) && !selected.has(person.id);
-          return (
-            <label key={person.id} className={`flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${selected.has(person.id) ? "border-sky-300 bg-sky-50 text-sky-950" : "border-slate-200 bg-white text-slate-700"} ${unavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:border-sky-200"}`} title={unavailable ? `Already assigned to ${otherLine.phoneNumber}` : ""}>
-              <input type="checkbox" checked={selected.has(person.id)} disabled={disabled || unavailable} onChange={() => onToggle(person.id)} className="size-4 rounded border-slate-300 text-sky-600" />
-              <span className="min-w-0 truncate font-medium">{person.fullName}</span>
-            </label>
-          );
-        })}
+    <div ref={containerRef} className="relative">
+      <div className={`flex min-h-10 flex-wrap items-center gap-1.5 rounded-2xl border px-2.5 py-1.5 transition ${disabled ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-white focus-within:border-sky-300 focus-within:ring-4 focus-within:ring-sky-100"}`}>
+        {assignedPeople.map((person) => (
+          <span key={person.id} className="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2.5 py-1 text-xs font-semibold text-white">
+            {person.fullName}
+            {!disabled ? (
+              <button type="button" onClick={() => onRemove(person.id)} aria-label={`Remove ${person.fullName}`} className="rounded-full p-0.5 hover:bg-white/20">
+                <X className="h-3 w-3" />
+              </button>
+            ) : null}
+          </span>
+        ))}
+        {!disabled ? (
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Backspace" && !query && assignedPeople.length) onRemove(assignedPeople[assignedPeople.length - 1].id);
+            }}
+            placeholder={assignedPeople.length ? "" : placeholder}
+            autoComplete="off"
+            className="h-7 min-w-[10rem] flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+          />
+        ) : null}
       </div>
-      {!staff.length ? <p className="text-xs text-slate-500">No active staff members are available.</p> : null}
-    </FieldSet>
+      {!staff.length ? <p className="mt-1.5 text-xs text-slate-500">No active staff members are available.</p> : null}
+
+      {open && !disabled && panelRect && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={panelRef}
+              className="fixed z-[700] max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
+              style={{ top: `${panelRect.top}px`, left: `${panelRect.left}px`, width: `${panelRect.width}px` }}
+            >
+              {matches.length ? (
+                matches.map((person) => {
+                  const otherLine = assignedElsewhere.get(person.id);
+                  return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      disabled={Boolean(otherLine)}
+                      onClick={() => { onAdd(person.id); setQuery(""); inputRef.current?.focus(); }}
+                      className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent"
+                    >
+                      {person.fullName}
+                      {otherLine ? <span className="text-xs font-normal text-slate-400">On {otherLine.phoneNumber}</span> : null}
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-3 py-2 text-sm text-slate-400">No matching team members.</p>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
   );
 }
 
@@ -124,7 +221,12 @@ export default function AgencyTwilioSettingsPanel() {
   const [addRouting, setAddRouting] = useState("FRONTDESK");
   const [addAssignedUserIds, setAddAssignedUserIds] = useState([]);
   const [addingSid, setAddingSid] = useState("");
-  const [assignmentOpenLineId, setAssignmentOpenLineId] = useState("");
+  // Tracks which line the admin has explicitly switched to "Specific staff"
+  // mode for, independent of what's actually saved server-side — picking
+  // that segment should reveal the combobox immediately, before anyone is
+  // assigned yet (the server only accepts DIRECT once at least one person is
+  // attached, so the first save happens on the first add, not the click).
+  const [directPinnedLineId, setDirectPinnedLineId] = useState("");
   const [updatingLineId, setUpdatingLineId] = useState("");
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceTesting, setVoiceTesting] = useState(false);
@@ -384,6 +486,21 @@ export default function AgencyTwilioSettingsPanel() {
     }
   };
 
+  const setPrimaryLine = async (line) => {
+    try {
+      setUpdatingLineId(line.id);
+      setLinesError("");
+      setLinesNotice("");
+      await api.post(`/twilio-calls/lines/${line.id}/primary`);
+      setLinesNotice(`${line.phoneNumber} is now the default calling number.`);
+      await loadLines();
+    } catch (reason) {
+      setLinesError(errorMessage(reason, "This line could not be set as the default."));
+    } finally {
+      setUpdatingLineId("");
+    }
+  };
+
   const removeLine = async (line) => {
     try {
       setLinesError("");
@@ -425,7 +542,8 @@ export default function AgencyTwilioSettingsPanel() {
   const voiceReady = form.voiceReady;
   const voiceConnected = form.lastCallTestStatus === "Connected";
   const assignedLineByUserId = new Map(lines.flatMap((line) => (line.assignedUserIds || []).map((userId) => [userId, line])));
-  const toggleNewLineAssignee = (userId) => setAddAssignedUserIds((current) => current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]);
+  const addNewLineAssignee = (userId) => setAddAssignedUserIds((current) => (current.includes(userId) ? current : [...current, userId]));
+  const removeNewLineAssignee = (userId) => setAddAssignedUserIds((current) => current.filter((id) => id !== userId));
 
   return (
     <div className="flex flex-col gap-6">
@@ -682,7 +800,7 @@ export default function AgencyTwilioSettingsPanel() {
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Voice lines</p>
                         <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">
-                          Assign a shared number to one or more staff members. Everyone assigned receives its calls and uses it automatically for outbound caller ID.
+                          Choose who rings each number — frontdesk, everyone, specific teammates, or the internal line — and which one is the default outbound caller ID.
                         </p>
                       </div>
                       <button type="button" disabled={numbersLoading || linesLoading || !form.canManage} onClick={loadNumbers} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
@@ -696,28 +814,53 @@ export default function AgencyTwilioSettingsPanel() {
                       <div className="mt-4 flex flex-col gap-3">
                         {lines.map((line) => {
                           const assignedElsewhere = new Map([...assignedLineByUserId].filter(([, assignedLine]) => assignedLine.id !== line.id));
-                          const assignmentOpen = assignmentOpenLineId === line.id;
                           const lineBusy = updatingLineId === line.id;
-                          const routingLabel = line.routing === "FRONTDESK" ? "Frontdesk" : line.routing === "INTERNAL" ? "Internal" : line.routing === "DIRECT" ? `${line.assignedUserIds?.length || 0} assigned` : "All staff";
+                          // Picking "Specific staff" reveals the combobox right away, even
+                          // before the server has anything saved as DIRECT yet — it only
+                          // switches over once the first person is actually added.
+                          const displayedMode = directPinnedLineId === line.id ? "DIRECT" : line.routing;
+                          const onModeChange = (next) => {
+                            if (!next || next === displayedMode) return;
+                            if (next === "DIRECT") {
+                              setDirectPinnedLineId(line.id);
+                              return;
+                            }
+                            setDirectPinnedLineId((current) => (current === line.id ? "" : current));
+                            routeLine(line, next);
+                          };
+                          // The segmented control above already shows the routing type, so a
+                          // badge repeating "Frontdesk"/"All staff"/"Internal" would just be
+                          // noise next to a title that's often named the same thing. The one
+                          // case worth a badge is DIRECT, where the assignee count isn't
+                          // visible anywhere else on the card.
+                          const routingLabel = line.routing === "DIRECT" ? `${line.assignedUserIds?.length || 0} assigned` : null;
                           return (
                             <Card key={line.id} size="sm" className="gap-3 rounded-2xl bg-white py-4 shadow-none ring-slate-200">
                               <CardHeader className="gap-2 px-4 sm:grid-cols-[1fr_auto]">
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <CardTitle>{line.label}</CardTitle>
-                                    <Badge variant={line.routing === "DIRECT" ? "default" : "secondary"}>{routingLabel}</Badge>
-                                    {line.isPrimary ? <Badge variant="outline">Primary</Badge> : null}
+                                    {routingLabel ? <Badge variant="default">{routingLabel}</Badge> : null}
+                                    {line.isPrimary ? (
+                                      <Badge variant="outline" className="gap-1"><Star className="h-3 w-3 fill-current" />Default</Badge>
+                                    ) : null}
                                     {!line.enabled ? <Badge variant="outline">Paused</Badge> : null}
                                   </div>
                                   <CardDescription className="mt-1 font-medium tabular-nums text-slate-600">{line.phoneNumber}</CardDescription>
                                 </div>
                                 <CardAction className="flex flex-wrap items-center justify-end gap-2">
-                                  <select value={line.routing} disabled={lineBusy} onChange={(event) => routeLine(line, event.target.value)} className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none focus:border-sky-300" aria-label={`Route ${line.phoneNumber}`}>
-                                    <option value="FRONTDESK">Frontdesk</option>
-                                    <option value="STAFF">All staff</option>
-                                    {line.routing === "DIRECT" ? <option value="DIRECT">Assigned staff</option> : null}
-                                    <option value="INTERNAL">Internal line</option>
-                                  </select>
+                                  {!line.isPrimary ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={lineBusy || !line.enabled}
+                                      onClick={() => setPrimaryLine(line)}
+                                      title={line.enabled ? "Use this number as the default outbound caller ID" : "Enable this line first"}
+                                    >
+                                      Set as default
+                                    </Button>
+                                  ) : null}
                                   <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
                                     <input type="checkbox" checked={line.enabled} disabled={lineBusy} onChange={(event) => toggleLine(line, event.target.checked)} className="size-4 rounded border-slate-300 text-sky-600" />Active
                                   </label>
@@ -725,13 +868,30 @@ export default function AgencyTwilioSettingsPanel() {
                                 </CardAction>
                               </CardHeader>
                               <CardContent className="flex flex-col gap-3 px-4">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {line.assignedUsers?.map((person) => <Badge key={person.id} variant="outline">{person.fullName}</Badge>)}
-                                  <Button type="button" variant="outline" size="sm" onClick={() => setAssignmentOpenLineId(assignmentOpen ? "" : line.id)}>
-                                    <UsersRound data-icon="inline-start" />{assignmentOpen ? "Done" : line.assignedUserIds?.length ? "Manage staff" : "Assign staff"}
-                                  </Button>
-                                </div>
-                                {assignmentOpen ? <StaffAssignmentPicker staff={staff} selectedIds={line.assignedUserIds} assignedElsewhere={assignedElsewhere} disabled={lineBusy} onToggle={(userId) => toggleLineAssignee(line, userId)} /> : null}
+                                <ToggleGroup
+                                  value={[displayedMode]}
+                                  onValueChange={(next) => onModeChange(next[0])}
+                                  variant="outline"
+                                  size="sm"
+                                  spacing={0}
+                                  disabled={lineBusy}
+                                  aria-label={`Who rings on ${line.phoneNumber}`}
+                                >
+                                  <ToggleGroupItem value="FRONTDESK">Frontdesk</ToggleGroupItem>
+                                  <ToggleGroupItem value="STAFF">All staff</ToggleGroupItem>
+                                  <ToggleGroupItem value="DIRECT">Specific staff</ToggleGroupItem>
+                                  <ToggleGroupItem value="INTERNAL">Internal</ToggleGroupItem>
+                                </ToggleGroup>
+                                {displayedMode === "DIRECT" ? (
+                                  <StaffAssignCombobox
+                                    staff={staff}
+                                    value={line.assignedUserIds}
+                                    assignedElsewhere={assignedElsewhere}
+                                    disabled={lineBusy}
+                                    onAdd={(userId) => toggleLineAssignee(line, userId)}
+                                    onRemove={(userId) => toggleLineAssignee(line, userId)}
+                                  />
+                                ) : null}
                               </CardContent>
                             </Card>
                           );
@@ -741,10 +901,37 @@ export default function AgencyTwilioSettingsPanel() {
 
                     {numbers.length ? (
                       <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4">
-                        <div className="grid gap-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200 sm:grid-cols-2">
-                          <label className="text-xs font-semibold text-slate-700">Line label<input value={addLabel} onChange={(event) => setAddLabel(event.target.value)} className="mt-1.5 h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 outline-none focus:border-sky-300" placeholder="e.g. Reception" /></label>
-                          <label className="text-xs font-semibold text-slate-700">Routing<select value={addRouting} onChange={(event) => { setAddRouting(event.target.value); if (event.target.value !== "DIRECT") setAddAssignedUserIds([]); }} className="mt-1.5 h-9 w-full rounded-xl border border-slate-200 bg-white px-2 text-xs font-medium text-slate-900 outline-none focus:border-sky-300"><option value="FRONTDESK">Frontdesk</option><option value="STAFF">All staff</option><option value="DIRECT">Assigned staff</option><option value="INTERNAL">Internal line</option></select></label>
-                          {addRouting === "DIRECT" ? <div className="sm:col-span-2"><StaffAssignmentPicker staff={staff} selectedIds={addAssignedUserIds} assignedElsewhere={assignedLineByUserId} onToggle={toggleNewLineAssignee} /></div> : null}
+                        <div className="grid gap-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="new-voice-line-label">Line label</FieldLabel>
+                            <Input id="new-voice-line-label" value={addLabel} onChange={(event) => setAddLabel(event.target.value)} placeholder="e.g. Reception" />
+                          </Field>
+                          <Field>
+                            <FieldLabel>Who rings</FieldLabel>
+                            <ToggleGroup
+                              value={[addRouting]}
+                              onValueChange={(next) => {
+                                const value = next[0];
+                                if (!value) return;
+                                setAddRouting(value);
+                                if (value !== "DIRECT") setAddAssignedUserIds([]);
+                              }}
+                              variant="outline"
+                              size="sm"
+                              spacing={0}
+                              aria-label="Routing for the new line"
+                            >
+                              <ToggleGroupItem value="FRONTDESK">Frontdesk</ToggleGroupItem>
+                              <ToggleGroupItem value="STAFF">All staff</ToggleGroupItem>
+                              <ToggleGroupItem value="DIRECT">Specific staff</ToggleGroupItem>
+                              <ToggleGroupItem value="INTERNAL">Internal</ToggleGroupItem>
+                            </ToggleGroup>
+                          </Field>
+                          {addRouting === "DIRECT" ? (
+                            <div className="sm:col-span-2">
+                              <StaffAssignCombobox staff={staff} value={addAssignedUserIds} assignedElsewhere={assignedLineByUserId} onAdd={addNewLineAssignee} onRemove={removeNewLineAssignee} />
+                            </div>
+                          ) : null}
                         </div>
                         <p className="text-xs font-semibold text-slate-500">Available Twilio numbers</p>
                         {numbers.map((item) => (

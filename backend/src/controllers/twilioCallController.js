@@ -13,6 +13,7 @@ import {
   listTwilioVoiceNumbers,
   provisionTwilioVoiceLine,
   resolveAgencyTwilioVoiceConfig,
+  setPrimaryTwilioVoiceLine,
   startCallRecording,
   stopCallRecording,
   syncTwilioCallHistory,
@@ -83,6 +84,18 @@ export async function patchTwilioVoiceLine(req, res) {
     userId: req.user.id,
     action: "settings.twilio_voice_line_updated",
     details: `${data.label} line (${data.phoneNumber}) updated`,
+  });
+  res.json({ data });
+}
+
+export async function makeTwilioVoiceLinePrimary(req, res) {
+  requireAdmin(req);
+  const data = await setPrimaryTwilioVoiceLine(req.user.agencyId, req.params.lineId);
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "settings.twilio_voice_line_primary",
+    details: `${data.label} line (${data.phoneNumber}) set as the default calling number`,
   });
   res.json({ data });
 }

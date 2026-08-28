@@ -147,6 +147,28 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(webhookRoutes, /router\.post\("\/twilio\/inbound\/:agencyId\/:lineId"/);
 });
 
+test("the default calling number is an explicit action — setPrimaryTwilioVoiceLine swaps isPrimary and the settings voiceNumber together, not just an accident of creation/deletion order", async () => {
+  const [service, controller, routes] = await Promise.all([
+    source("../src/services/twilioCallService.js"),
+    source("../src/controllers/twilioCallController.js"),
+    source("../src/routes/twilioCallRoutes.js"),
+  ]);
+  const fn = service.slice(service.indexOf("export async function setPrimaryTwilioVoiceLine"), service.indexOf("// ---- TwiML handlers"));
+  assert.match(fn, /if \(!line\.enabled\) throw createHttpError\(400,/);
+  assert.match(fn, /if \(line\.isPrimary\) return line;/);
+  // Unsetting every other line's isPrimary and setting this one's must be
+  // one atomic transaction — otherwise a crash mid-update could leave an
+  // agency with zero (or two) primary lines.
+  assert.match(fn, /prisma\.\$transaction\(\[/);
+  assert.match(fn, /agencyTwilioVoiceLine\.updateMany\(\{ where: \{ agencyId, isPrimary: true \}, data: \{ isPrimary: false \} \}\)/);
+  assert.match(fn, /agencyTwilioVoiceLine\.update\(\{ where: \{ id: line\.id \}, data: \{ isPrimary: true \} \}\)/);
+  assert.match(fn, /agencyTwilioSettings\.update\(\{ where: \{ agencyId \}, data: \{ voiceNumber: line\.phoneNumber \} \}\)/);
+  const controllerFn = controller.slice(controller.indexOf("export async function makeTwilioVoiceLinePrimary"), controller.indexOf("export async function removeTwilioVoiceLine"));
+  assert.match(controllerFn, /requireAdmin\(req\);/);
+  assert.match(controllerFn, /setPrimaryTwilioVoiceLine\(req\.user\.agencyId, req\.params\.lineId\)/);
+  assert.match(routes, /router\.post\("\/lines\/:lineId\/primary", asyncHandler\(makeTwilioVoiceLinePrimary\)\)/);
+});
+
 test("history sync and address book back the Call center without exposing secrets", async () => {
   const [service, controller] = await Promise.all([
     source("../src/services/twilioCallService.js"),
@@ -342,10 +364,15 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(panel, /API Key SID/);
   assert.match(panel, /Enable calling for this workspace/);
   assert.match(panel, /FRONTDESK/);
-  assert.match(panel, /Internal line/);
-  assert.match(panel, /Staff using this number/);
+  assert.match(panel, /ToggleGroupItem value="INTERNAL">Internal</);
+  assert.match(panel, /function StaffAssignCombobox/);
   assert.match(panel, /assignedUserIds/);
-  assert.match(panel, /Everyone assigned receives its calls and uses it automatically for outbound caller ID/);
+  assert.match(panel, /Choose who rings each number/);
+  // Which number is the default outbound caller ID is an explicit, per-line
+  // action now (setPrimaryTwilioVoiceLine on the backend), not just an
+  // accident of creation/deletion order.
+  assert.match(panel, /twilio-calls\/lines\/\$\{line\.id\}\/primary/);
+  assert.match(panel, /Set as default/);
   // The global dialpad's in-call screen exposes transfer and the picker
   // fetches transferable staff — the active-call UI lives there, not on the
   // softphone provider, so it shares one phone surface instead of two

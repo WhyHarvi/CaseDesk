@@ -8,6 +8,7 @@ import {
   listTwilioCallNumbers,
   listTwilioCallStaff,
   listTwilioVoiceLines,
+  makeTwilioVoiceLinePrimary,
   patchTwilioVoiceLine,
   recordOutboundCallOutcome,
   removeTwilioVoiceLine,
@@ -27,6 +28,7 @@ router.get("/numbers", asyncHandler(listTwilioCallNumbers));
 router.get("/lines", asyncHandler(listTwilioVoiceLines));
 router.post("/lines", asyncHandler(createTwilioVoiceLine));
 router.patch("/lines/:lineId", asyncHandler(patchTwilioVoiceLine));
+router.post("/lines/:lineId/primary", asyncHandler(makeTwilioVoiceLinePrimary));
 router.delete("/lines/:lineId", asyncHandler(removeTwilioVoiceLine));
 router.post("/transfer", asyncHandler(transferCall));
 router.post("/recording/start", asyncHandler(startRecording));
