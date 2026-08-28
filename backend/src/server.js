@@ -160,6 +160,7 @@ import {
   zoomConfigured,
 } from "./services/zoomService.js";
 import { startIncentiveRetryWorker, stopIncentiveRetryWorker } from "./services/incentiveCreditingService.js";
+import { startUciCommunicationMatchingWorker, stopUciCommunicationMatchingWorker } from "./services/uciCommunicationMatchingService.js";
 
 dotenv.config();
 
@@ -542,6 +543,7 @@ function onListening() {
   startCaseInformationDriftDetector();
   startAppointmentNoShowWorker();
   startIncentiveRetryWorker();
+  startUciCommunicationMatchingWorker();
 }
 
 // On a nodemon restart the outgoing process's listening socket can still be
@@ -592,6 +594,7 @@ async function shutdown(signal) {
   stopCaseInformationDriftDetector();
   stopAppointmentNoShowWorker();
   stopIncentiveRetryWorker();
+  stopUciCommunicationMatchingWorker();
   (server || { close: (cb) => cb() }).close(async () => {
     await prisma.$disconnect().catch(() => {});
     process.exit(0);
