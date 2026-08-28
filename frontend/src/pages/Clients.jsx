@@ -965,8 +965,17 @@ export default function Clients() {
   }
 
   useEffect(() => {
-    loadClients();
-    loadUsers();
+    // /clients performs a list query of its own. Let it release its DB
+    // connection before firing the staff catalog request — starting both
+    // together (same pattern LeadsPage.jsx hit) can saturate the
+    // production connection pool on a hard reload, when everything else in
+    // the app is also mounting from scratch and firing its own initial
+    // requests at the same moment, and leave the browser's own /clients
+    // request without a response.
+    (async () => {
+      await loadClients();
+      await loadUsers();
+    })();
   }, []);
 
   useEffect(() => {
@@ -1620,7 +1629,7 @@ export default function Clients() {
             </div>
           </div>
 
-          {error ? <div className="mx-5 mt-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6">{error}</div> : null}
+          {error ? <div className="mx-5 mt-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6"><p>{error}</p><button type="button" disabled={loading} onClick={loadClients} className="mt-2 text-xs font-semibold underline disabled:opacity-60">{loading ? "Trying again…" : "Try again"}</button></div> : null}
           {callError ? <div className="mx-5 mt-5 flex items-center justify-between gap-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6"><span>{callError}</span><button type="button" onClick={() => setCallError("")} className="text-xs font-semibold underline">Dismiss</button></div> : null}
 
           {loading ? (
