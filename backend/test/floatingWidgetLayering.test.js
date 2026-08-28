@@ -68,20 +68,28 @@ test("GlobalDialpad hides on the Chats page like FloatingChatWidget already does
 // coordinated with these two floating buttons' 390/410 range — so a curtain
 // sitting anywhere below ~390-410 let the dialpad/chat button visibly float
 // on top of it. Rather than retrofitting the ~80 individual curtain
-// components to opt in, useAnyCurtainOpen detects the one DOM convention
-// every one of them already shares (portaled straight to document.body,
-// root class "fixed inset-0") — new curtains are covered automatically,
-// with zero changes needed anywhere else.
-test("the phone and chat floating buttons hide behind any open curtain, detected generically instead of requiring every curtain to opt in", async () => {
+// components to opt in, useAnyCurtainOpen detects the shared root class
+// combo ("fixed inset-0") every one of them uses — new curtains are covered
+// automatically, with zero changes needed anywhere else.
+//
+// First version of this fix only checked document.body's DIRECT children,
+// on the assumption every curtain portals there (most do). ClientDrawer and
+// CaseFormFrawer (the "Add client"/"Create case" curtains, among others)
+// instead render their "fixed inset-0" root inline in the normal React
+// tree — so that version never caught them. Fixed by searching the whole
+// document (observer subtree: true) instead of just body's direct children.
+test("the phone and chat floating buttons hide behind any open curtain, whether it portals to document.body or renders inline deep in the tree", async () => {
   const [hook, globalDialpad, chatWidget] = await Promise.all([
     source("../../frontend/src/hooks/useAnyCurtainOpen.js"),
     source("../../frontend/src/components/calls/GlobalDialpad.jsx"),
     source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
   ]);
 
-  assert.match(hook, /const CURTAIN_SELECTOR = ":scope > \.fixed\.inset-0";/);
+  assert.match(hook, /const CURTAIN_SELECTOR = "\.fixed\.inset-0";/);
+  assert.doesNotMatch(hook, /:scope >/);
+  assert.match(hook, /document\.querySelector\(CURTAIN_SELECTOR\)/);
   assert.match(hook, /new MutationObserver\(update\)/);
-  assert.match(hook, /observer\.observe\(document\.body, \{ childList: true \}\)/);
+  assert.match(hook, /observer\.observe\(document\.body, \{ childList: true, subtree: true \}\)/);
   assert.match(hook, /export default function useAnyCurtainOpen\(\)/);
 
   assert.match(globalDialpad, /import useAnyCurtainOpen from "\.\.\/\.\.\/hooks\/useAnyCurtainOpen";/);
@@ -95,4 +103,15 @@ test("the phone and chat floating buttons hide behind any open curtain, detected
   // same "don't yank away active engagement" principle as the dialpad's
   // active-call exemption above.
   assert.match(chatWidget, /location\.pathname === "\/app\/chats" \|\| \(curtainOpen && !open\)\) return null;/);
+
+  // The specific regression: confirm ClientDrawer/CaseFormDrawer really do
+  // render their curtain inline (not via createPortal) — proving why the
+  // direct-children-only version of the selector missed them, and why
+  // subtree:true stays load-bearing rather than an unexplained option.
+  const [clientsPage, casesPage] = await Promise.all([
+    source("../../frontend/src/pages/Clients.jsx"),
+    source("../../frontend/src/pages/Cases.jsx"),
+  ]);
+  assert.match(clientsPage, /fixed inset-0 z-50 flex justify-end bg-slate-950\/30/);
+  assert.match(casesPage, /fixed inset-0 z-50 flex justify-end bg-slate-950\/30/);
 });
