@@ -2,6 +2,7 @@ import { ArrowLeftRight, BatteryFull, Circle, Clipboard, Delete, Grid3x3, Keyboa
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
+import useAnyCurtainOpen from "../../hooks/useAnyCurtainOpen";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 import api from "../../services/api";
 import { useSoftphone } from "./SoftphoneProvider";
@@ -25,6 +26,7 @@ export function openGlobalDialpad(number = "") {
 
 export default function GlobalDialpad() {
   const location = useLocation();
+  const curtainOpen = useAnyCurtainOpen();
   const { dial, active, status, muted, toggleMute, hangup, sendDigits } = useSoftphone();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState("");
@@ -457,9 +459,12 @@ export default function GlobalDialpad() {
 
   // Hidden on the Chats page itself — same reasoning FloatingChatWidget
   // already applies there for the same reason (redundant with the page you're
-  // already on). Never hidden mid-call, though: navigating to Chats while on
-  // a live call must not strand the hang-up/mute controls.
-  if (location.pathname === "/app/chats" && !active) return null;
+  // already on). Also hidden behind any open curtain (client/case/appointment
+  // side panels etc.) — their z-index values were never coordinated with
+  // this button's, so it could otherwise float visibly on top of one. Never
+  // hidden mid-call, though: navigating to Chats, or opening a curtain, while
+  // on a live call must not strand the hang-up/mute controls.
+  if ((location.pathname === "/app/chats" || curtainOpen) && !active) return null;
 
   if (!open) {
     return (

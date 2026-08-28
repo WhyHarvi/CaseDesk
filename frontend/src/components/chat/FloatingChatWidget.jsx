@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronLeft, LifeBuoy, Loader2, Maximize2, MessagesSquare, RotateCcw, Search, UserRound, Users, X } from "lucide-react";
 import { useAuth } from "../../auth/AuthContext";
+import useAnyCurtainOpen from "../../hooks/useAnyCurtainOpen";
 import { useNotifications } from "../notifications/NotificationProvider";
 import api from "../../services/api";
 import {
@@ -106,6 +107,7 @@ export default function FloatingChatWidget() {
   const reduceMotion = useReducedMotion();
   const { sidebarCounts, acknowledgeDestination } = useNotifications();
   const isChatsRoute = location.pathname === "/app/chats"; // the full page already polls/plays sound itself
+  const curtainOpen = useAnyCurtainOpen();
 
   const [open, setOpen] = useState(false);
   const [phoneFloat, setPhoneFloat] = useState({ open: false, active: false });
@@ -590,7 +592,11 @@ export default function FloatingChatWidget() {
     navigate(`/app/clients/${encodeURIComponent(clientId)}`);
   }
 
-  if (typeof document === "undefined" || location.pathname === "/app/chats") return null;
+  // Hidden behind any open curtain (client/case/appointment side panels
+  // etc.) unless the user already has a conversation open here — their
+  // z-index values were never coordinated with this widget's, so it could
+  // otherwise float visibly on top of one.
+  if (typeof document === "undefined" || location.pathname === "/app/chats" || (curtainOpen && !open)) return null;
 
   const unreadTotal = sidebarCounts?.chats?.total || 0;
 

@@ -61,5 +61,38 @@ test("GlobalDialpad hides on the Chats page like FloatingChatWidget already does
   assert.match(chatWidget, /location\.pathname === "\/app\/chats"/);
 
   assert.match(globalDialpad, /import \{ useLocation \} from "react-router-dom";/);
-  assert.match(globalDialpad, /if \(location\.pathname === "\/app\/chats" && !active\) return null;/);
+  assert.match(globalDialpad, /if \(\(location\.pathname === "\/app\/chats" \|\| curtainOpen\) && !active\) return null;/);
+});
+
+// Real bug: curtain z-index values across the app span 60-9999, never
+// coordinated with these two floating buttons' 390/410 range — so a curtain
+// sitting anywhere below ~390-410 let the dialpad/chat button visibly float
+// on top of it. Rather than retrofitting the ~80 individual curtain
+// components to opt in, useAnyCurtainOpen detects the one DOM convention
+// every one of them already shares (portaled straight to document.body,
+// root class "fixed inset-0") — new curtains are covered automatically,
+// with zero changes needed anywhere else.
+test("the phone and chat floating buttons hide behind any open curtain, detected generically instead of requiring every curtain to opt in", async () => {
+  const [hook, globalDialpad, chatWidget] = await Promise.all([
+    source("../../frontend/src/hooks/useAnyCurtainOpen.js"),
+    source("../../frontend/src/components/calls/GlobalDialpad.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+  ]);
+
+  assert.match(hook, /const CURTAIN_SELECTOR = ":scope > \.fixed\.inset-0";/);
+  assert.match(hook, /new MutationObserver\(update\)/);
+  assert.match(hook, /observer\.observe\(document\.body, \{ childList: true \}\)/);
+  assert.match(hook, /export default function useAnyCurtainOpen\(\)/);
+
+  assert.match(globalDialpad, /import useAnyCurtainOpen from "\.\.\/\.\.\/hooks\/useAnyCurtainOpen";/);
+  assert.match(globalDialpad, /const curtainOpen = useAnyCurtainOpen\(\);/);
+  // Never hidden mid-call — same guarantee the Chats-page hide already had.
+  assert.match(globalDialpad, /if \(\(location\.pathname === "\/app\/chats" \|\| curtainOpen\) && !active\) return null;/);
+
+  assert.match(chatWidget, /import useAnyCurtainOpen from "\.\.\/\.\.\/hooks\/useAnyCurtainOpen";/);
+  assert.match(chatWidget, /const curtainOpen = useAnyCurtainOpen\(\);/);
+  // Never hidden while the person already has a conversation open in it —
+  // same "don't yank away active engagement" principle as the dialpad's
+  // active-call exemption above.
+  assert.match(chatWidget, /location\.pathname === "\/app\/chats" \|\| \(curtainOpen && !open\)\) return null;/);
 });

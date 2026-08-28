@@ -113,8 +113,10 @@ test("the floating quick-chat widget is mounted globally, opens to the recent-co
   assert.match(layout, /import FloatingChatWidget from "\.\.\/components\/chat\/FloatingChatWidget";/);
   assert.match(layout, /<FloatingChatWidget \/>/);
   // Hidden on the full Chats page itself — showing a launcher on top of
-  // the page it launches would be redundant.
-  assert.match(widget, /if \(typeof document === "undefined" \|\| location\.pathname === "\/app\/chats"\) return null;/);
+  // the page it launches would be redundant. Also hidden behind any open
+  // curtain (see useAnyCurtainOpen / floatingWidgetLayering.test.js) unless
+  // a conversation is already open in it.
+  assert.match(widget, /if \(typeof document === "undefined" \|\| location\.pathname === "\/app\/chats" \|\| \(curtainOpen && !open\)\) return null;/);
   // Opening always lands on the list, never jumps straight into a thread.
   assert.match(widget, /const \[view, setView\] = useState\("list"\);/);
   assert.doesNotMatch(widget, /casedesk:quickChat:lastConversation/);
