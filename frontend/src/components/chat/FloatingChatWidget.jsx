@@ -29,9 +29,9 @@ import { resetNovaChat, retryNovaMessage, sendNovaMessage, useNovaChat } from ".
 import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSuggestions, NovaThinkingIndicator } from "./NovaChatPresentation";
 import SupportDeskPanel from "./SupportDeskPanel";
 
-const RECONCILE_POLL_MS = 45_000;
-const FALLBACK_POLL_MS = 10_000;
-const AMBIENT_LIST_POLL_MS = 20_000; // keeps the badge/preview live even while the widget is collapsed
+const RECONCILE_POLL_MS = 5 * 60_000;
+const FALLBACK_POLL_MS = 60_000;
+const AMBIENT_LIST_POLL_MS = 5 * 60_000; // realtime/notifications carry freshness; this is a safety net
 
 const initials = (name) =>
   String(name || "?")

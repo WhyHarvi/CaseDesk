@@ -34,9 +34,10 @@ import { NovaAssistantAvatar, NovaMessageContent, NovaProactiveInsight, NovaSugg
 import SupportDeskPanel from "../components/chat/SupportDeskPanel";
 import CommunicationComposer from "../components/case-profile/communication/CommunicationComposer";
 
-const RECONCILE_POLL_MS = 45_000; // realtime connected — safety net only
-const FALLBACK_POLL_MS = 10_000; // realtime not configured
-const LIST_POLL_MS = 30_000;
+const RECONCILE_POLL_MS = 5 * 60_000; // realtime connected — safety net only
+const FALLBACK_POLL_MS = 60_000; // realtime unavailable
+const EMAIL_DETAIL_POLL_MS = 2 * 60_000;
+const LIST_POLL_MS = 2 * 60_000;
 
 const CATEGORY_FILTERS = [
   { key: "teams", label: "Team" },
@@ -624,7 +625,9 @@ export default function ChatsPage() {
 
   useEffect(() => {
     if (!selectedId) return undefined;
-    const intervalMs = realtime?.configured ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
+    const intervalMs = selectedKind === "email"
+      ? EMAIL_DETAIL_POLL_MS
+      : realtime?.configured ? RECONCILE_POLL_MS : FALLBACK_POLL_MS;
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") {
         void loadDetail(selectedKind, selectedId, { silent: true });

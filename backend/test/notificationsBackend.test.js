@@ -102,6 +102,8 @@ test("notification policy groups incidents, separates actions, expires noise, an
   assert.match(scheduler, /resolveCompletedAndExpiredNotifications/);
   assert.match(scheduler, /NOTIFICATION_RESOLUTION_BATCH_SIZE/);
   assert.match(scheduler, /NOTIFICATION_ENTITY_RECHECK_MS/);
+  assert.match(scheduler, /NOTIFICATION_DEADLINE_SCAN_MS/);
+  assert.match(scheduler, /deadlineScanSkipped: true/);
   assert.match(scheduler, /notificationResolutionCursor/);
   assert.doesNotMatch(scheduler, /take:\s*2000/);
   assert.match(scheduler, /notificationId: \{ in: expiredIds \}/);
@@ -389,6 +391,8 @@ test("staff, case, and client sidebars consume one aggregated destination count 
   assert.match(controller, /attentionLevel: "action_required", readAt: null/);
   assert.match(controller, /attentionLevel: "update", readAt: null/);
   assert.match(controller, /focusRows/);
+  assert.match(controller, /SELECT DISTINCT ON \(destination_key\)/);
+  assert.doesNotMatch(controller, /distinct: \["destinationKey"\]/);
   assert.match(routes, /sidebar-counts/);
   assert.match(provider, /getSidebarNotificationCounts/);
   assert.match(provider, /acknowledgeDestination/);
@@ -403,6 +407,24 @@ test("staff, case, and client sidebars consume one aggregated destination count 
   assert.doesNotMatch(portalBottom, /animate-pulse|shadow-\[0_0_16px/);
   assert.match(caseTabs, /caseTabCounts/);
   assert.match(caseTabs, /acknowledgeDestination/);
+});
+
+test("communication refreshes use summary rows and low-frequency safety polling", async () => {
+  const [controller, chats, widget, workspace, notificationPolling] = await Promise.all([
+    source("../src/controllers/communicationController.js"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+    source("../../frontend/src/components/chat/FloatingChatWidget.jsx"),
+    source("../../frontend/src/components/case-profile/CommunicationWorkspace.jsx"),
+    source("../../frontend/src/services/notificationPolling.js"),
+  ]);
+  assert.match(controller, /const conversationListInclude =/);
+  assert.match(controller, /include: conversationListInclude/);
+  assert.match(controller, /_count: \{ select: \{ attachmentRecords: true \} \}/);
+  assert.match(chats, /const LIST_POLL_MS = 2 \* 60_000/);
+  assert.match(chats, /const EMAIL_DETAIL_POLL_MS = 2 \* 60_000/);
+  assert.match(widget, /const AMBIENT_LIST_POLL_MS = 5 \* 60_000/);
+  assert.match(workspace, /\}, 2 \* 60_000\);/);
+  assert.match(notificationPolling, /NOTIFICATION_POLL_MS = 5 \* 60_000/);
 });
 
 test("a client activating their portal account does not fire the admin-facing Settings notification", async () => {

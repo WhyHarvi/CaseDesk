@@ -130,6 +130,33 @@ function clean(value, max, fallback = "") {
     .slice(0, max);
 }
 
+// Inbox/list refreshes only need a preview. Selecting a whole
+// CommunicationMessage here pulled HTML bodies, transcripts, attachment JSON,
+// provider metadata, and every other scalar field across the DB connection on
+// each poll even though none of it is rendered in the list.
+const conversationListInclude = {
+  client: { select: { id: true, fullName: true, email: true, phone: true } },
+  case: { select: { id: true, caseType: true, stage: true, status: true } },
+  assignedTo: { select: userSelect },
+  createdBy: { select: userSelect },
+  messages: {
+    where: { deletedAt: null },
+    orderBy: { occurredAt: "desc" },
+    take: 1,
+    select: {
+      id: true,
+      direction: true,
+      status: true,
+      subject: true,
+      bodyText: true,
+      occurredAt: true,
+      senderUser: { select: userSelect },
+      _count: { select: { attachmentRecords: true } },
+    },
+  },
+  _count: { select: { messages: { where: { deletedAt: null } } } },
+};
+
 function jsonArray(value, limit = 50) {
   return Array.isArray(value) ? value.slice(0, limit) : [];
 }
@@ -683,7 +710,7 @@ export async function listCommunicationInbox(req, res) {
   const [data, total] = await Promise.all([
     prisma.communicationConversation.findMany({
       where,
-      include: conversationInclude,
+      include: conversationListInclude,
       orderBy,
       skip,
       take: limit,

@@ -12,6 +12,10 @@ import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
 import { reconcileMissingAppointmentPaymentAlerts } from "./bookingPaymentHoldService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
+const NOTIFICATION_DEADLINE_SCAN_MS = Math.max(
+  Number(process.env.NOTIFICATION_DEADLINE_SCAN_MS) || 10 * 60_000,
+  INTERVAL_MS,
+);
 const NOTIFICATION_RESOLUTION_BATCH_SIZE = Math.min(
   Math.max(Number(process.env.NOTIFICATION_RESOLUTION_BATCH_SIZE) || 250, 25),
   1_000,
@@ -23,6 +27,7 @@ const NOTIFICATION_ENTITY_RECHECK_MS = Math.max(
 let timer = null;
 let running = false;
 let nextEntityResolutionAt = 0;
+let nextDeadlineScanAt = 0;
 let notificationResolutionCursor = null;
 
 const isoKey = (value) => new Date(value).toISOString();
@@ -394,6 +399,10 @@ export async function runNotificationScheduler(now = new Date()) {
     const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
     await resolveCompletedAndExpiredNotifications(now);
     await reconcileMissingAppointmentPaymentAlerts();
+    if (now.getTime() < nextDeadlineScanAt) {
+      return { skipped: false, deadlineScanSkipped: true, completedAt: new Date() };
+    }
+    nextDeadlineScanAt = now.getTime() + NOTIFICATION_DEADLINE_SCAN_MS;
     await taskNotifications(now, horizon);
     await followUpNotifications(now, horizon);
     // Appointment confirmations and reminders already use the dedicated

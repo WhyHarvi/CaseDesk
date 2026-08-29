@@ -1,4 +1,6 @@
-export const NOTIFICATION_POLL_MS = 45_000;
+// Window focus and route-level refreshes carry the interactive path. This is
+// a low-frequency safety net, coordinated across tabs by the lease below.
+export const NOTIFICATION_POLL_MS = 5 * 60_000;
 export const NOTIFICATION_LEASE_TTL_MS = 2 * NOTIFICATION_POLL_MS + 5_000;
 
 export function notificationLeaseKey(scope = "session") {

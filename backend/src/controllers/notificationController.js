@@ -1,4 +1,5 @@
 import prisma from "../services/prisma/client.js";
+import { Prisma } from "@prisma/client";
 import { caseTabFromNotification, SIDEBAR_DESTINATIONS } from "../services/notificationService.js";
 import { reconcileNotificationAccessForUser } from "../services/notificationAccessService.js";
 import { hasPortalCapability, hasPortalPageAccess } from "../services/portalAccessService.js";
@@ -233,22 +234,29 @@ export async function getSidebarNotificationCounts(req, res) {
     prisma.notification.count({
       where: { ...where, attentionLevel: "action_required", readAt: null },
     }),
-    prisma.notification.findMany({
-      where: { ...where, readAt: null },
-      distinct: ["destinationKey"],
-      orderBy: [{ destinationKey: "asc" }, { lastOccurredAt: "desc" }],
-      select: {
-        destinationKey: true,
-        type: true,
-        title: true,
-        body: true,
-        actionUrl: true,
-        entityType: true,
-        entityId: true,
-        attentionLevel: true,
-        lastOccurredAt: true,
-      },
-    }),
+    // Prisma's `distinct` is applied in JavaScript for this shape, which made
+    // Postgres send every unread notification on every badge poll. DISTINCT
+    // ON keeps the same newest-per-destination result inside the database.
+    prisma.$queryRaw(Prisma.sql`
+      SELECT DISTINCT ON (destination_key)
+        destination_key AS "destinationKey",
+        type,
+        title,
+        body,
+        action_url AS "actionUrl",
+        entity_type AS "entityType",
+        entity_id AS "entityId",
+        attention_level AS "attentionLevel",
+        last_occurred_at AS "lastOccurredAt"
+      FROM notifications
+      WHERE agency_id = ${req.auth.agencyId}
+        AND recipient_user_id = ${req.auth.userId}
+        AND dismissed_at IS NULL
+        AND resolved_at IS NULL
+        AND read_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ${new Date()})
+      ORDER BY destination_key ASC, last_occurred_at DESC
+    `),
   ]);
   const destinations = {};
   for (const group of actionGroups) addCount(destinations, visibleSidebarDestination(group.destinationKey), "actions", group._count._all);

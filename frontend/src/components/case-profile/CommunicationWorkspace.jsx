@@ -857,7 +857,7 @@ export default function CommunicationWorkspace({ caseItem }) {
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") loadView({ silent: true });
-    }, 20000);
+    }, 2 * 60_000);
     return () => clearInterval(timer);
   }, [view, channel, status, search, inboxScope, caseItem.id]);
   useEffect(() => setSelected([]), [view, channel, status]);
