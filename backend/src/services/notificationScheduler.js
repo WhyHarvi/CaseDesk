@@ -10,6 +10,7 @@ import {
 } from "./notificationService.js";
 import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
 import { reconcileMissingAppointmentPaymentAlerts } from "./bookingPaymentHoldService.js";
+import { acquireWorkerLease } from "./workerLeaseService.js";
 
 const INTERVAL_MS = Math.max(Number(process.env.NOTIFICATION_SCHEDULER_INTERVAL_MS) || 60_000, 15_000);
 const NOTIFICATION_DEADLINE_SCAN_MS = Math.max(
@@ -24,6 +25,7 @@ const NOTIFICATION_ENTITY_RECHECK_MS = Math.max(
   Number(process.env.NOTIFICATION_ENTITY_RECHECK_MS) || 5 * 60_000,
   INTERVAL_MS,
 );
+const NOTIFICATION_SCHEDULER_LEASE_MS = Math.max(INTERVAL_MS * 3, 5 * 60_000);
 let timer = null;
 let running = false;
 let nextEntityResolutionAt = 0;
@@ -396,6 +398,15 @@ export async function runNotificationScheduler(now = new Date()) {
   if (running) return { skipped: true };
   running = true;
   try {
+    // Every application replica starts this worker. A database-backed lease
+    // makes exactly one replica perform each pass instead of multiplying all
+    // deadline scans and per-recipient dedupe checks by the replica count.
+    if (!await acquireWorkerLease("notification-scheduler", {
+      ttlMs: NOTIFICATION_SCHEDULER_LEASE_MS,
+      now,
+    })) {
+      return { skipped: true, reason: "distributed_lease" };
+    }
     const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60_000);
     await resolveCompletedAndExpiredNotifications(now);
     await reconcileMissingAppointmentPaymentAlerts();

@@ -3457,6 +3457,16 @@ model UnmatchedCommunication {
   @@map("unmatched_communications")
 }
 
+model WorkerLease {
+  leaseKey  String   @id @map("lease_key")
+  ownerId   String   @map("owner_id")
+  expiresAt DateTime @map("expires_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt])
+  @@map("worker_leases")
+}
+
 model CommunicationAuditEvent {
   id             String   @id @default(uuid())
   agencyId       String   @map("agency_id")

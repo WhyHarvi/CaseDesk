@@ -3,6 +3,7 @@ import { logger } from "./logger.js";
 import { notifyUsers, adminRecipientIds } from "./notificationService.js";
 import { recordCommunicationAudit } from "./communicationAudit.js";
 import { communicationResolutionDueAt, communicationResponseDueAt } from "./communicationSlaService.js";
+import { acquireWorkerLease } from "./workerLeaseService.js";
 
 // IRCC/RCIC portal correspondence about a client arrives addressed TO the
 // agency, never FROM the client — so the normal sender-address matching in
@@ -160,6 +161,10 @@ export async function autoLinkUciMatchedCommunications() {
   if (running) return 0;
   running = true;
   try {
+    // This worker starts in every backend replica. Without a shared lease,
+    // every deployment instance independently walked the entire unresolved
+    // backlog on startup and once per hour.
+    if (!await acquireWorkerLease("uci-communication-matching", { ttlMs: POLL_MS + 5 * 60_000 })) return 0;
     let linked = 0;
     // This is a shared, multi-tenant table — the unresolved-email backlog
     // is not scoped to one agency, and a fixed single-page, oldest-first
@@ -179,10 +184,31 @@ export async function autoLinkUciMatchedCommunications() {
         orderBy: { id: "asc" },
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         take: BATCH_SIZE,
+        // UCI detection only needs these three columns. In particular, never
+        // transfer the provider payload for every unresolved email just to run a regex.
+        select: { id: true, subject: true, bodyText: true },
       });
       if (!page.length) break;
       for (const candidate of page) {
-        const didLink = await linkOne(candidate).catch((error) => {
+        const uci = extractUci(candidate.subject) || extractUci(candidate.bodyText);
+        if (!uci) continue;
+        const unmatched = await prisma.unmatchedCommunication.findUnique({
+          where: { id: candidate.id },
+          select: {
+            id: true,
+            agencyId: true,
+            channel: true,
+            provider: true,
+            providerMessageId: true,
+            senderAddress: true,
+            recipients: true,
+            subject: true,
+            bodyText: true,
+            occurredAt: true,
+          },
+        });
+        if (!unmatched) continue;
+        const didLink = await linkOne(unmatched).catch((error) => {
           logger.warn("uci_match.link_failed", { unmatchedId: candidate.id, reason: error.message });
           return false;
         });

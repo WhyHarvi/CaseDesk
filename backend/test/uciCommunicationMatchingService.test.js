@@ -89,3 +89,12 @@ test("the matching pass paginates through the whole unresolved backlog every run
   assert.match(fn, /if \(!page\.length\) break;/);
   assert.match(fn, /cursor = page\.at\(-1\)\.id;/);
 });
+
+test("the matching pass is cross-replica safe and does not fetch raw provider payloads while scanning", async () => {
+  const service = await source("../src/services/uciCommunicationMatchingService.js");
+  const fn = service.slice(service.indexOf("export async function autoLinkUciMatchedCommunications"), service.indexOf("export function startUciCommunicationMatchingWorker"));
+  assert.match(fn, /acquireWorkerLease\("uci-communication-matching"/);
+  assert.match(fn, /select: \{ id: true, subject: true, bodyText: true \}/);
+  assert.doesNotMatch(fn.slice(fn.indexOf("const page ="), fn.indexOf("for (const candidate")), /rawPayload|recipients|senderAddress/);
+  assert.match(fn, /prisma\.unmatchedCommunication\.findUnique/);
+});

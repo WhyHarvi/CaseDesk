@@ -105,6 +105,8 @@ test("notification policy groups incidents, separates actions, expires noise, an
   assert.match(scheduler, /NOTIFICATION_DEADLINE_SCAN_MS/);
   assert.match(scheduler, /deadlineScanSkipped: true/);
   assert.match(scheduler, /notificationResolutionCursor/);
+  assert.match(scheduler, /acquireWorkerLease\("notification-scheduler"/);
+  assert.match(schema, /model WorkerLease/);
   assert.doesNotMatch(scheduler, /take:\s*2000/);
   assert.match(scheduler, /notificationId: \{ in: expiredIds \}/);
   assert.match(booking, /kind === "attended"/);
