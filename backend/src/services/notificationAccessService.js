@@ -182,6 +182,28 @@ export function notificationAllowedForMembership(
   return audienceAllowed && destinationAllowed(access, destinationKey);
 }
 
+// Pure decision step shared by both the per-call query path below and the
+// batched scheduler path in notificationService.js's notifyUsers(): given
+// recipient candidates and their already-loaded (agency-scoped) membership
+// row, decide who is eligible. Keeping this as the single place the
+// eligibility rule is applied means the batched path can never silently
+// drift from the per-call query path — there is exactly one definition of
+// "eligible", just two different ways of sourcing the membership data it
+// reads.
+export function resolveEligibleRecipientIdsFromMemberships({
+  recipientIds,
+  membershipsByUserId,
+  notification,
+}) {
+  const uniqueIds = [...new Set((recipientIds || []).filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  return uniqueIds.filter((id) => {
+    const membership = membershipsByUserId?.get(id);
+    if (!membership) return false;
+    return notificationAllowedForMembership(membership, notification);
+  });
+}
+
 export async function eligibleNotificationRecipientIds({
   agencyId,
   recipientIds,
@@ -205,11 +227,47 @@ export async function eligibleNotificationRecipientIds({
       },
     },
   });
-  return users
-    .filter((user) =>
-      notificationAllowedForMembership(user.memberships[0], notification),
-    )
-    .map((user) => user.id);
+  const membershipsByUserId = new Map(users.map((user) => [user.id, user.memberships[0]]));
+  return resolveEligibleRecipientIdsFromMemberships({
+    recipientIds: uniqueIds,
+    membershipsByUserId,
+    notification,
+  });
+}
+
+// Batches the exact same active-user/active-membership query above across
+// every agency touched in a scheduler pass, instead of once per candidate.
+// `recipientIdsByAgency` is a Map<agencyId, Iterable<userId>> covering the
+// raw (pre-dedupe) candidate recipients the pass intends to notify —
+// including any resolved fallback-admin ids — so the returned map is a safe
+// superset for every notifyUsers() call made during that pass.
+export async function loadEligibleMembershipsByAgency(recipientIdsByAgency) {
+  const result = new Map();
+  for (const [agencyId, ids] of recipientIdsByAgency || []) {
+    const uniqueIds = [...new Set([...(ids || [])].filter(Boolean))];
+    if (!uniqueIds.length) {
+      result.set(agencyId, new Map());
+      continue;
+    }
+    const users = await prisma.user.findMany({
+      where: {
+        id: { in: uniqueIds },
+        agencyId,
+        status: "active",
+        memberships: { some: { agencyId, isActive: true } },
+      },
+      select: {
+        id: true,
+        memberships: {
+          where: { agencyId, isActive: true },
+          select: { role: true, permissions: true },
+          take: 1,
+        },
+      },
+    });
+    result.set(agencyId, new Map(users.map((user) => [user.id, user.memberships[0]])));
+  }
+  return result;
 }
 
 const accessReconciliationCache = new Map();

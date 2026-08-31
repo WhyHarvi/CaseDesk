@@ -44,7 +44,10 @@ test("web push: schema, service, and delivery-channel wiring", async () => {
   // way in_app/email/sms have, and it applies whether channels was
   // explicitly passed by the call site or derived from preferences.
   assert.match(notificationService, /import \{ hasPushSubscription \} from "\.\/webPushService\.js";/);
-  assert.match(notificationService, /const pushSubscribedUserIds = await hasPushSubscription\(validIds\);/);
+  // The scheduler's batched pass supplies push-subscription status via
+  // `precomputed` instead of querying per candidate; every other call site
+  // (no `precomputed`) still hits hasPushSubscription directly, unchanged.
+  assert.match(notificationService, /: await hasPushSubscription\(validIds\);/);
   assert.match(notificationService, /if \(pushSubscribedUserIds\.has\(recipientUserId\) && !enabledChannels\.includes\("push"\)\)/);
 });
 

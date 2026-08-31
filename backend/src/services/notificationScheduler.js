@@ -6,8 +6,11 @@ import {
   caseNotificationActionUrl,
   clientRecipientIds,
   internalCaseRecipientIds,
+  loadNotificationPreferencesByUser,
   notifyUsers,
 } from "./notificationService.js";
+import { loadEligibleMembershipsByAgency } from "./notificationAccessService.js";
+import { hasPushSubscription } from "./webPushService.js";
 import { queueDirectFollowUpEmail } from "./followUpClientReminderService.js";
 import { reconcileMissingAppointmentPaymentAlerts } from "./bookingPaymentHoldService.js";
 import { acquireWorkerLease } from "./workerLeaseService.js";
@@ -36,6 +39,89 @@ const isoKey = (value) => new Date(value).toISOString();
 const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]);
+
+// Each scheduler pass builds one of these. It exists to fold the
+// fallback-admin lookup into the same "resolve once per agency per pass"
+// batching as the three hot notifyUsers() queries below — several
+// candidate loops fall back to the agency's admins when a candidate has no
+// otherwise-eligible recipient, and previously each of those fallbacks ran
+// its own fresh prisma.user.findMany, sometimes more than once for the same
+// agency within a single pass (see communicationSlaNotifications, which
+// could call it twice for one conversation).
+// loadAdminRecipientIds is overridable purely for testing this memoization
+// with a fake counter instead of a live database — production always uses
+// the real adminRecipientIds.
+export function createSchedulerPassContext({ loadAdminRecipientIds = adminRecipientIds } = {}) {
+  const adminIdsByAgency = new Map();
+  return {
+    async cachedAdminRecipientIds(agencyId) {
+      if (!adminIdsByAgency.has(agencyId)) {
+        adminIdsByAgency.set(agencyId, await loadAdminRecipientIds(agencyId));
+      }
+      return adminIdsByAgency.get(agencyId);
+    },
+  };
+}
+
+// Pure grouping step, exported so its call-count/shape behavior (one bucket
+// per agency touched by the pass, one flat set of user ids overall) is
+// directly testable without a database — this is the structural reason the
+// three hot queries below become O(agencies-with-candidates) instead of
+// O(candidates).
+export function groupRecipientIdsForDispatch(jobs) {
+  const recipientIdsByAgency = new Map();
+  const allUserIds = new Set();
+  for (const job of jobs || []) {
+    if (!job.agencyId) continue;
+    const set = recipientIdsByAgency.get(job.agencyId) || new Set();
+    for (const recipientId of job.recipientIds || []) {
+      if (!recipientId) continue;
+      set.add(recipientId);
+      allUserIds.add(recipientId);
+    }
+    recipientIdsByAgency.set(job.agencyId, set);
+  }
+  return { recipientIdsByAgency, allUserIds };
+}
+
+// Candidate loops below no longer call notifyUsers() directly. Instead they
+// resolve recipients exactly as before (including the per-pass admin
+// fallback above) and collect a plain job object per notifyUsers() call.
+// Once every loop has finished collecting for this pass, dispatchNotificationJobs
+// resolves membership eligibility, preferences, and push-subscription status
+// once — grouped by agency where that scoping matters, globally where it
+// doesn't (see notificationAccessService.js / notificationService.js) —
+// and only then calls the real notifyUsers() for each job, passing that
+// pass-scoped data through the `precomputed` parameter so no per-candidate
+// query is repeated.
+//
+// The loaders/notify are overridable (defaulting to the real
+// implementations) purely so tests can assert call counts and wiring with
+// fakes instead of a live database — production callers never pass these.
+export async function dispatchNotificationJobs(jobs, {
+  loadMembershipsByAgency = loadEligibleMembershipsByAgency,
+  loadPreferencesByUser = loadNotificationPreferencesByUser,
+  loadPushSubscribedUserIds = hasPushSubscription,
+  notify = notifyUsers,
+} = {}) {
+  if (!jobs.length) return;
+  const { recipientIdsByAgency, allUserIds } = groupRecipientIdsForDispatch(jobs);
+  const [membershipsByAgency, preferencesByUserId, pushSubscribedUserIds] = await Promise.all([
+    loadMembershipsByAgency(recipientIdsByAgency),
+    loadPreferencesByUser([...allUserIds]),
+    loadPushSubscribedUserIds([...allUserIds]),
+  ]);
+  for (const job of jobs) {
+    await notify({
+      ...job,
+      precomputed: {
+        membershipsByUserId: membershipsByAgency.get(job.agencyId) || new Map(),
+        preferencesByUserId,
+        pushSubscribedUserIds,
+      },
+    });
+  }
+}
 
 function localClock(now, timezone) {
   const parts = Object.fromEntries(
@@ -111,18 +197,19 @@ async function sendDailyDigests(now) {
   }
 }
 
-async function taskNotifications(now, horizon) {
+async function taskNotifications(now, horizon, pass) {
   const tasks = await prisma.caseWorkflowStep.findMany({
     where: { isActive: true, status: "Pending", dueAt: { not: null, lte: horizon } },
     take: 500,
     select: { id: true, agencyId: true, caseId: true, assignedToId: true, title: true, dueAt: true },
   });
+  const jobs = [];
   for (const task of tasks) {
     const overdue = task.dueAt < now;
     const recipients = task.assignedToId ? [task.assignedToId] : await internalCaseRecipientIds(task.agencyId, task.caseId);
-    await notifyUsers({
+    jobs.push({
       agencyId: task.agencyId,
-      recipientIds: recipients.length ? recipients : await adminRecipientIds(task.agencyId),
+      recipientIds: recipients.length ? recipients : await pass.cachedAdminRecipientIds(task.agencyId),
       type: overdue ? "task.overdue" : "task.due_soon",
       category: "work",
       title: overdue ? `Overdue task: ${task.title}` : `Task due soon: ${task.title}`,
@@ -136,9 +223,10 @@ async function taskNotifications(now, horizon) {
       attentionLevel: overdue ? "action_required" : "update",
     });
   }
+  return jobs;
 }
 
-async function followUpNotifications(now, horizon) {
+async function followUpNotifications(now, horizon, pass) {
   const followUps = await prisma.followUp.findMany({
     where: {
       status: "Pending",
@@ -156,6 +244,7 @@ async function followUpNotifications(now, horizon) {
       client: { select: { email: true } },
     },
   });
+  const jobs = [];
   for (const item of followUps) {
     const milestone = item.dueDate && item.dueDate < now
       ? "overdue"
@@ -164,8 +253,8 @@ async function followUpNotifications(now, horizon) {
         : "due";
     const recipients = item.assignedUserId
       ? [item.assignedUserId]
-      : item.caseId ? await internalCaseRecipientIds(item.agencyId, item.caseId) : await adminRecipientIds(item.agencyId);
-    await notifyUsers({
+      : item.caseId ? await internalCaseRecipientIds(item.agencyId, item.caseId) : await pass.cachedAdminRecipientIds(item.agencyId);
+    jobs.push({
       agencyId: item.agencyId,
       recipientIds: recipients,
       type: `follow_up.${milestone}`,
@@ -185,7 +274,7 @@ async function followUpNotifications(now, horizon) {
     if (item.notifyClient && item.clientId) {
       const channels = item.notificationChannels?.length ? item.notificationChannels : ["in_app"];
       const portalRecipientIds = await clientRecipientIds(item.agencyId, item.clientId);
-      await notifyUsers({
+      jobs.push({
         agencyId: item.agencyId,
         recipientIds: portalRecipientIds,
         type: `client_reminder.${milestone}`,
@@ -211,6 +300,7 @@ async function followUpNotifications(now, horizon) {
       }
     }
   }
+  return jobs;
 }
 
 export async function resolveCompletedAndExpiredNotifications(now = new Date()) {
@@ -295,9 +385,10 @@ async function documentNotifications(now, horizon) {
     take: 500,
     select: { id: true, agencyId: true, clientId: true, caseId: true, documentName: true, dueAt: true },
   });
+  const jobs = [];
   for (const item of documents) {
     const overdue = item.dueAt < now;
-    await notifyUsers({
+    jobs.push({
       agencyId: item.agencyId,
       recipientIds: await clientRecipientIds(item.agencyId, item.clientId),
       type: overdue ? "document.overdue" : "document.due_soon",
@@ -313,6 +404,7 @@ async function documentNotifications(now, horizon) {
       attentionLevel: overdue ? "action_required" : "update",
     });
   }
+  return jobs;
 }
 
 async function questionnaireNotifications(now, horizon) {
@@ -321,9 +413,10 @@ async function questionnaireNotifications(now, horizon) {
     take: 500,
     select: { id: true, agencyId: true, clientId: true, name: true, dueAt: true },
   });
+  const jobs = [];
   for (const item of assignments) {
     const overdue = item.dueAt < now;
-    await notifyUsers({
+    jobs.push({
       agencyId: item.agencyId,
       recipientIds: await clientRecipientIds(item.agencyId, item.clientId),
       type: overdue ? "questionnaire.overdue" : "questionnaire.due_soon",
@@ -339,6 +432,7 @@ async function questionnaireNotifications(now, horizon) {
       attentionLevel: overdue ? "action_required" : "update",
     });
   }
+  return jobs;
 }
 
 async function leadNotifications(now, horizon) {
@@ -348,36 +442,39 @@ async function leadNotifications(now, horizon) {
     prisma.lead.findMany({ where: { status: { in: ["OPEN", "NURTURE"] }, ...leadSegmentWhere(), OR: [{ firstContactDueAt: { lte: horizon }, firstContactAt: null }, { nextActionAt: { lte: horizon } }, { nurtureUntil: { lte: now } }] }, take: 500, select: { id: true, agencyId: true, leadNumber: true, ownerUserId: true, nextActionOwnerId: true, firstContactDueAt: true, firstContactAt: true, nextActionAt: true, nurtureUntil: true } }),
     prisma.leadConsultation.findMany({ where: { status: { in: ["SCHEDULED", "CONFIRMED", "RESCHEDULED"] }, startAt: { gt: now, lte: consultationHorizon }, lead: leadSegmentWhere() }, take: 500, select: { id: true, agencyId: true, leadId: true, consultantUserId: true, startAt: true } }),
   ]);
+  const jobs = [];
   for (const item of followUps) {
     const overdue = item.dueAt < now;
-    await notifyUsers({ agencyId: item.agencyId, recipientIds: [item.assignedUserId], type: overdue ? "lead.follow_up_overdue" : "lead.follow_up_due", category: "leads", title: overdue ? "Lead follow-up overdue" : "Lead follow-up due soon", body: item.description, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: item.leadId, actionUrl: "/leads", dedupeKey: `lead-follow-up:${item.id}:${overdue ? "overdue" : "due"}:${isoKey(item.dueAt)}`, scheduledFor: overdue ? null : item.dueAt, attentionLevel: overdue ? "action_required" : "update" });
+    jobs.push({ agencyId: item.agencyId, recipientIds: [item.assignedUserId], type: overdue ? "lead.follow_up_overdue" : "lead.follow_up_due", category: "leads", title: overdue ? "Lead follow-up overdue" : "Lead follow-up due soon", body: item.description, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: item.leadId, actionUrl: "/leads", dedupeKey: `lead-follow-up:${item.id}:${overdue ? "overdue" : "due"}:${isoKey(item.dueAt)}`, scheduledFor: overdue ? null : item.dueAt, attentionLevel: overdue ? "action_required" : "update" });
   }
   for (const lead of leads) {
     const recipientIds = [lead.nextActionOwnerId || lead.ownerUserId];
     if (!lead.firstContactAt && lead.firstContactDueAt && lead.firstContactDueAt <= horizon) {
       const overdue = lead.firstContactDueAt < now;
-      await notifyUsers({ agencyId: lead.agencyId, recipientIds, type: overdue ? "lead.first_response_breached" : "lead.first_response_due", category: "leads", title: `${lead.leadNumber}: first response ${overdue ? "overdue" : "due soon"}`, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:first-response:${overdue ? "overdue" : "due"}:${isoKey(lead.firstContactDueAt)}`, scheduledFor: overdue ? null : lead.firstContactDueAt, attentionLevel: overdue ? "action_required" : "update" });
+      jobs.push({ agencyId: lead.agencyId, recipientIds, type: overdue ? "lead.first_response_breached" : "lead.first_response_due", category: "leads", title: `${lead.leadNumber}: first response ${overdue ? "overdue" : "due soon"}`, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:first-response:${overdue ? "overdue" : "due"}:${isoKey(lead.firstContactDueAt)}`, scheduledFor: overdue ? null : lead.firstContactDueAt, attentionLevel: overdue ? "action_required" : "update" });
     }
     if (lead.nextActionAt && lead.nextActionAt <= horizon) {
       const overdue = lead.nextActionAt < now;
-      await notifyUsers({ agencyId: lead.agencyId, recipientIds, type: overdue ? "lead.next_action_overdue" : "lead.next_action_due", category: "leads", title: `${lead.leadNumber}: next action ${overdue ? "overdue" : "due soon"}`, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:next-action:${overdue ? "overdue" : "due"}:${isoKey(lead.nextActionAt)}`, scheduledFor: overdue ? null : lead.nextActionAt, attentionLevel: overdue ? "action_required" : "update" });
+      jobs.push({ agencyId: lead.agencyId, recipientIds, type: overdue ? "lead.next_action_overdue" : "lead.next_action_due", category: "leads", title: `${lead.leadNumber}: next action ${overdue ? "overdue" : "due soon"}`, severity: overdue ? "critical" : "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:next-action:${overdue ? "overdue" : "due"}:${isoKey(lead.nextActionAt)}`, scheduledFor: overdue ? null : lead.nextActionAt, attentionLevel: overdue ? "action_required" : "update" });
     }
     if (lead.nurtureUntil && lead.nurtureUntil <= now) {
-      await notifyUsers({ agencyId: lead.agencyId, recipientIds: [lead.ownerUserId], type: "lead.nurture_due", category: "leads", title: `${lead.leadNumber} is ready for reactivation`, severity: "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:nurture:${isoKey(lead.nurtureUntil)}` });
+      jobs.push({ agencyId: lead.agencyId, recipientIds: [lead.ownerUserId], type: "lead.nurture_due", category: "leads", title: `${lead.leadNumber} is ready for reactivation`, severity: "warning", entityType: "lead", entityId: lead.id, actionUrl: "/leads", dedupeKey: `lead:${lead.id}:nurture:${isoKey(lead.nurtureUntil)}` });
     }
   }
   for (const item of consultations) {
     const milestone = item.startAt.getTime() - now.getTime() <= 60 * 60_000 ? "1h" : "24h";
-    await notifyUsers({ agencyId: item.agencyId, recipientIds: [item.consultantUserId], type: "lead.consultation_reminder", category: "leads", title: `Lead consultation starts ${milestone === "1h" ? "within an hour" : "within 24 hours"}`, body: item.startAt.toISOString(), severity: "warning", entityType: "lead", entityId: item.leadId, actionUrl: "/leads", dedupeKey: `lead-consultation:${item.id}:${milestone}:${isoKey(item.startAt)}`, attentionLevel: "update" });
+    jobs.push({ agencyId: item.agencyId, recipientIds: [item.consultantUserId], type: "lead.consultation_reminder", category: "leads", title: `Lead consultation starts ${milestone === "1h" ? "within an hour" : "within 24 hours"}`, body: item.startAt.toISOString(), severity: "warning", entityType: "lead", entityId: item.leadId, actionUrl: "/leads", dedupeKey: `lead-consultation:${item.id}:${milestone}:${isoKey(item.startAt)}`, attentionLevel: "update" });
   }
+  return jobs;
 }
 
-async function communicationSlaNotifications(now, horizon) {
+async function communicationSlaNotifications(now, horizon, pass) {
   const conversations = await prisma.communicationConversation.findMany({
     where: { state: { in: ["Open", "WaitingOnAgency"] }, deletedAt: null, OR: [{ responseDueAt: { not: null, lte: horizon } }, { resolutionDueAt: { not: null, lte: horizon } }] },
     take: 500,
     select: { id: true, agencyId: true, clientId: true, caseId: true, assignedToId: true, subject: true, responseDueAt: true, resolutionDueAt: true },
   });
+  const jobs = [];
   for (const item of conversations) {
     const recipients = item.assignedToId ? [item.assignedToId] : await internalCaseRecipientIds(item.agencyId, item.caseId);
     for (const [kind, dueAt] of [["response", item.responseDueAt], ["resolution", item.resolutionDueAt]]) {
@@ -389,9 +486,10 @@ async function communicationSlaNotifications(now, horizon) {
       const actionUrl = item.caseId
         ? caseNotificationActionUrl(item.caseId, { type, category: "communications" })
         : `/app/clients/${item.clientId}?conversation=${encodeURIComponent(item.id)}`;
-      await notifyUsers({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(item.agencyId), type, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl, dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
+      jobs.push({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await pass.cachedAdminRecipientIds(item.agencyId), type, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl, dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
     }
   }
+  return jobs;
 }
 
 export async function runNotificationScheduler(now = new Date()) {
@@ -414,15 +512,27 @@ export async function runNotificationScheduler(now = new Date()) {
       return { skipped: false, deadlineScanSkipped: true, completedAt: new Date() };
     }
     nextDeadlineScanAt = now.getTime() + NOTIFICATION_DEADLINE_SCAN_MS;
-    await taskNotifications(now, horizon);
-    await followUpNotifications(now, horizon);
-    // Appointment confirmations and reminders already use the dedicated
-    // booking email/SMS pipeline. The reconciliation above is only for the
-    // staff-facing billing exception, not a duplicate client reminder.
-    await documentNotifications(now, horizon);
-    await questionnaireNotifications(now, horizon);
-    await leadNotifications(now, horizon);
-    await communicationSlaNotifications(now, horizon);
+    // Every candidate loop below only *collects* the notifyUsers() jobs it
+    // would previously have fired immediately — recipient resolution
+    // (assignee lookups, internalCaseRecipientIds, clientRecipientIds, and
+    // the per-pass admin fallback) still happens exactly as before, per
+    // candidate. Once every loop has finished, dispatchNotificationJobs
+    // resolves membership eligibility, preferences, and push-subscription
+    // status once for the whole pass and only then creates the actual
+    // notifications — see dispatchNotificationJobs above for why.
+    const pass = createSchedulerPassContext();
+    const jobs = [
+      ...(await taskNotifications(now, horizon, pass)),
+      ...(await followUpNotifications(now, horizon, pass)),
+      // Appointment confirmations and reminders already use the dedicated
+      // booking email/SMS pipeline. The reconciliation above is only for the
+      // staff-facing billing exception, not a duplicate client reminder.
+      ...(await documentNotifications(now, horizon)),
+      ...(await questionnaireNotifications(now, horizon)),
+      ...(await leadNotifications(now, horizon)),
+      ...(await communicationSlaNotifications(now, horizon, pass)),
+    ];
+    await dispatchNotificationJobs(jobs);
     await sendDailyDigests(now);
     return { skipped: false, completedAt: new Date() };
   } finally {

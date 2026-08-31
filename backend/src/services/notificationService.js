@@ -3,6 +3,7 @@ import {
   eligibleNotificationRecipientIds,
   notificationAudienceKey,
   NOTIFICATION_AUDIENCES,
+  resolveEligibleRecipientIdsFromMemberships,
 } from "./notificationAccessService.js";
 import { hasPushSubscription } from "./webPushService.js";
 
@@ -360,6 +361,41 @@ async function preferencesFor(agencyId, recipientIds, category) {
   return result;
 }
 
+// Pure "pick the right preference row" step shared by the batched scheduler
+// path: given every preference row a user has (across all categories, not
+// just the two this particular call cares about), resolve the same
+// exact-category-beats-"all" winner that preferencesFor() above resolves
+// per call. Kept pure/exported so it is testable without a live database.
+export function resolvePreferencesFromMap(recipientIds, preferencesByUserId, category) {
+  const result = new Map();
+  for (const userId of recipientIds || []) {
+    const byCategory = preferencesByUserId?.get(userId);
+    if (!byCategory) continue;
+    const preference = byCategory.get(category) || byCategory.get("all");
+    if (preference) result.set(userId, preference);
+  }
+  return result;
+}
+
+// Batches notification-preference lookups across an entire scheduler pass.
+// NotificationPreference's uniqueness constraint is (userId, category), not
+// agency scoped (see prisma/schema.prisma), so this intentionally queries by
+// the global set of user ids touched in the pass rather than splitting per
+// agency the way membership eligibility must be.
+export async function loadNotificationPreferencesByUser(userIds) {
+  const uniqueIds = [...new Set((userIds || []).filter(Boolean))];
+  if (!uniqueIds.length) return new Map();
+  const rows = await prisma.notificationPreference.findMany({
+    where: { userId: { in: uniqueIds } },
+  });
+  const byUser = new Map();
+  for (const row of rows) {
+    if (!byUser.has(row.userId)) byUser.set(row.userId, new Map());
+    byUser.get(row.userId).set(row.category, row);
+  }
+  return byUser;
+}
+
 export async function notifyUsers({
   agencyId,
   recipientIds,
@@ -382,6 +418,16 @@ export async function notifyUsers({
   aggregate = false,
   expiresAt = undefined,
   audienceKey = null,
+  // Optional pass-scoped bundle produced by a batching caller (today, only
+  // the notification scheduler — see notificationScheduler.js's
+  // dispatchNotificationJobs) so the three hot per-call queries below
+  // (membership eligibility, preferences, push-subscription status) can be
+  // resolved from already-loaded in-memory data instead of hitting the
+  // database again for every candidate. When omitted (every other one of
+  // this function's ~40+ call sites), behavior is byte-for-byte identical
+  // to before: each of the three lookups runs its own query exactly as it
+  // always has.
+  precomputed = null,
 }) {
   const uniqueRecipients = [...new Set((recipientIds || []).filter(Boolean))]
     .filter((id) => includeActor || id !== actorUserId);
@@ -430,31 +476,42 @@ export async function notifyUsers({
     destinationKey: resolvedDestinationKey,
     metadata,
   });
-  const validIds = await eligibleNotificationRecipientIds({
-    agencyId,
-    recipientIds: candidateRecipients,
-    notification: {
-      audienceKey: resolvedAudienceKey,
-      type,
-      category,
-      actionUrl,
-      destinationKey: resolvedDestinationKey,
-      metadata,
-    },
-  });
+  const notificationForEligibility = {
+    audienceKey: resolvedAudienceKey,
+    type,
+    category,
+    actionUrl,
+    destinationKey: resolvedDestinationKey,
+    metadata,
+  };
+  const validIds = precomputed
+    ? resolveEligibleRecipientIdsFromMemberships({
+        recipientIds: candidateRecipients,
+        membershipsByUserId: precomputed.membershipsByUserId,
+        notification: notificationForEligibility,
+      })
+    : await eligibleNotificationRecipientIds({
+        agencyId,
+        recipientIds: candidateRecipients,
+        notification: notificationForEligibility,
+      });
   const storedMetadata = {
     ...(metadata && typeof metadata === "object" && !Array.isArray(metadata)
       ? metadata
       : {}),
     notificationAudience: resolvedAudienceKey,
   };
-  const preferences = await preferencesFor(agencyId, validIds, category);
+  const preferences = precomputed
+    ? resolvePreferencesFromMap(validIds, precomputed.preferencesByUserId, category)
+    : await preferencesFor(agencyId, validIds, category);
   // Subscribing IS the opt-in — there's no separate "push enabled" toggle
   // to check the way in_app/email/sms have. A recipient with an active
   // browser subscription gets push for anything they'd otherwise be
   // notified about, whether channels was explicitly passed by the caller
   // or derived from preferences below.
-  const pushSubscribedUserIds = await hasPushSubscription(validIds);
+  const pushSubscribedUserIds = precomputed
+    ? new Set(validIds.filter((id) => precomputed.pushSubscribedUserIds.has(id)))
+    : await hasPushSubscription(validIds);
   const created = [];
 
   for (const recipientUserId of validIds) {
