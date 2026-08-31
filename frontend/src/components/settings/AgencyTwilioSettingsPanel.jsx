@@ -800,7 +800,7 @@ export default function AgencyTwilioSettingsPanel() {
                       <div>
                         <p className="text-sm font-semibold text-slate-900">Voice lines</p>
                         <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">
-                          Choose who rings each number — frontdesk, everyone, specific teammates, or the internal line — and which one is the default outbound caller ID.
+                          Choose who receives inbound calls on each number, then select one default outbound caller ID. Assigning specific teammates does not change the number they call from.
                         </p>
                       </div>
                       <button type="button" disabled={numbersLoading || linesLoading || !form.canManage} onClick={loadNumbers} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">

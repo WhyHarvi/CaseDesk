@@ -106,10 +106,6 @@ export async function twilioVoiceConnectionStatus(agencyId) {
 
 export async function issueTwilioAccessToken(agencyId, userId) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId);
-  const directLine = await prisma.agencyTwilioVoiceLine.findFirst({
-    where: { agencyId, routing: "DIRECT", enabled: true, assignments: { some: { userId } } },
-    select: { phoneNumber: true },
-  });
   const AccessToken = twilio.jwt.AccessToken;
   const VoiceGrant = AccessToken.VoiceGrant;
   const identity = clientIdentity(userId);
@@ -126,7 +122,7 @@ export async function issueTwilioAccessToken(agencyId, userId) {
     token: token.toJwt(),
     identity,
     accountSid: config.accountSid,
-    voiceNumber: directLine?.phoneNumber || config.voiceNumber,
+    voiceNumber: config.voiceNumber,
     outboundReady: Boolean(config.twimlAppSid),
     expiresIn: 3600,
   };
@@ -417,10 +413,9 @@ export async function outboundTwiML(agencyId, req) {
   // them together so the TwiML webhook can tell Twilio where to dial without
   // paying for two sequential database round trips on every call.
   const agentIdentity = identityFromClient(req.body?.From);
-  const [config, internalLine, directLine] = await Promise.all([
+  const [config, internalLine] = await Promise.all([
     resolveAgencyTwilioVoiceConfig(agencyId, { optional: true }),
     prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "INTERNAL", enabled: true } }),
-    agentIdentity ? prisma.agencyTwilioVoiceLine.findFirst({ where: { agencyId, routing: "DIRECT", enabled: true, assignments: { some: { userId: agentIdentity } } } }) : null,
   ]);
   if (!config) return `<Response><Say voice="alice" language="en-US">Calling is not configured. Please contact your administrator.</Say></Response>`;
   const toRaw = clean(req.body?.To, 40);
@@ -471,7 +466,11 @@ export async function outboundTwiML(agencyId, req) {
   // real dialed number rides along as `dialedNumber` since the action
   // request's own To/From describe the leg executing the Dial (the agent's
   // Client→Application leg), not the number actually dialed.
-  const outboundCallerId = directLine?.phoneNumber || config.voiceNumber;
+  // Line routing controls who receives inbound calls. It must not silently
+  // override the administrator's explicit default outbound caller ID for an
+  // assigned staff member; every external call uses the configured primary
+  // voice number.
+  const outboundCallerId = config.voiceNumber;
   return `<Response><Dial callerId="${escapeXml(outboundCallerId)}" timeout="30" answerOnBridge="true" action="${escapeXml(statusBase)}" method="POST"><Number statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${to}</Number></Dial></Response>`;
 }
 

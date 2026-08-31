@@ -123,8 +123,11 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(service, /if \(line\.routing === "FRONTDESK"\) roles = \["frontdesk"\];/);
   assert.match(service, /if \(line\.routing === "DIRECT"\)/);
   assert.match(service, /assignedUserIds = assignees\.map/);
-  assert.match(service, /assignments: \{ some: \{ userId: agentIdentity \} \}/);
-  assert.match(service, /const outboundCallerId = directLine\?\.phoneNumber \|\| config\.voiceNumber/);
+  // DIRECT assignment is inbound routing only. It must never silently
+  // replace the administrator-selected default outbound caller ID.
+  assert.doesNotMatch(service, /assignments: \{ some: \{ userId: agentIdentity \} \}/);
+  assert.match(service, /const outboundCallerId = config\.voiceNumber/);
+  assert.match(service, /voiceNumber: config\.voiceNumber/);
   // Dialing the internal office line rings the whole team instead of an
   // external number; transfers ring the target agent's softphone directly.
   assert.match(service, /routing: "INTERNAL", enabled: true/);
@@ -367,7 +370,8 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(panel, /ToggleGroupItem value="INTERNAL">Internal</);
   assert.match(panel, /function StaffAssignCombobox/);
   assert.match(panel, /assignedUserIds/);
-  assert.match(panel, /Choose who rings each number/);
+  assert.match(panel, /Choose who receives inbound calls on each number/);
+  assert.match(panel, /Assigning specific teammates does not change the number they call from/);
   // Which number is the default outbound caller ID is an explicit, per-line
   // action now (setPrimaryTwilioVoiceLine on the backend), not just an
   // accident of creation/deletion order.
