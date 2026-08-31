@@ -8,6 +8,8 @@ import {
 } from "../services/communicationSlaService.js";
 import { createHttpError } from "../utils/http.js";
 import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
+import { linkOne } from "../services/uciCommunicationMatchingService.js";
+import { logger } from "../services/logger.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 const stopWords = new Set(["stop", "unsubscribe", "cancel", "end", "quit"]);
@@ -143,6 +145,18 @@ async function storeUnmatched({
     details: `${channel} received from ${senderAddress || "unknown sender"}`,
     metadata: { unmatchedId: data.id, provider, providerMessageId },
   });
+  // Attempt an immediate UCI match right away instead of waiting for the
+  // next hourly reconciliation pass — most genuinely new messages that can
+  // be matched at all can be matched the moment they arrive. This does not
+  // change this function's own return value (still `unmatched: true`) since
+  // callers key other side effects (e.g. lead-intake enqueueing) off of
+  // "landed unmatched", exactly as an hourly-worker match would have left
+  // it before this row existed.
+  if (channel === "Email") {
+    await linkOne(data).catch((error) => {
+      logger.warn("uci_match.ingest_check_failed", { unmatchedId: data.id, reason: error.message });
+    });
+  }
   return { data, unmatched: true, duplicate: false };
 }
 

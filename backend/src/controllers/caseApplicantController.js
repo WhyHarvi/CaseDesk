@@ -3,6 +3,8 @@ import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { caseAccessWhere } from "../middleware/authorization.js";
+import { recheckUnmatchedCommunicationsForUci } from "../services/uciCommunicationMatchingService.js";
+import { logger } from "../services/logger.js";
 
 const PROFILE_TYPES = new Set([
   "Applicant",
@@ -103,6 +105,21 @@ async function findScopedProfile(req, caseId, profileId) {
   });
   if (!profile) throw createHttpError(404, "Applicant profile not found");
   return profile;
+}
+
+// ImmigrationProfile.uci is the only live UCI write path in this codebase
+// (Client.uci is dead — nothing writes it). Setting or changing it here is
+// the one place that can make a previously-unmatched IRCC message
+// resolvable, so it explicitly triggers a targeted recheck instead of
+// waiting for the next hourly UCI-matching pass — this is a real equality
+// lookup against the newly-written UCI value, not a heuristic.
+async function triggerUciRecheckIfChanged(agencyId, uci) {
+  if (!uci) return;
+  try {
+    await recheckUnmatchedCommunicationsForUci(agencyId, uci);
+  } catch (error) {
+    logger.warn("uci_match.applicant_recheck_failed", { agencyId, reason: error.message });
+  }
 }
 
 async function getCaseContext(req, caseId) {
@@ -215,6 +232,9 @@ export async function createCaseApplicant(req, res) {
       action: "case.applicant.created",
       details: `${data.profileType} profile added for ${data.givenNames} ${data.familyName}`,
     });
+    // A brand-new applicant profile has no "previous" UCI to compare
+    // against — any UCI present here is newly set.
+    await triggerUciRecheckIfChanged(agencyId, data.uci);
 
     const { passwordHash, loginUsernameNormalized, ...safeProfile } = profile;
     res.status(201).json({ data: { ...safeProfile, passwordConfigured: Boolean(passwordHash) } });
@@ -242,6 +262,7 @@ export async function updateCaseApplicant(req, res) {
     .map((access) => access.caseId)
     .filter((existingCaseId) => !accessibleIds.has(existingCaseId));
   const finalCaseIds = [...new Set([...selectedCaseIds, ...inaccessibleExistingIds])];
+  const uciChanged = Boolean(data.uci) && data.uci !== existing.uci;
 
   try {
     const profile = await prisma.$transaction(async (tx) => {
@@ -267,6 +288,7 @@ export async function updateCaseApplicant(req, res) {
       action: "case.applicant.updated",
       details: `${profile.profileType} profile updated for ${profile.givenNames} ${profile.familyName}`,
     });
+    if (uciChanged) await triggerUciRecheckIfChanged(agencyId, data.uci);
     const { passwordHash, loginUsernameNormalized, ...safeProfile } = profile;
     res.json({
       data: {

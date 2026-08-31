@@ -3449,11 +3449,32 @@ model UnmatchedCommunication {
   occurredAt        DateTime             @default(now()) @map("occurred_at")
   rawPayload        Json                 @default("{}") @map("raw_payload")
   resolvedAt        DateTime?            @map("resolved_at")
+  // Persisted UCI-check state so the hourly matching pass only has to look
+  // at rows that are new or need retrying, instead of rereading the entire
+  // backlog every run. `extractedUci` is the UCI (if any) found in this
+  // row's subject/body the last time it was checked — persisted (not just
+  // computed transiently) so a case/applicant UCI being entered later can
+  // look up "which unmatched rows already reference this UCI" with a real
+  // indexed equality query. `uciCheckedAt` is set once a check completes
+  // cleanly (UCI found with no linkable case yet, or no UCI present at
+  // all) — null means "never checked". `uciCheckFailedAt` is set when a
+  // check attempt throws (transient error), which keeps the row eligible
+  // for the bounded pass to retry without being confused for "already
+  // matched" (resolvedAt) or "checked, nothing to do" (uciCheckedAt).
+  extractedUci      String?              @map("extracted_uci")
+  uciCheckedAt      DateTime?            @map("uci_checked_at")
+  uciCheckFailedAt  DateTime?            @map("uci_check_failed_at")
   createdAt         DateTime             @default(now()) @map("created_at")
   agency            Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
 
   @@unique([agencyId, provider, providerMessageId])
   @@index([agencyId, resolvedAt, occurredAt])
+  // Powers the bounded hourly rescan: only rows that were never checked or
+  // whose last check errored.
+  @@index([resolvedAt, channel, uciCheckedAt])
+  // Powers the targeted "which unmatched rows already reference this UCI"
+  // lookup triggered when a case's ImmigrationProfile.uci is set or changed.
+  @@index([agencyId, extractedUci])
   @@map("unmatched_communications")
 }
 
