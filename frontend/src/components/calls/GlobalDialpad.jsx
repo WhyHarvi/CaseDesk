@@ -5,6 +5,7 @@ import { useAuth } from "../../auth/AuthContext";
 import useAnyCurtainOpen from "../../hooks/useAnyCurtainOpen";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 import api from "../../services/api";
+import Select from "../ui/Select";
 import { useSoftphone } from "./SoftphoneProvider";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
@@ -20,16 +21,17 @@ const phoneMatchKey = (value) => {
   return digits.length >= 10 ? digits.slice(-10) : digits;
 };
 
-export function openGlobalDialpad(number = "") {
-  window.dispatchEvent(new CustomEvent("casedesk:open-dialpad", { detail: { number } }));
+export function openGlobalDialpad(number = "", context = {}) {
+  window.dispatchEvent(new CustomEvent("casedesk:open-dialpad", { detail: { number, context } }));
 }
 
 export default function GlobalDialpad() {
   const location = useLocation();
   const curtainOpen = useAnyCurtainOpen();
-  const { dial, active, status, muted, toggleMute, hangup, sendDigits } = useSoftphone();
+  const { dial, active, status, muted, toggleMute, hangup, sendDigits, outboundNumbers, selectedOutboundNumber, selectOutboundNumber } = useSoftphone();
   const [open, setOpen] = useState(false);
   const [number, setNumber] = useState("");
+  const [dialContext, setDialContext] = useState({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(() => new Date());
@@ -90,17 +92,18 @@ export default function GlobalDialpad() {
     try {
       setBusy(true);
       setError("");
-      await dial(number);
+      await dial(number, dialContext);
       // Stay open (rather than collapsing back to the pill) so placing a
       // call flows straight into the in-call screen below — the "active
       // call should also be visible" ask, not just reachable by re-opening.
       setNumber("");
+      setDialContext({});
     } catch (reason) {
       setError(reason?.message || "The call could not be placed.");
     } finally {
       setBusy(false);
     }
-  }, [canCall, dial, number]);
+  }, [canCall, dial, dialContext, number]);
 
   const warmAudio = useCallback(() => {
     try {
@@ -366,6 +369,7 @@ export default function GlobalDialpad() {
       warmAudio();
       const nextNumber = String(event.detail?.number || "").replace(/[^\d+*#]/g, "");
       if (nextNumber) setNumber(nextNumber);
+      setDialContext(event.detail?.context || {});
       setError("");
       setOpen(true);
     };
@@ -577,6 +581,27 @@ export default function GlobalDialpad() {
           <button type="button" onClick={paste} className="mt-1 text-xs font-medium text-[#0a84ff] hover:text-[#5eafff] disabled:opacity-40">Paste number</button>
         </div>
         {error ? <p className="mb-2 rounded-xl bg-red-500/15 px-3 py-2 text-center text-xs font-medium text-red-400">{error}</p> : null}
+
+        {outboundNumbers.length ? (
+          <div className="mx-auto mb-3 flex w-full max-w-[18rem] items-center justify-between gap-3 rounded-2xl bg-white/5 px-3 py-2 ring-1 ring-white/10">
+            <label htmlFor="dialpad-caller-id" className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Calling from</label>
+            <Select
+              id="dialpad-caller-id"
+              value={selectedOutboundNumber}
+              onChange={(event) => selectOutboundNumber(event.target.value)}
+              ariaLabel="Calling from number"
+              disabled={outboundNumbers.length < 2}
+              className="min-w-0 flex-1"
+              selectClassName="h-11 border-white/10 bg-zinc-900 py-2 text-right font-mono text-xs tabular-nums text-white shadow-none hover:border-white/20 focus:border-[#0a84ff] focus:ring-[#0a84ff]/20 disabled:bg-zinc-900 disabled:text-zinc-300"
+            >
+              {outboundNumbers.map((line) => (
+                <option key={line.phoneNumber} value={line.phoneNumber}>
+                  {line.label} · {line.phoneNumber}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : null}
 
         <div className="mx-auto grid max-w-[18rem] grid-cols-3 gap-x-5 gap-y-4">
           {KEYS.map((key) => key === "0" ? (

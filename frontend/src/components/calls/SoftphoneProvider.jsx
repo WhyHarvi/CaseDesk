@@ -122,6 +122,8 @@ export function SoftphoneProvider({ children }) {
   const [incoming, setIncoming] = useState(null); // { from, callSid }
   const [active, setActive] = useState(null); // { callSid, number, direction, phase, connectedAt, leadId?, leadName?, clientId?, clientName? }
   const [muted, setMuted] = useState(false);
+  const [outboundNumbers, setOutboundNumbers] = useState([]);
+  const [selectedOutboundNumber, setSelectedOutboundNumber] = useState("");
   // { number, callSid, durationSeconds, leadId, leadName, clientId, clientName }
   // set when an OUTBOUND call we placed ends — the trigger for the follow-up
   // popup. Incoming calls never set it: their activity is recorded server-side
@@ -131,7 +133,7 @@ export function SoftphoneProvider({ children }) {
   // Mirrors the state above for synchronous reads inside callbacks (avoids
   // stale-closure bugs across the many interdependent handlers below) and is
   // exactly what gets broadcast to follower tabs whenever it changes.
-  const stateRef = useRef({ status: "idle", error: "", registered: false, incoming: null, active: null, muted: false });
+  const stateRef = useRef({ status: "idle", error: "", registered: false, incoming: null, active: null, muted: false, outboundNumbers: [] });
 
   const broadcast = useCallback((message) => {
     channelRef.current?.postMessage(message);
@@ -149,6 +151,7 @@ export function SoftphoneProvider({ children }) {
     if ("incoming" in partial) setIncoming(partial.incoming);
     if ("active" in partial) setActive(partial.active);
     if ("muted" in partial) setMuted(partial.muted);
+    if ("outboundNumbers" in partial) setOutboundNumbers(partial.outboundNumbers);
     if (!fromRemote && isLeaderRef.current) broadcast({ type: "state", state: stateRef.current });
   }, [broadcast]);
 
@@ -208,14 +211,36 @@ export function SoftphoneProvider({ children }) {
     tokenRefreshInFlight.current = true;
     try {
       const response = await api.post("/twilio-calls/token");
-      device.updateToken(response.data?.data?.token);
+      const tokenData = response.data?.data || {};
+      device.updateToken(tokenData.token);
+      applyState({ outboundNumbers: tokenData.outboundNumbers || [] });
     } catch {
       // Token refresh is best-effort — the device will re-register on the next
       // page load if the old token fully expires.
     } finally {
       tokenRefreshInFlight.current = false;
     }
-  }, []);
+  }, [applyState]);
+
+  useEffect(() => {
+    if (!outboundNumbers.length) {
+      setSelectedOutboundNumber("");
+      return;
+    }
+    const storageKey = `casedesk:outbound-number:${appUser?.id || "user"}`;
+    const stored = window.localStorage.getItem(storageKey) || "";
+    setSelectedOutboundNumber((current) => {
+      if (outboundNumbers.some((line) => line.phoneNumber === current)) return current;
+      if (outboundNumbers.some((line) => line.phoneNumber === stored)) return stored;
+      return outboundNumbers.find((line) => line.isDefault)?.phoneNumber || outboundNumbers[0].phoneNumber;
+    });
+  }, [appUser?.id, outboundNumbers]);
+
+  const selectOutboundNumber = useCallback((phoneNumber) => {
+    if (!outboundNumbers.some((line) => line.phoneNumber === phoneNumber)) return;
+    setSelectedOutboundNumber(phoneNumber);
+    window.localStorage.setItem(`casedesk:outbound-number:${appUser?.id || "user"}`, phoneNumber);
+  }, [appUser?.id, outboundNumbers]);
 
   // ---- Leader-only real Twilio Voice SDK operations --------------------
   // These touch deviceRef/incomingCallRef/activeCallRef directly and must
@@ -232,16 +257,18 @@ export function SoftphoneProvider({ children }) {
     // The record ids ride as custom params to the TwiML Application, which
     // forwards them to the status callbacks so the session links to the
     // lead/client even before (or without) the outcome popup being saved.
+    const { outboundCallerId, ...recordContext } = context || {};
     const call = await device.connect({
       params: {
         To: target,
-        ...(context.leadId ? { leadId: context.leadId } : {}),
-        ...(context.clientId ? { clientId: context.clientId } : {}),
+        ...(outboundCallerId ? { CallerId: outboundCallerId } : {}),
+        ...(recordContext.leadId ? { leadId: recordContext.leadId } : {}),
+        ...(recordContext.clientId ? { clientId: recordContext.clientId } : {}),
       },
     });
     activeCallRef.current = call;
-    dialContextRef.current = context || {};
-    applyState({ active: { callSid: call.parameters?.CallSid || "", number: target, direction: "OUTBOUND", phase: "dialing", connectedAt: null, ...(context || {}) }, muted: false });
+    dialContextRef.current = recordContext;
+    applyState({ active: { callSid: call.parameters?.CallSid || "", number: target, direction: "OUTBOUND", phase: "dialing", connectedAt: null, outboundCallerId, ...recordContext }, muted: false });
     let finished = false;
     const finish = (showPopup) => {
       if (finished) return;
@@ -403,8 +430,10 @@ export function SoftphoneProvider({ children }) {
       try {
         const response = await api.post("/twilio-calls/token");
         if (disposed) return;
-        const token = response.data?.data?.token;
+        const tokenData = response.data?.data || {};
+        const token = tokenData.token;
         if (!token) return;
+        applyState({ outboundNumbers: tokenData.outboundNumbers || [] });
         device = new Device(token, { logLevel: 1, allowIncomingWhileBusy: true });
         deviceRef.current = device;
         device.on("registered", () => { if (!disposed) applyState({ registered: true, status: "ready" }); });
@@ -506,9 +535,11 @@ export function SoftphoneProvider({ children }) {
   }, [appUser?.id, refreshToken, playRingtone, stopRingtone, applyState, broadcast, performDial, performAccept, performReject, performHangup, performToggleMute, performSendDigits]);
 
   const dial = useCallback(async (number, context = {}) => {
-    if (isLeaderRef.current) { await performDial(number, context); return; }
-    await sendAction("dial", { number, context });
-  }, [performDial, sendAction]);
+    const outboundCallerId = selectedOutboundNumber || outboundNumbers.find((line) => line.isDefault)?.phoneNumber || outboundNumbers[0]?.phoneNumber || "";
+    const dialContext = { ...context, ...(outboundCallerId ? { outboundCallerId } : {}) };
+    if (isLeaderRef.current) { await performDial(number, dialContext); return; }
+    await sendAction("dial", { number, context: dialContext });
+  }, [outboundNumbers, performDial, selectedOutboundNumber, sendAction]);
 
   const accept = useCallback(() => {
     if (isLeaderRef.current) { performAccept(); return; }
@@ -548,6 +579,9 @@ export function SoftphoneProvider({ children }) {
       incoming,
       active,
       muted,
+      outboundNumbers,
+      selectedOutboundNumber,
+      selectOutboundNumber,
       dial,
       accept,
       reject,
@@ -556,7 +590,7 @@ export function SoftphoneProvider({ children }) {
       sendDigits,
       normalizeE164,
     }),
-    [status, error, registered, incoming, active, muted, dial, accept, reject, hangup, toggleMute, sendDigits],
+    [status, error, registered, incoming, active, muted, outboundNumbers, selectedOutboundNumber, selectOutboundNumber, dial, accept, reject, hangup, toggleMute, sendDigits],
   );
 
   return (

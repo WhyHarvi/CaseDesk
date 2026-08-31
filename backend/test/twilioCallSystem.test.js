@@ -123,11 +123,17 @@ test("voice lines route inbound calls to their group and the internal line bridg
   assert.match(service, /if \(line\.routing === "FRONTDESK"\) roles = \["frontdesk"\];/);
   assert.match(service, /if \(line\.routing === "DIRECT"\)/);
   assert.match(service, /assignedUserIds = assignees\.map/);
-  // DIRECT assignment is inbound routing only. It must never silently
-  // replace the administrator-selected default outbound caller ID.
-  assert.doesNotMatch(service, /assignments: \{ some: \{ userId: agentIdentity \} \}/);
-  assert.match(service, /const outboundCallerId = config\.voiceNumber/);
+  // A DIRECT assignment is offered as an explicit outbound choice, while
+  // the workspace default remains the fallback. The webhook re-validates
+  // the requested caller ID against the authenticated client identity.
+  assert.match(service, /export async function issueTwilioAccessToken[\s\S]+outboundNumbersForUser\(agencyId, userId, config\.voiceNumber\)/);
+  assert.match(service, /routing: "DIRECT",[\s\S]+assignments: \{ some: \{ userId \} \}/);
+  assert.match(service, /let outboundCallerId = config\.voiceNumber/);
+  assert.match(service, /const requestedCallerId = clean\(req\.body\?\.CallerId, 40\)/);
+  assert.match(service, /assignments: \{ some: \{ userId: agentIdentity \} \}/);
+  assert.match(service, /if \(assignedLine\) outboundCallerId = assignedLine\.phoneNumber/);
   assert.match(service, /voiceNumber: config\.voiceNumber/);
+  assert.match(service, /outboundNumbers,/);
   // Dialing the internal office line rings the whole team instead of an
   // external number; transfers ring the target agent's softphone directly.
   assert.match(service, /routing: "INTERNAL", enabled: true/);
@@ -283,14 +289,15 @@ test("the clients UI calls clients through the softphone too, with the same outc
     source("../../frontend/src/pages/Clients.jsx"),
     source("../../frontend/src/pages/ClientProfile.jsx"),
   ]);
-  // List rows (desktop + mobile cards) dial with the client record context.
+  // List rows (desktop + mobile cards) open the shared dialpad with the
+  // client record context so the caller ID can be selected before dialing.
   assert.match(clientsPage, /import \{ useSoftphone } from "\.\.\/components\/calls\/SoftphoneProvider";/);
-  assert.match(clientsPage, /await dial\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
+  assert.match(clientsPage, /openGlobalDialpad\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
   assert.match(clientsPage, /disabled=\{softphoneStatus !== "ready"}/);
   assert.match(clientsPage, /onCall=\{\(\) => startCall\(client\)}/);
-  // Profile header phone action dials through the softphone when ready.
+  // Profile header phone action uses that same pre-call dialpad when ready.
   assert.match(profilePage, /useSoftphone\(\)/);
-  assert.match(profilePage, /await dial\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
+  assert.match(profilePage, /openGlobalDialpad\(client\.phone, \{ clientId: client\.id, clientName: client\.fullName }/);
   assert.match(profilePage, /onClick=\{softphoneStatus === "ready" && client\.phone \? startClientCall : undefined}/);
   // The popup keeps the follow-up option lead-only — client calls record the
   // outcome on the call and the client's communication thread instead.
@@ -307,7 +314,7 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
   // dial() accepts the record context, passes the ids to Twilio as custom
   // params, and remembers them so the ended-call popup can autofill + save.
   assert.match(provider, /const dial = useCallback\(async \(number, context = \{\}\) =>/);
-  assert.match(provider, /leadId: context\.leadId/);
+  assert.match(provider, /leadId: recordContext\.leadId/);
   assert.match(provider, /const payload = \{ number: target, callSid: call\.parameters\?\.CallSid \|\| "", durationSeconds, \.\.\.dialContextRef\.current };/);
   assert.match(provider, /setEndedCall\(payload\);/);
   // The popup itself: autofilled details, outcome + note, optional follow-up.
@@ -322,10 +329,10 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
   assert.doesNotMatch(provider, /call\.on\("disconnect", \(\) => \{\s*setEndedCall/);
   // The leads list gains a per-row call button; the detail sheet dials too.
   assert.match(leadsPage, /import \{ useSoftphone } from "\.\.\/\.\.\/\.\.\/components\/calls\/SoftphoneProvider";/);
-  assert.match(leadsPage, /await dial\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+  assert.match(leadsPage, /openGlobalDialpad\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
   assert.match(leadsPage, /stopPropagation\(\); startCall\(lead\)/);
   assert.match(detailSheet, /useSoftphone\(\)/);
-  assert.match(detailSheet, /await dial\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+  assert.match(detailSheet, /openGlobalDialpad\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
   // Adjacent call and close controls remain distinct touch targets, and the
   // decorative call pulse cannot intercept a close tap.
   assert.match(detailSheet, /flex shrink-0 items-center gap-4/);
@@ -350,7 +357,11 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(provider, /phase: "connected", connectedAt/);
   assert.match(dialpad, /if \(!callConnected\) return undefined/);
   assert.match(dialpad, /Date\.now\(\) - Number\(active\.connectedAt\)/);
-  assert.match(provider, /device\.updateToken\(response\.data\?\.data\?\.token\)/);
+  assert.match(provider, /device\.updateToken\(tokenData\.token\)/);
+  assert.match(provider, /CallerId: outboundCallerId/);
+  assert.match(provider, /casedesk:outbound-number:/);
+  assert.match(dialpad, /Calling from/);
+  assert.match(dialpad, /selectedOutboundNumber/);
   assert.match(provider, /export function useSoftphone\(\)/);
   assert.match(callsPage, /export default function CallsPage\(\)/);
   assert.match(callsPage, /"history", "History", History/);

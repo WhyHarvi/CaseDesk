@@ -28,6 +28,7 @@ import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import api from "../services/api";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
+import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import PortalAccessCard from "../components/clients/PortalAccessCard";
 import QuickBooksSyncCard from "../components/clients/QuickBooksSyncCard";
 import CaseEasyReportsCard from "../components/clients/CaseEasyReportsCard";
@@ -450,7 +451,7 @@ export default function ClientProfile() {
   const location = useLocation();
   const navigate = useNavigate();
   const { role, appUser, membership } = useAuth();
-  const { status: softphoneStatus, dial } = useSoftphone();
+  const { status: softphoneStatus } = useSoftphone();
   const [callError, setCallError] = useState("");
   const canAccessInternalNotes = hasCapability(role, membership?.permissions, "internalNotes");
   const canAccessFinancialData = hasCapability(role, membership?.permissions, "financialData");
@@ -498,14 +499,10 @@ export default function ClientProfile() {
     if (initialChatConversationId) setChatOpen(true);
   }, [initialChatConversationId]);
 
-  async function startClientCall() {
+  function startClientCall() {
     if (!client?.phone) return;
-    try {
-      setCallError("");
-      await dial(client.phone, { clientId: client.id, clientName: client.fullName });
-    } catch (reason) {
-      setCallError(reason?.message || "The call could not be placed.");
-    }
+    setCallError("");
+    openGlobalDialpad(client.phone, { clientId: client.id, clientName: client.fullName });
   }
 
   const isEditingNote = Boolean(editingNote);

@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import api from "../../../services/api";
 import { useAuth } from "../../../auth/AuthContext";
 import { useSoftphone } from "../../../components/calls/SoftphoneProvider";
+import { openGlobalDialpad } from "../../../components/calls/GlobalDialpad";
 import QuickAddLeadSheet from "../components/QuickAddLeadSheet";
 import LeadFilterMenu from "../components/LeadFilterMenu";
 import LeadDetailSheet from "../components/LeadDetailSheet";
@@ -40,7 +41,7 @@ const SEGMENT_COPY = {
 
 export default function LeadsPage({ segment = "STANDARD" }) {
   const { role } = useAuth();
-  const { status: softphoneStatus, dial } = useSoftphone();
+  const { status: softphoneStatus } = useSoftphone();
   const [callError, setCallError] = useState("");
   const copy = SEGMENT_COPY[segment] || SEGMENT_COPY.STANDARD;
   const [params, setParams] = useSearchParams();
@@ -224,13 +225,9 @@ export default function LeadsPage({ segment = "STANDARD" }) {
     setParams({});
   }
 
-  async function startCall(lead) {
-    try {
-      setCallError("");
-      await dial(lead.phone, { leadId: lead.id, leadName: leadName(lead) });
-    } catch (reason) {
-      setCallError(reason?.message || "The call could not be placed.");
-    }
+  function startCall(lead) {
+    setCallError("");
+    openGlobalDialpad(lead.phone, { leadId: lead.id, leadName: leadName(lead) });
   }
 
   function toggleSelected(id) {

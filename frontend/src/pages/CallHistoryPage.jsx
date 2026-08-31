@@ -25,6 +25,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
+import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import api from "../services/api";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
@@ -281,17 +282,13 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   const { acknowledgeDestination } = useNotifications();
   // A direct call-back next to the caller's name, from the browser softphone
   // Callback calls always go through the browser-based Twilio softphone.
-  const { dial, status: softphoneStatus, active: activeCall } = useSoftphone();
+  const { status: softphoneStatus, active: activeCall } = useSoftphone();
   const [callBackError, setCallBackError] = useState("");
-  const callBack = useCallback(async (numberValue) => {
+  const callBack = useCallback((numberValue) => {
     if (!numberValue) return;
     setCallBackError("");
-    try {
-      await dial(numberValue);
-    } catch (reason) {
-      setCallBackError(reason?.message || "The call could not be placed.");
-    }
-  }, [dial]);
+    openGlobalDialpad(numberValue);
+  }, []);
   const canCallBack = softphoneStatus === "ready" && !activeCall;
   const [params, setParams] = useSearchParams();
   const [calls, setCalls] = useState([]);

@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
+import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import { canAccessPage, getPortalAccess, hasCapability } from "../auth/portalAccess";
 import api from "../services/api";
 import CaseEasyOriginBadge from "../components/clients/CaseEasyOriginBadge";
@@ -887,7 +888,7 @@ function ClientsMobileCard({ client, onEdit, onDelete, onToggleMenu, isMenuOpen,
 
 export default function Clients() {
   const { role, membership } = useAuth();
-  const { status: softphoneStatus, dial } = useSoftphone();
+  const { status: softphoneStatus } = useSoftphone();
   const [callError, setCallError] = useState("");
   const canManageClients = ["admin", "consultant", "frontdesk"].includes(role);
   const navigate = useNavigate();
@@ -946,13 +947,9 @@ export default function Clients() {
     }
   }
 
-  async function startCall(client) {
-    try {
-      setCallError("");
-      await dial(client.phone, { clientId: client.id, clientName: client.fullName });
-    } catch (reason) {
-      setCallError(reason?.message || "The call could not be placed.");
-    }
+  function startCall(client) {
+    setCallError("");
+    openGlobalDialpad(client.phone, { clientId: client.id, clientName: client.fullName });
   }
 
   async function loadUsers() {
