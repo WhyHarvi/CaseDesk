@@ -15,6 +15,7 @@ import {
   UserRound,
   UserSquare2,
   Users,
+  Volume2,
   Wallet2,
   Waypoints,
   Workflow,
@@ -46,6 +47,7 @@ import GovernmentFormSignaturePanel from "../components/settings/GovernmentFormS
 import CaseRolesSettingsPanel from "../components/settings/CaseRolesSettingsPanel";
 import CaseTeamBackfillPanel from "../components/settings/CaseTeamBackfillPanel";
 import IncentivePlansSettingsPanel from "../components/settings/IncentivePlansSettingsPanel";
+import SoundSettingsPanel from "../components/settings/SoundSettingsPanel";
 
 const LeadIntakeSettingsPanel = lazy(
   () => import("../modules/leads/pages/LeadIntakePage"),
@@ -176,6 +178,13 @@ const adminSettingsItems = [
     subtitle: "Control reminders, alerts, and communication preferences.",
   },
   {
+    id: "sound",
+    label: "Sound",
+    icon: Volume2,
+    title: "Sound",
+    subtitle: "Choose ringtone, speaker, volume, and notification sound preferences.",
+  },
+  {
     id: "automated-reminders",
     label: "Automated Reminders",
     icon: BellRing,
@@ -229,6 +238,13 @@ const consultantSettingsItems = [
     icon: Bell,
     title: "Notifications",
     subtitle: "Control your personal reminders and alert preferences.",
+  },
+  {
+    id: "sound",
+    label: "Sound",
+    icon: Volume2,
+    title: "Sound",
+    subtitle: "Choose ringtone, speaker, volume, and notification sound preferences.",
   },
   {
     id: "security",
@@ -1043,6 +1059,8 @@ export default function Settings() {
                     </div>
                   ) : activeSection === "notifications" ? (
                     <NotificationPreferencesPanel />
+                  ) : activeSection === "sound" ? (
+                    <SoundSettingsPanel />
                   ) : isAdmin && activeSection === "automated-reminders" ? (
                     <AutomatedRemindersSettingsPanel />
                   ) : isAdmin && activeSection === "scheduling" ? (

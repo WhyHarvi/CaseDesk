@@ -2,6 +2,8 @@
 // the Web Audio API rather than bundling Apple's actual (copyrighted)
 // Messages.app sound assets — these are original tones in the same spirit
 // (a quick rising whoosh for send, a bright two-note chime for receive).
+import { getSoundPreferences, playConfiguredNotificationSound } from "./soundPreferences";
+
 let audioContext = null;
 let unlockAttached = false;
 
@@ -63,13 +65,16 @@ function tone(ctx, { frequency, glideTo, startTime, duration, gain = 0.15 }) {
 }
 
 async function playTones(specs) {
+  const preferences = getSoundPreferences();
+  if (!preferences.notificationSoundsEnabled || preferences.notificationVolume <= 0) return;
   const ctx = ensureContext();
   if (!ctx) return;
   await resumeIfNeeded(ctx);
   if (ctx.state !== "running") return; // still locked — nothing audible to schedule
   const now = ctx.currentTime;
+  const volumeScale = preferences.notificationVolume / 100;
   for (const spec of specs) {
-    tone(ctx, { ...spec, startTime: now + (spec.delay || 0) });
+    tone(ctx, { ...spec, gain: (spec.gain ?? 0.15) * volumeScale, startTime: now + (spec.delay || 0) });
   }
 }
 
@@ -78,8 +83,17 @@ export function playSentSound() {
 }
 
 export function playReceivedSound() {
+  if (playConfiguredNotificationSound()) return;
   playTones([
     { frequency: 880, duration: 0.09, gain: 0.14 },
     { frequency: 1318.5, duration: 0.16, gain: 0.15, delay: 0.08 },
+  ]).catch(() => {});
+}
+
+export function playNotificationSound() {
+  if (playConfiguredNotificationSound()) return;
+  playTones([
+    { frequency: 740, duration: 0.1, gain: 0.13 },
+    { frequency: 988, duration: 0.18, gain: 0.14, delay: 0.09 },
   ]).catch(() => {});
 }

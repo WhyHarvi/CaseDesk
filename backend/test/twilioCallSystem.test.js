@@ -341,16 +341,38 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
 });
 
 test("the frontend mounts a real softphone provider and a Call center page", async () => {
-  const [provider, dialpad, callsPage, main, routes, panel] = await Promise.all([
+  const [provider, dialpad, callsPage, main, routes, panel, soundPreferences, soundPanel, settings, viteConfig, slider, soundSwitch] = await Promise.all([
     source("../../frontend/src/components/calls/SoftphoneProvider.jsx"),
     source("../../frontend/src/components/calls/GlobalDialpad.jsx"),
     source("../../frontend/src/pages/CallsPage.jsx"),
     source("../../frontend/src/main.jsx"),
     source("../../frontend/src/routes/AppRoutes.jsx"),
     source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx"),
+    source("../../frontend/src/utils/soundPreferences.js"),
+    source("../../frontend/src/components/settings/SoundSettingsPanel.jsx"),
+    source("../../frontend/src/pages/Settings.jsx"),
+    source("../../frontend/vite.config.js"),
+    source("../../frontend/src/components/ui/slider.jsx"),
+    source("../../frontend/src/components/ui/switch.jsx"),
   ]);
   assert.match(provider, /import \{ Device \} from "@twilio\/voice-sdk";/);
   assert.match(provider, /device\.on\("incoming"/);
+  assert.match(provider, /startConfiguredRingtone\(\{ loop: true \}\)/);
+  assert.match(soundPreferences, /from "virtual:casedesk-sound-assets"/);
+  assert.match(soundPreferences, /additionalAudio[\s\S]+\.setSinkId\(preferences\.additionalOutputId\)/);
+  assert.match(soundPreferences, /audio\.volume = preferences\.ringtoneVolume \/ 100/);
+  assert.match(viteConfig, /\["ringtones", "RINGTONE_ASSETS"\]/);
+  assert.match(viteConfig, /\["notification-sounds", "NOTIFICATION_SOUND_ASSETS"\]/);
+  assert.match(soundPanel, /Ringtone output/);
+  assert.match(soundPanel, /Additional output/);
+  assert.match(soundPanel, /Notification sounds/);
+  assert.match(soundPanel, /selectAudioOutput/);
+  assert.match(soundPanel, /onValueChange=\{\(next\) => onChange\(Array\.isArray\(next\) \? next\[0\] : next\)\}/);
+  assert.match(soundPanel, /onCheckedChange=\{\(checked\) => save\(\{ notificationSoundsEnabled: Boolean\(checked\) \}\)\}/);
+  assert.match(slider, /className="relative flex h-6 w-full touch-none cursor-pointer/);
+  assert.match(soundSwitch, /data-\[checked\]:bg-primary/);
+  assert.match(settings, /id: "sound"/);
+  assert.match(settings, /<SoundSettingsPanel \/>/);
   assert.match(provider, /call\.customParameters\?\.get\?\.\("CallerNumber"\) \|\| call\.parameters\?\.From/);
   assert.match(provider, /device\.connect\(\{\s*params: \{\s*To: target/);
   assert.match(provider, /call\.on\("ringing"/);

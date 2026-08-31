@@ -3,6 +3,7 @@ import { CheckCircle2, CircleAlert, Clock3, Loader2, Phone, PhoneIncoming, Phone
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import api from "../../services/api";
+import { startConfiguredRingtone } from "../../utils/soundPreferences";
 
 const SoftphoneContext = createContext(null);
 
@@ -113,8 +114,7 @@ export function SoftphoneProvider({ children }) {
   const callStartedAtRef = useRef(null);
   const channelRef = useRef(null);
   const pendingActionsRef = useRef(new Map()); // requestId -> { resolve, reject, timer } — follower tabs awaiting the leader's reply
-  const ringContextRef = useRef(null);
-  const ringTimerRef = useRef(null);
+  const ringtonePlaybackRef = useRef(null);
 
   const [status, setStatus] = useState("idle"); // idle | registering | ready | error | unconfigured
   const [error, setError] = useState("");
@@ -156,54 +156,16 @@ export function SoftphoneProvider({ children }) {
   }, [broadcast]);
 
   const stopRingtone = useCallback(() => {
-    if (ringTimerRef.current) {
-      window.clearTimeout(ringTimerRef.current);
-      ringTimerRef.current = null;
-    }
-    const context = ringContextRef.current;
-    ringContextRef.current = null;
-    if (context && context.state !== "closed") void context.close().catch(() => {});
+    ringtonePlaybackRef.current?.stop();
+    ringtonePlaybackRef.current = null;
   }, []);
 
-  // Synthesizes the incoming-call ring instead of bundling an audio asset —
-  // 440Hz + 480Hz is the actual North American ring-tone frequency pair,
-  // played 2s on / 2s off, repeating until the call is accepted, declined,
-  // or the caller hangs up first. Every open tab (leader and followers
-  // alike) runs its own copy of this, triggered by the ring-start/ring-stop
-  // broadcast below, so the ring is audible regardless of which tab the
-  // leader happens to be or which tab currently has focus.
+  // Every open tab (leader and followers alike) plays the configured incoming
+  // ringtone, triggered by the ring-start/ring-stop broadcast below, so the
+  // ring is audible regardless of which tab owns the Twilio Device.
   const playRingtone = useCallback(() => {
     stopRingtone();
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    let context;
-    try {
-      context = new AudioContextClass();
-    } catch {
-      return;
-    }
-    ringContextRef.current = context;
-    const ringCycle = () => {
-      if (ringContextRef.current !== context || context.state === "closed") return;
-      if (context.state === "suspended") void context.resume().catch(() => {});
-      const startAt = context.currentTime + 0.02;
-      const gain = context.createGain();
-      gain.gain.setValueAtTime(0.0001, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.11, startAt + 0.06);
-      gain.gain.setValueAtTime(0.11, startAt + 1.85);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 2);
-      gain.connect(context.destination);
-      [440, 480].forEach((frequency) => {
-        const oscillator = context.createOscillator();
-        oscillator.type = "sine";
-        oscillator.frequency.value = frequency;
-        oscillator.connect(gain);
-        oscillator.start(startAt);
-        oscillator.stop(startAt + 2);
-      });
-      ringTimerRef.current = window.setTimeout(ringCycle, 4000);
-    };
-    ringCycle();
+    ringtonePlaybackRef.current = startConfiguredRingtone({ loop: true });
   }, [stopRingtone]);
 
   const refreshToken = useCallback(async (device) => {

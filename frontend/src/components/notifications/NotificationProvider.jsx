@@ -27,6 +27,7 @@ import {
   notificationLeaseKey,
   releaseNotificationPollLease,
 } from "../../services/notificationPolling";
+import { playNotificationSound } from "../../utils/chatSounds";
 
 const NotificationContext = createContext(null);
 
@@ -105,6 +106,7 @@ export function NotificationProvider({ children }) {
   const pendingRef = useRef(new Set());
   const pollOwnerRef = useRef(createNotificationPollOwner());
   const filterRef = useRef(filter);
+  const lastPolledUnreadRef = useRef(null);
   filterRef.current = filter;
 
   const loadPage = useCallback(
@@ -172,9 +174,17 @@ export function NotificationProvider({ children }) {
       try {
         const result = await getSidebarNotificationCounts();
         if (stopped) return;
-        setUnreadCount(result.unread || 0);
+        const nextUnread = result.unread || 0;
+        if (
+          lastPolledUnreadRef.current !== null &&
+          nextUnread > lastPolledUnreadRef.current
+        ) {
+          playNotificationSound();
+        }
+        lastPolledUnreadRef.current = nextUnread;
+        setUnreadCount(nextUnread);
         setSidebarCounts(result.destinations || {});
-        channel?.postMessage({ type: "sidebar-counts", unread: result.unread || 0, destinations: result.destinations || {} });
+        channel?.postMessage({ type: "sidebar-counts", unread: nextUnread, destinations: result.destinations || {} });
       } catch {
         /* polling failure is silent; next tick or focus retries */
       }
@@ -214,6 +224,7 @@ export function NotificationProvider({ children }) {
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       stopped = true;
+      lastPolledUnreadRef.current = null;
       window.clearInterval(interval);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onLeaseChanged);
