@@ -9,4 +9,6 @@ dist
 coverage
 .vite
 backend/storage/
-docs/production/
+docs/
+.agents/
+run-dev.sh
