@@ -49,6 +49,7 @@ import { reconcilePaymentHold } from "../services/quickbooksWebhookService.js";
 import { resolveFreeConsultationEligibility } from "../services/bookingFreeConsultationService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { submitPaymentApproval } from "../services/paymentApprovalService.js";
+import { portalDataScope } from "../services/portalAccessService.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import { estimateRefundAfterFees, refundFeeRateForAgency } from "../services/refundFeeEstimateService.js";
 import {
@@ -1402,7 +1403,7 @@ export async function cancelBookingAppointment(req, res) {
     where: {
       id: req.params.id,
       agencyId: req.auth.agencyId,
-      ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
+      ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}),
     },
     include: {
       sessionType: { select: { name: true, bufferMinutes: true, allowedMeetingModes: true } },
@@ -1415,7 +1416,7 @@ export async function cancelBookingAppointment(req, res) {
   if (new Date(existing.startsAt) <= new Date()) throw createHttpError(409, "Past appointments should be marked attended or no-show.", "TOO_LATE");
   const cancelSeries = req.body?.scope === "series" && existing.seriesKey;
   if (cancelSeries) {
-    const series = await prisma.appointment.findMany({ where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } }, orderBy: { startsAt: "asc" } });
+    const series = await prisma.appointment.findMany({ where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}) }, include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } } }, orderBy: { startsAt: "asc" } });
     const reason = String(req.body?.reason || "").trim().slice(0, 500) || null;
     const cancelledAt = new Date();
     const cancelled = series.map((item) => ({ ...item, status: "Cancelled", cancelledAt, cancellationReason: reason }));
@@ -1484,7 +1485,7 @@ export async function rescheduleBookingAppointment(req, res) {
       id: req.params.id,
       agencyId: req.auth.agencyId,
       status: { in: ["Scheduled", "NoShow"] },
-      ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}),
+      ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}),
     },
     include: {
       sessionType: { select: { bufferMinutes: true, allowedMeetingModes: true } },
@@ -1523,7 +1524,7 @@ export async function rescheduleBookingAppointment(req, res) {
   const rescheduleSeries = existing.status === "Scheduled" && req.body?.scope === "series" && existing.seriesKey;
   if (rescheduleSeries) {
     const series = await prisma.appointment.findMany({
-      where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
+      where: { agencyId: req.auth.agencyId, seriesKey: existing.seriesKey, status: "Scheduled", startsAt: { gte: existing.startsAt }, ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}) },
       include: { ...calendarInclude, client: { select: { id: true, fullName: true, email: true, phone: true } }, assignedTo: { select: { id: true, fullName: true, schedulingPreference: { select: { bufferMinutes: true } } } } },
       orderBy: { startsAt: "asc" },
     });
@@ -1735,7 +1736,7 @@ export async function getSchedulingAnalytics(req, res) {
 }
 
 export async function convertAppointmentToClient(req, res) {
-  const appointment = await prisma.appointment.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) } });
+  const appointment = await prisma.appointment.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}) } });
   if (!appointment) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
   if (appointment.clientId) return res.json({ data: { clientId: appointment.clientId, existing: true } });
   if (!appointment.guestName) throw createHttpError(400, "This appointment has no visitor name.", "VALIDATION_ERROR");
@@ -1862,7 +1863,7 @@ export async function updateBookingAppointmentStatus(req, res) {
   const status = String(req.body?.status || "");
   if (!["Completed", "Cancelled", "NoShow", "Scheduled"].includes(status)) throw createHttpError(400, "Choose a valid appointment status.", "VALIDATION_ERROR");
   const existing = await prisma.appointment.findFirst({
-    where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" ? { assignedToId: req.auth.userId } : {}) },
+    where: { id: req.params.id, agencyId: req.auth.agencyId, ...(req.auth.role === "consultant" && portalDataScope(req, "cases") !== "all" ? { assignedToId: req.auth.userId } : {}) },
   });
   if (!existing) throw createHttpError(404, "Appointment not found.", "NOT_FOUND");
 
