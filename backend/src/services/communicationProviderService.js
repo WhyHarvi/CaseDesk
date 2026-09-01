@@ -88,7 +88,7 @@ export async function sendEmailMessage({ agencyId, userId = null, to, cc, bcc, r
   };
 }
 
-export async function sendSmsMessage({ agencyId, to, body, idempotencyKey, requireVerified = true }) {
-  const twilioConfig = await resolveAgencyTwilioConfig(agencyId, { requireVerified });
-  return sendAgencyTwilioSms({ agencyId, to, body, idempotencyKey, requireVerified, config: twilioConfig });
+export async function sendSmsMessage({ agencyId, to, body, fromNumber, idempotencyKey, requireVerified = true }) {
+  const twilioConfig = await resolveAgencyTwilioConfig(agencyId, { requireVerified, sendingNumber: fromNumber });
+  return sendAgencyTwilioSms({ agencyId, to, body, fromNumber, idempotencyKey, requireVerified, config: twilioConfig });
 }

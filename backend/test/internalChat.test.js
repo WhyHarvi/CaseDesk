@@ -134,7 +134,7 @@ test("a new internal chat message notifies every other participant through the g
   assert.match(notificationService, /\["\/app\/chats", "chats"\],/);
 });
 
-test("inbound portal-chat and email notifications route to their reply-capable Chats categories", async () => {
+test("inbound portal-chat, email, and SMS notifications route to their reply-capable Chats categories", async () => {
   const notificationService = await source("../src/services/notificationService.js");
   const dispatch = notificationService.slice(
     notificationService.indexOf("export async function dispatchCommunicationAuditNotification"),
@@ -142,8 +142,11 @@ test("inbound portal-chat and email notifications route to their reply-capable C
   );
   assert.match(dispatch, /const inboundChat = \["communication\.client_chat_received", "communication\.portal_message_received"\]\.includes\(event\.action\);/);
   assert.match(dispatch, /const inboundEmail = event\.action === "communication\.inbound_received" && message\?\.channel === "Email";/);
+  assert.match(dispatch, /const inboundSms = event\.action === "communication\.inbound_received" && message\?\.channel === "Sms";/);
   assert.match(dispatch, /`\/app\/chats\?thread=\$\{encodeURIComponent\(clientId\)\}&kind=email`/);
-  assert.match(dispatch, /destinationKey: inboundChat \|\| inboundEmail \? "chats" : undefined,/);
+  assert.match(dispatch, /`\/app\/chats\?thread=\$\{encodeURIComponent\(event\.conversationId\)\}&kind=\$\{inboundSms \? "sms" : "client"\}`/);
+  assert.match(dispatch, /const inboundToChats = inboundChat \|\| inboundEmail \|\| inboundSms;/);
+  assert.match(dispatch, /destinationKey: inboundToChats \? "chats" : undefined,/);
 });
 
 test("internal chat is mounted for staff roles only, alongside the rest of the internal API", async () => {
@@ -180,18 +183,20 @@ test("Chats is the unified inbox route, replacing the old Team Chat naming every
   assert.match(mainLayout, /const isChats = location\.pathname === "\/app\/chats";/);
 });
 
-test("Chats merges team threads, portal chats, and client-mapped email conversations", async () => {
+test("Chats merges team threads, portal chats, client email, and SMS conversations", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
   // No clientId filter here on purpose — this is the whole point of the
   // merge: every client conversation the staff member can see, not just
   // one client's thread the way the client-profile drawer scopes it.
   assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Chat&limit=100"\)/);
   assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Email&limit=100"\)/);
+  assert.match(page, /api\.get\("\/communications\/inbox\?scope=all&channel=Sms&limit=100"\)/);
   assert.match(page, /Promise\.allSettled\(\[/);
   assert.match(page, /kind: "internal"/);
   assert.match(page, /kind: "client"/);
   assert.match(page, /kind: "email"/);
-  assert.match(page, /\[\.\.\.internal, \.\.\.client, \.\.\.email\]\.sort\(\(a, b\) => new Date\(b\.lastMessageAt\) - new Date\(a\.lastMessageAt\)\)/);
+  assert.match(page, /kind: "sms"/);
+  assert.match(page, /\[\.\.\.internal, \.\.\.client, \.\.\.email, \.\.\.sms\]\.sort\(\(a, b\) => new Date\(b\.lastMessageAt\) - new Date\(a\.lastMessageAt\)\)/);
   // Per-row unread badge, for both kinds, driven by the same field.
   assert.match(page, /unreadCount: item\.unreadCount,/);
   assert.match(page, /unreadCount: conversation\.unreadCount \|\| 0,/);
@@ -252,9 +257,9 @@ test("the communications API cannot mix email and portal messages in one convers
   assert.match(createMessage, /CONVERSATION_CHANNEL_MISMATCH/);
 });
 
-test("inbound email maps to a client without requiring a case and rejoins reply threads", async () => {
+test("inbound email and SMS map to a client without requiring a case, while email rejoins reply threads", async () => {
   const controller = await source("../src/controllers/communicationWebhookController.js");
-  assert.match(controller, /if \(!caseItem && channel !== "Email"\)/);
+  assert.match(controller, /if \(!caseItem && !\["Email", "Sms"\]\.includes\(channel\)\)/);
   assert.match(controller, /caseId: caseItem\?\.id \|\| null/);
   assert.match(controller, /channel === "Email" && emailInReplyTo/);
   assert.match(controller, /\{ emailMessageId: emailInReplyTo \}/);

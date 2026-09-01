@@ -254,9 +254,9 @@ export async function ingestInboundCommunication(payload) {
       where: { agencyId, clientId: client.id },
       orderBy: { updatedAt: "desc" },
     }));
-  // Email belongs to the client record even when that client does not have a
-  // case yet. Other provider channels retain their existing case requirement.
-  if (!caseItem && channel !== "Email")
+  // Email and SMS belong to the client record even when that client does not
+  // have a case yet. Call records retain their existing case requirement.
+  if (!caseItem && !["Email", "Sms"].includes(channel))
     return storeUnmatched({
       agencyId,
       channel,

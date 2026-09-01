@@ -278,6 +278,8 @@ export async function provisionTwilioVoiceLine(agencyId, { numberSid, label, rou
     updated = await client.incomingPhoneNumbers(numberSidClean).update({
       voiceMethod: "POST",
       voiceUrl: `${base}/api/communications/webhooks/twilio/inbound/${agencyId}/${line.id}`,
+      smsMethod: "POST",
+      smsUrl: `${base}/api/communications/webhooks/twilio/sms/${agencyId}`,
       statusCallbackMethod: "POST",
       statusCallback: `${base}/api/communications/webhooks/twilio/status/${agencyId}`,
     });

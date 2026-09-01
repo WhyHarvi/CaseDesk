@@ -1947,9 +1947,16 @@ export async function buildAppointmentRegistry(req, query) {
       ...(search ? [{ OR: [
       { guestName: { contains: search, mode: "insensitive" } },
       { guestEmail: { contains: search, mode: "insensitive" } },
+      { guestPhone: { contains: search, mode: "insensitive" } },
       { referenceCode: { contains: search, mode: "insensitive" } },
       { subject: { contains: search, mode: "insensitive" } },
       { client: { is: { fullName: { contains: search, mode: "insensitive" } } } },
+      { client: { is: { phone: { contains: search, mode: "insensitive" } } } },
+      { lead: { is: { OR: [
+        { firstName: { contains: search, mode: "insensitive" } },
+        { lastName: { contains: search, mode: "insensitive" } },
+        { phone: { contains: search, mode: "insensitive" } },
+      ] } } },
       ] }] : []),
     ],
   };
@@ -1958,6 +1965,7 @@ export async function buildAppointmentRegistry(req, query) {
       where,
       include: {
         client: { select: { id: true, fullName: true, email: true, phone: true } },
+        lead: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
         assignedTo: { select: { id: true, fullName: true } },
         sessionType: { select: { id: true, name: true } },
       },

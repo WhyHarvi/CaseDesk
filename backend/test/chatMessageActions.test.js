@@ -134,7 +134,7 @@ test("client conversations link to the scoped client profile from full and float
     source("../src/controllers/communicationController.js"),
   ]);
   assert.match(controller, /client: \{ select: \{ id: true, fullName: true, email: true, phone: true \} \}/);
-  assert.match(page, /\["client", "email"\]\.includes\(activeDetail\?\.kind\) && activeDetail\.clientId/);
+  assert.match(page, /\["client", "email", "sms"\]\.includes\(activeDetail\?\.kind\) && activeDetail\.clientId/);
   assert.match(page, /to=\{`\/app\/clients\/\$\{encodeURIComponent\(activeDetail\.clientId\)\}`\}/);
   assert.match(page, /title="Open client profile"/);
   assert.match(widget, /function openClientProfile\(\)/);
@@ -145,7 +145,7 @@ test("client conversations link to the scoped client profile from full and float
 
 test("refreshing a Nova deep link keeps it as AI instead of loading an internal thread named nova", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
-  assert.match(page, /\["ai", "support", "client", "email", "internal"\]\.includes\(requestedKind\)/);
+  assert.match(page, /\["ai", "support", "client", "email", "sms", "internal"\]\.includes\(requestedKind\)/);
   assert.match(page, /const \[selectedKind, setSelectedKind\] = useState\(initialKind\);/);
   assert.match(page, /useState\(initialKind === "ai" && requestedThreadId \? "nova" : requestedThreadId\)/);
 });

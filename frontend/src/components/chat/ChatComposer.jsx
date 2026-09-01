@@ -23,6 +23,7 @@ export default function ChatComposer({
   onCancelReply,
   sendLabel,
   sendingLabel = "Thinking",
+  maxLength = 5000,
 }) {
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -87,7 +88,7 @@ export default function ChatComposer({
             }
           }}
           rows={1}
-          maxLength={5000}
+          maxLength={maxLength}
           disabled={disabled}
           placeholder={disabled && disabledReason ? disabledReason : placeholder}
           className="max-h-32 min-h-[50px] flex-1 resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-base leading-6 text-slate-900 outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100 disabled:bg-slate-50"

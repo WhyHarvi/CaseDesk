@@ -35,7 +35,7 @@ function friendlyTwilioError(error) {
 
 // optional:true returns null instead of throwing so connection-status checks
 // can probe an incomplete setup. Actual sends require a complete configuration.
-export async function resolveAgencyTwilioConfig(agencyId, { requireVerified = true, optional = false } = {}) {
+export async function resolveAgencyTwilioConfig(agencyId, { requireVerified = true, optional = false, sendingNumber = null } = {}) {
   const settings = agencyId ? await prisma.agencyTwilioSettings.findUnique({ where: { agencyId } }) : null;
   const config = storedConfig(settings);
   const fail = (message) => {
@@ -44,7 +44,7 @@ export async function resolveAgencyTwilioConfig(agencyId, { requireVerified = tr
   };
   if (!config) return fail("Twilio is not connected. Add the Account SID and Auth Token in Settings.");
   if (!config.enabled || !config.smsEnabled) return fail("Twilio SMS is turned off in Settings.");
-  if (!config.sendReady) return fail("Add a Twilio phone number or Messaging Service SID in Settings before sending.");
+  if (!config.sendReady && !sendingNumber) return fail("Add a Twilio phone number or Messaging Service SID in Settings before sending.");
   if (requireVerified && config.lastSmsTestStatus !== "Connected") return fail("Send a successful test text from Settings before using Twilio with clients.");
   return config;
 }
@@ -92,17 +92,45 @@ export async function verifyAgencyTwilioCredentials({ accountSid, authToken }) {
 // but not forwarded to Twilio — the classic Messages resource has no native
 // idempotency-key input, and real dedupe already lives in
 // communicationOutboxService.js's claim-based row-status transition.
-export async function sendAgencyTwilioSms({ agencyId, to, body, idempotencyKey, requireVerified = true, config }) {
-  const resolved = config || (await resolveAgencyTwilioConfig(agencyId, { requireVerified }));
+export async function sendAgencyTwilioSms({ agencyId, to, body, fromNumber, idempotencyKey, requireVerified = true, config }) {
+  const resolved = config || (await resolveAgencyTwilioConfig(agencyId, { requireVerified, sendingNumber: fromNumber }));
   const client = twilio(resolved.accountSid, resolved.authToken);
   try {
     const message = await client.messages.create({
       body,
       to,
-      ...(resolved.messagingServiceSid ? { messagingServiceSid: resolved.messagingServiceSid } : { from: resolved.fromNumber }),
+      ...(fromNumber
+        ? { from: fromNumber }
+        : resolved.messagingServiceSid
+          ? { messagingServiceSid: resolved.messagingServiceSid }
+          : { from: resolved.fromNumber }),
     });
     return { id: message.sid, provider: "Twilio", response: { accepted: true, status: message.status } };
   } catch (error) {
     throw createHttpError(502, friendlyTwilioError(error));
   }
+}
+
+export async function agencyTwilioSmsSendingOptions(agencyId) {
+  const [settings, lines] = await Promise.all([
+    prisma.agencyTwilioSettings.findUnique({ where: { agencyId } }),
+    prisma.agencyTwilioVoiceLine.findMany({
+      where: { agencyId, enabled: true },
+      select: { id: true, phoneNumber: true, label: true, isPrimary: true },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+    }),
+  ]);
+  const primary = lines.find((line) => line.isPrimary)?.phoneNumber || null;
+  const defaultNumber = primary || settings?.voiceNumber || settings?.fromNumber || null;
+  const numbers = [...lines];
+  if (defaultNumber && !numbers.some((line) => line.phoneNumber === defaultNumber)) {
+    numbers.unshift({ id: "default", phoneNumber: defaultNumber, label: "Default calling number", isPrimary: true });
+  }
+  return {
+    defaultNumber,
+    numbers,
+    requiresSelection: !defaultNumber && numbers.length > 0,
+    configured: Boolean(settings?.accountSid && settings?.authTokenEncrypted && settings.enabled && settings.smsEnabled),
+    verified: settings?.lastSmsTestStatus === "Connected",
+  };
 }

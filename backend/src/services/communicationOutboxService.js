@@ -42,6 +42,7 @@ async function deliver(job) {
       agencyId: job.agencyId,
       to: Array.isArray(payload.recipients) ? payload.recipients[0] : null,
       body: payload.bodyText || "",
+      fromNumber: payload.senderAddress || undefined,
       idempotencyKey: job.message.idempotencyKey || job.message.id,
     });
   }

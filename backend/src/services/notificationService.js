@@ -771,19 +771,21 @@ export async function dispatchCommunicationAuditNotification(event) {
   const caseId = conversation?.caseId || message?.caseId;
   const clientId = conversation?.clientId || message?.clientId;
   if (inbound && (caseId || clientId)) {
-    // Portal chat and email both have complete read/reply experiences in the
-    // unified Chats inbox. SMS retains its case/client destination.
+    // Portal chat, email, and SMS all have complete read/reply experiences
+    // in the unified Chats inbox.
     const inboundChat = ["communication.client_chat_received", "communication.portal_message_received"].includes(event.action);
     const inboundEmail = event.action === "communication.inbound_received" && message?.channel === "Email";
+    const inboundSms = event.action === "communication.inbound_received" && message?.channel === "Sms";
     const chatsActionUrl = inboundEmail
       ? `/app/chats?thread=${encodeURIComponent(clientId)}&kind=email`
-      : `/app/chats?thread=${encodeURIComponent(event.conversationId)}&kind=client`;
+      : `/app/chats?thread=${encodeURIComponent(event.conversationId)}&kind=${inboundSms ? "sms" : "client"}`;
+    const inboundToChats = inboundChat || inboundEmail || inboundSms;
     const recipients = conversation?.assignedToId
       ? [conversation.assignedToId]
       : caseId
         ? await internalCaseRecipientIds(event.agencyId, caseId)
         : await adminRecipientIds(event.agencyId);
-    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: inboundChat || inboundEmail ? chatsActionUrl : caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, destinationKey: inboundChat || inboundEmail ? "chats" : undefined, dedupeKey: `conversation:${event.conversationId}:unread:staff`, aggregate: true, attentionLevel: "action_required" });
+    await notifyUsers({ agencyId: event.agencyId, recipientIds: recipients.length ? recipients : await adminRecipientIds(event.agencyId), actorUserId: event.userId, type: event.action, category: "communications", title: `New client message${conversation?.subject ? `: ${conversation.subject}` : ""}`, body: event.details, severity: "warning", entityType: "conversation", entityId: event.conversationId, actionUrl: inboundToChats ? chatsActionUrl : caseId ? `/app/cases/${caseId}` : `/app/clients/${clientId}?conversation=${event.conversationId}`, destinationKey: inboundToChats ? "chats" : undefined, dedupeKey: `conversation:${event.conversationId}:unread:staff`, aggregate: true, attentionLevel: "action_required" });
   }
   if (failed) {
     const recipients = [...new Set([message?.senderUserId, ...(await adminRecipientIds(event.agencyId))].filter(Boolean))];

@@ -10,6 +10,8 @@ import {
   exportCommunication,
   getCommunicationConversation,
   getCommunicationProviders,
+  getSmsSendingOptions,
+  syncSmsHistory,
   getClientEmailThread,
   getPortalChatStatus,
   getCommunicationRealtimeConfig,
@@ -65,6 +67,8 @@ import {
 const router = Router();
 
 router.get("/providers", asyncHandler(getCommunicationProviders));
+router.get("/sms-options", asyncHandler(getSmsSendingOptions));
+router.post("/sms/sync", asyncHandler(syncSmsHistory));
 router.get(
   "/clients/:clientId/portal-chat-status",
   asyncHandler(getPortalChatStatus),

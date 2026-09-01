@@ -5,6 +5,11 @@ import { portalDataScope } from "../services/portalAccessService.js";
 import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
 import { createLead as createLeadRecord } from "../modules/leads/lead.service.js";
 import { DEFAULT_LEAD_SOURCES } from "../modules/leads/lead.constants.js";
+import { agencyTwilioSmsSendingOptions, sendAgencyTwilioSms } from "../services/agencyTwilioService.js";
+import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
+import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
+import { requireCommunicationPermission } from "../services/communicationPermissions.js";
+import { recordActivity } from "../utils/prismaCrud.js";
 import {
   applyCallOutcome,
   ensureCallCallbackFollowUp,
@@ -125,6 +130,136 @@ export async function listCalls(req, res) {
 
 export async function getCall(req, res) {
   res.json({ data: await requireCall(req) });
+}
+
+export async function getCallSmsOptions(req, res) {
+  await requireCommunicationPermission(req, "canSendSms");
+  const call = await requireCall(req);
+  const destination = normalizeCommunicationPhone(call.remoteNumberNormalized || call.remoteNumber);
+  if (!destination) throw createHttpError(400, "This call does not have a valid mobile number.", "INVALID_SMS_DESTINATION");
+  const options = await agencyTwilioSmsSendingOptions(req.auth.agencyId);
+  res.json({ data: { ...options, destination } });
+}
+
+async function recordClientSms(call, { agencyId, userId, to, from, body, idempotencyKey, providerMessageId }) {
+  if (!call.clientId) return null;
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    let conversation = await tx.communicationConversation.findFirst({
+      where: {
+        agencyId,
+        clientId: call.clientId,
+        caseId: call.caseId || null,
+        channel: "Sms",
+        state: { not: "Closed" },
+        deletedAt: null,
+      },
+      orderBy: { lastMessageAt: "desc" },
+    });
+    if (!conversation) {
+      conversation = await tx.communicationConversation.create({
+        data: {
+          agencyId,
+          clientId: call.clientId,
+          caseId: call.caseId || null,
+          channel: "Sms",
+          provider: "Twilio",
+          assignedToId: userId,
+          state: "WaitingOnClient",
+          lastMessageAt: now,
+          lastOutboundAt: now,
+          createdById: userId,
+        },
+      });
+    }
+    const message = await tx.communicationMessage.create({
+      data: {
+        agencyId,
+        clientId: call.clientId,
+        caseId: call.caseId || null,
+        conversationId: conversation.id,
+        channel: "Sms",
+        direction: "Outbound",
+        status: "Sent",
+        senderUserId: userId,
+        senderAddress: from,
+        recipients: [to],
+        bodyText: body,
+        provider: "Twilio",
+        providerMessageId,
+        idempotencyKey,
+        occurredAt: now,
+        sentAt: now,
+        metadata: { callHistoryId: call.id },
+      },
+    });
+    await Promise.all([
+      tx.communicationConversation.update({
+        where: { id: conversation.id },
+        data: { state: "WaitingOnClient", lastMessageAt: now, lastOutboundAt: now, isArchived: false },
+      }),
+      tx.communicationDeliveryEvent.create({
+        data: { agencyId, messageId: message.id, type: "ProviderAccepted", details: "SMS accepted by Twilio" },
+      }),
+    ]);
+    return message;
+  });
+}
+
+export async function sendCallSms(req, res) {
+  await requireCommunicationPermission(req, "canSendSms");
+  const call = await requireCall(req);
+  const body = clean(req.body.body, 1600);
+  const destination = normalizeCommunicationPhone(call.remoteNumberNormalized || call.remoteNumber);
+  if (!destination) throw createHttpError(400, "This call does not have a valid mobile number.", "INVALID_SMS_DESTINATION");
+  if (!body) throw createHttpError(400, "Enter a message before sending.", "SMS_BODY_REQUIRED");
+
+  if (call.clientId) {
+    const policy = await assertClientCommunicationAllowed({ agencyId: req.auth.agencyId, clientId: call.clientId, channel: "Sms" });
+    if (!policy.allowed) throw createHttpError(409, "SMS is disabled by the workspace policy or this client's communication preferences.", "SMS_NOT_ALLOWED");
+  }
+
+  const options = await agencyTwilioSmsSendingOptions(req.auth.agencyId);
+  const requestedFrom = normalizeCommunicationPhone(req.body.fromNumber);
+  const fromNumber = requestedFrom || options.defaultNumber;
+  if (!fromNumber) throw createHttpError(400, "Choose which calling number should send this SMS.", "SMS_SENDER_REQUIRED");
+  if (!options.numbers.some((number) => number.phoneNumber === fromNumber)) {
+    throw createHttpError(400, "Choose one of this workspace's active calling numbers.", "INVALID_SMS_SENDER");
+  }
+  const idempotencyKey = clean(req.body.idempotencyKey, 200) || null;
+  if (idempotencyKey && call.clientId) {
+    const duplicate = await prisma.communicationMessage.findFirst({
+      where: { agencyId: req.auth.agencyId, idempotencyKey },
+      select: { id: true, providerMessageId: true, senderAddress: true, recipients: true, sentAt: true },
+    });
+    if (duplicate) return res.json({ data: { ...duplicate, duplicate: true } });
+  }
+
+  const result = await sendAgencyTwilioSms({
+    agencyId: req.auth.agencyId,
+    to: destination,
+    body,
+    fromNumber,
+    idempotencyKey,
+  });
+  const recorded = await recordClientSms(call, {
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    to: destination,
+    from: fromNumber,
+    body,
+    idempotencyKey,
+    providerMessageId: result.id,
+  });
+  await recordActivity({
+    agencyId: req.auth.agencyId,
+    userId: req.auth.userId,
+    clientId: call.clientId || null,
+    caseId: call.caseId || null,
+    action: "call_history.sms_sent",
+    details: `SMS sent from ${fromNumber} to ${destination}`,
+  });
+  res.status(201).json({ data: { id: recorded?.id || result.id, providerMessageId: result.id, fromNumber, to: destination, status: result.response?.status || "accepted" } });
 }
 
 export async function listCallCandidates(req, res) {

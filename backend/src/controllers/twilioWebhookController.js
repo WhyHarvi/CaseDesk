@@ -1,8 +1,15 @@
+import twilio from "twilio";
 import { logger } from "../services/logger.js";
+import prisma from "../services/prisma/client.js";
+import { decryptSecret } from "../services/secretEncryption.js";
+import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
+import { ingestInboundCommunication } from "./communicationWebhookController.js";
+import { createHttpError } from "../utils/http.js";
 import {
   handleTwilioCallStatus,
   inboundTwiML,
   outboundTwiML,
+  twilioPublicBase,
 } from "../services/twilioCallService.js";
 
 // Twilio fetches these TwiML endpoints (voiceMethod POST) and executes the
@@ -37,5 +44,34 @@ export async function twilioCallStatus(req, res) {
   // ("Invalid Content-Type") since a bare 200 with no body carries no
   // Content-Type at all. An empty <Response/> satisfies both cases: nothing
   // more to do, the call has already ended by the time this fires.
+  res.type("text/xml").send("<Response></Response>");
+}
+
+export async function twilioInboundSms(req, res) {
+  const agencyId = req.params.agencyId;
+  const settings = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId } });
+  if (!settings?.authTokenEncrypted) throw createHttpError(404, "Twilio SMS workspace not found");
+  const webhookUrl = `${twilioPublicBase(req)}${String(req.originalUrl || "").split("?")[0]}`;
+  const signature = req.header("x-twilio-signature") || "";
+  if (!twilio.validateRequest(decryptSecret(settings.authTokenEncrypted), signature, webhookUrl, req.body || {})) {
+    throw createHttpError(401, "Invalid Twilio webhook signature");
+  }
+  const destination = normalizeCommunicationPhone(req.body?.To);
+  const validNumbers = new Set(
+    [settings.voiceNumber, settings.fromNumber, ...(await prisma.agencyTwilioVoiceLine.findMany({ where: { agencyId, enabled: true }, select: { phoneNumber: true } })).map((line) => line.phoneNumber)]
+      .map(normalizeCommunicationPhone)
+      .filter(Boolean),
+  );
+  if (!destination || !validNumbers.has(destination)) throw createHttpError(404, "Twilio SMS number not found");
+  await ingestInboundCommunication({
+    agencyId,
+    channel: "Sms",
+    provider: "Twilio",
+    providerMessageId: req.body?.MessageSid,
+    from: req.body?.From,
+    to: req.body?.To,
+    body: req.body?.Body,
+    metadata: { numMedia: Number(req.body?.NumMedia || 0) },
+  });
   res.type("text/xml").send("<Response></Response>");
 }

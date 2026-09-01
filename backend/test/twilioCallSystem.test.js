@@ -310,6 +310,32 @@ test("call details can prefill a booking, link the created appointment, and open
   assert.match(calendarPage, /onCreatedId=\{linkCreatedAppointmentToCall\}/);
 });
 
+test("call history SMS uses the default calling line and asks for a sender only when no default exists", async () => {
+  const [controller, routes, twilio, callsPage] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../src/routes/callHistoryRoutes.js"),
+    source("../src/services/agencyTwilioService.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+  ]);
+
+  assert.match(twilio, /const defaultNumber = primary \|\| settings\?\.voiceNumber \|\| settings\?\.fromNumber \|\| null/);
+  assert.match(twilio, /requiresSelection: !defaultNumber && numbers\.length > 0/);
+  assert.match(twilio, /fromNumber[\s\S]+\? \{ from: fromNumber \}/);
+  assert.match(controller, /export async function getCallSmsOptions/);
+  assert.match(controller, /export async function sendCallSms/);
+  assert.match(controller, /requireCommunicationPermission\(req, "canSendSms"\)/);
+  assert.match(controller, /assertClientCommunicationAllowed\([\s\S]+channel: "Sms"/);
+  assert.match(controller, /metadata: \{ callHistoryId: call\.id \}/);
+  assert.match(routes, /router\.get\("\/:id\/sms-options", asyncHandler\(getCallSmsOptions\)\)/);
+  assert.match(routes, /router\.post\("\/:id\/sms", asyncHandler\(sendCallSms\)\)/);
+
+  assert.match(callsPage, /initialMode=\{selectedMode\}/);
+  assert.match(callsPage, /openCall\(call, "sms"\)/);
+  assert.match(callsPage, /No default calling number is set/);
+  assert.match(callsPage, /Default calling number/);
+  assert.match(callsPage, /Send SMS/);
+});
+
 test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
   const [clientsPage, profilePage] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),

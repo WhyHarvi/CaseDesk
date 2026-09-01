@@ -5,6 +5,7 @@ import {
 } from "../controllers/communicationWebhookController.js";
 import {
   twilioCallStatus,
+  twilioInboundSms,
   twilioInboundTwiML,
   twilioOutboundTwiML,
 } from "../controllers/twilioWebhookController.js";
@@ -19,5 +20,6 @@ router.post("/twilio/inbound/:agencyId", asyncHandler(twilioInboundTwiML));
 router.post("/twilio/inbound/:agencyId/:lineId", asyncHandler(twilioInboundTwiML));
 router.post("/twilio/outbound/:agencyId", asyncHandler(twilioOutboundTwiML));
 router.post("/twilio/status/:agencyId", asyncHandler(twilioCallStatus));
+router.post("/twilio/sms/:agencyId", asyncHandler(twilioInboundSms));
 
 export default router;

@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, LifeBuoy, Loader2, Mail, MailPlus, MessagesSquare, RotateCcw, Search, Send, SquarePen, UserRound, Users, X } from "lucide-react";
+import { Check, ChevronLeft, LifeBuoy, Loader2, Mail, MailPlus, MessageSquareText, MessagesSquare, RotateCcw, Search, Send, SquarePen, UserRound, Users, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +44,7 @@ const CATEGORY_FILTERS = [
   { key: "teams", label: "Team" },
   { key: "portal", label: "Portal chat" },
   { key: "email", label: "Email" },
+  { key: "sms", label: "SMS" },
   { key: "groups", label: "Groups" },
 ];
 
@@ -108,6 +109,9 @@ function ChatAvatar({ item, avatarUrl, className = "h-11 w-11 text-xs" }) {
   if (item?.kind === "email") {
     return <span className={`flex shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-[#002FA7] ${className}`}><Mail className="h-4 w-4" /></span>;
   }
+  if (item?.kind === "sms") {
+    return <span className={`flex shrink-0 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 ${className}`}><MessageSquareText className="h-4 w-4" /></span>;
+  }
   if (avatarUrl) {
     return (
       <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full ${className}`}>
@@ -146,6 +150,9 @@ function KindBadge({ kind }) {
   }
   if (kind === "email") {
     return <span className="inline-flex shrink-0 items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-[#002FA7]">Email</span>;
+  }
+  if (kind === "sms") {
+    return <span className="inline-flex shrink-0 items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">SMS</span>;
   }
   if (kind === "client") {
     return <span className="inline-flex shrink-0 items-center rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">Portal chat</span>;
@@ -431,17 +438,18 @@ export default function ChatsPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedKind = searchParams.get("kind");
-  const initialKind = ["ai", "support", "client", "email", "internal"].includes(requestedKind) ? requestedKind : "internal";
+  const initialKind = ["ai", "support", "client", "email", "sms", "internal"].includes(requestedKind) ? requestedKind : "internal";
   const requestedThreadId = searchParams.get("thread") || "";
   const [internalThreads, setInternalThreads] = useState([]);
   const [clientConversations, setClientConversations] = useState([]);
   const [emailConversations, setEmailConversations] = useState([]);
+  const [smsConversations, setSmsConversations] = useState([]);
   const [listLoading, setListLoading] = useState(true);
   const [listSearch, setListSearch] = useState("");
   // Opens to Teams by default — unless a notification/deep-link landed us
   // directly on a client conversation, in which case that filter is active
   // so the opened item is actually visible (and highlighted) in the list.
-  const [categoryFilter, setCategoryFilter] = useState(initialKind === "client" ? "portal" : initialKind === "email" ? "email" : "teams");
+  const [categoryFilter, setCategoryFilter] = useState(initialKind === "client" ? "portal" : initialKind === "email" ? "email" : initialKind === "sms" ? "sms" : "teams");
   const [selectedKind, setSelectedKind] = useState(initialKind);
   const [selectedId, setSelectedId] = useState(initialKind === "ai" && requestedThreadId ? "nova" : requestedThreadId);
   const [activeDetail, setActiveDetail] = useState(null);
@@ -465,6 +473,10 @@ export default function ChatsPage() {
   const [communicationTemplates, setCommunicationTemplates] = useState([]);
   const [groupProfileOpen, setGroupProfileOpen] = useState(false);
   const [emailComposerOpen, setEmailComposerOpen] = useState(false);
+  const [smsComposerOpen, setSmsComposerOpen] = useState(false);
+  const [smsOptions, setSmsOptions] = useState(null);
+  const [smsFromNumber, setSmsFromNumber] = useState("");
+  const [smsSyncing, setSmsSyncing] = useState(false);
   const { messages: novaMessages, sending: novaSending, error: novaError } = useNovaChat();
   const novaContextPath = searchParams.get("from") || location.pathname;
 
@@ -496,19 +508,24 @@ export default function ChatsPage() {
     Promise.all([
       api.get("/communications/providers"),
       api.get("/communications/templates"),
-    ]).then(([providerResponse, templateResponse]) => {
+      api.get("/communications/sms-options").catch(() => null),
+    ]).then(([providerResponse, templateResponse, smsResponse]) => {
       setCommunicationProviders(providerResponse.data.data || {});
       setCommPermissions(providerResponse.data.meta?.permissions || {});
       setCommunicationTemplates(templateResponse.data.data || []);
+      const nextSmsOptions = smsResponse?.data?.data || null;
+      setSmsOptions(nextSmsOptions);
+      setSmsFromNumber(nextSmsOptions?.defaultNumber || "");
     }).catch(() => {});
   }, []);
 
   const loadLists = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setListLoading(true);
-    const [internalResult, clientResult, emailResult] = await Promise.allSettled([
+    const [internalResult, clientResult, emailResult, smsResult] = await Promise.allSettled([
       getInternalChatThreads(),
       api.get("/communications/inbox?scope=all&channel=Chat&limit=100").then((response) => response.data.data),
       api.get("/communications/inbox?scope=all&channel=Email&limit=100").then((response) => response.data.data),
+      api.get("/communications/inbox?scope=all&channel=Sms&limit=100").then((response) => response.data.data),
     ]);
     // Each source degrades independently — a permissions edge case on one
     // (e.g. client-chat view restricted for this user) must never blank
@@ -516,8 +533,22 @@ export default function ChatsPage() {
     if (internalResult.status === "fulfilled") setInternalThreads(internalResult.value);
     if (clientResult.status === "fulfilled") setClientConversations(clientResult.value);
     if (emailResult.status === "fulfilled") setEmailConversations(emailResult.value);
+    if (smsResult.status === "fulfilled") setSmsConversations(smsResult.value);
     if (!silent) setListLoading(false);
   }, []);
+
+  const syncSms = useCallback(async () => {
+    if (smsSyncing) return;
+    setSmsSyncing(true);
+    try {
+      await api.post("/communications/sms/sync", {}, { timeout: 60_000 });
+      await loadLists({ silent: true });
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Twilio SMS history could not be synced.");
+    } finally {
+      setSmsSyncing(false);
+    }
+  }, [loadLists, smsSyncing]);
 
   const fetchDetailOnce = useCallback(async (kind, id) => {
     if (kind === "support") return { ...supportItem, messages: [], caseId: null };
@@ -563,7 +594,7 @@ export default function ChatsPage() {
     const data = response.data.data;
     if (data.unreadCount) await api.post(`/communications/conversations/${id}/read`, { read: true });
     return {
-      kind: data.channel === "Email" ? "email" : "client",
+      kind: data.channel === "Email" ? "email" : data.channel === "Sms" ? "sms" : "client",
       channel: data.channel,
       id,
       name: `${data.client?.fullName || "Client"}${data.case?.caseType ? ` · ${data.case.caseType}` : ""}`,
@@ -571,6 +602,7 @@ export default function ChatsPage() {
       caseId: data.caseId || null,
       clientId: data.clientId,
       clientEmail: data.client?.email || null,
+      clientPhone: data.client?.phone || null,
       subject: data.subject || data.messages?.find((message) => message.subject)?.subject || "",
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
@@ -606,6 +638,12 @@ export default function ChatsPage() {
   }, [fetchDetailOnce]);
 
   useEffect(() => { void loadLists(); }, [loadLists]);
+  const initialSmsSyncStarted = useRef(false);
+  useEffect(() => {
+    if (initialSmsSyncStarted.current) return;
+    initialSmsSyncStarted.current = true;
+    void syncSms();
+  }, [syncSms]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void loadLists({ silent: true });
@@ -676,6 +714,7 @@ export default function ChatsPage() {
     setSelectedId(id);
     if (kind === "client") setCategoryFilter("portal");
     if (kind === "email") setCategoryFilter("email");
+    if (kind === "sms") setCategoryFilter("sms");
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set("thread", id);
@@ -787,15 +826,30 @@ export default function ChatsPage() {
         preview: latest ? `${subject} — ${(latest.direction === "Outbound" ? "You: " : "")}${latest.bodyText || "Email message"}` : subject,
       };
     });
-    return [novaItem, supportItem, ...[...internal, ...client, ...email].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, emailConversations, novaItem, supportItem]);
+    const sms = smsConversations.map((conversation) => {
+      const latest = conversation.messages?.[0];
+      return {
+        kind: "sms",
+        channel: "Sms",
+        category: "sms",
+        id: conversation.id,
+        name: conversation.client?.fullName || "Client",
+        phone: conversation.client?.phone || "",
+        isGroup: false,
+        lastMessageAt: conversation.lastMessageAt,
+        unreadCount: conversation.unreadCount || 0,
+        preview: latest ? `${latest.direction === "Outbound" ? "You: " : ""}${latest.bodyText || "SMS message"}` : "",
+      };
+    });
+    return [novaItem, supportItem, ...[...internal, ...client, ...email, ...sms].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
+  }, [internalThreads, clientConversations, emailConversations, smsConversations, novaItem, supportItem]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
     return mergedItems.filter((item) => {
       if (!["ai", "support"].includes(item.kind) && categoryFilter && item.category !== categoryFilter) return false;
       if (!query) return true;
-      return `${item.name} ${item.email || ""} ${item.subject || ""} ${item.preview}`.toLowerCase().includes(query);
+      return `${item.name} ${item.email || ""} ${item.phone || ""} ${item.subject || ""} ${item.preview}`.toLowerCase().includes(query);
     });
   }, [mergedItems, listSearch, categoryFilter]);
 
@@ -817,8 +871,23 @@ export default function ChatsPage() {
       return;
     }
     const emailConversation = selectedKind === "email" || activeDetail?.channel === "Email";
+    const smsConversation = selectedKind === "sms" || activeDetail?.channel === "Sms";
     if (emailConversation && !activeDetail?.clientEmail) {
       setError("Add an email address to this client's profile before replying.");
+      return;
+    }
+    if (smsConversation && !activeDetail?.clientPhone) {
+      setError("Add a phone number to this client's profile before sending an SMS.");
+      return;
+    }
+    if (smsConversation && (!smsOptions?.configured || !smsOptions?.verified)) {
+      setError(!smsOptions?.configured
+        ? "Twilio SMS is not enabled for this workspace."
+        : "An administrator must send a successful test SMS from Settings first.");
+      return;
+    }
+    if (smsConversation && !smsFromNumber) {
+      setError("Choose which calling number should send this SMS.");
       return;
     }
     const clientMessageId = crypto.randomUUID();
@@ -835,22 +904,23 @@ export default function ChatsPage() {
         await sendInternalChatMessage(selectedId, { bodyText, clientMessageId, replyToId });
       } else {
         const conversationId = emailConversation ? activeDetail?.replyConversationId : selectedId;
-        if (!conversationId) throw new Error("This email conversation is not ready yet.");
+        if (!conversationId) throw new Error("This conversation is not ready yet.");
         await api.post(
           "/communications/messages",
           {
             conversationId,
             caseId: emailConversation ? activeDetail?.replyCaseId || undefined : activeDetail?.caseId || undefined,
             parentMessageId: replyToId || (emailConversation ? activeDetail?.replyParentMessageId : thread[thread.length - 1]?.id) || undefined,
-            channel: emailConversation ? "Email" : "Chat",
+            channel: emailConversation ? "Email" : smsConversation ? "Sms" : "Chat",
             direction: "Outbound",
-            recipients: emailConversation ? [activeDetail.clientEmail] : [],
+            recipients: emailConversation ? [activeDetail.clientEmail] : smsConversation ? [activeDetail.clientPhone] : [],
+            senderAddress: smsConversation ? smsFromNumber : undefined,
             subject: emailConversation ? activeDetail.subject : undefined,
             bodyText,
             occurredAt: new Date().toISOString(),
             sendNow: true,
             idempotencyKey: clientMessageId,
-            portalAudience: !emailConversation,
+            portalAudience: !emailConversation && !smsConversation,
           },
           { timeout: 30_000 },
         );
@@ -1060,6 +1130,13 @@ export default function ChatsPage() {
     void loadLists({ silent: true });
   }
 
+  function handleSmsSaved(message) {
+    setSmsComposerOpen(false);
+    setCategoryFilter("sms");
+    if (message?.conversationId) selectThread("sms", message.conversationId);
+    void loadLists({ silent: true });
+  }
+
   function handleGroupUpdated({ avatarChanged } = {}) {
     if (avatarChanged) refreshThreadAvatar(selectedId);
     void loadDetail(selectedKind, selectedId, { silent: true });
@@ -1089,7 +1166,7 @@ export default function ChatsPage() {
           transition={{ duration: reduceMotion ? 0 : 0.32, delay: reduceMotion ? 0 : 0.04, ease: [0.16, 1, 0.3, 1] }}
           className="mt-1 text-[13px] font-medium text-slate-500"
         >
-          Team conversations, portal messages, and client email in one workspace.
+          Team conversations, portal messages, client email, and SMS in one workspace.
         </motion.p>
         <div className="mt-4 inline-flex max-w-full items-center overflow-x-auto rounded-xl border border-slate-300 bg-white">
           {CATEGORY_FILTERS.map((filter) => {
@@ -1115,6 +1192,14 @@ export default function ChatsPage() {
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Conversations</p>
               <div className="flex items-center gap-1">
+                {categoryFilter === "sms" ? (
+                  <button type="button" onClick={syncSms} disabled={smsSyncing} className="flex h-10 w-10 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-40" aria-label="Sync SMS from Twilio" title="Sync SMS from Twilio">
+                    <RotateCcw className={`h-4 w-4 ${smsSyncing ? "animate-spin" : ""}`} />
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => setSmsComposerOpen(true)} disabled={!commPermissions.canSendSms} className="flex h-10 w-10 items-center justify-center rounded-full text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-35" aria-label="New client SMS" title={commPermissions.canSendSms ? "New client SMS" : "You do not have permission to send SMS"}>
+                  <MessageSquareText className="h-4.5 w-4.5" />
+                </button>
                 <button type="button" onClick={() => setEmailComposerOpen(true)} disabled={!commPermissions.canSendEmail} className="flex h-9 w-9 items-center justify-center rounded-full text-[#002FA7] transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-35" aria-label="New client email" title={commPermissions.canSendEmail ? "New client email" : "You do not have permission to send email"}>
                   <MailPlus className="h-4.5 w-4.5" />
                 </button>
@@ -1140,15 +1225,20 @@ export default function ChatsPage() {
               <div className="flex h-full flex-col items-center justify-center px-8 text-center">
                 <span className="flex h-14 w-14 items-center justify-center rounded-full bg-sky-50 text-sky-600"><MessagesSquare className="h-6 w-6" /></span>
                 <h3 className="mt-4 text-sm font-semibold text-slate-800">
-                  {listSearch ? "No matching conversations" : categoryFilter === "portal" ? "No portal chats yet" : categoryFilter === "email" ? "No emails yet" : `No ${categoryFilter} yet`}
+                  {listSearch ? "No matching conversations" : categoryFilter === "portal" ? "No portal chats yet" : categoryFilter === "email" ? "No emails yet" : categoryFilter === "sms" ? "No SMS conversations yet" : `No ${categoryFilter} yet`}
                 </h3>
                 <p className="mt-1.5 text-sm leading-6 text-slate-500">
-                  {listSearch ? "Try a different search." : categoryFilter === "portal" ? "Portal conversations will appear when clients send or receive secure messages." : categoryFilter === "email" ? "Emails linked to client records will appear here." : "Start a chat with a colleague."}
+                  {listSearch ? "Try a different search." : categoryFilter === "portal" ? "Portal conversations will appear when clients send or receive secure messages." : categoryFilter === "email" ? "Emails linked to client records will appear here." : categoryFilter === "sms" ? "Send a text to a client to start a tracked SMS thread." : "Start a chat with a colleague."}
                 </p>
                 {!listSearch && categoryFilter === "email" ? (
                   <button type="button" onClick={() => setEmailComposerOpen(true)} disabled={!commPermissions.canSendEmail} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-[#002FA7] px-5 text-sm font-semibold text-white transition hover:bg-blue-800 disabled:opacity-40">
                     <MailPlus className="h-4 w-4" />New email
                   </button>
+                ) : !listSearch && categoryFilter === "sms" ? (
+                  <div className="mt-5 flex flex-wrap justify-center gap-2">
+                    <button type="button" onClick={syncSms} disabled={smsSyncing} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-sky-200 bg-white px-5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:opacity-40"><RotateCcw className={`h-4 w-4 ${smsSyncing ? "animate-spin" : ""}`} />{smsSyncing ? "Syncing…" : "Sync Twilio"}</button>
+                    <button type="button" onClick={() => setSmsComposerOpen(true)} disabled={!commPermissions.canSendSms} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-sky-600 px-5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-40"><MessageSquareText className="h-4 w-4" />New SMS</button>
+                  </div>
                 ) : !listSearch && !["portal"].includes(categoryFilter) ? (
                   <button type="button" onClick={openPicker} className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-sky-600 px-5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(2,132,199,0.2)] transition hover:bg-sky-700">
                     <SquarePen className="h-4 w-4" />New team chat
@@ -1221,13 +1311,13 @@ export default function ChatsPage() {
                         <h2 className="truncate text-sm font-semibold text-slate-950">{activeDetail?.name}</h2>
                         {activeDetail ? <KindBadge kind={activeDetail.kind} /> : null}
                       </span>
-                      {["client", "email"].includes(activeDetail?.kind) ? (
+                      {["client", "email", "sms"].includes(activeDetail?.kind) ? (
                         <p className="mt-0.5 truncate text-xs text-slate-500">
-                          {activeDetail.kind === "email" ? `${activeDetail.clientEmail || "No client email"} · ${activeDetail.messageCount || 0} ${(activeDetail.messageCount || 0) === 1 ? "email" : "emails"}` : "Client portal · Secure messaging"}
+                          {activeDetail.kind === "email" ? `${activeDetail.clientEmail || "No client email"} · ${activeDetail.messageCount || 0} ${(activeDetail.messageCount || 0) === 1 ? "email" : "emails"}` : activeDetail.kind === "sms" ? `${activeDetail.clientPhone || "No client phone"} · Twilio SMS` : "Client portal · Secure messaging"}
                         </p>
                       ) : null}
                     </div>
-                    {["client", "email"].includes(activeDetail?.kind) && activeDetail.clientId ? (
+                    {["client", "email", "sms"].includes(activeDetail?.kind) && activeDetail.clientId ? (
                       <Link
                         to={`/app/clients/${encodeURIComponent(activeDetail.clientId)}`}
                         aria-label={`Open ${activeDetail.name}'s client profile`}
@@ -1251,16 +1341,16 @@ export default function ChatsPage() {
                 mineDirection="Outbound"
                 loading={detailLoading}
                 className="min-h-0 flex-1 px-4 py-5"
-                mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "email" ? "rounded-br-sm border border-blue-200 bg-blue-50 text-slate-900" : activeDetail?.kind === "client" ? "rounded-br-sm border border-slate-300 bg-white text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
+                mineBubbleClassName={activeDetail?.kind === "ai" ? "rounded-br-lg bg-gradient-to-br from-slate-800 to-slate-950 text-white" : activeDetail?.kind === "email" ? "rounded-br-sm border border-blue-200 bg-blue-50 text-slate-900" : activeDetail?.kind === "sms" ? "rounded-br-lg bg-sky-600 text-white" : activeDetail?.kind === "client" ? "rounded-br-sm border border-slate-300 bg-white text-slate-900" : "rounded-br-lg bg-gradient-to-br from-sky-600 to-indigo-600 text-white"}
                 theirBubbleClassName={activeDetail?.kind === "ai" ? "rounded-bl-lg border border-brand-100 bg-white/95 text-slate-800 shadow-[0_8px_24px_rgba(73,104,149,0.12)]" : "rounded-bl-lg border border-slate-200 bg-white text-slate-800"}
                 attachmentFileUrl={attachmentFileUrl}
                 onAttachmentTap={handleAttachmentTap}
                 clientLastReadAt={activeDetail?.kind === "email" ? null : readThreshold}
                 senderLabelFor={activeDetail?.kind === "internal" && activeDetail.isGroup ? (message) => message.sender?.fullName : undefined}
-                mineSenderLabelFor={["client", "email"].includes(activeDetail?.kind) ? (message) => message.senderUser?.fullName : undefined}
+                mineSenderLabelFor={["client", "email", "sms"].includes(activeDetail?.kind) ? (message) => message.senderUser?.fullName : undefined}
                 myUserId={myUserId}
-                onReply={["ai", "email"].includes(activeDetail?.kind) ? undefined : startReply}
-                onToggleReaction={["ai", "email"].includes(activeDetail?.kind) ? undefined : toggleReaction}
+                onReply={["ai", "email", "sms"].includes(activeDetail?.kind) ? undefined : startReply}
+                onToggleReaction={["ai", "email", "sms"].includes(activeDetail?.kind) ? undefined : toggleReaction}
                 canEditMessage={canEditMessage}
                 canDeleteMessage={canDeleteMessage}
                 editingMessageId={editingMessageId}
@@ -1284,8 +1374,8 @@ export default function ChatsPage() {
                 emptyState={
                   <>
                     <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm"><MessagesSquare className="h-6 w-6" /></span>
-                    <h3 className="mt-4 text-sm font-semibold text-slate-800">{activeDetail?.kind === "email" ? "No email messages yet" : "Say hello"}</h3>
-                    <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{activeDetail?.kind === "email" ? `Replies will be sent to ${activeDetail.clientEmail || "the client's email address"}.` : `Messages here are just between you and ${activeDetail?.name}.`}</p>
+                    <h3 className="mt-4 text-sm font-semibold text-slate-800">{activeDetail?.kind === "email" ? "No email messages yet" : activeDetail?.kind === "sms" ? "No text messages yet" : "Say hello"}</h3>
+                    <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">{activeDetail?.kind === "email" ? `Replies will be sent to ${activeDetail.clientEmail || "the client's email address"}.` : activeDetail?.kind === "sms" ? `Texts will be sent to ${activeDetail.clientPhone || "the client's phone number"}.` : `Messages here are just between you and ${activeDetail?.name}.`}</p>
                   </>
                 }
               />
@@ -1295,16 +1385,32 @@ export default function ChatsPage() {
               <div className="shrink-0 border-t border-slate-200/70 bg-white/90 px-4 py-3 backdrop-blur-xl">
                 {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaProactiveInsight currentPath={novaContextPath} /> : null}
                 {activeDetail?.kind === "ai" && novaMessages.length === 1 ? <NovaSuggestions onSelect={setDraft} currentPath={novaContextPath} /> : null}
+                {activeDetail?.kind === "sms" ? (
+                  <div className="mb-2 flex min-h-10 items-center gap-3 rounded-xl border border-sky-100 bg-sky-50/70 px-3">
+                    <label htmlFor="chat-sms-sender" className="shrink-0 text-xs font-semibold text-sky-800">Send from</label>
+                    {smsOptions?.requiresSelection ? (
+                      <select id="chat-sms-sender" value={smsFromNumber} onChange={(event) => setSmsFromNumber(event.target.value)} className="h-9 min-w-0 flex-1 rounded-lg border border-sky-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100">
+                        <option value="">Choose a calling number</option>
+                        {(smsOptions?.numbers || []).map((number) => <option key={number.id} value={number.phoneNumber}>{number.label} · {number.phoneNumber}</option>)}
+                      </select>
+                    ) : (
+                      <span id="chat-sms-sender" className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{smsOptions?.defaultNumber || "No sending number configured"}</span>
+                    )}
+                    <span className="shrink-0 text-[11px] tabular-nums text-slate-500">{draft.length}/1600</span>
+                  </div>
+                ) : null}
                 <ChatComposer
                   value={draft}
-                  onChange={setDraft}
+                  onChange={activeDetail?.kind === "sms" ? (value) => setDraft(value.slice(0, 1600)) : setDraft}
                   onSend={send}
-                  onAttach={["ai", "email"].includes(activeDetail?.kind) ? undefined : attachFile}
-                  allowAttach={!["ai", "email"].includes(activeDetail?.kind)}
+                  onAttach={["ai", "email", "sms"].includes(activeDetail?.kind) ? undefined : attachFile}
+                  allowAttach={!["ai", "email", "sms"].includes(activeDetail?.kind)}
                   sending={activeDetail?.kind === "ai" ? novaSending : sending}
-                  placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : activeDetail?.kind === "email" ? "Write an email reply" : "Type a message"}
-                  accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-brand-600 to-brand-800" : activeDetail?.kind === "email" ? "bg-[#002FA7]" : activeDetail?.kind === "client" ? "bg-slate-800" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
-                  sendLabel={activeDetail?.kind === "ai" ? "Ask Nova" : activeDetail?.kind === "email" ? "Send email" : undefined}
+                  placeholder={activeDetail?.kind === "ai" ? "Ask Nova where to go" : activeDetail?.kind === "email" ? "Write an email reply" : activeDetail?.kind === "sms" ? "Write a text message" : "Type a message"}
+                  accentClassName={activeDetail?.kind === "ai" ? "bg-gradient-to-br from-brand-600 to-brand-800" : activeDetail?.kind === "email" ? "bg-[#002FA7]" : activeDetail?.kind === "sms" ? "bg-sky-600" : activeDetail?.kind === "client" ? "bg-slate-800" : "bg-gradient-to-br from-sky-600 to-indigo-600"}
+                  sendLabel={activeDetail?.kind === "ai" ? "Ask Nova" : activeDetail?.kind === "email" ? "Send email" : activeDetail?.kind === "sms" ? "Send SMS" : undefined}
+                  sendingLabel={activeDetail?.kind === "sms" ? "Sending…" : undefined}
+                  maxLength={activeDetail?.kind === "sms" ? 1600 : 5000}
                   replyTarget={replyTarget}
                   replyTargetLabel={replyTargetLabel}
                   onCancelReply={cancelReply}
@@ -1333,6 +1439,21 @@ export default function ChatsPage() {
             lockChannel
             onClose={() => setEmailComposerOpen(false)}
             onSaved={handleEmailSaved}
+          />
+        ) : null}
+      </AnimatePresence>
+      <AnimatePresence>
+        {smsComposerOpen ? (
+          <CommunicationComposer
+            initialChannel="Sms"
+            caseItem={{ id: null, client: null }}
+            providers={communicationProviders}
+            permissions={commPermissions}
+            templates={communicationTemplates}
+            allowClientSelection
+            lockChannel
+            onClose={() => setSmsComposerOpen(false)}
+            onSaved={handleSmsSaved}
           />
         ) : null}
       </AnimatePresence>

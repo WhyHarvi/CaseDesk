@@ -11,12 +11,14 @@ import {
   Link2,
   Loader2,
   MessageCircle,
+  MessageSquareText,
   Phone,
   PhoneCall,
   PhoneMissed,
   Plus,
   RefreshCw,
   Search,
+  Send,
   ShieldAlert,
   UserRoundPlus,
   Voicemail,
@@ -82,7 +84,7 @@ function EmptyCalls({ unresolved, provider }) {
   );
 }
 
-function MobileCallCard({ call, onOpen, provider, onCall }) {
+function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
   const name = personName(call) || call.remoteNumber || "Private number";
   const detail = personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched";
   return (
@@ -115,6 +117,17 @@ function MobileCallCard({ call, onOpen, provider, onCall }) {
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
                 >
                   <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : null}
+              {onSms && call.remoteNumber ? (
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); onSms(); }}
+                  aria-label={`Send SMS to ${name}`}
+                  title="Send SMS"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"
+                >
+                  <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               ) : null}
             </span>
@@ -151,15 +164,22 @@ function MatchResults({ title, records, kind, busy, onLink }) {
   );
 }
 
-function CallDrawer({ call, staff, onClose, onChanged, provider }) {
+function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) {
   const { role } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState(call.resolution === "UNRESOLVED" ? "resolve" : "outcome");
+  const [mode, setMode] = useState(initialMode || (call.resolution === "UNRESOLVED" ? "resolve" : "outcome"));
   const [search, setSearch] = useState(call.remoteNumber || "");
   const [candidates, setCandidates] = useState({ leads: [], clients: [] });
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [smsOptions, setSmsOptions] = useState(null);
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsBody, setSmsBody] = useState("");
+  const [smsFromNumber, setSmsFromNumber] = useState("");
+  const [smsSuccess, setSmsSuccess] = useState("");
+  const [smsIdempotencyKey, setSmsIdempotencyKey] = useState(() => crypto.randomUUID());
   const [leadForm, setLeadForm] = useState({ firstName: "", lastName: "", email: "", ownerUserId: call.handledBy?.id || staff[0]?.id || "", immigrationInterest: "", initialMessage: "", priority: call.status === "MISSED" ? "HIGH" : "NORMAL" });
   const [outcome, setOutcome] = useState({ outcome: call.disposition || "COMPLETED", notes: call.outcomeNotes || "", addFollowUp: false, dueAt: "", description: "Follow up after phone call", assignedUserId: call.lead?.owner?.id || call.handledBy?.id || staff[0]?.id || "" });
 
@@ -181,6 +201,24 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
     const timer = window.setTimeout(() => loadCandidates(search), 250);
     return () => window.clearTimeout(timer);
   }, [mode, search, loadCandidates]);
+
+  useEffect(() => {
+    if (mode !== "sms" || smsOptions || smsLoading) return;
+    let cancelled = false;
+    setSmsLoading(true);
+    setError("");
+    api.get(`/call-history/${call.id}/sms-options`).then((response) => {
+      if (cancelled) return;
+      const options = response.data.data;
+      setSmsOptions(options);
+      setSmsFromNumber(options.defaultNumber || "");
+    }).catch((reason) => {
+      if (!cancelled) setError(reason.response?.data?.message || "SMS sending options could not be loaded.");
+    }).finally(() => {
+      if (!cancelled) setSmsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [mode, smsOptions, call.id]);
 
   async function mutate(path, body = {}) {
     try {
@@ -209,6 +247,28 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
       notes: outcome.notes,
       ...(outcome.addFollowUp ? { nextFollowUp: { dueAt: outcome.dueAt, description: outcome.description, assignedUserId: outcome.assignedUserId } } : {}),
     });
+  }
+
+  async function sendSms(event) {
+    event.preventDefault();
+    if (!smsBody.trim() || smsSending) return;
+    try {
+      setSmsSending(true);
+      setError("");
+      setSmsSuccess("");
+      const response = await api.post(`/call-history/${call.id}/sms`, {
+        body: smsBody.trim(),
+        fromNumber: smsFromNumber || undefined,
+        idempotencyKey: smsIdempotencyKey,
+      });
+      setSmsSuccess(`SMS sent from ${response.data.data.fromNumber || smsFromNumber}.`);
+      setSmsBody("");
+      setSmsIdempotencyKey(crypto.randomUUID());
+    } catch (reason) {
+      setError(reason.response?.data?.message || "The SMS could not be sent.");
+    } finally {
+      setSmsSending(false);
+    }
   }
 
   const suggestedLeads = call.matchSummary?.leads || [];
@@ -247,6 +307,7 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" onClick={openBooking} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"><CalendarPlus className="h-4 w-4" />{call.appointment?.id ? "Open booking" : "Book appointment"}</button>
+            {call.remoteNumber ? <button type="button" onClick={() => setMode("sms")} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-4 w-4" />Send SMS</button> : null}
             {whatsAppPhone ? <a href={`https://wa.me/${whatsAppPhone}`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white transition hover:bg-[#1fb85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2" aria-label={`Open WhatsApp chat with ${call.remoteNumber}`}><MessageCircle className="h-4 w-4" />WhatsApp <ExternalLink className="h-3 w-3" /></a> : null}
             {call.remoteNumber ? <a href={`tel:${call.remoteNumber}`} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"><Phone className="h-3.5 w-3.5" />Call with Twilio</a> : null}
             {call.recordingUrl ? <a href={call.recordingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Voicemail className="h-3.5 w-3.5" />Recording <ExternalLink className="h-3 w-3" /></a> : null}
@@ -259,12 +320,40 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
           <div className="flex gap-1 border-b border-slate-200 bg-white px-5 py-2 sm:px-6">
             <button type="button" onClick={() => setMode("resolve")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "resolve" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Match caller</button>
             <button type="button" onClick={() => setMode("outcome")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "outcome" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Record outcome</button>
+            <button type="button" onClick={() => setMode("sms")} className={`rounded-full px-3.5 py-2 text-xs font-semibold ${mode === "sms" ? "bg-sky-50 text-sky-700" : "text-slate-500"}`}>Send SMS</button>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
             {error ? <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
-            {mode === "resolve" ? (
+            {mode === "sms" ? (
+              <form onSubmit={sendSms} className="space-y-5">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-950">Text {personName(call) || call.remoteNumber}</h3>
+                  <p className="mt-1 text-sm text-slate-500">The message will be sent through Twilio to {smsOptions?.destination || call.remoteNumber}.</p>
+                </div>
+                {smsLoading ? <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-4 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-sky-600" />Loading sending number…</div> : null}
+                {smsOptions && !smsOptions.configured ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Twilio SMS is not enabled for this workspace. An administrator can configure it in Settings.</div> : null}
+                {smsOptions?.configured && !smsOptions.verified ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">An administrator must send a successful Twilio test SMS from Settings before client texts can be sent.</div> : null}
+                {smsOptions?.requiresSelection ? (
+                  <label className="block text-sm font-semibold text-slate-800">Send from
+                    <select required value={smsFromNumber} onChange={(event) => setSmsFromNumber(event.target.value)} className={`${input} mt-2`}>
+                      <option value="">Choose a calling number</option>
+                      {smsOptions.numbers.map((number) => <option key={number.id} value={number.phoneNumber}>{number.label} · {number.phoneNumber}</option>)}
+                    </select>
+                    <span className="mt-1.5 block text-xs font-normal leading-5 text-slate-500">No default calling number is set, so confirm which line should send this message.</span>
+                  </label>
+                ) : smsOptions?.defaultNumber ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3"><p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Sending from</p><p className="mt-1 text-sm font-semibold text-slate-800">{smsOptions.defaultNumber} <span className="font-normal text-slate-500">· Default calling number</span></p></div>
+                ) : smsOptions && !smsLoading ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">No active calling number is available. Add a Twilio voice line in Settings before sending.</div> : null}
+                <label className="block text-sm font-semibold text-slate-800">Message
+                  <textarea required maxLength={1600} rows={7} value={smsBody} onChange={(event) => { setSmsBody(event.target.value); setSmsSuccess(""); }} className="mt-2 w-full resize-y rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-base leading-6 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100" placeholder="Write your message…" />
+                  <span className="mt-1.5 block text-right text-xs font-normal tabular-nums text-slate-400">{smsBody.length}/1600</span>
+                </label>
+                {smsSuccess ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{smsSuccess}</div> : null}
+                <div className="flex justify-end"><button disabled={smsSending || smsLoading || !smsBody.trim() || !smsFromNumber || !smsOptions?.configured || !smsOptions?.verified} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-sky-600 px-5 text-sm font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50">{smsSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{smsSending ? "Sending…" : "Send SMS"}</button></div>
+              </form>
+            ) : mode === "resolve" ? (
               <div className="space-y-6">
                 {call.resolution !== "UNRESOLVED" ? <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /><div><p className="font-semibold">Caller matched</p><p className="mt-0.5 text-xs">Currently linked to {personName(call) || humanize(call.resolution)}. Linking another record will replace this match.</p></div></div> : null}
                 {(suggestedLeads.length || suggestedClients.length) ? <section className="space-y-4 rounded-3xl border border-sky-100 bg-sky-50/60 p-4"><div><p className="text-sm font-semibold text-sky-950">Exact phone matches</p><p className="mt-1 text-xs text-sky-700">CaseDesk found these records using the normalized caller number.</p></div><MatchResults title="Leads" records={suggestedLeads} kind="lead" busy={busy} onLink={link} /><MatchResults title="Clients" records={suggestedClients} kind="client" busy={busy} onLink={link} /></section> : null}
@@ -323,6 +412,7 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
+  const [selectedMode, setSelectedMode] = useState("");
   const page = Math.max(Number(params.get("page")) || 1, 1);
   const view = params.get("view") || "all";
   const search = params.get("search") || "";
@@ -383,13 +473,15 @@ export function CallHistorySection({ provider = "TWILIO" }) {
     });
   }
 
-  function openCall(call) {
+  function openCall(call, nextMode = "") {
     setSelected(call);
+    setSelectedMode(nextMode);
     setParams((current) => { const next = new URLSearchParams(current); next.set("call", call.id); return next; }, { replace: true });
   }
 
   function closeCall() {
     setSelected(null);
+    setSelectedMode("");
     setParams((current) => { const next = new URLSearchParams(current); next.delete("call"); return next; }, { replace: true });
   }
 
@@ -418,12 +510,12 @@ export function CallHistorySection({ provider = "TWILIO" }) {
         {loading ? <div className="space-y-3 p-5">{Array.from({ length: 7 }, (_, index) => <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)}</div> : !calls.length ? <EmptyCalls unresolved={view === "unresolved"} provider={provider} /> : (
           <>
           <div className="divide-y divide-slate-200 md:hidden">
-            {calls.map((call) => <MobileCallCard key={call.id} call={call} provider={provider} onOpen={() => openCall(call)} onCall={canCallBack ? callBack : null} />)}
+            {calls.map((call) => <MobileCallCard key={call.id} call={call} provider={provider} onOpen={() => openCall(call)} onCall={canCallBack ? callBack : null} onSms={call.remoteNumber ? () => openCall(call, "sms") : null} />)}
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] border-collapse text-left">
               <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Team member</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
+              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}{call.remoteNumber ? <button type="button" onClick={() => openCall(call, "sms")} aria-label={`Send SMS to ${personName(call) || call.remoteNumber}`} title="Send SMS" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
             </table>
           </div>
           </>
@@ -431,7 +523,7 @@ export function CallHistorySection({ provider = "TWILIO" }) {
         <footer className="flex items-center justify-between border-t border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500"><span className="tabular-nums">{meta.total ? `${(page - 1) * 25 + 1}–${Math.min(page * 25, meta.total)} of ${meta.total}` : "0 calls"}</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1 || loading} onClick={() => update({ page: String(page - 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button><span className="min-w-16 text-center text-xs font-semibold tabular-nums">Page {page}</span><button type="button" disabled={!meta.hasMore || loading} onClick={() => update({ page: String(page + 1) })} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Next page"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button></div></footer>
       </div>
 
-      {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}`} call={selected} staff={staff} provider={provider} onClose={closeCall} onChanged={async () => { await load({ quiet: true }); }} /> : null}
+      {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}:${selectedMode}`} call={selected} staff={staff} provider={provider} initialMode={selectedMode} onClose={closeCall} onChanged={async () => { await load({ quiet: true }); }} /> : null}
     </section>
   );
 }

@@ -49,13 +49,56 @@ test("SMS sends require Twilio and never fall back to another provider", async (
     source("../src/services/agencyTwilioService.js"),
     source("../src/services/communicationOutboxService.js"),
   ]);
-  assert.match(provider, /export async function sendSmsMessage\(\{ agencyId, to, body, idempotencyKey, requireVerified = true \}\)/);
-  assert.match(provider, /resolveAgencyTwilioConfig\(agencyId, \{ requireVerified \}\)/);
+  assert.match(provider, /export async function sendSmsMessage\(\{ agencyId, to, body, fromNumber, idempotencyKey, requireVerified = true \}\)/);
+  assert.match(provider, /resolveAgencyTwilioConfig\(agencyId, \{ requireVerified, sendingNumber: fromNumber \}\)/);
   assert.match(provider, /return sendAgencyTwilioSms\(/);
   assert.doesNotMatch(provider, /Ooma|sendAgencyOomaSms/);
   assert.match(twilioService, /Twilio is not connected/);
   assert.match(outbox, /sendSmsMessage/);
+  assert.match(outbox, /fromNumber: payload\.senderAddress \|\| undefined/);
   assert.doesNotMatch(outbox, /sendOomaSms/);
+});
+
+test("SMS senders come from the workspace's active calling numbers", async () => {
+  const [service, controller, routes, chats] = await Promise.all([
+    source("../src/services/agencyTwilioService.js"),
+    source("../src/controllers/communicationController.js"),
+    source("../src/routes/communicationRoutes.js"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+  ]);
+  assert.match(service, /export async function agencyTwilioSmsSendingOptions/);
+  assert.match(service, /where: \{ agencyId, enabled: true \}/);
+  assert.match(service, /const defaultNumber = primary \|\| settings\?\.voiceNumber \|\| settings\?\.fromNumber \|\| null/);
+  assert.match(controller, /export async function getSmsSendingOptions/);
+  assert.match(controller, /"INVALID_SMS_SENDER"/);
+  assert.match(routes, /router\.get\("\/sms-options", asyncHandler\(getSmsSendingOptions\)\)/);
+  assert.match(chats, /api\.get\("\/communications\/sms-options"\)/);
+  assert.match(chats, /channel: "Sms"/);
+  assert.match(chats, /senderAddress: smsConversation \? smsFromNumber : undefined/);
+  assert.match(chats, /maxLength=\{activeDetail\?\.kind === "sms" \? 1600 : 5000\}/);
+});
+
+test("Chats imports existing Twilio SMS history and can receive future replies", async () => {
+  const [syncService, controller, routes, webhookRoutes, webhookController, voiceService, chats] = await Promise.all([
+    source("../src/services/twilioSmsSyncService.js"),
+    source("../src/controllers/communicationController.js"),
+    source("../src/routes/communicationRoutes.js"),
+    source("../src/routes/communicationWebhookRoutes.js"),
+    source("../src/controllers/twilioWebhookController.js"),
+    source("../src/services/twilioCallService.js"),
+    source("../../frontend/src/pages/ChatsPage.jsx"),
+  ]);
+  assert.match(syncService, /client\.messages\.list\(/);
+  assert.match(syncService, /providerMessageId: providerMessage\.sid/);
+  assert.match(syncService, /importedFromTwilio: true/);
+  assert.match(controller, /export async function syncSmsHistory/);
+  assert.match(routes, /router\.post\("\/sms\/sync", asyncHandler\(syncSmsHistory\)\)/);
+  assert.match(webhookRoutes, /router\.post\("\/twilio\/sms\/:agencyId", asyncHandler\(twilioInboundSms\)\)/);
+  assert.match(webhookController, /twilio\.validateRequest/);
+  assert.match(webhookController, /channel: "Sms"/);
+  assert.match(voiceService, /smsUrl: `\$\{base\}\/api\/communications\/webhooks\/twilio\/sms\/\$\{agencyId\}`/);
+  assert.match(chats, /api\.post\("\/communications\/sms\/sync"/);
+  assert.match(chats, /Sync Twilio/);
 });
 
 test("Twilio settings can be removed", async () => {
@@ -90,7 +133,7 @@ test("frontend registers Twilio as the sole phone and SMS provider", async () =>
     source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx"),
   ]);
   assert.match(settingsPage, /import AgencyTwilioSettingsPanel from "\.\.\/components\/settings\/AgencyTwilioSettingsPanel";/);
-  assert.match(settingsPage, /activeSection === "agency-phone" \? \(\s*\n\s*<div className="space-y-6">\s*\n\s*<AgencyTwilioSettingsPanel \/>/);
+  assert.match(settingsPage, /activeSection === "agency-phone" \? \(\s*\n\s*<AgencyTwilioSettingsPanel \/>/);
   assert.match(twilioPanel, /Verify credentials/);
   assert.match(twilioPanel, /settings\/twilio\/verify/);
   assert.match(twilioPanel, /Send test text/);

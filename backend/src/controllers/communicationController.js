@@ -26,6 +26,10 @@ import {
 import { resolveNotifications } from "../services/notificationService.js";
 import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
 import { shortenSubjectLine } from "../services/ollama.service.js";
+import { agencyTwilioSmsSendingOptions } from "../services/agencyTwilioService.js";
+import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
+import { syncAgencyTwilioSmsHistory } from "../services/twilioSmsSyncService.js";
+import { twilioPublicBase } from "../services/twilioCallService.js";
 
 const channels = new Set(["Email", "Sms", "Chat", "Call"]);
 // A subject is only ever collected for Email — Sms/Chat/Call have no
@@ -332,6 +336,7 @@ function buildOutboxPayload({
   bodyText,
   bodyHtml,
   parent,
+  senderAddress,
 }) {
   const references = parent
     ? [...jsonArray(parent.emailReferences), parent.emailMessageId].filter(
@@ -346,6 +351,7 @@ function buildOutboxPayload({
     subject,
     bodyText,
     bodyHtml,
+    senderAddress,
     headers: parent
       ? {
           "In-Reply-To": parent.emailMessageId || undefined,
@@ -386,6 +392,17 @@ export async function getCommunicationProviders(req, res) {
     getCommunicationPermissions(req),
   ]);
   res.json({ data: providers, meta: { permissions } });
+}
+
+export async function getSmsSendingOptions(req, res) {
+  await requireCommunicationPermission(req, "canSendSms");
+  res.json({ data: await agencyTwilioSmsSendingOptions(req.user.agencyId) });
+}
+
+export async function syncSmsHistory(req, res) {
+  await requireCommunicationPermission(req, "canView");
+  const data = await syncAgencyTwilioSmsHistory(req.user.agencyId, { publicBase: twilioPublicBase(req) });
+  res.json({ data });
 }
 
 export async function getPortalChatStatus(req, res) {
@@ -816,6 +833,15 @@ export async function createCommunicationMessage(req, res) {
       ? sendPermission(channel)
       : "canView",
   );
+  let senderAddress = clean(req.body.senderAddress, 320) || null;
+  if (channel === "Sms" && direction === "Outbound") {
+    const options = await agencyTwilioSmsSendingOptions(req.user.agencyId);
+    senderAddress = normalizeCommunicationPhone(senderAddress) || options.defaultNumber;
+    if (!senderAddress) throw createHttpError(400, "Choose which calling number should send this SMS.", "SMS_SENDER_REQUIRED");
+    if (!options.numbers.some((number) => number.phoneNumber === senderAddress)) {
+      throw createHttpError(400, "Choose one of this workspace's active calling numbers.", "INVALID_SMS_SENDER");
+    }
+  }
 
   const authenticatedPortalChat =
     channel === "Chat" &&
@@ -1030,9 +1056,7 @@ export async function createCommunicationMessage(req, res) {
         direction,
         status: initialStatus,
         senderUserId: direction === "Inbound" ? null : req.user.id,
-        senderAddress:
-          clean(req.body.senderAddress, 320) ||
-          (direction === "Inbound" ? null : req.user.email),
+        senderAddress: senderAddress || (direction === "Inbound" ? null : req.user.email),
         recipients,
         cc,
         bcc,
@@ -1079,6 +1103,7 @@ export async function createCommunicationMessage(req, res) {
             bodyText,
             bodyHtml,
             parent,
+            senderAddress,
           }),
           availableAt:
             scheduledAt && scheduledAt > new Date() ? scheduledAt : new Date(),
@@ -1348,6 +1373,7 @@ export async function sendCommunicationDraft(req, res) {
           bodyText: existing.bodyText,
           bodyHtml: existing.bodyHtml,
           parent,
+          senderAddress: existing.senderAddress,
         }),
         availableAt:
           scheduledAt && scheduledAt > new Date() ? scheduledAt : new Date(),
