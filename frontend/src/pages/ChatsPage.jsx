@@ -1,5 +1,6 @@
 import { Check, ChevronLeft, LifeBuoy, Loader2, Mail, MailPlus, MessagesSquare, RotateCcw, Search, Send, SquarePen, UserRound, Users, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
@@ -48,6 +49,30 @@ const CATEGORY_FILTERS = [
 
 const EMAIL_SUBJECT_MAX_WORDS = 10;
 const subjectWordCount = (value) => String(value || "").trim().split(/\s+/).filter(Boolean).length;
+
+function EmailMessageContent({ message }) {
+  const safeHtml = message.bodyHtml
+    ? DOMPurify.sanitize(message.bodyHtml, {
+        FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "img"],
+        FORBID_ATTR: ["style", "srcset"],
+      })
+    : "";
+  return (
+    <div className="min-w-0">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#002FA7]">
+        {message.subject || message.conversation?.subject || "Email"}
+      </p>
+      {safeHtml ? (
+        <div
+          className="[overflow-wrap:anywhere] text-[15px] leading-6 [&_a]:text-blue-700 [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_li]:ml-5 [&_ol]:list-decimal [&_p]:mb-3 [&_p:last-child]:mb-0 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_ul]:list-disc"
+          dangerouslySetInnerHTML={{ __html: safeHtml }}
+        />
+      ) : (
+        <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
+      )}
+    </div>
+  );
+}
 
 const initials = (name) =>
   String(name || "?")
@@ -1254,14 +1279,7 @@ export default function ChatsPage() {
                   mine
                     ? <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
                     : <NovaMessageContent text={message.bodyText} animate={isNew} />
-                ) : activeDetail?.kind === "email" ? (message) => (
-                  <div>
-                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#002FA7]">
-                      {message.subject || message.conversation?.subject || "Email"}
-                    </p>
-                    <p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>
-                  </div>
-                ) : undefined}
+                ) : activeDetail?.kind === "email" ? (message) => <EmailMessageContent message={message} /> : undefined}
                 onRetryMessage={activeDetail?.kind === "ai" ? retryNova : undefined}
                 emptyState={
                   <>

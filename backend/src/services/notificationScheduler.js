@@ -472,7 +472,7 @@ async function communicationSlaNotifications(now, horizon, pass) {
   const conversations = await prisma.communicationConversation.findMany({
     where: { state: { in: ["Open", "WaitingOnAgency"] }, deletedAt: null, OR: [{ responseDueAt: { not: null, lte: horizon } }, { resolutionDueAt: { not: null, lte: horizon } }] },
     take: 500,
-    select: { id: true, agencyId: true, clientId: true, caseId: true, assignedToId: true, subject: true, responseDueAt: true, resolutionDueAt: true },
+    select: { id: true, agencyId: true, clientId: true, caseId: true, channel: true, assignedToId: true, subject: true, responseDueAt: true, resolutionDueAt: true },
   });
   const jobs = [];
   for (const item of conversations) {
@@ -483,10 +483,13 @@ async function communicationSlaNotifications(now, horizon, pass) {
       const type = `communication.${kind}_${overdue ? "breached" : "due"}`;
       // Conversations aren't always case-scoped — client-only chats have no
       // caseId, and building a case link for those produced "/app/cases/null".
-      const actionUrl = item.caseId
-        ? caseNotificationActionUrl(item.caseId, { type, category: "communications" })
-        : `/app/clients/${item.clientId}?conversation=${encodeURIComponent(item.id)}`;
-      jobs.push({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await pass.cachedAdminRecipientIds(item.agencyId), type, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl, dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
+      const chatsKind = item.channel === "Email" ? "email" : item.channel === "Chat" ? "client" : null;
+      const actionUrl = chatsKind
+        ? `/app/chats?thread=${encodeURIComponent(chatsKind === "email" ? item.clientId : item.id)}&kind=${chatsKind}`
+        : item.caseId
+          ? caseNotificationActionUrl(item.caseId, { type, category: "communications" })
+          : `/app/clients/${item.clientId}?conversation=${encodeURIComponent(item.id)}`;
+      jobs.push({ agencyId: item.agencyId, recipientIds: recipients.length ? recipients : await pass.cachedAdminRecipientIds(item.agencyId), type, category: "communications", title: `${kind === "response" ? "Response" : "Resolution"} ${overdue ? "SLA breached" : "due soon"}: ${item.subject || "client conversation"}`, severity: overdue ? "critical" : "warning", entityType: "conversation", entityId: item.id, actionUrl, destinationKey: chatsKind ? "chats" : undefined, dedupeKey: `conversation:${item.id}:${kind}:${overdue ? "overdue" : "due"}:${isoKey(dueAt)}`, scheduledFor: overdue ? null : dueAt, attentionLevel: overdue ? "action_required" : "update" });
     }
   }
   return jobs;

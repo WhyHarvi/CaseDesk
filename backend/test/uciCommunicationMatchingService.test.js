@@ -53,7 +53,8 @@ test("an incoming email nobody's own address matches (IRCC/RCIC correspondence, 
 
   // Clicking the notification lands exactly where the rest of the app
   // already sends a conversation-scoped notification.
-  assert.match(service, /actionUrl: `\/app\/clients\/\$\{client\.id\}\?conversation=\$\{conversation\.id\}`/);
+  assert.match(service, /actionUrl: `\/app\/chats\?thread=\$\{encodeURIComponent\(client\.id\)\}&kind=email`/);
+  assert.match(service, /destinationKey: "chats"/);
   assert.match(notificationService, /actionUrl.*\/app\/clients\/\$\{clientId\}\?conversation=\$\{event\.conversationId\}/);
 });
 

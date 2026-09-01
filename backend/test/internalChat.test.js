@@ -134,15 +134,16 @@ test("a new internal chat message notifies every other participant through the g
   assert.match(notificationService, /\["\/app\/chats", "chats"\],/);
 });
 
-test("inbound client-chat notifications also route to the unified Chats badge, but other inbound channels (email/SMS) keep badging Cases/Clients", async () => {
+test("inbound portal-chat and email notifications route to their reply-capable Chats categories", async () => {
   const notificationService = await source("../src/services/notificationService.js");
   const dispatch = notificationService.slice(
     notificationService.indexOf("export async function dispatchCommunicationAuditNotification"),
     notificationService.indexOf("export function notificationTitle"),
   );
   assert.match(dispatch, /const inboundChat = \["communication\.client_chat_received", "communication\.portal_message_received"\]\.includes\(event\.action\);/);
-  assert.match(dispatch, /actionUrl: inboundChat \? `\/app\/chats\?thread=\$\{event\.conversationId\}&kind=client` : caseId/);
-  assert.match(dispatch, /destinationKey: inboundChat \? "chats" : undefined,/);
+  assert.match(dispatch, /const inboundEmail = event\.action === "communication\.inbound_received" && message\?\.channel === "Email";/);
+  assert.match(dispatch, /`\/app\/chats\?thread=\$\{encodeURIComponent\(clientId\)\}&kind=email`/);
+  assert.match(dispatch, /destinationKey: inboundChat \|\| inboundEmail \? "chats" : undefined,/);
 });
 
 test("internal chat is mounted for staff roles only, alongside the rest of the internal API", async () => {
@@ -214,6 +215,15 @@ test("Chats consolidates every email thread for one client into one soft-edged c
   assert.match(controller, /export async function getClientEmailThread/);
   assert.match(controller, /conversationId: \{ in: conversationIds \}/);
   assert.match(controller, /totalMessages: conversations\.reduce/);
+});
+
+test("Chats renders the complete sanitized HTML email instead of Microsoft's shortened preview", async () => {
+  const page = await source("../../frontend/src/pages/ChatsPage.jsx");
+  assert.match(page, /import DOMPurify from "dompurify"/);
+  assert.match(page, /function EmailMessageContent/);
+  assert.match(page, /DOMPurify\.sanitize\(message\.bodyHtml/);
+  assert.match(page, /FORBID_TAGS: \["script", "style", "iframe", "object", "embed", "img"\]/);
+  assert.match(page, /<EmailMessageContent message=\{message\} \/>/);
 });
 
 test("Chats starts email from a real client and keeps portal chat visually separate", async () => {

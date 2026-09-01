@@ -112,6 +112,26 @@ test("user-authored CRM email uses its sender mailbox while automation keeps the
   assert.match(inbound, /microsoftMessageId/);
 });
 
+test("Microsoft Sent Items replies are merged into the client email history without duplicating CaseDesk sends", async () => {
+  const [inbound, schema, migration] = await Promise.all([
+    source("../src/services/inboundMailSyncService.js"),
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260901120000_mailbox_sent_sync_checkpoint/migration.sql"),
+  ]);
+  assert.match(inbound, /async function syncMicrosoftSentItems/);
+  assert.match(inbound, /\/me\/mailFolders\/sentitems\/messages/);
+  assert.match(inbound, /async function ingestMicrosoftSentEmail/);
+  assert.match(inbound, /direction: "Outbound"/);
+  assert.match(inbound, /state: "WaitingOnClient"/);
+  assert.match(inbound, /graphHeader\(message, "x-casedesk-message-id"\)/);
+  assert.match(inbound, /senderUserId: connection\.userId/);
+  assert.match(inbound, /connection\.lastSentSyncedAt/);
+  assert.match(inbound, /lastSentSyncedAt: startedAt/);
+  assert.match(schema, /lastSentSyncedAt\s+DateTime\?\s+@map\("last_sent_synced_at"\)/);
+  assert.match(migration, /agency_microsoft_mailbox_connections/);
+  assert.match(migration, /user_mailbox_connections/);
+});
+
 test("workspace administrators connect a Microsoft system mailbox for automation and inbound replies", async () => {
   const [schema, migration, routes, controller, service, agencyMail, inbound, panel] = await Promise.all([
     source("../prisma/schema.prisma"),

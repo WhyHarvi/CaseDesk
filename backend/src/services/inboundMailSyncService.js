@@ -193,6 +193,231 @@ const graphHeader = (message, name) =>
     (item) => String(item.name).toLowerCase() === name.toLowerCase(),
   )?.value || null;
 
+// Outlook replies written outside CaseDesk still belong in the client's
+// unified email history. Import them from Sent Items without creating a new
+// notification (the client did not send this message) or another outbox job.
+async function ingestMicrosoftSentEmail({
+  agencyId,
+  senderUserId = null,
+  senderAddress,
+  providerEventPrefix,
+  message,
+}) {
+  const provider = "Microsoft 365";
+  const providerMessageId = message.id;
+  if (!providerMessageId) return { skipped: true };
+  const caseDeskMessageId = graphHeader(message, "x-casedesk-message-id");
+  if (caseDeskMessageId) {
+    const existingCaseDeskMessage = await prisma.communicationMessage.findFirst({
+      where: { id: caseDeskMessageId, agencyId, direction: "Outbound", channel: "Email" },
+      select: { id: true },
+    });
+    if (existingCaseDeskMessage) {
+      await prisma.communicationMessage.update({
+        where: { id: existingCaseDeskMessage.id },
+        data: {
+          provider,
+          providerMessageId,
+          emailMessageId: message.internetMessageId || undefined,
+        },
+      });
+      return { duplicate: true };
+    }
+  }
+  const duplicate = await prisma.communicationMessage.findFirst({
+    where: { agencyId, provider, providerMessageId },
+    select: { id: true },
+  });
+  if (duplicate) return { duplicate: true };
+
+  const recipientAddresses = [
+    ...graphAddresses(message.toRecipients),
+    ...graphAddresses(message.ccRecipients),
+  ];
+  const inReplyTo = graphHeader(message, "in-reply-to");
+  const parent = inReplyTo
+    ? await prisma.communicationMessage.findFirst({
+        where: {
+          agencyId,
+          channel: "Email",
+          deletedAt: null,
+          OR: [{ emailMessageId: inReplyTo }, { providerMessageId: inReplyTo }],
+        },
+        select: { id: true, clientId: true, caseId: true, conversationId: true },
+      })
+    : null;
+  const client = parent
+    ? await prisma.client.findFirst({ where: { id: parent.clientId, agencyId } })
+    : await prisma.client.findFirst({
+        where: {
+          agencyId,
+          OR: recipientAddresses.flatMap((address) => [
+            { emailNormalized: String(address).toLowerCase() },
+            { email: { equals: address, mode: "insensitive" } },
+          ]),
+        },
+      });
+  if (!client) return { skipped: true };
+
+  const caseItem = parent?.caseId
+    ? await prisma.case.findFirst({ where: { id: parent.caseId, agencyId } })
+    : (await prisma.case.findFirst({
+        where: { agencyId, clientId: client.id, status: { not: "Closed" } },
+        orderBy: { updatedAt: "desc" },
+      })) || await prisma.case.findFirst({
+        where: { agencyId, clientId: client.id },
+        orderBy: { updatedAt: "desc" },
+      });
+  const occurredAt = new Date(message.sentDateTime || message.createdDateTime || Date.now());
+  const references = String(graphHeader(message, "references") || "")
+    .split(/\s+/)
+    .filter(Boolean);
+  const subject = message.subject || null;
+  const bodyText = message.body?.contentType?.toLowerCase() === "text"
+    ? message.body.content
+    : message.bodyPreview || null;
+  const bodyHtml = message.body?.contentType?.toLowerCase() === "html"
+    ? message.body.content
+    : null;
+  const providerThreadId = message.conversationId || null;
+
+  const data = await prisma.$transaction(async (tx) => {
+    let conversation = parent
+      ? await tx.communicationConversation.findFirst({
+          where: { id: parent.conversationId, agencyId, clientId: client.id, channel: "Email", deletedAt: null },
+        })
+      : null;
+    if (!conversation && providerThreadId) {
+      conversation = await tx.communicationConversation.findFirst({
+        where: { agencyId, clientId: client.id, channel: "Email", provider, providerThreadId, deletedAt: null },
+      });
+    }
+    let ownerId = senderUserId || conversation?.assignedToId || caseItem?.assignedUserId || client.assignedUserId;
+    if (!ownerId) {
+      ownerId = (await tx.user.findFirst({
+        where: { agencyId, status: "active", role: { in: ["admin", "consultant", "frontdesk"] } },
+        orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+        select: { id: true },
+      }))?.id;
+    }
+    if (!ownerId) return null;
+    if (!conversation) {
+      conversation = await tx.communicationConversation.create({
+        data: {
+          agencyId,
+          clientId: client.id,
+          caseId: caseItem?.id || null,
+          channel: "Email",
+          subject,
+          provider,
+          providerThreadId,
+          assignedToId: caseItem?.assignedUserId || client.assignedUserId || ownerId,
+          state: "WaitingOnClient",
+          lastMessageAt: occurredAt,
+          lastOutboundAt: occurredAt,
+          resolutionDueAt: null,
+          createdById: ownerId,
+        },
+      });
+    }
+    const created = await tx.communicationMessage.create({
+      data: {
+        agencyId,
+        clientId: client.id,
+        caseId: conversation.caseId || caseItem?.id || null,
+        conversationId: conversation.id,
+        channel: "Email",
+        direction: "Outbound",
+        status: "Sent",
+        senderUserId: ownerId,
+        senderAddress,
+        recipients: graphAddresses(message.toRecipients),
+        cc: graphAddresses(message.ccRecipients),
+        bcc: graphAddresses(message.bccRecipients),
+        subject,
+        bodyText,
+        bodyHtml,
+        provider,
+        providerMessageId,
+        parentMessageId: parent?.id || null,
+        emailMessageId: message.internetMessageId || null,
+        emailInReplyTo: inReplyTo || null,
+        emailReferences: references,
+        occurredAt,
+        sentAt: occurredAt,
+        metadata: { mailboxSync: true, microsoftMessageId: message.id },
+        isRead: true,
+      },
+    });
+    await tx.communicationConversation.update({
+      where: { id: conversation.id },
+      data: {
+        lastMessageAt: occurredAt,
+        lastOutboundAt: occurredAt,
+        responseDueAt: null,
+        state: "WaitingOnClient",
+        isArchived: false,
+        subject: conversation.subject || subject,
+        ...(!conversation.firstRespondedAt && conversation.lastInboundAt
+          ? { firstRespondedAt: occurredAt }
+          : {}),
+      },
+    });
+    await tx.communicationDeliveryEvent.create({
+      data: {
+        agencyId,
+        messageId: created.id,
+        type: "Sent",
+        providerEventId: `${providerEventPrefix}:${message.id}`,
+        providerTimestamp: occurredAt,
+        details: "Email imported from Microsoft Sent Items",
+        metadata: { mailboxSync: true },
+      },
+    });
+    return created;
+  });
+  if (!data) return { skipped: true };
+  await resolveNotifications({
+    agencyId,
+    entityType: "conversation",
+    entityId: data.conversationId,
+    types: [
+      "communication.inbound_received",
+      "communication.response_due",
+      "communication.response_breached",
+    ],
+  });
+  return { data, duplicate: false };
+}
+
+async function syncMicrosoftSentItems({ request, connection, senderUserId = null, providerEventPrefix, since }) {
+  const query = new URLSearchParams({
+    "$filter": `sentDateTime ge ${since}`,
+    "$orderby": "sentDateTime asc",
+    "$top": "50",
+    "$select": "id,internetMessageId,conversationId,sentDateTime,createdDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,internetMessageHeaders",
+  });
+  let next = `/me/mailFolders/sentitems/messages?${query}`;
+  let pages = 0;
+  let imported = 0;
+  while (next && pages < 5) {
+    const result = await request(next);
+    for (const message of result.value || []) {
+      const synced = await ingestMicrosoftSentEmail({
+        agencyId: connection.agencyId,
+        senderUserId,
+        senderAddress: connection.emailAddress,
+        providerEventPrefix,
+        message,
+      });
+      if (synced.data && !synced.duplicate) imported += 1;
+    }
+    next = result["@odata.nextLink"] || null;
+    pages += 1;
+  }
+  return imported;
+}
+
 async function syncPersonalMicrosoftMailbox(connection) {
   const startedAt = new Date();
   try {
@@ -202,6 +427,11 @@ async function syncPersonalMicrosoftMailbox(connection) {
         (connection.lastSyncedAt || connection.connectedAt || startedAt).getTime() - 5 * 60_000,
         startedAt.getTime() - 7 * 24 * 60 * 60_000,
       ),
+    ).toISOString();
+    const sentSince = new Date(
+      connection.lastSentSyncedAt
+        ? connection.lastSentSyncedAt.getTime() - 5 * 60_000
+        : startedAt.getTime() - 7 * 24 * 60 * 60_000,
     ).toISOString();
     const query = new URLSearchParams({
       "$filter": `receivedDateTime ge ${since}`,
@@ -265,10 +495,18 @@ async function syncPersonalMicrosoftMailbox(connection) {
       next = result["@odata.nextLink"] || null;
       pages += 1;
     }
+    imported += await syncMicrosoftSentItems({
+      request,
+      connection,
+      senderUserId: connection.userId,
+      providerEventPrefix: `microsoft-sent:${connection.id}`,
+      since: sentSince,
+    });
     await prisma.userMailboxConnection.update({
       where: { id: connection.id },
       data: {
         lastSyncedAt: startedAt,
+        lastSentSyncedAt: startedAt,
         lastSyncStatus: "Connected",
         lastSyncMessage: imported
           ? `${imported} matching client email${imported === 1 ? "" : "s"} synchronized.`
@@ -316,6 +554,11 @@ async function syncAgencyMicrosoftMailbox(connection) {
         (connection.lastSyncedAt || connection.connectedAt || startedAt).getTime() - 5 * 60_000,
         startedAt.getTime() - 7 * 24 * 60 * 60_000,
       ),
+    ).toISOString();
+    const sentSince = new Date(
+      connection.lastSentSyncedAt
+        ? connection.lastSentSyncedAt.getTime() - 5 * 60_000
+        : startedAt.getTime() - 7 * 24 * 60 * 60_000,
     ).toISOString();
     const query = new URLSearchParams({
       "$filter": `receivedDateTime ge ${since}`,
@@ -412,10 +655,17 @@ async function syncAgencyMicrosoftMailbox(connection) {
       next = result["@odata.nextLink"] || null;
       pages += 1;
     }
+    imported += await syncMicrosoftSentItems({
+      request,
+      connection,
+      providerEventPrefix: `microsoft-system-sent:${connection.id}`,
+      since: sentSince,
+    });
     await prisma.agencyMicrosoftMailboxConnection.update({
       where: { id: connection.id },
       data: {
         lastSyncedAt: startedAt,
+        lastSentSyncedAt: startedAt,
         lastSyncStatus: "Connected",
         lastSyncMessage: imported
           ? `${imported} system mailbox email${imported === 1 ? "" : "s"} synchronized.`

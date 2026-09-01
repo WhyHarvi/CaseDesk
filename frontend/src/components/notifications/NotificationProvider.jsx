@@ -37,6 +37,18 @@ const PATH_REWRITES = {};
 export function actionPathForNotification(notification) {
   const metadata = notification?.metadata || {};
   const type = String(notification?.type || "");
+  // Older inbound-email notifications were saved with a client-profile URL.
+  // Email is now a first-class Chats category (with its own reply composer),
+  // so keep already-created notifications useful after the backend rollout.
+  const legacyClientConversation = String(notification?.actionUrl || "").match(
+    /^\/app\/clients\/([^/?#]+)\?[^#]*\bconversation=([^&#]+)/,
+  );
+  if (
+    legacyClientConversation &&
+    ["communication.inbound_received", "communication.uci_matched"].includes(type)
+  ) {
+    return `/app/chats?thread=${encodeURIComponent(decodeURIComponent(legacyClientConversation[1]))}&kind=email`;
+  }
   const refundReceiptId =
     metadata.refundReceiptId ||
     (notification?.entityType === "quickBooksRefundReceipt"

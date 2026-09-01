@@ -215,6 +215,13 @@ test("payment producers use the financial audience and cancellation notices are 
   assert.match(provider, /This payment request has already been completed/);
 });
 
+test("legacy inbound-email notifications are upgraded to the reply-capable Chats email thread", async () => {
+  const provider = await source("../../frontend/src/components/notifications/NotificationProvider.jsx");
+  assert.match(provider, /legacyClientConversation/);
+  assert.match(provider, /"communication\.inbound_received", "communication\.uci_matched"/);
+  assert.match(provider, /kind=email/);
+});
+
 test("document, reminder, and questionnaire notification gaps are normalized", async () => {
   const [schema, assessment, portal, followUps] = await Promise.all([
     source("../prisma/schema.prisma"),

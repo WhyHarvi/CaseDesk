@@ -223,9 +223,8 @@ export async function linkOne(unmatched) {
       severity: "info",
       entityType: "conversation",
       entityId: conversation.id,
-      // Same "client messages" destination the rest of the app already uses
-      // for a conversation-scoped notification.
-      actionUrl: `/app/clients/${client.id}?conversation=${conversation.id}`,
+      actionUrl: `/app/chats?thread=${encodeURIComponent(client.id)}&kind=email`,
+      destinationKey: "chats",
       dedupeKey: `unmatched-uci:${unmatched.id}`,
       attentionLevel: "action_required",
     }).catch(() => {});
