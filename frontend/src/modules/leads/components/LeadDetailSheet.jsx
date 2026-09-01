@@ -174,7 +174,13 @@ export default function LeadDetailSheet({ lead: initialLead, staff = [], onClose
   function startCall() {
     if (!lead.phone) return;
     setCallError("");
-    openGlobalDialpad(lead.phone, { leadId: lead.id, leadName: leadName(lead) });
+    const number = lead.phone;
+    const context = { leadId: lead.id, leadName: leadName(lead) };
+    // The global phone intentionally stays hidden behind open curtains.
+    // Dismiss this curtain first, then open the populated dialer once React
+    // has removed it from the page so the phone is visible immediately.
+    onClose();
+    window.requestAnimationFrame(() => openGlobalDialpad(number, context));
   }
 
   function refreshLead() {

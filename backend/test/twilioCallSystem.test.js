@@ -332,7 +332,9 @@ test("the leads UI calls leads through the softphone and pops the outcome card o
   assert.match(leadsPage, /openGlobalDialpad\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
   assert.match(leadsPage, /stopPropagation\(\); startCall\(lead\)/);
   assert.match(detailSheet, /useSoftphone\(\)/);
-  assert.match(detailSheet, /openGlobalDialpad\(lead\.phone, \{ leadId: lead\.id, leadName: leadName\(lead\) }/);
+  assert.match(detailSheet, /const number = lead\.phone;/);
+  assert.match(detailSheet, /const context = \{ leadId: lead\.id, leadName: leadName\(lead\) \};/);
+  assert.match(detailSheet, /onClose\(\);\s*window\.requestAnimationFrame\(\(\) => openGlobalDialpad\(number, context\)\);/);
   // Adjacent call and close controls remain distinct touch targets, and the
   // decorative call pulse cannot intercept a close tap.
   assert.match(detailSheet, /flex shrink-0 items-center gap-4/);
