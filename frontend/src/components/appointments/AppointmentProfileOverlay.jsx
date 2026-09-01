@@ -49,6 +49,7 @@ import { hasCapability } from "../../auth/portalAccess";
 import CompleteConsultationSheet, { getDraftConsultationId } from "../../modules/leads/components/CompleteConsultationSheet";
 import useDebouncedAutosave from "../../hooks/useDebouncedAutosave";
 import { fadingHighlightClass, useFadingHighlight } from "../../hooks/useFadingHighlight";
+import { calendarDateError, formatDateInput } from "../../utils/dateInputFormat.js";
 
 const tabs = [
   ["details", "Details", FileText],
@@ -471,6 +472,8 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
     if (!adviceCategories.length) { setAdviceError("Choose at least one category."); return; }
     if (!adviceAssignedUserId) { setAdviceError("Select who should contact the client."); return; }
     if (!adviceFollowUpDate) { setAdviceError("Choose a follow-up date."); return; }
+    const followUpDateError = calendarDateError(adviceFollowUpDate, "follow-up date");
+    if (followUpDateError) { setAdviceError(followUpDateError); return; }
     try {
       setAdviceSaving(true);
       setAdviceError("");
@@ -829,7 +832,15 @@ export default function AppointmentProfileOverlay({ appointmentId, initialTab = 
                       </label>
                       <label className="block">
                         <span className="text-xs font-semibold text-slate-600">Follow-up date</span>
-                        <input type="date" value={adviceFollowUpDate} onChange={(event) => setAdviceFollowUpDate(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400" />
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={10}
+                          placeholder="YYYY-MM-DD"
+                          value={adviceFollowUpDate}
+                          onChange={(event) => setAdviceFollowUpDate(formatDateInput(event.target.value, event.nativeEvent?.inputType))}
+                          className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-sky-400"
+                        />
                       </label>
                     </div>
                     {adviceStaff.length > 1 ? (

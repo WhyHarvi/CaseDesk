@@ -413,7 +413,7 @@ function Toast({ toast, onDismiss }) {
   );
 }
 
-function StatCard({ icon: Icon, label, value, helper, accent }) {
+function StatCard({ icon: Icon, label, value, helper, accent, active, onClick }) {
   const accentStyles = {
     blue: "bg-sky-100 text-sky-700",
     emerald: "bg-emerald-100 text-emerald-700",
@@ -422,7 +422,12 @@ function StatCard({ icon: Icon, label, value, helper, accent }) {
   };
 
   return (
-    <article className="flex min-h-[108px] items-center gap-4 rounded-3xl border border-white/70 bg-white/70 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex min-h-[108px] w-full items-center gap-4 rounded-3xl border p-4 text-left shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_16px_36px_rgba(15,23,42,0.1)] ${active ? "border-slate-950 bg-white ring-2 ring-slate-950/10" : "border-white/70 bg-white/70"}`}
+    >
       <div
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${accentStyles[accent]}`}
       >
@@ -435,7 +440,7 @@ function StatCard({ icon: Icon, label, value, helper, accent }) {
         </p>
         <p className="mt-1 text-xs text-slate-400">{helper}</p>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -1388,6 +1393,11 @@ export default function Cases() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [registerView, setRegisterView] = useState("active");
+  // Which KPI card (if any) the list is currently filtered down to —
+  // clicking the same card again clears back to "all". Reuses the exact
+  // predicates the KPI counts themselves are computed from, so the list
+  // shown always matches the number on the card.
+  const [quickFilter, setQuickFilter] = useState("all");
   const [activeActionMenuId, setActiveActionMenuId] = useState(null);
   const loadRequestRef = useRef(0);
   const handledCreateRequestRef = useRef("");
@@ -1683,6 +1693,11 @@ export default function Cases() {
           (filters.intake === "past" && Boolean(intakeKey) && intakeKey < currentIntakeKey) ||
           intakeKey === filters.intake
         ));
+      const matchesQuickFilter =
+        quickFilter === "all" ||
+        (quickFilter === "active" && isActiveCase(caseItem)) ||
+        (quickFilter === "readyForSubmission" && isReadyForSubmission(caseItem)) ||
+        (quickFilter === "needsAttention" && caseItem.urgent);
 
       return (
         matchesSearch &&
@@ -1691,10 +1706,11 @@ export default function Cases() {
         matchesStatus &&
         matchesStaff &&
         matchesPriority &&
-        matchesIntake
+        matchesIntake &&
+        matchesQuickFilter
       );
     });
-  }, [enrichedCases, filters, searchQuery]);
+  }, [enrichedCases, filters, searchQuery, quickFilter]);
 
   const summary = useMemo(() => {
     const totalCases = enrichedCases.length;
@@ -2099,6 +2115,8 @@ export default function Cases() {
                 value={summary.totalCases}
                 helper="Files in the active register"
                 accent="blue"
+                active={quickFilter === "all"}
+                onClick={() => setQuickFilter("all")}
               />
               <StatCard
                 icon={Users}
@@ -2106,6 +2124,8 @@ export default function Cases() {
                 value={summary.activeCases}
                 helper="Files currently moving forward"
                 accent="emerald"
+                active={quickFilter === "active"}
+                onClick={() => setQuickFilter((current) => (current === "active" ? "all" : "active"))}
               />
               <StatCard
                 icon={Sparkles}
@@ -2113,6 +2133,8 @@ export default function Cases() {
                 value={summary.readyForSubmission}
                 helper="Applications close to filing"
                 accent="amber"
+                active={quickFilter === "readyForSubmission"}
+                onClick={() => setQuickFilter((current) => (current === "readyForSubmission" ? "all" : "readyForSubmission"))}
               />
               <StatCard
                 icon={CalendarClock}
@@ -2120,6 +2142,8 @@ export default function Cases() {
                 value={summary.needsAttentionCases}
                 helper="Missing documents, unpaid balance, or a pending submission/payment action"
                 accent="rose"
+                active={quickFilter === "needsAttention"}
+                onClick={() => setQuickFilter((current) => (current === "needsAttention" ? "all" : "needsAttention"))}
               />
             </section>
           ) : null}

@@ -195,6 +195,22 @@ test("the advice composer lets admin/consultant assign additional co-assignees b
   assert.match(overlay, /Assigned to \{\[savedAdvice\.assignedUser\?\.fullName, \.\.\.\(savedAdvice\.additionalAssignedUsers \|\| \[\]\)\.map\(\(user\) => user\.fullName\)\]\.filter\(Boolean\)\.join\(", "\) \|\| "—"\}/);
 });
 
+test("the Advice & handoff follow-up date masks free-typed digits into YYYY-MM-DD and rejects an impossible calendar date, instead of a bare type=\"date\" input that let through nonsense like a 5-digit year or a 299 day", async () => {
+  const overlay = await source("../../frontend/src/components/appointments/AppointmentProfileOverlay.jsx");
+  assert.match(overlay, /import \{ calendarDateError, formatDateInput \} from "\.\.\/\.\.\/utils\/dateInputFormat\.js";/);
+  assert.doesNotMatch(overlay, /type="date" value=\{adviceFollowUpDate\}/);
+  assert.match(
+    overlay,
+    /onChange=\{\(event\) => setAdviceFollowUpDate\(formatDateInput\(event\.target\.value, event\.nativeEvent\?\.inputType\)\)\}/,
+  );
+  const confirmFn = overlay.slice(overlay.indexOf("async function confirmAdvice"), overlay.indexOf("useDebouncedAutosave({\n    value: note"));
+  assert.match(confirmFn, /const followUpDateError = calendarDateError\(adviceFollowUpDate, "follow-up date"\);/);
+  assert.match(confirmFn, /if \(followUpDateError\) \{ setAdviceError\(followUpDateError\); return; \}/);
+
+  const dateFormat = await source("../../frontend/src/utils/dateInputFormat.js");
+  assert.match(dateFormat, /const digits = raw\.replace\(\/\\D\/g, ""\)\.slice\(0, 8\);/);
+});
+
 test("completing a consultation claims the appointment's status change atomically, the same way every other attendance-marking path does, instead of a bare update that could silently overwrite a concurrent change (e.g. a call or Zoom join completing it first, or reverting an already-recorded cancellation)", async () => {
   const leadService = await source("../src/modules/leads/lead.service.js");
   const fnStart = leadService.indexOf("export async function updateConsultation(req, db = prisma) {");
