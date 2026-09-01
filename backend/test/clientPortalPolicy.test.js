@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { resolvePermissionFromPolicies } from "../src/services/clientPortalPolicyService.js";
+
+const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
 const policy = ({ preset = "STANDARD", status = "ACTIVE", permissions = {}, vetoes = {}, validFrom = null, validUntil = null } = {}) => ({ preset, status, permissions, vetoes, validFrom, validUntil });
 const resolve = (key, values = {}) => resolvePermissionFromPolicies({ key, agencyPolicy: policy(values.agency), casePolicy: values.casePolicy || null, clientPolicy: values.clientPolicy || null, now: values.now || new Date("2026-08-22T12:00:00Z") });
@@ -59,4 +62,30 @@ test("restricted status retains only essential capabilities", () => {
 test("unknown permission keys fail closed", () => {
   assert.equal(resolve("internal.notes", {}).allowed, false);
   assert.equal(resolve("internal.notes", {}).source, "UNKNOWN_PERMISSION");
+});
+
+test("the client portal's general (case-less) chat sentinel is never looked up as a real case id", async () => {
+  // Regression: a client sending a "General inquiry" portal message
+  // (caseId: GENERAL_CHAT_ID, i.e. "general") got a raw 404 "Application
+  // not found" because requireClientPortalPermission resolved caseId from
+  // the request body/query and passed it straight to
+  // loadPortalPolicyContext, which tries prisma.case.findFirst({ id:
+  // caseId }) whenever caseId is truthy — "general" is never a real case
+  // id, so it always failed, even though portalController.js's own
+  // GENERAL_CHAT_ID handling treats it as no case at all.
+  const middleware = await source("../src/middleware/clientPortalPolicy.js");
+  assert.match(middleware, /import \{ GENERAL_CHAT_ID \} from "\.\.\/constants\/portalChat\.js";/);
+  assert.match(
+    middleware,
+    /const rawCaseId = req\.params\.caseId \|\| req\.body\?\.caseId \|\| req\.query\?\.caseId \|\| null;\s*\n\s*return rawCaseId === GENERAL_CHAT_ID \? null : rawCaseId;/,
+  );
+
+  const controller = await source("../src/controllers/portalController.js");
+  assert.match(controller, /import \{ GENERAL_CHAT_ID \} from "\.\.\/constants\/portalChat\.js";/);
+
+  const policyService = await source("../src/services/clientPortalPolicyService.js");
+  assert.match(
+    policyService,
+    /if \(caseId\) \{\s*\n\s*const validCase = await prisma\.case\.findFirst/,
+  );
 });

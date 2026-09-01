@@ -1,5 +1,6 @@
 import prisma from "../services/prisma/client.js";
 import { resolvePortalPermission } from "../services/clientPortalPolicyService.js";
+import { GENERAL_CHAT_ID } from "../constants/portalChat.js";
 
 async function caseIdForResource(req, resource) {
   if (resource === "document") {
@@ -13,7 +14,11 @@ async function caseIdForResource(req, resource) {
   if (resource === "caseFormSignature") return (await prisma.caseFormSignatureRequest.findFirst({ where: { id: req.params.requestId, agencyId: req.auth.agencyId }, select: { caseId: true } }))?.caseId || null;
   if (resource === "agreement") return (await prisma.writtenDocument.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId }, select: { caseId: true } }))?.caseId || null;
   if (resource === "conversation") return (await prisma.communicationConversation.findFirst({ where: { id: req.params.id, agencyId: req.auth.agencyId }, select: { caseId: true } }))?.caseId || null;
-  return req.params.caseId || req.body?.caseId || req.query?.caseId || null;
+  // The client portal's case-less "general inquiry" chat sends this
+  // sentinel as caseId — it isn't a real case to look up, it means no
+  // case at all, same as caseId being absent.
+  const rawCaseId = req.params.caseId || req.body?.caseId || req.query?.caseId || null;
+  return rawCaseId === GENERAL_CHAT_ID ? null : rawCaseId;
 }
 
 export function requireClientPortalPermission(key, { resource = null } = {}) {

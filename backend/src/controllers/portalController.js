@@ -30,6 +30,7 @@ import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import { getEffectiveClientCommunicationPreference } from "../services/clientCommunicationPolicyService.js";
 import { filterPortalRecordsByPermission, loadPortalPolicyContext } from "../services/clientPortalPolicyService.js";
+import { GENERAL_CHAT_ID } from "../constants/portalChat.js";
 
 async function linkedClient(req) {
   const link = await prisma.clientUser.findFirst({
@@ -46,8 +47,6 @@ const clean = (value, max = 500) =>
   String(value ?? "")
     .trim()
     .slice(0, max);
-const GENERAL_CHAT_ID = "general";
-
 async function linkedCase(req, clientId, caseId) {
   const data = await prisma.case.findFirst({
     where: {
