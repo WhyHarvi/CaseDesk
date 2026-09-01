@@ -15,7 +15,7 @@ import {
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const callStatuses = new Set(["RINGING", "ANSWERED", "COMPLETED", "MISSED", "FAILED"]);
 const callDirections = new Set(["INBOUND", "OUTBOUND"]);
-const callResolutions = new Set(["UNRESOLVED", "LINKED_LEAD", "LINKED_CLIENT", "SPAM"]);
+const callResolutions = new Set(["UNRESOLVED", "LINKED_LEAD", "LINKED_CLIENT", "LINKED_APPOINTMENT", "SPAM"]);
 
 const callInclude = {
   lead: { select: { id: true, leadNumber: true, firstName: true, lastName: true, phone: true, status: true, stage: true, owner: { select: { id: true, fullName: true } } } },
@@ -24,6 +24,17 @@ const callInclude = {
   handledBy: { select: { id: true, fullName: true, email: true } },
   resolvedBy: { select: { id: true, fullName: true } },
   followUp: { select: { id: true, type: true, description: true, dueAt: true, status: true } },
+  appointment: {
+    select: {
+      id: true,
+      referenceCode: true,
+      subject: true,
+      startsAt: true,
+      status: true,
+      guestName: true,
+      assignedTo: { select: { id: true, fullName: true } },
+    },
+  },
 };
 
 function callAccessWhere(req) {
@@ -37,6 +48,7 @@ function callAccessWhere(req) {
       { client: { assignedUserId: req.auth.userId } },
       { case: { assignedUserId: req.auth.userId } },
       { case: { assignments: { some: { consultantUserId: req.auth.userId, status: "active" } } } },
+      { appointment: { assignedToId: req.auth.userId } },
     ],
   };
 }
@@ -184,6 +196,51 @@ export async function linkCallToClient(req, res) {
   res.json({ data });
 }
 
+export async function linkCallToAppointment(req, res) {
+  const call = await requireCall(req, {});
+  const appointment = await prisma.appointment.findFirst({
+    where: {
+      id: clean(req.body.appointmentId, 100),
+      agencyId: req.auth.agencyId,
+    },
+    select: {
+      id: true,
+      clientId: true,
+      caseId: true,
+      leadId: true,
+      assignedToId: true,
+    },
+  });
+  if (!appointment) throw createHttpError(404, "Booking not found.", "APPOINTMENT_NOT_FOUND");
+
+  const resolution = appointment.clientId
+    ? "LINKED_CLIENT"
+    : appointment.leadId
+      ? "LINKED_LEAD"
+      : call.resolution === "UNRESOLVED"
+        ? "LINKED_APPOINTMENT"
+        : call.resolution;
+  const data = await prisma.callSession.update({
+    where: { id: call.id },
+    data: {
+      appointmentId: appointment.id,
+      ...(appointment.clientId
+        ? { clientId: appointment.clientId, leadId: null, caseId: appointment.caseId || null }
+        : appointment.leadId
+          ? { leadId: appointment.leadId, clientId: null, caseId: null }
+          : {}),
+      resolution,
+      resolvedAt: new Date(),
+      resolvedById: req.auth.userId,
+      handledByUserId: call.handledByUserId || appointment.assignedToId || null,
+    },
+    include: callInclude,
+  });
+  if (appointment.clientId) await syncCallClientCommunication(call.id);
+  if (appointment.leadId) await syncCallLeadActivity(call.id);
+  res.json({ data });
+}
+
 export async function createLeadFromCall(req, res) {
   const call = await requireCall(req, {});
   if (!call.remoteNumberNormalized) throw createHttpError(400, "A valid caller phone number is required before creating a lead.", "INVALID_CALLER_PHONE");
@@ -227,7 +284,7 @@ export async function markCallSpam(req, res) {
   const call = await requireCall(req, {});
   const data = await prisma.callSession.update({
     where: { id: call.id },
-    data: { resolution: "SPAM", resolvedAt: new Date(), resolvedById: req.auth.userId, leadId: null, clientId: null, caseId: null, followUpId: null, outcomeNotes: clean(req.body.notes, 1000) || "Marked as spam" },
+    data: { resolution: "SPAM", resolvedAt: new Date(), resolvedById: req.auth.userId, leadId: null, clientId: null, caseId: null, appointmentId: null, followUpId: null, outcomeNotes: clean(req.body.notes, 1000) || "Marked as spam" },
     include: callInclude,
   });
   res.json({ data });

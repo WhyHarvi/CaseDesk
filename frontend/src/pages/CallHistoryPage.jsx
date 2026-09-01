@@ -1,6 +1,7 @@
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  CalendarPlus,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
   ExternalLink,
   Link2,
   Loader2,
+  MessageCircle,
   Phone,
   PhoneCall,
   PhoneMissed,
@@ -21,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
@@ -39,6 +41,13 @@ const callStatusLabel = (value, direction) => {
   return humanize(value);
 };
 const personName = (call) => call.client?.fullName || [call.lead?.firstName, call.lead?.lastName].filter(Boolean).join(" ") || null;
+const whatsappNumber = (value) => {
+  const raw = String(value || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+  if (!raw.startsWith("+") && digits.length === 10) return `1${digits}`;
+  return digits;
+};
 const when = (value) => value ? new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
 const duration = (seconds) => {
   if (seconds == null) return "—";
@@ -144,6 +153,7 @@ function MatchResults({ title, records, kind, busy, onLink }) {
 
 function CallDrawer({ call, staff, onClose, onChanged, provider }) {
   const { role } = useAuth();
+  const navigate = useNavigate();
   const [mode, setMode] = useState(call.resolution === "UNRESOLVED" ? "resolve" : "outcome");
   const [search, setSearch] = useState(call.remoteNumber || "");
   const [candidates, setCandidates] = useState({ leads: [], clients: [] });
@@ -203,6 +213,20 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
 
   const suggestedLeads = call.matchSummary?.leads || [];
   const suggestedClients = call.matchSummary?.clients || [];
+  const whatsAppPhone = whatsappNumber(call.remoteNumberNormalized || call.remoteNumber);
+
+  function openBooking() {
+    if (call.appointment?.id) {
+      const date = call.appointment.startsAt ? String(call.appointment.startsAt).slice(0, 10) : "";
+      navigate(`/app/calendar?appointment=${encodeURIComponent(call.appointment.id)}${date ? `&date=${encodeURIComponent(date)}` : ""}`);
+      return;
+    }
+    const params = new URLSearchParams({ fromCall: call.id });
+    if (call.client?.id) params.set("bookForClient", call.client.id);
+    else if (call.lead?.id) params.set("bookForLead", call.lead.id);
+    else params.set("bookFromCall", call.id);
+    navigate(`/app/calendar?${params.toString()}`);
+  }
 
   return (
     <div className="fixed inset-0 z-[80] flex justify-end bg-slate-950/25 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Twilio call details">
@@ -222,7 +246,9 @@ function CallDrawer({ call, staff, onClose, onChanged, provider }) {
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Team member</p><p className="mt-1 truncate text-sm font-semibold text-slate-800">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {call.remoteNumber ? <a href={`tel:${call.remoteNumber}`} className="inline-flex h-9 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"><Phone className="h-3.5 w-3.5" />Call with Twilio</a> : null}
+            <button type="button" onClick={openBooking} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"><CalendarPlus className="h-4 w-4" />{call.appointment?.id ? "Open booking" : "Book appointment"}</button>
+            {whatsAppPhone ? <a href={`https://wa.me/${whatsAppPhone}`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white transition hover:bg-[#1fb85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2" aria-label={`Open WhatsApp chat with ${call.remoteNumber}`}><MessageCircle className="h-4 w-4" />WhatsApp <ExternalLink className="h-3 w-3" /></a> : null}
+            {call.remoteNumber ? <a href={`tel:${call.remoteNumber}`} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"><Phone className="h-3.5 w-3.5" />Call with Twilio</a> : null}
             {call.recordingUrl ? <a href={call.recordingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Voicemail className="h-3.5 w-3.5" />Recording <ExternalLink className="h-3 w-3" /></a> : null}
             {call.lead ? <Link to={`/leads?lead=${encodeURIComponent(call.lead.id)}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.lead.leadNumber}</Link> : null}
             {call.client ? <Link to={`/app/clients/${call.client.id}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.client.clientNumber}</Link> : null}

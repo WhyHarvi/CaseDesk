@@ -284,6 +284,32 @@ test("the 'call ended' popup saves the outcome through a shared applyCallOutcome
   assert.match(routes, /router\.post\("\/outcome", asyncHandler\(recordOutboundCallOutcome\)\)/);
 });
 
+test("call details can prefill a booking, link the created appointment, and open WhatsApp", async () => {
+  const [schema, migration, controller, routes, callsPage, calendarPage] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260831210000_link_calls_to_appointments/migration.sql"),
+    source("../src/controllers/callHistoryController.js"),
+    source("../src/routes/callHistoryRoutes.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+    source("../../frontend/src/pages/CalendarPage.jsx"),
+  ]);
+
+  assert.match(schema, /appointmentId\s+String\?\s+@map\("appointment_id"\)/);
+  assert.match(migration, /FOREIGN KEY \("appointment_id"\) REFERENCES "appointments"\("id"\)/);
+  assert.match(controller, /export async function linkCallToAppointment/);
+  assert.match(controller, /appointmentId: appointment\.id/);
+  assert.match(routes, /router\.post\("\/:id\/link-appointment", asyncHandler\(linkCallToAppointment\)\)/);
+
+  assert.match(callsPage, /Book appointment/);
+  assert.match(callsPage, /bookForClient/);
+  assert.match(callsPage, /bookForLead/);
+  assert.match(callsPage, /bookFromCall/);
+  assert.match(callsPage, /https:\/\/wa\.me\/\$\{whatsAppPhone\}/);
+  assert.match(calendarPage, /setPrefillGuest/);
+  assert.match(calendarPage, /api\.post\(`\/call-history\/\$\{linkingCallId\}\/link-appointment`/);
+  assert.match(calendarPage, /onCreatedId=\{linkCreatedAppointmentToCall\}/);
+});
+
 test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
   const [clientsPage, profilePage] = await Promise.all([
     source("../../frontend/src/pages/Clients.jsx"),

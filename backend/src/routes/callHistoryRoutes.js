@@ -4,6 +4,7 @@ import {
   createLeadFromCall,
   getCall,
   linkCallToClient,
+  linkCallToAppointment,
   linkCallToLead,
   listCallCandidates,
   listCalls,
@@ -18,6 +19,7 @@ router.get("/:id", asyncHandler(getCall));
 router.get("/:id/candidates", asyncHandler(listCallCandidates));
 router.post("/:id/link-lead", asyncHandler(linkCallToLead));
 router.post("/:id/link-client", asyncHandler(linkCallToClient));
+router.post("/:id/link-appointment", asyncHandler(linkCallToAppointment));
 router.post("/:id/create-lead", asyncHandler(createLeadFromCall));
 router.post("/:id/spam", asyncHandler(markCallSpam));
 router.post("/:id/outcome", asyncHandler(recordCallOutcome));

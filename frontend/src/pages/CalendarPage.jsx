@@ -1272,7 +1272,7 @@ function EventDetails({ appointment, tone, onClose, onCancel, cancelling, onResc
   );
 }
 
-function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialLead, initialIntake, settings }) {
+function NewAppointmentSheet({ open, onClose, onCreated, onCreatedId, onRefresh, staff, sessionTypes, role, userId, initialDate, initialClient, initialLead, initialGuest, initialIntake, settings }) {
   const locations = Array.isArray(settings?.locations) ? settings.locations : [];
   // Set once at mount and never again — distinguishes "the sheet is open
   // because a draft was restored on page load" from every other reason
@@ -1316,12 +1316,12 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       paymentMethod: initialIntake?.action === "appointment-payment" ? initialIntake.paymentMethod || "" : "",
       paymentReference: initialIntake?.action === "appointment-payment" ? initialIntake.paymentReference || "" : "",
       idempotencyKey: newBookingOperationKey(),
-      mode: initialClient ? "client" : initialLead ? "guest" : current.mode,
+      mode: initialClient ? "client" : initialLead || initialGuest ? "guest" : current.mode,
       clientId: initialClient?.id || "",
       leadId: initialLead?.id || "",
-      guestName: initialLead ? [initialLead.firstName, initialLead.lastName].filter(Boolean).join(" ") : current.guestName,
-      guestEmail: initialLead?.email || (initialLead ? "" : current.guestEmail),
-      guestPhone: initialLead?.phone || (initialLead ? "" : current.guestPhone),
+      guestName: initialLead ? [initialLead.firstName, initialLead.lastName].filter(Boolean).join(" ") : initialGuest?.name ?? current.guestName,
+      guestEmail: initialLead?.email || (initialLead ? "" : initialGuest?.email ?? current.guestEmail),
+      guestPhone: initialLead?.phone || (initialLead ? "" : initialGuest?.phone ?? current.guestPhone),
       assignedToId: initialLead?.ownerUserId || initialLead?.owner?.id || (role === "consultant" ? userId : current.assignedToId),
     }));
     setSelectedClient(initialClient || null);
@@ -1332,7 +1332,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
     setPaymentActionError("");
     setPaymentRecipient("");
     setConfirmPaymentCancel(false);
-  }, [open, role, userId, initialDate, initialClient, initialLead, initialIntake]);
+  }, [open, role, userId, initialDate, initialClient, initialLead, initialGuest, initialIntake]);
 
   useEffect(() => {
     if (!open) {
@@ -1361,6 +1361,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
       try {
         const latest = await getBookingPaymentHoldStatus(pendingHold.holdId);
         if (latest.status === "Paid" && latest.appointmentId) {
+          await onCreatedId?.(latest.appointmentId);
           onRefresh?.();
           onClose();
           return;
@@ -1553,6 +1554,7 @@ function NewAppointmentSheet({ open, onClose, onCreated, onRefresh, staff, sessi
         setPaymentRecipient(created.guestEmail || (form.mode === "client" ? selectedClient?.email : form.guestEmail) || "");
         return;
       }
+      await onCreatedId?.(created.id);
       onCreated(created);
       if (created.manualPaymentWarning) {
         setBookedWarning(created.manualPaymentWarning);
@@ -1914,7 +1916,9 @@ export default function CalendarPage() {
   const [sheetOpen, setSheetOpen] = useState(() => Boolean(readAppointmentDraft()));
   const [prefillClient, setPrefillClient] = useState(null);
   const [prefillLead, setPrefillLead] = useState(null);
+  const [prefillGuest, setPrefillGuest] = useState(null);
   const [prefillIntake, setPrefillIntake] = useState(null);
+  const [linkingCallId, setLinkingCallId] = useState("");
   const [selected, setSelected] = useState(null);
   const [focusedAppointmentId, setFocusedAppointmentId] = useState("");
   const [notesAppointmentId, setNotesAppointmentId] = useState(null);
@@ -1974,14 +1978,17 @@ export default function CalendarPage() {
     const bookForClientId = searchParams.get("bookForClient");
     if (!bookForClientId) return;
     let cancelled = false;
+    const fromCallId = searchParams.get("fromCall") || "";
     const intake = role === "frontdesk" ? location.state?.frontDeskIntake || null : null;
     setPrefillIntake(intake);
     api.get(`/clients/${bookForClientId}`).then((response) => {
       if (cancelled) return;
       setPrefillClient(response.data.data.client);
+      setLinkingCallId(fromCallId);
       setSheetOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete("bookForClient");
+      next.delete("fromCall");
       navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: null });
     }).catch((reason) => {
       if (!cancelled) setError(reason.response?.data?.message || "The new client was saved, but appointment booking could not be opened.");
@@ -1996,12 +2003,15 @@ export default function CalendarPage() {
     const bookForLeadId = searchParams.get("bookForLead");
     if (!bookForLeadId) return;
     let cancelled = false;
+    const fromCallId = searchParams.get("fromCall") || "";
     api.get(`/leads/${bookForLeadId}`).then((response) => {
       if (cancelled) return;
       setPrefillLead(response.data.data);
+      setLinkingCallId(fromCallId);
       setSheetOpen(true);
       const next = new URLSearchParams(searchParams);
       next.delete("bookForLead");
+      next.delete("fromCall");
       navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: null });
     }).catch((reason) => {
       if (!cancelled) setError(reason.response?.data?.message || "The lead was opened, but appointment booking could not be loaded.");
@@ -2009,6 +2019,43 @@ export default function CalendarPage() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Calls without a matched lead or client still open a useful guest booking:
+  // the caller's phone is filled now and staff can complete the missing fields.
+  useEffect(() => {
+    const bookFromCallId = searchParams.get("bookFromCall");
+    if (!bookFromCallId) return;
+    let cancelled = false;
+    api.get(`/call-history/${bookFromCallId}`).then((response) => {
+      if (cancelled) return;
+      const sourceCall = response.data.data;
+      setPrefillGuest({
+        name: sourceCall.client?.fullName || [sourceCall.lead?.firstName, sourceCall.lead?.lastName].filter(Boolean).join(" "),
+        phone: sourceCall.client?.phone || sourceCall.lead?.phone || sourceCall.remoteNumber || "",
+        email: sourceCall.client?.email || sourceCall.lead?.email || "",
+      });
+      setLinkingCallId(bookFromCallId);
+      setSheetOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete("bookFromCall");
+      next.delete("fromCall");
+      navigate({ pathname: location.pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true, state: null });
+    }).catch((reason) => {
+      if (!cancelled) setError(reason.response?.data?.message || "The call was opened, but appointment booking could not be loaded.");
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const linkCreatedAppointmentToCall = useCallback(async (appointmentId) => {
+    if (!linkingCallId) return;
+    try {
+      await api.post(`/call-history/${linkingCallId}/link-appointment`, { appointmentId });
+      setLinkingCallId("");
+    } catch (reason) {
+      setError(reason.response?.data?.message || "The booking was created, but it could not be linked to the call.");
+    }
+  }, [linkingCallId]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
@@ -2466,8 +2513,9 @@ export default function CalendarPage() {
 
       <NewAppointmentSheet
         open={sheetOpen}
-        onClose={() => { setSheetOpen(false); setPrefillClient(null); setPrefillLead(null); setPrefillIntake(null); }}
+        onClose={() => { setSheetOpen(false); setPrefillClient(null); setPrefillLead(null); setPrefillGuest(null); setPrefillIntake(null); setLinkingCallId(""); }}
         onCreated={(created) => { setAppointments((current) => [...current, created]); setSelected(created); }}
+        onCreatedId={linkCreatedAppointmentToCall}
         onRefresh={() => load({ fresh: true, background: true })}
         staff={staff}
         sessionTypes={sessionTypes}
@@ -2476,6 +2524,7 @@ export default function CalendarPage() {
         initialDate={dateKey(selectedDate)}
         initialClient={prefillClient}
         initialLead={prefillLead}
+        initialGuest={prefillGuest}
         initialIntake={prefillIntake}
         settings={bookingSettings}
       />
