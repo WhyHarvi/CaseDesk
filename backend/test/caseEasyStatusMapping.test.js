@@ -6,8 +6,11 @@ test("every recognized status lands Closed and archived — imported cases never
   assert.deepEqual(mapCaseEasyStatus("Submitted"), { stage: "Submitted", status: "Closed", archived: true, recognized: true });
   assert.deepEqual(mapCaseEasyStatus("Prospect"), { stage: "Lead", status: "Closed", archived: true, recognized: true });
   assert.deepEqual(mapCaseEasyStatus("Closed"), { stage: "Closed", status: "Closed", archived: true, recognized: true });
-  assert.deepEqual(mapCaseEasyStatus("Approved"), { stage: "Decision Received", status: "Closed", archived: true, recognized: true });
-  assert.deepEqual(mapCaseEasyStatus("Denied"), { stage: "Decision Received", status: "Closed", archived: true, recognized: true });
+  // Not Decision Received: that stage requires a real case_decisions
+  // record (outcome, permit expiry/refusal resolution) enforced by a DB
+  // trigger, which Case Easy's export never captured — only a bare date.
+  assert.deepEqual(mapCaseEasyStatus("Approved"), { stage: "Closed", status: "Closed", archived: true, recognized: true });
+  assert.deepEqual(mapCaseEasyStatus("Denied"), { stage: "Closed", status: "Closed", archived: true, recognized: true });
   assert.deepEqual(mapCaseEasyStatus("Archived"), { stage: "Closed", status: "Closed", archived: true, recognized: true });
 });
 

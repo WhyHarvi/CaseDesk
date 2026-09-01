@@ -674,6 +674,18 @@ export async function convertCaseEasyImportContact(req, res) {
     if (!CASE_STAGES.includes(stage)) {
       throw createHttpError(400, "A selected case stage is invalid.", "VALIDATION_ERROR");
     }
+    // A case can't be created directly at Decision Received — that stage
+    // requires a real case_decisions record (outcome, permit expiry or
+    // refusal resolution), enforced by a DB trigger, which imported Case
+    // Easy data never captured. Use Closed instead; it's already this
+    // case's final status/stage regardless.
+    if (stage === "Decision Received") {
+      throw createHttpError(
+        400,
+        "Decision Received isn't available for imported cases — Case Easy's export has no decision-outcome details to record. Choose Closed instead.",
+        "VALIDATION_ERROR",
+      );
+    }
     if (!isCaseStageAllowedForType(caseType, stage)) {
       throw createHttpError(
         400,

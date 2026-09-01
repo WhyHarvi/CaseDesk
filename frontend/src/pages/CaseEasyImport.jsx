@@ -472,7 +472,13 @@ function ConversionModal({ contact, onClose, onConverted }) {
                           <label className="text-xs font-medium text-slate-600">
                             Stage
                             <Select value={form.stage} onChange={(event) => updateCaseForm(index, { stage: event.target.value })} className="mt-1 w-full">
-                              {caseStagesForType(form.caseType).map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                              {caseStagesForType(form.caseType)
+                                // Decision Received requires a real decision
+                                // record (outcome, permit expiry/refusal) that
+                                // Case Easy's export never captured — not
+                                // choosable here, use Closed instead.
+                                .filter((stage) => stage !== "Decision Received")
+                                .map((stage) => <option key={stage} value={stage}>{stage}</option>)}
                             </Select>
                           </label>
                           <label className="text-xs font-medium text-slate-600">

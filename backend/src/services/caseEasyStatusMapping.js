@@ -15,6 +15,14 @@
 // `stage: null` entries have no confident pipeline-position signal in Case
 // Easy's vocabulary — left for the reviewer to set explicitly rather than
 // guessed, per the import prompt's "flag back rather than guess" rule.
+//
+// "approved"/"denied" map to Closed, not Decision Received. The Decision
+// Received stage now requires a real case_decisions record (decision
+// outcome, permit expiry or refusal resolution) enforced by a DB trigger —
+// Case Easy's export never captured that detail, only a bare date, so
+// there's no way to satisfy it from import data. Closed is already this
+// case's final status/stage regardless, and decisionAt still gets recorded
+// on the case as an informational date.
 const STAGE_MAP = {
   "prospect": "Lead",
   "active": null,
@@ -22,8 +30,8 @@ const STAGE_MAP = {
   "in progress": null,
   "submitted": "Submitted",
   "ita received": null,
-  "approved": "Decision Received",
-  "denied": "Decision Received",
+  "approved": "Closed",
+  "denied": "Closed",
   "cancelled": null,
   "closed": "Closed",
   "archived": "Closed",
