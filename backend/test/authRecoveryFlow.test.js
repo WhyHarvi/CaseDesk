@@ -40,6 +40,14 @@ test("production onboarding links never use a localhost application origin", () 
     publicAppUrl({ NODE_ENV: "production", PUBLIC_APP_URL: "https://workspace.example.com/app/" }),
     "https://workspace.example.com",
   );
+  assert.equal(
+    publicAppUrl({ FRONTEND_URL: "http://localhost:5173" }),
+    DEFAULT_PUBLIC_APP_URL,
+  );
+  assert.equal(
+    publicAppUrl({ NODE_ENV: "development", FRONTEND_URL: "http://localhost:5173" }),
+    "http://localhost:5173",
+  );
 });
 
 test("Supabase onboarding action links are forced back to the canonical application route", () => {

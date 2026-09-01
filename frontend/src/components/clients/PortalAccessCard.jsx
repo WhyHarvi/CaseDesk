@@ -151,6 +151,10 @@ function TemporaryPasswordDialog({ clientId, clientName, onClose, onIssued, relo
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Password</p>
             <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-slate-950">{result.password}</p>
           </div>
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Sign-in page</p>
+            <a href={result.loginUrl} target="_blank" rel="noreferrer" className="mt-1 block break-all text-sm font-semibold text-sky-700 underline decoration-sky-200 underline-offset-2 hover:text-sky-900">{result.loginUrl}</a>
+          </div>
           <button type="button" onClick={copyPassword} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3.5 text-sm font-semibold text-white transition hover:bg-slate-800">{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}{copied ? "Copied" : "Copy password"}</button>
           <p className="mt-4 text-center text-xs leading-5 text-slate-400">Treat this like a real password. Share it only with {clientName || "the client"}, over a trusted channel.</p>
         </section>

@@ -18,12 +18,16 @@ export function publicAppUrl(environment = process.env) {
 
   try {
     const parsed = new URL(candidate);
-    if (environment.NODE_ENV === "production" && (parsed.protocol !== "https:" || isLocalHostname(parsed.hostname))) {
+    const localDevelopment = ["development", "test"].includes(environment.NODE_ENV);
+    // Some production hosts do not set NODE_ENV. A localhost URL in an email
+    // is never useful to a client, so fail closed to the canonical portal
+    // unless the process explicitly identifies itself as development/test.
+    if (!localDevelopment && (parsed.protocol !== "https:" || isLocalHostname(parsed.hostname))) {
       return DEFAULT_PUBLIC_APP_URL;
     }
     return parsed.origin;
   } catch {
-    return environment.NODE_ENV === "production" ? DEFAULT_PUBLIC_APP_URL : "http://localhost:5173";
+    return ["development", "test"].includes(environment.NODE_ENV) ? "http://localhost:5173" : DEFAULT_PUBLIC_APP_URL;
   }
 }
 
