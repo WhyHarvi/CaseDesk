@@ -328,10 +328,11 @@ test("call details can prefill a booking, link the created appointment, and open
 });
 
 test("call history SMS uses the default calling line and asks for a sender only when no default exists", async () => {
-  const [controller, routes, twilio, callsPage] = await Promise.all([
+  const [controller, routes, twilio, smsSync, callsPage] = await Promise.all([
     source("../src/controllers/callHistoryController.js"),
     source("../src/routes/callHistoryRoutes.js"),
     source("../src/services/agencyTwilioService.js"),
+    source("../src/services/twilioSmsSyncService.js"),
     source("../../frontend/src/pages/CallHistoryPage.jsx"),
   ]);
 
@@ -339,18 +340,49 @@ test("call history SMS uses the default calling line and asks for a sender only 
   assert.match(twilio, /requiresSelection: !defaultNumber && numbers\.length > 0/);
   assert.match(twilio, /fromNumber[\s\S]+\? \{ from: fromNumber \}/);
   assert.match(controller, /export async function getCallSmsOptions/);
+  assert.match(controller, /export async function getCallSmsThread/);
   assert.match(controller, /export async function sendCallSms/);
   assert.match(controller, /requireCommunicationPermission\(req, "canSendSms"\)/);
+  assert.match(controller, /if \(call\.clientId\) \{[\s\S]+assertClientCommunicationAllowed/);
   assert.match(controller, /assertClientCommunicationAllowed\([\s\S]+channel: "Sms"/);
   assert.match(controller, /metadata: \{ callHistoryId: call\.id \}/);
   assert.match(routes, /router\.get\("\/:id\/sms-options", asyncHandler\(getCallSmsOptions\)\)/);
+  assert.match(routes, /router\.get\("\/:id\/sms-thread", asyncHandler\(getCallSmsThread\)\)/);
   assert.match(routes, /router\.post\("\/:id\/sms", asyncHandler\(sendCallSms\)\)/);
+  assert.match(smsSync, /communicationMessage\.update\([\s\S]+status,[\s\S]+failureReason/);
 
   assert.match(callsPage, /initialMode=\{selectedMode\}/);
   assert.match(callsPage, /openCall\(call, "sms"\)/);
+  assert.match(callsPage, /<ChatThread[\s\S]+messages=\{smsThread\.messages \|\| \[\]\}/);
+  assert.match(callsPage, /\/app\/chats\?kind=sms&thread=/);
+  assert.match(callsPage, /bg-sky-700[\s\S]+Match caller/);
+  assert.match(smsSync, /export async function listAgencyTwilioSmsHistoryForNumber/);
   assert.match(callsPage, /No default calling number is set/);
   assert.match(callsPage, /Default calling number/);
   assert.match(callsPage, /Send SMS/);
+});
+
+test("call history reports who dialed, answered, or was rung instead of a generic team-member assignment", async () => {
+  const [controller, callService, callsPage] = await Promise.all([
+    source("../src/controllers/callHistoryController.js"),
+    source("../src/services/twilioCallService.js"),
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+  ]);
+
+  assert.match(controller, /async function addEngagementSummaries/);
+  assert.match(controller, /prisma\.callRingDispatch\.findMany/);
+  assert.match(controller, /label: "Dialed by"/);
+  assert.match(controller, /answeredCall \? "Answered by"[\s\S]+"Ringing"[\s\S]+"Rang"/);
+  assert.match(controller, /const effectiveStatus = call\.status === "COMPLETED"[\s\S]+\? "MISSED" : call\.status/);
+  assert.match(controller, /const data = await addEngagementSummaries\(matched, req\.auth\.agencyId\)/);
+  assert.match(callService, /queueResult === "bridged" \? "COMPLETED" : "MISSED"/);
+  assert.match(callService, /\["MISSED", "FAILED"\]\.includes\(existing\.status\)/);
+  assert.match(callsPage, /function engagementSummary/);
+  assert.match(callsPage, /if \(value === "COMPLETED"\) return "Answered"/);
+  assert.match(callsPage, /function directionTone\(call\)/);
+  assert.match(callsPage, /\["MISSED", "FAILED"\]\.includes\(call\.status\)[\s\S]+bg-rose-50 text-rose-700/);
+  assert.match(callsPage, />Engagement<\/th>/);
+  assert.doesNotMatch(callsPage, />Team member<\/th>/);
 });
 
 test("the clients UI calls clients through the softphone too, with the same outcome popup", async () => {
@@ -716,6 +748,18 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   assert.match(service, /export function dequeueTwiML\(queueName\) \{/);
   assert.match(service, /return `<Response><Dial><Queue>\$\{escapeXml\(queueName\)\}<\/Queue><\/Dial><\/Response>`;/);
 
+  // Fixes a real bug: a consultant who answered was sometimes disconnected
+  // immediately, because this leg's own ring-status callback and the
+  // caller's QueueResult callback (which cancels still-ringing siblings)
+  // are two independent, unordered webhooks — if QueueResult landed first,
+  // the answering leg could still read "ringing" and get canceled along
+  // with its actual siblings. Flipping it out of "ringing" here, before the
+  // Dial/Queue TwiML is even returned, is safe regardless of webhook
+  // ordering: Twilio cannot produce that QueueResult without first
+  // receiving and executing this exact response.
+  assert.match(service, /export async function markRingDispatchAnswered\(agencyId, dispatchedCallSid\) \{/);
+  assert.match(service, /where: \{ agencyId, dispatchedCallSid, status: "ringing" \},\s*\n\s*data: \{ status: "answered" \},/);
+
   // The wait handler's deadline check only works because tune/greeting
   // playback is left at Twilio's default of playing once per fetch — a
   // <Play loop="0"> loops forever within a single response and Twilio
@@ -753,11 +797,22 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
 
 test("the queue-result and per-dispatch webhooks are wired up: cancel whoever's still ringing the instant the caller leaves the queue, and only fall through to voicemail on a genuine timeout (never on a clean bridge or hangup)", async () => {
   const controller = await source("../src/controllers/twilioWebhookController.js");
-  assert.match(controller, /import \{\s*\n\s*cancelSiblingRingDispatches,\s*\n\s*dequeueTwiML,\s*\n\s*handleTwilioCallStatus,\s*\n\s*inboundTwiML,\s*\n\s*inboundVoicemailTwiML,\s*\n\s*inboundWaitTwiML,\s*\n\s*outboundTwiML,\s*\n\s*recordRingDispatchStatus,/);
+  assert.match(controller, /import \{\s*\n\s*cancelSiblingRingDispatches,\s*\n\s*dequeueTwiML,\s*\n\s*handleTwilioCallStatus,\s*\n\s*inboundTwiML,\s*\n\s*inboundVoicemailTwiML,\s*\n\s*inboundWaitTwiML,\s*\n\s*markRingDispatchAnswered,\s*\n\s*outboundTwiML,\s*\n\s*recordRingDispatchStatus,/);
   assert.match(controller, /const isQueueResult = callback\.QueueResult !== undefined && Boolean\(callback\.callerNumber\);/);
   assert.match(controller, /await cancelSiblingRingDispatches\(req\.params\.agencyId, callback\.parentCallSid \|\| callback\.CallSid\)\.catch/);
   assert.match(controller, /if \(!\["bridged", "hangup"\]\.includes\(queueResult\)\) \{/);
   assert.match(controller, /export async function twilioDequeue\(req, res\) \{/);
+  // Marking this leg answered here — strictly before the Dial/Queue TwiML is
+  // even returned — closes a real race: this leg's own ring-status callback
+  // and the caller's own QueueResult callback (which drives
+  // cancelSiblingRingDispatches) are two independent, unordered webhooks. If
+  // QueueResult were processed first, cancelSiblingRingDispatches would
+  // still see this row as "ringing" and cancel the very call that just
+  // connected the caller — hanging up on a consultant the instant they
+  // answered. This write is guaranteed to land first because Twilio cannot
+  // produce that QueueResult without first receiving and executing this
+  // exact response.
+  assert.match(controller, /await markRingDispatchAnswered\(req\.params\.agencyId, req\.body\?\.CallSid\)\.catch/);
   assert.match(controller, /export async function twilioWait\(req, res\) \{/);
   assert.match(controller, /export async function twilioRingStatus\(req, res\) \{/);
   // The tune Twilio's <Play> actually fetches has to be a plain,
@@ -815,4 +870,54 @@ test("the settings panel's third greeting (\"while waiting to connect\") has the
   assert.match(panel, /20 seconds or less\. It plays first; the "While waiting/);
   assert.match(panel, /to connect" message above joins in partway through, then both repeat on a loop while staff are being/);
   assert.match(panel, /setTuneNotice\("Tune uploaded\. Callers will hear it while staff are being rung\."\);/);
+});
+
+test("call recordings (including voicemails) play with one click instead of linking out to Twilio's raw, credential-gated media URL", async () => {
+  const controller = await source("../src/controllers/callHistoryController.js");
+  // Twilio's recording media URL 401s without the account's own Basic Auth
+  // credentials, so it can never be handed to the browser directly — this
+  // proxies the bytes through the same access-checked requireCall path
+  // every other call action uses, then streams them back with CaseDesk's
+  // own auth already satisfied.
+  assert.match(controller, /import \{ decryptSecret \} from "\.\.\/services\/secretEncryption\.js";/);
+  assert.match(controller, /export async function streamCallRecording\(req, res\) \{/);
+  assert.match(controller, /const call = await requireCall\(req, \{\}\);/);
+  assert.match(controller, /if \(!call\.recordingUrl\) throw createHttpError\(404, "No recording is available for this call\.", "RECORDING_NOT_FOUND"\);/);
+  assert.match(controller, /const settings = await prisma\.agencyTwilioSettings\.findUnique\(\{ where: \{ agencyId: req\.auth\.agencyId \}, select: \{ accountSid: true, authTokenEncrypted: true \} \}\);/);
+  assert.match(controller, /const auth = Buffer\.from\(`\$\{settings\.accountSid\}:\$\{decryptSecret\(settings\.authTokenEncrypted\)\}`\)\.toString\("base64"\);/);
+  assert.match(controller, /const response = await fetch\(call\.recordingUrl, \{ headers: \{ Authorization: `Basic \$\{auth\}` \} \}\);/);
+  assert.match(controller, /if \(!response\.ok\) throw createHttpError\(502, "The recording could not be retrieved from Twilio\."\);/);
+
+  const routes = await source("../src/routes/callHistoryRoutes.js");
+  assert.match(routes, /router\.get\("\/:id\/recording", asyncHandler\(streamCallRecording\)\);/);
+
+  const player = await source("../../frontend/src/components/calls/CallRecordingPlayer.jsx");
+  // Fetched as a blob (not a plain <audio src>) specifically because the
+  // proxy above sits behind the same Bearer-token auth as every other API
+  // call, which a browser-issued media request can't carry on its own.
+  assert.match(player, /const response = await api\.get\(`\/call-history\/\$\{callId\}\/recording`, \{ responseType: "blob" \}\);/);
+  assert.match(player, /setAudioUrl\(URL\.createObjectURL\(response\.data\)\);/);
+  assert.match(player, /useEffect\(\(\) => \(\) => \{ if \(audioUrl\) URL\.revokeObjectURL\(audioUrl\); \}, \[audioUrl\]\);/);
+  // A lead/client can easily rack up several voicemails — only one may ever
+  // play at once, tracked via a module-level ref rather than per-instance
+  // state so a second player can reach in and pause the first.
+  assert.match(player, /let activeAudioEl = null;/);
+  assert.match(player, /if \(activeAudioEl && activeAudioEl !== el\) activeAudioEl\.pause\(\);/);
+  assert.match(player, /activeAudioEl = el;/);
+  // A genuine voicemail (nobody answered) is labeled distinctly from a
+  // recording of an answered conversation, rather than both reading
+  // identically as just "Recording".
+  assert.match(player, /const idleLabel = isVoicemail \? "Play voicemail" : "Play recording";/);
+  assert.match(player, /const buttonSize = compact \? "h-7 px-2\.5 text-\[10px\]" : "h-9 px-4 text-xs";/);
+
+  const [historyPage, leadSheet] = await Promise.all([
+    source("../../frontend/src/pages/CallHistoryPage.jsx"),
+    source("../../frontend/src/modules/leads/components/LeadDetailSheet.jsx"),
+  ]);
+  assert.match(historyPage, /import CallRecordingPlayer from "\.\.\/components\/calls\/CallRecordingPlayer";/);
+  assert.match(historyPage, /\{call\.recordingUrl \? <CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} \/> : null\}/);
+  assert.doesNotMatch(historyPage, /<a href=\{call\.recordingUrl\}/);
+  assert.match(leadSheet, /import CallRecordingPlayer from "\.\.\/\.\.\/\.\.\/components\/calls\/CallRecordingPlayer";/);
+  assert.match(leadSheet, /<CallRecordingPlayer callId=\{call\.id\} isVoicemail=\{call\.status === "MISSED"\} compact \/>/);
+  assert.doesNotMatch(leadSheet, /<a href=\{call\.recordingUrl\}/);
 });

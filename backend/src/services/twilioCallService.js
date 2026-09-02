@@ -561,6 +561,25 @@ export async function inboundVoicemailTwiML(agencyId, callback, req) {
 // QueueResult=bridged). Answering but finding the queue already empty
 // (someone else got there first) still marks this row "answered": it
 // genuinely was, the call just didn't end up bridged here.
+// Marks this specific dispatched leg as answered the instant it's about to
+// be dequeued into the caller's bridge (see twilioWebhookController.js's
+// twilioDequeue) — before returning that TwiML, not after. This closes a
+// real race: this leg's own ring-status callback (recordRingDispatchStatus,
+// below) and the caller's own QueueResult callback (which drives
+// cancelSiblingRingDispatches) are two independent, unordered Twilio
+// webhooks. If QueueResult happened to be processed first, siblings would
+// still see this row as "ringing" and cancel the very call that just
+// connected the caller — hanging up on them the instant they answered.
+// Updating it here instead is safe because it happens strictly before
+// Twilio can even attempt the bridge that later produces that QueueResult.
+export async function markRingDispatchAnswered(agencyId, dispatchedCallSid) {
+  if (!dispatchedCallSid) return;
+  await prisma.callRingDispatch.updateMany({
+    where: { agencyId, dispatchedCallSid, status: "ringing" },
+    data: { status: "answered" },
+  });
+}
+
 export async function recordRingDispatchStatus(agencyId, body) {
   const dispatchedCallSid = clean(body?.CallSid, 64);
   if (!dispatchedCallSid) return;
@@ -901,7 +920,16 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
   // per-leg status callback, and it's treated as the authoritative outbound
   // outcome below rather than the parent leg's own (irrelevant) status.
   const isDialAction = body.DialCallStatus !== undefined;
-  const status = isDialAction ? twilioCallStatus("completed", body.DialCallStatus) : twilioCallStatus(body.CallStatus, body.DialCallStatus);
+  const queueResult = clean(body.QueueResult, 40).toLowerCase();
+  // Twilio calls the parent PSTN leg "completed" whenever it ends, including
+  // when a queued inbound caller hung up before anybody answered. The queue
+  // result is the authoritative answer for that flow: only `bridged` means a
+  // staff member actually connected to the caller.
+  const status = queueResult
+    ? (queueResult === "bridged" ? "COMPLETED" : "MISSED")
+    : isDialAction
+      ? twilioCallStatus("completed", body.DialCallStatus)
+      : twilioCallStatus(body.CallStatus, body.DialCallStatus);
   const isRecording = body.recording === "1" || Boolean(clean(body.RecordingSid, 64));
   const occurredAt = new Date();
 
@@ -962,10 +990,17 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
       let session;
       if (existing) {
         const previousStatus = existing.status;
+        // A late generic parent-leg `completed` callback must not turn a
+        // known missed/failed inbound call green. Likewise, an inbound leg
+        // that went straight from ringing to completed without a bridge was
+        // not answered.
+        const nextStatus = direction === "INBOUND" && status === "COMPLETED" && !isDialAction && !queueResult
+          ? (["MISSED", "FAILED"].includes(existing.status) || (!existing.answeredAt && !["ANSWERED", "COMPLETED"].includes(existing.status)) ? (existing.status === "FAILED" ? "FAILED" : "MISSED") : "COMPLETED")
+          : status;
         session = await tx.callSession.update({
           where: { id: existing.id },
           data: {
-            ...(status ? { status } : {}),
+            ...(nextStatus ? { status: nextStatus } : {}),
             direction: direction || existing.direction,
             remoteNumber: remoteNumber || existing.remoteNumber,
             remoteNumberNormalized: remoteNumberNormalized || existing.remoteNumberNormalized,
@@ -977,8 +1012,8 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
             ...(linkClientId && !existing.clientId ? { clientId: linkClientId, resolution: "LINKED_CLIENT", resolvedAt: existing.resolvedAt || occurredAt, resolvedById: existing.resolvedById } : {}),
             ...(durationSeconds != null ? { durationSeconds } : {}),
             ...(recordingUrl ? { recordingUrl } : {}),
-            ...(status === "ANSWERED" ? { answeredAt: existing.answeredAt || occurredAt } : {}),
-            ...(status === "COMPLETED" ? { endedAt: existing.endedAt || occurredAt } : {}),
+            ...(nextStatus === "ANSWERED" || queueResult === "bridged" ? { answeredAt: existing.answeredAt || occurredAt } : {}),
+            ...(["COMPLETED", "MISSED", "FAILED"].includes(nextStatus) ? { endedAt: existing.endedAt || occurredAt } : {}),
             lastEventAt: occurredAt,
           },
         });
@@ -987,13 +1022,14 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
       }
 
       const providerCallId = parentCallSid || callSid;
+      const initialStatus = direction === "INBOUND" && status === "COMPLETED" && !isDialAction && !queueResult ? "MISSED" : status;
       session = await tx.callSession.create({
         data: {
           agencyId,
           provider: TWILIO_CALL_PROVIDER,
           providerCallId,
           direction,
-          status: status || "RINGING",
+          status: initialStatus || "RINGING",
           remoteNumber,
           remoteNumberNormalized,
           businessNumber,
@@ -1001,8 +1037,8 @@ export async function handleTwilioCallStatus({ agencyId, body }) {
           ...(linkLeadId ? { leadId: linkLeadId, resolution: "LINKED_LEAD", resolvedAt: occurredAt } : {}),
           ...(linkClientId ? { clientId: linkClientId, resolution: "LINKED_CLIENT", resolvedAt: occurredAt } : {}),
           startedAt: occurredAt,
-          ...(status === "ANSWERED" ? { answeredAt: occurredAt } : {}),
-          ...(status === "COMPLETED" ? { endedAt: occurredAt } : {}),
+          ...(initialStatus === "ANSWERED" || queueResult === "bridged" ? { answeredAt: occurredAt } : {}),
+          ...(["COMPLETED", "MISSED", "FAILED"].includes(initialStatus) ? { endedAt: occurredAt } : {}),
           durationSeconds,
           recordingUrl,
           lastEventAt: occurredAt,
@@ -1088,7 +1124,17 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
     const recording = (recordingByCall.get(call.sid) || [])[0];
     const startedAt = call.startTime ? new Date(call.startTime) : new Date();
     const endedAt = call.endTime ? new Date(call.endTime) : null;
-    const status = apiCallStatus(call);
+    let status = apiCallStatus(call);
+    const existing = await prisma.callSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
+    if (direction === "INBOUND" && status === "COMPLETED") {
+      const dispatches = await prisma.callRingDispatch.findMany({
+        where: { agencyId, parentCallSid: call.sid },
+        select: { status: true },
+      });
+      if ((dispatches.length && !dispatches.some((item) => item.status === "answered")) || ["MISSED", "FAILED"].includes(existing?.status)) {
+        status = existing?.status === "FAILED" ? "FAILED" : "MISSED";
+      }
+    }
     const data = {
       provider: TWILIO_CALL_PROVIDER,
       direction,
@@ -1105,7 +1151,6 @@ export async function syncTwilioCallHistory(agencyId, { limit = 100 } = {}) {
       rawPayload: { callSid: call.sid, direction: call.direction, status: call.status },
     };
     try {
-      const existing = await prisma.callSession.findUnique({ where: { agencyId_providerCallId: { agencyId, providerCallId: call.sid } } });
       if (remoteIsInternalClient && !existing) continue;
       await prisma.$transaction(async (tx) => {
         if (existing) {

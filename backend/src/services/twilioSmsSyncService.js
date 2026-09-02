@@ -19,6 +19,59 @@ function occurredAt(message) {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
+function failureReason(message) {
+  if (!message?.errorCode && !message?.errorMessage) return null;
+  return message.errorMessage || `Twilio error ${message.errorCode}`;
+}
+
+export async function listAgencyTwilioSmsHistoryForNumber(agencyId, remotePhone, { limit = 100 } = {}) {
+  const remoteNumber = normalizeCommunicationPhone(remotePhone);
+  if (!remoteNumber) return [];
+  const settings = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId } });
+  if (!settings?.accountSid || !settings?.authTokenEncrypted || !settings.enabled || !settings.smsEnabled) return [];
+  const lines = await prisma.agencyTwilioVoiceLine.findMany({
+    where: { agencyId, enabled: true },
+    select: { phoneNumber: true },
+  });
+  const agencyNumbers = new Set(
+    [...lines.map((line) => line.phoneNumber), settings.voiceNumber, settings.fromNumber]
+      .map(normalizeCommunicationPhone)
+      .filter(Boolean),
+  );
+  const client = twilio(settings.accountSid, decryptSecret(settings.authTokenEncrypted));
+  const take = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  const [outbound, inbound] = await Promise.all([
+    client.messages.list({ to: remoteNumber, limit: take }),
+    client.messages.list({ from: remoteNumber, limit: take }),
+  ]);
+  const unique = new Map([...outbound, ...inbound].map((message) => [message.sid, message]));
+  return [...unique.values()]
+    .filter((message) => {
+      const inboundMessage = String(message.direction || "").startsWith("inbound");
+      const localNumber = normalizeCommunicationPhone(inboundMessage ? message.to : message.from);
+      return localNumber && agencyNumbers.has(localNumber);
+    })
+    .sort((a, b) => occurredAt(a) - occurredAt(b))
+    .slice(-200)
+    .map((message) => {
+      const inboundMessage = String(message.direction || "").startsWith("inbound");
+      const status = messageStatus(message, inboundMessage);
+      const timestamp = occurredAt(message);
+      return {
+        id: message.sid,
+        direction: inboundMessage ? "Inbound" : "Outbound",
+        status,
+        bodyText: message.body || null,
+        occurredAt: timestamp,
+        sentAt: inboundMessage ? null : timestamp,
+        deliveredAt: status === "Delivered" ? timestamp : null,
+        failedAt: status === "Failed" ? timestamp : null,
+        failureReason: status === "Failed" ? failureReason(message) : null,
+        senderUser: null,
+      };
+    });
+}
+
 export async function syncAgencyTwilioSmsHistory(agencyId, { publicBase = null } = {}) {
   const settings = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId } });
   if (!settings?.accountSid || !settings?.authTokenEncrypted || !settings.enabled || !settings.smsEnabled) {
@@ -83,9 +136,22 @@ export async function syncAgencyTwilioSmsHistory(agencyId, { publicBase = null }
     const created = await prisma.$transaction(async (tx) => {
       const duplicate = await tx.communicationMessage.findFirst({
         where: { agencyId, provider: "Twilio", providerMessageId: providerMessage.sid },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-      if (duplicate) return false;
+      if (duplicate) {
+        await tx.communicationMessage.update({
+          where: { id: duplicate.id },
+          data: {
+            status,
+            deliveredAt: status === "Delivered" ? timestamp : null,
+            failedAt: status === "Failed" ? timestamp : null,
+            failureReason: status === "Failed"
+              ? failureReason(providerMessage) || "Twilio reported that this message was not delivered"
+              : null,
+          },
+        });
+        return false;
+      }
       const caseItem = await tx.case.findFirst({
         where: { agencyId, clientId: linkedClient.id, deletedAt: null },
         orderBy: { updatedAt: "desc" },
@@ -131,7 +197,9 @@ export async function syncAgencyTwilioSmsHistory(agencyId, { publicBase = null }
           sentAt: inbound ? null : timestamp,
           deliveredAt: status === "Delivered" ? timestamp : null,
           failedAt: status === "Failed" ? timestamp : null,
-          failureReason: providerMessage.errorMessage || null,
+          failureReason: status === "Failed"
+            ? failureReason(providerMessage) || "Twilio reported that this message was not delivered"
+            : null,
           metadata: { importedFromTwilio: true, twilioDirection: providerMessage.direction || null },
           isRead: true,
         },

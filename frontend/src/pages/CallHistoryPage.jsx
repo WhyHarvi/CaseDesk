@@ -12,6 +12,7 @@ import {
   Loader2,
   MessageCircle,
   MessageSquareText,
+  MessagesSquare,
   Phone,
   PhoneCall,
   PhoneMissed,
@@ -21,7 +22,6 @@ import {
   Send,
   ShieldAlert,
   UserRoundPlus,
-  Voicemail,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -30,6 +30,8 @@ import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../components/notifications/NotificationProvider";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
+import CallRecordingPlayer from "../components/calls/CallRecordingPlayer";
+import ChatThread from "../components/chat/ChatThread";
 import api from "../services/api";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
@@ -38,6 +40,8 @@ const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px
 const humanize = (value) => String(value || "").toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const callDirectionLabel = (value) => value === "INBOUND" ? "Incoming" : value === "OUTBOUND" ? "Outgoing" : humanize(value);
 const callStatusLabel = (value, direction) => {
+  if (value === "COMPLETED") return "Answered";
+  if (value === "ANSWERED") return "In call";
   if (value === "MISSED") return direction === "OUTBOUND" ? "No answer" : "Missed call";
   if (value === "FAILED") return "Call failed";
   return humanize(value);
@@ -58,6 +62,14 @@ const duration = (seconds) => {
   return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 };
 
+function engagementSummary(call, { compact = false } = {}) {
+  const engagement = call.engagement;
+  if (!engagement) return { label: call.direction === "OUTBOUND" ? "Dialed by" : "Call engagement", text: call.handledBy?.fullName || call.extensionLabel || "Not recorded", title: "" };
+  const names = (engagement.people || []).map((person) => person.fullName).filter(Boolean);
+  const text = compact && names.length > 2 ? `${names.slice(0, 2).join(", ")} +${names.length - 2}` : names.join(", ") || engagement.fallback;
+  return { label: engagement.label, text, title: names.join(", ") };
+}
+
 const statusTone = {
   RINGING: "bg-sky-50 text-sky-700 ring-sky-200",
   ANSWERED: "bg-indigo-50 text-indigo-700 ring-indigo-200",
@@ -74,6 +86,12 @@ function DirectionIcon({ value, className = "h-4 w-4" }) {
   return value === "OUTBOUND" ? <ArrowUpRight className={className} /> : <ArrowDownLeft className={className} />;
 }
 
+function directionTone(call) {
+  if (["MISSED", "FAILED"].includes(call.status)) return "bg-rose-50 text-rose-700";
+  if (call.status === "RINGING") return "bg-sky-50 text-sky-700";
+  return call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700";
+}
+
 function EmptyCalls({ unresolved, provider }) {
   return (
     <div className="flex min-h-80 flex-col items-center justify-center px-6 text-center">
@@ -87,6 +105,7 @@ function EmptyCalls({ unresolved, provider }) {
 function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
   const name = personName(call) || call.remoteNumber || "Private number";
   const detail = personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched";
+  const engagement = engagementSummary(call, { compact: true });
   return (
     // A <div> here, not a <button> — the Call button below needs to nest
     // inside the same card without landing inside another interactive
@@ -100,7 +119,7 @@ function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
       aria-label={`Open ${callDirectionLabel(call.direction)} call with ${name}`}
     >
       <span className="flex items-start gap-3">
-        <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span>
+        <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${directionTone(call)}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span>
         <span className="min-w-0 flex-1">
           <span className="flex items-start justify-between gap-3">
             <span className="flex min-w-0 items-center gap-2">
@@ -135,7 +154,7 @@ function MobileCallCard({ call, onOpen, provider, onCall, onSms }) {
           </span>
           <span className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <span><span className="block text-slate-400">Call</span><span className="mt-0.5 block font-medium text-slate-700">{callDirectionLabel(call.direction)} · {duration(call.durationSeconds)}</span></span>
-            <span><span className="block text-slate-400">Team member</span><span className="mt-0.5 block truncate font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</span></span>
+            <span><span className="block text-slate-400">{engagement.label}</span><span className="mt-0.5 block truncate font-medium text-slate-700" title={engagement.title || undefined}>{engagement.text}</span></span>
           </span>
           <span className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
             <span className="text-xs text-slate-500">{when(call.startedAt)}</span>
@@ -179,9 +198,13 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
   const [smsBody, setSmsBody] = useState("");
   const [smsFromNumber, setSmsFromNumber] = useState("");
   const [smsSuccess, setSmsSuccess] = useState("");
+  const [smsThread, setSmsThread] = useState({ matched: Boolean(call.clientId), client: call.client || null, conversation: null, messages: [] });
+  const [smsThreadLoading, setSmsThreadLoading] = useState(false);
+  const [smsSyncing, setSmsSyncing] = useState(false);
   const [smsIdempotencyKey, setSmsIdempotencyKey] = useState(() => crypto.randomUUID());
   const [leadForm, setLeadForm] = useState({ firstName: "", lastName: "", email: "", ownerUserId: call.handledBy?.id || staff[0]?.id || "", immigrationInterest: "", initialMessage: "", priority: call.status === "MISSED" ? "HIGH" : "NORMAL" });
   const [outcome, setOutcome] = useState({ outcome: call.disposition || "COMPLETED", notes: call.outcomeNotes || "", addFollowUp: false, dueAt: "", description: "Follow up after phone call", assignedUserId: call.lead?.owner?.id || call.handledBy?.id || staff[0]?.id || "" });
+  const engagement = engagementSummary(call);
 
   const loadCandidates = useCallback(async (term = search) => {
     try {
@@ -219,6 +242,31 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
     });
     return () => { cancelled = true; };
   }, [mode, smsOptions, call.id]);
+
+  const loadSmsThread = useCallback(async ({ sync = false } = {}) => {
+    try {
+      setSmsThreadLoading(true);
+      if (sync && call.clientId) {
+        setSmsSyncing(true);
+        try {
+          await api.post("/communications/sms/sync", {}, { timeout: 60_000 });
+        } catch (reason) {
+          setError(reason.response?.data?.message || "Saved CRM messages are shown, but Twilio history could not be refreshed.");
+        }
+      }
+      const response = await api.get(`/call-history/${call.id}/sms-thread`);
+      setSmsThread(response.data.data || { matched: true, client: call.client || null, conversation: null, messages: [] });
+    } catch (reason) {
+      setError(reason.response?.data?.message || "SMS conversation history could not be loaded.");
+    } finally {
+      setSmsThreadLoading(false);
+      setSmsSyncing(false);
+    }
+  }, [call.client, call.clientId, call.id]);
+
+  useEffect(() => {
+    if (mode === "sms") void loadSmsThread({ sync: true });
+  }, [mode, loadSmsThread]);
 
   async function mutate(path, body = {}) {
     try {
@@ -261,9 +309,10 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
         fromNumber: smsFromNumber || undefined,
         idempotencyKey: smsIdempotencyKey,
       });
-      setSmsSuccess(`SMS sent from ${response.data.data.fromNumber || smsFromNumber}.`);
+      setSmsSuccess(`SMS accepted by Twilio from ${response.data.data.fromNumber || smsFromNumber}. Delivery status will update in this thread.`);
       setSmsBody("");
       setSmsIdempotencyKey(crypto.randomUUID());
+      await loadSmsThread();
     } catch (reason) {
       setError(reason.response?.data?.message || "The SMS could not be sent.");
     } finally {
@@ -295,7 +344,7 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
         <header className="border-b border-slate-200 bg-white px-5 py-5 sm:px-6">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-3">
-              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${call.status === "MISSED" ? "bg-rose-50 text-rose-600" : "bg-sky-50 text-sky-600"}`}><DirectionIcon value={call.direction} className="h-5 w-5" /></span>
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${directionTone(call)}`}><DirectionIcon value={call.direction} className="h-5 w-5" /></span>
               <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold tracking-tight text-slate-950">{personName(call) || call.remoteNumber || "Unknown caller"}</h2><CallStatus value={call.status} direction={call.direction} /></div><p className="mt-1 text-sm text-slate-500">{callDirectionLabel(call.direction)} · {when(call.startedAt)}</p></div>
             </div>
             <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200" aria-label="Close"><X className="h-4 w-4" /></button>
@@ -303,14 +352,14 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Number</p><p className="mt-1 truncate text-sm font-semibold text-slate-800">{call.remoteNumber || "Private"}</p></div>
             <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Duration</p><p className="mt-1 text-sm font-semibold text-slate-800">{duration(call.durationSeconds)}</p></div>
-            <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Team member</p><p className="mt-1 truncate text-sm font-semibold text-slate-800">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></div>
+            <div className="rounded-2xl bg-slate-50 px-3 py-2.5"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{engagement.label}</p><p className="mt-1 text-sm font-semibold leading-5 text-slate-800">{engagement.text}</p></div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" onClick={openBooking} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-brand-600 px-4 text-xs font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"><CalendarPlus className="h-4 w-4" />{call.appointment?.id ? "Open booking" : "Book appointment"}</button>
             {call.remoteNumber ? <button type="button" onClick={() => setMode("sms")} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-4 w-4" />Send SMS</button> : null}
             {whatsAppPhone ? <a href={`https://wa.me/${whatsAppPhone}`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#25D366] px-4 text-xs font-semibold text-white transition hover:bg-[#1fb85a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2" aria-label={`Open WhatsApp chat with ${call.remoteNumber}`}><MessageCircle className="h-4 w-4" />WhatsApp <ExternalLink className="h-3 w-3" /></a> : null}
             {call.remoteNumber ? <a href={`tel:${call.remoteNumber}`} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"><Phone className="h-3.5 w-3.5" />Call with Twilio</a> : null}
-            {call.recordingUrl ? <a href={call.recordingUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Voicemail className="h-3.5 w-3.5" />Recording <ExternalLink className="h-3 w-3" /></a> : null}
+            {call.recordingUrl ? <CallRecordingPlayer callId={call.id} isVoicemail={call.status === "MISSED"} /> : null}
             {call.lead ? <Link to={`/leads?lead=${encodeURIComponent(call.lead.id)}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.lead.leadNumber}</Link> : null}
             {call.client ? <Link to={`/app/clients/${call.client.id}`} className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700">Open {call.client.clientNumber}</Link> : null}
           </div>
@@ -328,9 +377,15 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
 
             {mode === "sms" ? (
               <form onSubmit={sendSms} className="space-y-5">
-                <div>
-                  <h3 className="text-base font-semibold text-slate-950">Text {personName(call) || call.remoteNumber}</h3>
-                  <p className="mt-1 text-sm text-slate-500">The message will be sent through Twilio to {smsOptions?.destination || call.remoteNumber}.</p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <h3 className="min-w-0 flex-1 text-base font-semibold text-slate-950">Text {personName(call) || call.remoteNumber}</h3>
+                  {smsThread.conversation?.id ? (
+                    <Link to={`/app/chats?kind=sms&thread=${encodeURIComponent(smsThread.conversation.id)}`} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-sky-200 bg-white px-3.5 text-xs font-semibold text-sky-700 transition hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2">
+                      <MessagesSquare className="h-4 w-4" />Open in Chats
+                    </Link>
+                  ) : !call.clientId ? (
+                    <button type="button" onClick={() => setMode("resolve")} className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-sky-700 px-4 text-xs font-semibold text-white transition hover:bg-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><Link2 className="h-4 w-4" />Match caller</button>
+                  ) : null}
                 </div>
                 {smsLoading ? <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-4 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin text-sky-600" />Loading sending number…</div> : null}
                 {smsOptions && !smsOptions.configured ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Twilio SMS is not enabled for this workspace. An administrator can configure it in Settings.</div> : null}
@@ -352,6 +407,24 @@ function CallDrawer({ call, staff, onClose, onChanged, provider, initialMode }) 
                 </label>
                 {smsSuccess ? <div role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{smsSuccess}</div> : null}
                 <div className="flex justify-end"><button disabled={smsSending || smsLoading || !smsBody.trim() || !smsFromNumber || !smsOptions?.configured || !smsOptions?.verified} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-sky-600 px-5 text-sm font-semibold text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50">{smsSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}{smsSending ? "Sending…" : "Send SMS"}</button></div>
+                <section className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-100/70" aria-labelledby="sms-history-title">
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+                    <div><h4 id="sms-history-title" className="text-sm font-semibold text-slate-900">SMS history</h4><p className="mt-0.5 text-xs text-slate-500">Messages to and from {call.clientId ? "this client" : "this number"}</p></div>
+                    <button type="button" onClick={() => loadSmsThread({ sync: true })} disabled={smsThreadLoading} className="inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Refresh SMS history"><RefreshCw className={`h-4 w-4 ${smsSyncing || smsThreadLoading ? "animate-spin" : ""}`} />{smsSyncing ? "Syncing" : "Refresh"}</button>
+                  </div>
+                  <ChatThread
+                    messages={smsThread.messages || []}
+                    mineDirection="Outbound"
+                    loading={smsThreadLoading}
+                    className="min-h-64 px-4 py-4"
+                    mineBubbleClassName="bg-sky-600 text-white"
+                    theirBubbleClassName="border border-slate-200 bg-white text-slate-800"
+                    mineSenderLabelFor={(message) => message.senderUser?.fullName}
+                    showDeliveryStatus={false}
+                    renderMessageBody={(message) => <><p className="whitespace-pre-wrap break-words text-[15px] leading-6">{message.bodyText}</p>{message.direction === "Outbound" ? <p className={`text-[10px] font-semibold ${message.status === "Failed" ? "text-rose-100" : "text-sky-100"}`}>{message.status}{message.failureReason ? ` · ${message.failureReason}` : ""}</p> : null}</>}
+                    emptyState={<><span className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-sky-600 shadow-sm"><MessagesSquare className="h-5 w-5" /></span><h4 className="mt-3 text-sm font-semibold text-slate-800">No text messages yet</h4><p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">{call.clientId ? "The first outgoing text or incoming reply will appear here and in Chats." : "Messages will appear here now and move into the CRM thread after you match this number to a client."}</p></>}
+                  />
+                </section>
               </form>
             ) : mode === "resolve" ? (
               <div className="space-y-6">
@@ -514,8 +587,8 @@ export function CallHistorySection({ provider = "TWILIO" }) {
           </div>
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[900px] border-collapse text-left">
-              <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Team member</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
-              <tbody>{calls.map((call) => <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${call.direction === "OUTBOUND" ? "bg-blue-50 text-blue-700" : call.status === "MISSED" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}{call.remoteNumber ? <button type="button" onClick={() => openCall(call, "sms")} aria-label={`Send SMS to ${personName(call) || call.remoteNumber}`} title="Send SMS" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="font-medium text-slate-700">{call.handledBy?.fullName || call.extensionLabel || "Not mapped"}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>)}</tbody>
+              <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Call</th><th className="px-4 py-3">Caller / contact</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Engagement</th><th className="px-4 py-3">Duration</th><th className="px-4 py-3">Attention</th><th className="px-5 py-3" /></tr></thead>
+              <tbody>{calls.map((call) => { const callEngagement = engagementSummary(call, { compact: true }); return <tr key={call.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><span className={`flex h-9 w-9 items-center justify-center rounded-full ${directionTone(call)}`} aria-hidden="true"><DirectionIcon value={call.direction} /></span><div><p className="font-semibold text-slate-900">{callDirectionLabel(call.direction)}</p><p className="mt-0.5 text-xs text-slate-400">{when(call.startedAt)}</p></div></div></td><td className="px-4 py-4"><div className="flex items-center gap-2"><div className="min-w-0"><p className="font-semibold text-slate-800">{personName(call) || call.remoteNumber || "Private number"}</p><p className="mt-0.5 text-xs text-slate-400">{personName(call) ? call.remoteNumber : call.lead?.leadNumber || call.client?.clientNumber || "Not matched"}</p></div>{canCallBack && call.remoteNumber ? <button type="button" onClick={() => callBack(call.remoteNumber)} aria-label={`Call ${personName(call) || call.remoteNumber}`} title="Call" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><Phone className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}{call.remoteNumber ? <button type="button" onClick={() => openCall(call, "sms")} aria-label={`Send SMS to ${personName(call) || call.remoteNumber}`} title="Send SMS" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-700 transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2"><MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" /></button> : null}</div></td><td className="px-4 py-4"><CallStatus value={call.status} direction={call.direction} /></td><td className="px-4 py-4"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{callEngagement.label}</p><p className="mt-1 max-w-48 font-medium leading-5 text-slate-700" title={callEngagement.title || undefined}>{callEngagement.text}</p></td><td className="px-4 py-4 tabular-nums text-slate-600">{duration(call.durationSeconds)}</td><td className="px-4 py-4">{call.resolution === "UNRESOLVED" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700"><CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />Match caller</span> : call.followUp?.status === "PENDING" ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Callback due</span> : <span className="text-xs text-slate-400">{humanize(call.resolution)}</span>}</td><td className="px-5 py-4 text-right"><button type="button" onClick={() => openCall(call)} className="min-h-10 rounded-full bg-blue-50 px-3.5 text-xs font-semibold text-[#007AFF] transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label={`Open call with ${personName(call) || call.remoteNumber || "private number"}`}>Open</button></td></tr>; })}</tbody>
             </table>
           </div>
           </>

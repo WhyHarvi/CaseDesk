@@ -4,6 +4,7 @@ import {
   createLeadFromCall,
   getCall,
   getCallSmsOptions,
+  getCallSmsThread,
   linkCallToClient,
   linkCallToAppointment,
   linkCallToLead,
@@ -12,13 +13,16 @@ import {
   markCallSpam,
   recordCallOutcome,
   sendCallSms,
+  streamCallRecording,
 } from "../controllers/callHistoryController.js";
 
 const router = Router();
 
 router.get("/", asyncHandler(listCalls));
 router.get("/:id", asyncHandler(getCall));
+router.get("/:id/recording", asyncHandler(streamCallRecording));
 router.get("/:id/sms-options", asyncHandler(getCallSmsOptions));
+router.get("/:id/sms-thread", asyncHandler(getCallSmsThread));
 router.get("/:id/candidates", asyncHandler(listCallCandidates));
 router.post("/:id/link-lead", asyncHandler(linkCallToLead));
 router.post("/:id/link-client", asyncHandler(linkCallToClient));

@@ -13,6 +13,7 @@ import {
   inboundTwiML,
   inboundVoicemailTwiML,
   inboundWaitTwiML,
+  markRingDispatchAnswered,
   outboundTwiML,
   recordRingDispatchStatus,
   twilioPublicBase,
@@ -105,9 +106,15 @@ export async function twilioCallStatus(req, res) {
 
 // The Voice URL for each dispatched ring attempt (see
 // twilioCallService.js's dispatchRingAttempts) — pulls whoever answers
-// into the caller's queue.
+// into the caller's queue. Marking this leg answered happens here, before
+// the Dial/Queue TwiML is even returned — see markRingDispatchAnswered for
+// why that ordering is what keeps a consultant who just answered from
+// being disconnected by their own siblings' cancellation.
 export async function twilioDequeue(req, res) {
   const queueName = String(req.query.queueName || "");
+  await markRingDispatchAnswered(req.params.agencyId, req.body?.CallSid).catch((error) => {
+    logger.warn("twilio.mark_ring_answered_failed", { agencyId: req.params.agencyId, callSid: req.body?.CallSid, reason: error.message });
+  });
   res.type("text/xml").send(dequeueTwiML(queueName));
 }
 

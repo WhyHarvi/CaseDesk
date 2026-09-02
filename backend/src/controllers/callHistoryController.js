@@ -1,5 +1,6 @@
 import prisma from "../services/prisma/client.js";
 import { createHttpError } from "../utils/http.js";
+import { decryptSecret } from "../services/secretEncryption.js";
 import { clientAccessWhere } from "../middleware/authorization.js";
 import { portalDataScope } from "../services/portalAccessService.js";
 import { leadAccessWhere } from "../modules/leads/lead.permissions.js";
@@ -9,6 +10,7 @@ import { agencyTwilioSmsSendingOptions, sendAgencyTwilioSms } from "../services/
 import { normalizeCommunicationPhone } from "../services/communicationAddressService.js";
 import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
 import { requireCommunicationPermission } from "../services/communicationPermissions.js";
+import { listAgencyTwilioSmsHistoryForNumber } from "../services/twilioSmsSyncService.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import {
   applyCallOutcome,
@@ -71,6 +73,71 @@ function leadName(lead) {
   return [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.leadNumber;
 }
 
+function dispatchUserId(identity) {
+  return clean(identity, 200).replace(/^client:/, "").replace(/^casedesk:/, "");
+}
+
+async function addEngagementSummaries(data, agencyId) {
+  if (!data.length) return data;
+  const parentCallSids = data.map((item) => item.providerCallId).filter(Boolean);
+  const dispatches = parentCallSids.length
+    ? await prisma.callRingDispatch.findMany({
+        where: { agencyId, parentCallSid: { in: parentCallSids } },
+        select: { parentCallSid: true, identity: true, status: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const userIds = [...new Set(dispatches.map((item) => dispatchUserId(item.identity)).filter(Boolean))];
+  const users = userIds.length
+    ? await prisma.user.findMany({
+        where: { agencyId, id: { in: userIds } },
+        select: { id: true, fullName: true },
+      })
+    : [];
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  return data.map((call) => {
+    if (call.direction === "OUTBOUND") {
+      return {
+        ...call,
+        engagement: {
+          label: "Dialed by",
+          people: call.handledBy ? [call.handledBy] : [],
+          fallback: call.extensionLabel || "Dialer not recorded",
+        },
+      };
+    }
+
+    const callDispatches = dispatches.filter((item) => item.parentCallSid === call.providerCallId);
+    const answered = callDispatches.filter((item) => item.status === "answered");
+    const relevant = answered.length ? answered : callDispatches;
+    const people = [];
+    const seen = new Set();
+    for (const dispatch of relevant) {
+      const user = usersById.get(dispatchUserId(dispatch.identity));
+      if (user && !seen.has(user.id)) {
+        seen.add(user.id);
+        people.push(user);
+      }
+    }
+    if (!callDispatches.length && call.handledBy && call.answeredAt) people.push(call.handledBy);
+    const answeredCall = answered.length > 0 || (!callDispatches.length && Boolean(call.handledBy && call.answeredAt));
+    // Repair the presentation of older queue calls that Twilio reported as
+    // generic `completed` parent legs even though every staff ring attempt
+    // ended without an answer. This also makes recordings read as voicemail
+    // immediately, without waiting for a destructive data migration.
+    const effectiveStatus = call.status === "COMPLETED" && callDispatches.length && !answeredCall ? "MISSED" : call.status;
+    return {
+      ...call,
+      status: effectiveStatus,
+      engagement: {
+        label: answeredCall ? "Answered by" : effectiveStatus === "RINGING" ? "Ringing" : "Rang",
+        people,
+        fallback: call.extensionLabel || (answeredCall ? "Answering person not recorded" : "No staff phones recorded"),
+      },
+    };
+  });
+}
+
 async function addMatchSummaries(data, agencyId) {
   const numbers = [...new Set(data.map((item) => item.remoteNumberNormalized).filter(Boolean))];
   if (!numbers.length) return data.map((item) => ({ ...item, matchSummary: { leads: [], clients: [] } }));
@@ -124,12 +191,33 @@ export async function listCalls(req, res) {
     prisma.callSession.count({ where }),
     prisma.callSession.count({ where: { agencyId: req.auth.agencyId, provider: "TWILIO", resolution: "UNRESOLVED", ...callAccessWhere(req) } }),
   ]);
-  const data = await addMatchSummaries(raw, req.auth.agencyId);
+  const matched = await addMatchSummaries(raw, req.auth.agencyId);
+  const data = await addEngagementSummaries(matched, req.auth.agencyId);
   res.json({ data, meta: { page, limit, total, unresolved, hasMore: page * limit < total } });
 }
 
 export async function getCall(req, res) {
-  res.json({ data: await requireCall(req) });
+  const [data] = await addEngagementSummaries([await requireCall(req)], req.auth.agencyId);
+  res.json({ data });
+}
+
+// Twilio's recording media URL requires the account's own credentials to
+// fetch (it 401s otherwise), so the frontend can't just point an <audio>
+// tag at call.recordingUrl directly — this proxies the bytes through
+// CaseDesk's own auth instead, the same access-checked path as every other
+// call action, so a one-click player works without ever handing the raw
+// Twilio URL (or Twilio credentials) to the browser.
+export async function streamCallRecording(req, res) {
+  const call = await requireCall(req, {});
+  if (!call.recordingUrl) throw createHttpError(404, "No recording is available for this call.", "RECORDING_NOT_FOUND");
+  const settings = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.auth.agencyId }, select: { accountSid: true, authTokenEncrypted: true } });
+  if (!settings?.accountSid || !settings?.authTokenEncrypted) throw createHttpError(409, "Twilio is not connected for this workspace.");
+  const auth = Buffer.from(`${settings.accountSid}:${decryptSecret(settings.authTokenEncrypted)}`).toString("base64");
+  const response = await fetch(call.recordingUrl, { headers: { Authorization: `Basic ${auth}` } });
+  if (!response.ok) throw createHttpError(502, "The recording could not be retrieved from Twilio.");
+  res.set("Cache-Control", "private, max-age=3600");
+  res.type(response.headers.get("content-type") || "audio/mpeg");
+  res.send(Buffer.from(await response.arrayBuffer()));
 }
 
 export async function getCallSmsOptions(req, res) {
@@ -141,6 +229,86 @@ export async function getCallSmsOptions(req, res) {
   res.json({ data: { ...options, destination } });
 }
 
+export async function getCallSmsThread(req, res) {
+  await requireCommunicationPermission(req, "canView");
+  const call = await requireCall(req);
+  if (!call.clientId) {
+    const messages = await listAgencyTwilioSmsHistoryForNumber(
+      req.auth.agencyId,
+      call.remoteNumberNormalized || call.remoteNumber,
+    );
+    return res.json({
+      data: {
+        matched: false,
+        client: null,
+        conversation: null,
+        messages,
+      },
+    });
+  }
+
+  const conversation = await prisma.communicationConversation.findFirst({
+    where: {
+      agencyId: req.auth.agencyId,
+      clientId: call.clientId,
+      channel: "Sms",
+      deletedAt: null,
+    },
+    orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      state: true,
+      lastMessageAt: true,
+      client: { select: { id: true, fullName: true, clientNumber: true, phone: true } },
+    },
+  });
+  if (!conversation) {
+    return res.json({
+      data: {
+        matched: true,
+        client: call.client,
+        conversation: null,
+        messages: [],
+      },
+    });
+  }
+
+  const recentMessages = await prisma.communicationMessage.findMany({
+    where: {
+      agencyId: req.auth.agencyId,
+      conversationId: conversation.id,
+      channel: "Sms",
+      deletedAt: null,
+    },
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+    take: 200,
+    select: {
+      id: true,
+      direction: true,
+      status: true,
+      bodyText: true,
+      occurredAt: true,
+      sentAt: true,
+      deliveredAt: true,
+      failedAt: true,
+      failureReason: true,
+      senderUser: { select: { id: true, fullName: true } },
+    },
+  });
+  return res.json({
+    data: {
+      matched: true,
+      client: conversation.client,
+      conversation: {
+        id: conversation.id,
+        state: conversation.state,
+        lastMessageAt: conversation.lastMessageAt,
+      },
+      messages: recentMessages.reverse(),
+    },
+  });
+}
+
 async function recordClientSms(call, { agencyId, userId, to, from, body, idempotencyKey, providerMessageId }) {
   if (!call.clientId) return null;
   const now = new Date();
@@ -149,7 +317,6 @@ async function recordClientSms(call, { agencyId, userId, to, from, body, idempot
       where: {
         agencyId,
         clientId: call.clientId,
-        caseId: call.caseId || null,
         channel: "Sms",
         state: { not: "Closed" },
         deletedAt: null,
