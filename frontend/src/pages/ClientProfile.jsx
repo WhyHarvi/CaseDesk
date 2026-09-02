@@ -582,7 +582,7 @@ export default function ClientProfile() {
   }, [id]);
 
   useEffect(() => {
-    if (!client?.id || !canOpenCases || cases.length) return;
+    if (!client?.id || !canOpenCases) return;
 
     Promise.all([
       api.get("/cases/case-types"),
@@ -612,7 +612,7 @@ export default function ClientProfile() {
           rcicUsers: [], caseWorkerUsers: [], ready: false, missing: ["RCIC", "Case Worker"],
         });
       });
-  }, [client?.id, canOpenCases, cases.length]);
+  }, [client?.id, canOpenCases]);
 
   useEffect(() => {
     let active = true;
