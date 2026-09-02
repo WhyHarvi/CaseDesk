@@ -85,16 +85,17 @@ export function microsoftMailboxAuthorizeUrl(state) {
     response_mode: "query",
     scope: SCOPES.join(" "),
     state,
-    // Azure AD's `prompt` accepts exactly one value (login/none/consent/
-    // select_account) — "select_account consent" is two values crammed into
-    // one, which Azure AD rejects outright with AADSTS90023 on every sign-in
-    // attempt. "consent" alone still forces Microsoft to always re-display
-    // (and the person to re-approve) the full current scope list, so
-    // reconnecting to pick up a newly-added scope (e.g. Calendars.ReadWrite)
-    // can't silently reuse a prior consent and keep the old grantedScopes —
-    // the property "select_account consent" was trying to add. Switching
-    // accounts is still available from Microsoft's own consent screen.
-    prompt: "consent",
+    // No `prompt` value at all — forcing one (this was "select_account
+    // consent", invalid and rejected outright with AADSTS90023; then just
+    // "consent") backfires on a tenant with self-service user consent
+    // disabled (chkimmigration.ca): forcing an interactive consent screen
+    // makes Microsoft require THIS signing-in user to personally approve
+    // it, and a non-admin can't — so it bounces to "ask your admin" even
+    // for scopes already granted tenant-wide. Omitting prompt entirely
+    // lets Microsoft evaluate existing tenant consent silently (succeeds
+    // immediately when everything requested is already granted) and still
+    // auto-triggers incremental consent on its own for any newly-added,
+    // not-yet-granted scope — no forced prompt is needed for that.
   });
   return `${authority()}/authorize?${params}`;
 }
