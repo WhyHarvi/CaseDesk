@@ -78,14 +78,16 @@ export function microsoftMailboxAuthorizeUrl(state) {
     response_mode: "query",
     scope: SCOPES.join(" "),
     state,
-    // "select_account" alone lets Microsoft silently reuse a prior consent
-    // instead of showing the permission screen again — someone reconnecting
-    // to pick up a newly-added scope (e.g. Calendars.ReadWrite) would get a
-    // token back carrying the SAME old scope, with no visible error, and
-    // grantedScopes in the database would never actually change. Forcing
-    // "consent" alongside it means Microsoft always re-displays (and the
-    // person always re-approves) the current full scope list.
-    prompt: "select_account consent",
+    // Azure AD's `prompt` accepts exactly one value (login/none/consent/
+    // select_account) — "select_account consent" is two values crammed into
+    // one, which Azure AD rejects outright with AADSTS90023 on every sign-in
+    // attempt. "consent" alone still forces Microsoft to always re-display
+    // (and the person to re-approve) the full current scope list, so
+    // reconnecting to pick up a newly-added scope (e.g. Calendars.ReadWrite)
+    // can't silently reuse a prior consent and keep the old grantedScopes —
+    // the property "select_account consent" was trying to add. Switching
+    // accounts is still available from Microsoft's own consent screen.
+    prompt: "consent",
   });
   return `${authority()}/authorize?${params}`;
 }
