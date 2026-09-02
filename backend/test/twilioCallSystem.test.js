@@ -735,13 +735,23 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   assert.doesNotMatch(service, /const clients = identities\.map/);
   assert.match(service, /if \(!identities\.length\) return `<Response>\$\{greetingTwiML\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
   assert.match(service, /const queueName = `call-\$\{parentCallSid\}`;/);
-  assert.match(service, /await dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base \}\)\.catch/);
+  // Fixes a real bug: a fast answer could find the queue still empty (the
+  // caller's own Enqueue hadn't been processed by Twilio yet), so
+  // <Dial><Queue> had nothing to bridge to and the consultant's screen
+  // showed "Connecting…" right before the call just ended. Not awaiting
+  // dispatchRingAttempts means this response — the one that actually
+  // enqueues the caller — reaches Twilio without waiting on the ring
+  // dispatch REST calls first.
+  assert.doesNotMatch(service, /await dispatchRingAttempts\(/);
+  assert.match(service, /dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base \}\)\.catch/);
   assert.match(service, /return `<Response>\$\{greetingTwiML\}<Enqueue waitUrl="\$\{escapeXml\(waitUrl\)\}" action="\$\{escapeXml\(statusBase\)\}">\$\{escapeXml\(queueName\)\}<\/Enqueue><\/Response>`;/);
 
   // Every ring attempt is its own real outbound call via the REST API
   // (client.calls.create), each recorded so it can be canceled once one
   // connects and so the answering browser can look itself up by CallSid.
+  assert.match(service, /const RING_DISPATCH_DELAY_MS = 1_500;/);
   assert.match(service, /async function dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber, base \}\) \{/);
+  assert.match(service, /await new Promise\(\(resolve\) => setTimeout\(resolve, RING_DISPATCH_DELAY_MS\)\);/);
   assert.match(service, /const call = await client\.calls\.create\(\{\s*\n\s*to: `client:\$\{identity\}`,\s*\n\s*from: config\.voiceNumber,\s*\n\s*url: dequeueUrl,/);
   assert.match(service, /await prisma\.callRingDispatch\.create\(\{\s*\n\s*data: \{ agencyId, parentCallSid, dispatchedCallSid: call\.sid, identity, callerNumber: callerNumber \|\| null \},/);
 

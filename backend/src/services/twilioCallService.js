@@ -420,8 +420,17 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // Twilio API error) must never break the caller's own call, so it's
   // logged, not thrown — the queue's own timeout (see the wait handler)
   // falls through to voicemail if genuinely nobody ends up ringing.
+  //
+  // Deliberately not awaited: this response (which is what actually places
+  // the caller into queueName) must reach Twilio and get processed before
+  // any dispatched call can possibly be answered, or a fast answer finds
+  // the queue still empty and <Dial><Queue> has nothing to bridge to — the
+  // staff member's screen shows "Connecting…" and the call just ends.
+  // dispatchRingAttempts adds its own further delay before actually
+  // ringing anyone, on top of not blocking this return, to make that
+  // ordering safe rather than merely likely.
   const queueName = `call-${parentCallSid}`;
-  await dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base }).catch((error) => {
+  dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base }).catch((error) => {
     logger.warn("twilio.ring_dispatch_failed", { agencyId, parentCallSid, reason: error.message });
   });
   const waitUrl = `${base}/api/communications/webhooks/twilio/wait/${agencyId}?deadline=${Date.now() + QUEUE_WAIT_TIMEOUT_MS}`;
@@ -439,6 +448,11 @@ const QUEUE_WAIT_TIMEOUT_MS = 25_000;
 // deadline cuts the wait short.
 const WAIT_ANNOUNCEMENT_DELAY_MS = 12_000;
 
+// How long dispatchRingAttempts waits before actually placing any ring
+// calls, on top of not being awaited by inboundTwiML at all — see the
+// comment there for why this ordering matters.
+const RING_DISPATCH_DELAY_MS = 1_500;
+
 // Rings every assigned staff member's browser directly via the REST API
 // (rather than TwiML <Dial><Client>), each pointed at dequeueTwiML so
 // whoever answers first is bridged to the caller waiting in queueName. A
@@ -451,6 +465,13 @@ const WAIT_ANNOUNCEMENT_DELAY_MS = 12_000;
 // was never nested inside the caller's own <Dial> the way <Parameter>
 // values require.
 async function dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber, base }) {
+  // inboundTwiML doesn't await this call at all, so this delay costs the
+  // caller nothing — they're already hearing their greeting and being
+  // enqueued while it runs. It exists purely to guarantee real separation
+  // between "the caller is in the queue" and "a staff phone can be
+  // answered": a human needs at least this long to notice a ring and react
+  // to it, but our own webhook round-trip for the caller's Enqueue doesn't.
+  await new Promise((resolve) => setTimeout(resolve, RING_DISPATCH_DELAY_MS));
   const client = twilioClient(config.settings);
   const queueName = `call-${parentCallSid}`;
   const dequeueUrl = `${base}/api/communications/webhooks/twilio/dequeue/${agencyId}?queueName=${encodeURIComponent(queueName)}`;
