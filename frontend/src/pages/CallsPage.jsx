@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BookUser,
   History,
   Loader2,
@@ -16,7 +17,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useSoftphone } from "../components/calls/SoftphoneProvider";
 import { openGlobalDialpad } from "../components/calls/GlobalDialpad";
 import api from "../services/api";
-import { CallHistorySection } from "./CallHistoryPage";
+import { CallHistorySection, CallPerformanceSection } from "./CallHistoryPage";
 
 const panel = "overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-200/70 backdrop-blur-xl";
 const input = "h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70";
@@ -174,12 +175,12 @@ export default function CallsPage() {
       {syncNotice ? <div role="status" className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900 shadow-sm">{syncNotice}</div> : null}
 
       <nav className="flex w-full rounded-2xl bg-slate-200/70 p-1.5 sm:w-fit" aria-label="Call center views">
-        {[["history", "History", History], ["address-book", "Address book", BookUser]].map(([value, label, Icon]) => (
+        {[["history", "History", History], ["address-book", "Address book", BookUser], ...(["admin", "frontdesk"].includes(role) ? [["performance", "Team performance", BarChart3]] : [])].map(([value, label, Icon]) => (
           <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)} className={`inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:flex-none ${tab === value ? "bg-white text-slate-950 shadow-[0_2px_8px_rgba(15,23,42,0.12)]" : "text-slate-500 hover:text-slate-900"}`}><Icon className="h-4 w-4" aria-hidden="true" />{label}</button>
         ))}
       </nav>
 
-      <div>{tab === "history" ? <CallHistorySection provider="TWILIO" /> : <AddressBook onPick={pickFromAddressBook} />}</div>
+      <div>{tab === "history" ? <CallHistorySection provider="TWILIO" /> : tab === "performance" && ["admin", "frontdesk"].includes(role) ? <CallPerformanceSection /> : <AddressBook onPick={pickFromAddressBook} />}</div>
 
       {status !== "ready" ? (
         <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50/90 px-5 py-4 text-sm leading-6 text-amber-950 shadow-sm">

@@ -11,6 +11,7 @@ import { normalizeCommunicationPhone } from "../services/communicationAddressSer
 import { assertClientCommunicationAllowed } from "../services/clientCommunicationPolicyService.js";
 import { requireCommunicationPermission } from "../services/communicationPermissions.js";
 import { listAgencyTwilioSmsHistoryForNumber } from "../services/twilioSmsSyncService.js";
+import { listTwilioCallableStaff } from "../services/twilioCallService.js";
 import { recordActivity } from "../utils/prismaCrud.js";
 import {
   applyCallOutcome,
@@ -166,6 +167,7 @@ export async function listCalls(req, res) {
   const status = callStatuses.has(req.query.status) ? req.query.status : null;
   const direction = callDirections.has(req.query.direction) ? req.query.direction : null;
   const resolution = callResolutions.has(req.query.resolution) ? req.query.resolution : null;
+  const handledByUserId = clean(req.query.handledByUserId, 100);
   const search = clean(req.query.search, 120);
   const where = {
     agencyId: req.auth.agencyId,
@@ -185,6 +187,7 @@ export async function listCalls(req, res) {
     ...(status ? { status } : {}),
     ...(direction ? { direction } : {}),
     ...(resolution ? { resolution } : {}),
+    ...(handledByUserId ? { handledByUserId } : {}),
   };
   const [raw, total, unresolved] = await Promise.all([
     prisma.callSession.findMany({ where, include: callInclude, orderBy: { lastEventAt: "desc" }, skip: (page - 1) * limit, take: limit }),
@@ -194,6 +197,81 @@ export async function listCalls(req, res) {
   const matched = await addMatchSummaries(raw, req.auth.agencyId);
   const data = await addEngagementSummaries(matched, req.auth.agencyId);
   res.json({ data, meta: { page, limit, total, unresolved, hasMore: page * limit < total } });
+}
+
+const performanceRangeSince = {
+  today: () => { const start = new Date(); start.setHours(0, 0, 0, 0); return start; },
+  "7d": () => new Date(Date.now() - 7 * 24 * 60 * 60_000),
+  "30d": () => new Date(Date.now() - 30 * 24 * 60 * 60_000),
+  all: () => null,
+};
+
+// Whoever actually bridged the call — set once from the Twilio dial/queue
+// leg (see twilioCallService.js) and never overwritten — so this is a
+// reliable "who called/answered" signal, unlike a case's assignedUserId
+// which can be reassigned long after the call happened.
+export async function listCallPerformance(req, res) {
+  if (!["admin", "frontdesk"].includes(req.auth.role)) {
+    throw createHttpError(403, "Only administrators and front desk staff can view team call performance.", "FORBIDDEN");
+  }
+  const range = Object.hasOwn(performanceRangeSince, req.query.range) ? req.query.range : "30d";
+  const since = performanceRangeSince[range]();
+  const baseWhere = {
+    agencyId: req.auth.agencyId,
+    provider: "TWILIO",
+    handledByUserId: { not: null },
+    ...(since ? { startedAt: { gte: since } } : {}),
+  };
+  const [staff, totals, missed, outbound] = await Promise.all([
+    listTwilioCallableStaff(req.auth.agencyId),
+    prisma.callSession.groupBy({
+      by: ["handledByUserId"],
+      where: baseWhere,
+      _count: { _all: true },
+      _sum: { durationSeconds: true },
+      _avg: { durationSeconds: true },
+    }),
+    prisma.callSession.groupBy({
+      by: ["handledByUserId"],
+      where: { ...baseWhere, status: { in: ["MISSED", "FAILED"] } },
+      _count: { _all: true },
+    }),
+    prisma.callSession.groupBy({
+      by: ["handledByUserId"],
+      where: { ...baseWhere, direction: "OUTBOUND" },
+      _count: { _all: true },
+    }),
+  ]);
+  const totalsByUser = new Map(totals.map((row) => [row.handledByUserId, row]));
+  const missedByUser = new Map(missed.map((row) => [row.handledByUserId, row._count._all]));
+  const outboundByUser = new Map(outbound.map((row) => [row.handledByUserId, row._count._all]));
+  const staffById = new Map(staff.map((user) => [user.id, user]));
+  // Someone who handled calls in this window but is no longer active/callable
+  // staff (role changed, left the agency) must still show up — otherwise
+  // their historical calls would just vanish from the leaderboard.
+  const extraUserIds = [...totalsByUser.keys()].filter((id) => id && !staffById.has(id));
+  const extraUsers = extraUserIds.length
+    ? await prisma.user.findMany({ where: { id: { in: extraUserIds }, agencyId: req.auth.agencyId }, select: { id: true, fullName: true, role: true } })
+    : [];
+  const rows = [...staff, ...extraUsers].map((user) => {
+    const totalsRow = totalsByUser.get(user.id);
+    const totalCalls = totalsRow?._count._all || 0;
+    const missedCalls = missedByUser.get(user.id) || 0;
+    const outboundCalls = outboundByUser.get(user.id) || 0;
+    const answeredCalls = Math.max(totalCalls - missedCalls, 0);
+    return {
+      user: { id: user.id, fullName: user.fullName, role: user.role },
+      totalCalls,
+      answeredCalls,
+      missedCalls,
+      inboundCalls: Math.max(totalCalls - outboundCalls, 0),
+      outboundCalls,
+      answerRate: totalCalls ? Math.round((answeredCalls / totalCalls) * 100) : null,
+      totalTalkTimeSeconds: totalsRow?._sum?.durationSeconds || 0,
+      avgCallDurationSeconds: totalsRow?._avg?.durationSeconds != null ? Math.round(totalsRow._avg.durationSeconds) : null,
+    };
+  }).sort((a, b) => b.totalCalls - a.totalCalls);
+  res.json({ data: rows, meta: { range, since } });
 }
 
 export async function getCall(req, res) {

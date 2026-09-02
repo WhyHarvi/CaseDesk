@@ -9,6 +9,7 @@ import {
   linkCallToAppointment,
   linkCallToLead,
   listCallCandidates,
+  listCallPerformance,
   listCalls,
   markCallSpam,
   recordCallOutcome,
@@ -19,6 +20,7 @@ import {
 const router = Router();
 
 router.get("/", asyncHandler(listCalls));
+router.get("/performance", asyncHandler(listCallPerformance));
 router.get("/:id", asyncHandler(getCall));
 router.get("/:id/recording", asyncHandler(streamCallRecording));
 router.get("/:id/sms-options", asyncHandler(getCallSmsOptions));

@@ -482,6 +482,7 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   const [calls, setCalls] = useState([]);
   const [meta, setMeta] = useState({ page: 1, total: 0, unresolved: 0, hasMore: false });
   const [staff, setStaff] = useState([]);
+  const [callStaff, setCallStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
@@ -489,6 +490,11 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   const page = Math.max(Number(params.get("page")) || 1, 1);
   const view = params.get("view") || "all";
   const search = params.get("search") || "";
+  // Independent of `view` on purpose — "who called" and the existing
+  // all/unresolved/missed/outbound pills are separate axes, so they combine
+  // (e.g. missed calls handled by one specific team member) instead of
+  // one resetting the other.
+  const agent = params.get("agent") || "";
   const requestedCallId = params.get("call") || "";
   const [searchDraft, setSearchDraft] = useState(search);
 
@@ -499,8 +505,9 @@ export function CallHistorySection({ provider = "TWILIO" }) {
     if (view === "unresolved") next.set("resolution", "UNRESOLVED");
     if (view === "missed") next.set("status", "MISSED");
     if (view === "outbound") next.set("direction", "OUTBOUND");
+    if (agent) next.set("handledByUserId", agent);
     return next.toString();
-  }, [page, provider, search, view]);
+  }, [page, provider, search, view, agent]);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     try {
@@ -531,6 +538,10 @@ export function CallHistorySection({ provider = "TWILIO" }) {
   useEffect(() => { setSearchDraft(search); }, [search]);
   useEffect(() => {
     api.get("/leads/staff").then((response) => setStaff(response.data.data || [])).catch(() => setStaff([]));
+    // A separate, calling-specific staff list (who can actually receive
+    // calls) rather than /leads/staff's broader lead-owner list — this is
+    // what "who called" should be filtered against.
+    api.get("/twilio-calls/staff").then((response) => setCallStaff(response.data.data || [])).catch(() => setCallStaff([]));
   }, []);
   useEffect(() => {
     const timer = window.setInterval(() => load({ quiet: true }), 15_000);
@@ -578,6 +589,20 @@ export function CallHistorySection({ provider = "TWILIO" }) {
           </form>
         </div>
 
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3.5 sm:px-5">
+          <label className="text-xs font-semibold text-slate-600" htmlFor="call-history-agent-filter">Who called</label>
+          <select
+            id="call-history-agent-filter"
+            value={agent}
+            onChange={(event) => update({ agent: event.target.value })}
+            className="h-10 min-w-0 max-w-full rounded-full border border-slate-200 bg-slate-50/80 px-3.5 text-xs font-semibold text-slate-700 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100/70 sm:w-64"
+          >
+            <option value="">Everyone</option>
+            {callStaff.map((person) => <option key={person.id} value={person.id}>{person.fullName}</option>)}
+          </select>
+          {agent ? <button type="button" onClick={() => update({ agent: "" })} className="text-xs font-semibold text-blue-700 hover:underline">Clear</button> : null}
+        </div>
+
         {error ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}<button type="button" onClick={() => load()} className="ml-2 font-semibold underline">Try again</button></div> : null}
         {callBackError ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{callBackError}<button type="button" onClick={() => setCallBackError("")} className="ml-2 font-semibold underline">Dismiss</button></div> : null}
         {loading ? <div className="space-y-3 p-5">{Array.from({ length: 7 }, (_, index) => <div key={index} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)}</div> : !calls.length ? <EmptyCalls unresolved={view === "unresolved"} provider={provider} /> : (
@@ -597,6 +622,117 @@ export function CallHistorySection({ provider = "TWILIO" }) {
       </div>
 
       {selected ? <CallDrawer key={`${selected.id}:${selected.updatedAt}:${selectedMode}`} call={selected} staff={staff} provider={provider} initialMode={selectedMode} onClose={closeCall} onChanged={async () => { await load({ quiet: true }); }} /> : null}
+    </section>
+  );
+}
+
+const PERFORMANCE_RANGES = [["today", "Today"], ["7d", "Last 7 days"], ["30d", "Last 30 days"], ["all", "All time"]];
+
+function formatTalkTime(seconds) {
+  if (!seconds) return "0m";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+// Aggregated per team member, not per call — a distinct question from the
+// call list above ("who called on this one?" vs "how is everyone doing?"),
+// so it gets its own tab rather than folding into the History filters.
+export function CallPerformanceSection() {
+  const [range, setRange] = useState("30d");
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const response = await api.get(`/call-history/performance?range=${encodeURIComponent(range)}`);
+      setRows(response.data.data || []);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Team call performance could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [range]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totals = useMemo(() => rows.reduce((sum, row) => ({
+    totalCalls: sum.totalCalls + row.totalCalls,
+    answeredCalls: sum.answeredCalls + row.answeredCalls,
+    missedCalls: sum.missedCalls + row.missedCalls,
+    totalTalkTimeSeconds: sum.totalTalkTimeSeconds + row.totalTalkTimeSeconds,
+  }), { totalCalls: 0, answeredCalls: 0, missedCalls: 0, totalTalkTimeSeconds: 0 }), [rows]);
+
+  return (
+    <section className="space-y-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 shadow-[0_14px_40px_rgba(15,23,42,0.07)] ring-1 ring-slate-200/70 backdrop-blur-xl sm:grid-cols-4">
+        <div className="border-r border-slate-200 px-4 py-4 sm:px-5"><p className="text-xs font-medium text-slate-500">Total calls</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{totals.totalCalls}</p></div>
+        <div className="border-r border-slate-200 px-4 py-4 sm:px-5"><p className="text-xs font-medium text-emerald-700">Answered</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{totals.answeredCalls}</p></div>
+        <div className="border-t border-slate-200 px-4 py-4 sm:border-r sm:border-t-0 sm:px-5"><p className="text-xs font-medium text-rose-700">Missed</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{totals.missedCalls}</p></div>
+        <div className="border-t border-slate-200 px-4 py-4 sm:border-t-0 sm:px-5"><p className="text-xs font-medium text-slate-500">Total talk time</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{formatTalkTime(totals.totalTalkTimeSeconds)}</p></div>
+      </div>
+
+      <div className={panel}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 sm:p-5">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Team call performance</p>
+            <p className="mt-1 text-xs text-slate-500">Who's answering, who's missing calls, and how long they talk.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {PERFORMANCE_RANGES.map(([value, label]) => (
+              <button key={value} type="button" aria-pressed={range === value} onClick={() => setRange(value)} className={`min-h-10 rounded-full px-3.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${range === value ? "bg-[#007AFF] text-white shadow-[0_6px_16px_rgba(0,122,255,0.24)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"}`}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        {error ? <div className="m-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}<button type="button" onClick={() => load()} className="ml-2 font-semibold underline">Try again</button></div> : null}
+        {loading ? <div className="space-y-3 p-5">{Array.from({ length: 5 }, (_, index) => <div key={index} className="h-14 animate-pulse rounded-2xl bg-slate-100" />)}</div> : !rows.length ? (
+          <div className="flex min-h-64 flex-col items-center justify-center px-6 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-50 text-sky-600"><PhoneCall className="h-6 w-6" /></div>
+            <p className="mt-4 text-base font-semibold text-slate-900">No calls in this range</p>
+            <p className="mt-1 max-w-md text-sm leading-6 text-slate-500">Team performance appears once calls are handled through a connected staff phone.</p>
+          </div>
+        ) : (
+          <>
+          <div className="divide-y divide-slate-100 md:hidden">
+            {rows.map((row) => (
+              <div key={row.user.id} className="px-4 py-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-semibold text-slate-950">{row.user.fullName}</p>
+                  <span className="shrink-0 text-xs font-semibold text-slate-500">{row.totalCalls} calls</span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                  <span><span className="block text-slate-400">Answered</span><span className="mt-0.5 block font-medium text-emerald-700">{row.answeredCalls}{row.answerRate != null ? ` (${row.answerRate}%)` : ""}</span></span>
+                  <span><span className="block text-slate-400">Missed</span><span className="mt-0.5 block font-medium text-rose-700">{row.missedCalls}</span></span>
+                  <span><span className="block text-slate-400">Avg call</span><span className="mt-0.5 block font-medium text-slate-700">{duration(row.avgCallDurationSeconds)}</span></span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[820px] border-collapse text-left">
+              <thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><th className="px-5 py-3">Team member</th><th className="px-4 py-3">Total calls</th><th className="px-4 py-3">Answered</th><th className="px-4 py-3">Missed</th><th className="px-4 py-3">Answer rate</th><th className="px-4 py-3">Inbound</th><th className="px-4 py-3">Outbound</th><th className="px-4 py-3">Talk time</th><th className="px-5 py-3">Avg call</th></tr></thead>
+              <tbody>{rows.map((row) => (
+                <tr key={row.user.id} className="border-b border-slate-100 text-sm transition-colors last:border-0 hover:bg-blue-50/30">
+                  <td className="px-5 py-4"><p className="font-semibold text-slate-900">{row.user.fullName}</p><p className="mt-0.5 text-xs capitalize text-slate-400">{row.user.role}</p></td>
+                  <td className="px-4 py-4 tabular-nums text-slate-700">{row.totalCalls}</td>
+                  <td className="px-4 py-4 tabular-nums text-emerald-700">{row.answeredCalls}</td>
+                  <td className="px-4 py-4 tabular-nums text-rose-700">{row.missedCalls}</td>
+                  <td className="px-4 py-4 tabular-nums text-slate-700">{row.answerRate != null ? `${row.answerRate}%` : "—"}</td>
+                  <td className="px-4 py-4 tabular-nums text-slate-600">{row.inboundCalls}</td>
+                  <td className="px-4 py-4 tabular-nums text-slate-600">{row.outboundCalls}</td>
+                  <td className="px-4 py-4 tabular-nums text-slate-600">{formatTalkTime(row.totalTalkTimeSeconds)}</td>
+                  <td className="px-5 py-4 tabular-nums text-slate-600">{duration(row.avgCallDurationSeconds)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          </>
+        )}
+      </div>
     </section>
   );
 }
