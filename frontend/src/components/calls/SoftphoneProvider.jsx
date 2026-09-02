@@ -50,6 +50,20 @@ function formatNumber(value) {
   return value || "";
 }
 
+// A Call's own "error" event — distinct from the Device-level one already
+// handled below — fires when accept() itself fails, most commonly because
+// the browser denied microphone access (Twilio SDK error 31401). Without
+// this, that failure was completely silent: no dequeue request ever
+// reached the backend, and the ring UI just vanished with no explanation.
+function describeCallError(callError) {
+  const code = callError?.code;
+  if (code === 31401 || code === 31402) {
+    return "The call couldn't connect: this browser denied microphone access. Check the site's microphone permission and try again.";
+  }
+  const detail = callError?.message || callError?.causes?.[0] || String(callError || "");
+  return `The call couldn't connect${code ? ` (Twilio error ${code})` : ""}${detail ? `: ${detail}` : "."}`;
+}
+
 function CallerName({ from, onDone }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -129,11 +143,18 @@ export function SoftphoneProvider({ children }) {
   // popup. Incoming calls never set it: their activity is recorded server-side
   // and the user only ever gets this popup for calls we placed.
   const [endedCall, setEndedCall] = useState(null);
+  // Set when an incoming call's own "error" event fires — most commonly a
+  // failed call.accept() (e.g. the browser denied microphone access), which
+  // otherwise disappears with zero signal: no dequeue request ever reaches
+  // the backend, the caller just hears nothing happen, and the ring UI here
+  // simply vanishes with no explanation. Auto-clears itself; see the effect
+  // below.
+  const [connectError, setConnectError] = useState("");
 
   // Mirrors the state above for synchronous reads inside callbacks (avoids
   // stale-closure bugs across the many interdependent handlers below) and is
   // exactly what gets broadcast to follower tabs whenever it changes.
-  const stateRef = useRef({ status: "idle", error: "", registered: false, incoming: null, active: null, muted: false, outboundNumbers: [] });
+  const stateRef = useRef({ status: "idle", error: "", registered: false, incoming: null, active: null, muted: false, outboundNumbers: [], connectError: "" });
 
   const broadcast = useCallback((message) => {
     channelRef.current?.postMessage(message);
@@ -152,6 +173,7 @@ export function SoftphoneProvider({ children }) {
     if ("active" in partial) setActive(partial.active);
     if ("muted" in partial) setMuted(partial.muted);
     if ("outboundNumbers" in partial) setOutboundNumbers(partial.outboundNumbers);
+    if ("connectError" in partial) setConnectError(partial.connectError);
     if (!fromRemote && isLeaderRef.current) broadcast({ type: "state", state: stateRef.current });
   }, [broadcast]);
 
@@ -439,6 +461,17 @@ export function SoftphoneProvider({ children }) {
             activeCallRef.current = null;
             applyState({ incoming: null, active: null, muted: false });
           });
+          // Fires when accept() itself fails (see describeCallError above) —
+          // "disconnect" isn't guaranteed to fire on its own in that case,
+          // so state is cleaned up here too rather than assuming it will.
+          call.on("error", (callError) => {
+            console.error("softphone.call_error", callError);
+            stopRingtone();
+            broadcast({ type: "ring-stop" });
+            incomingCallRef.current = null;
+            if (activeCallRef.current === call) activeCallRef.current = null;
+            applyState({ incoming: null, active: null, muted: false, connectError: describeCallError(callError) });
+          });
 
           const showIncoming = (from, callSid) => {
             // Superseded (this call was already answered/canceled, or a
@@ -558,6 +591,12 @@ export function SoftphoneProvider({ children }) {
     broadcast({ type: "ended-call-resolved" });
   }, [broadcast]);
 
+  useEffect(() => {
+    if (!connectError) return undefined;
+    const timer = setTimeout(() => applyState({ connectError: "" }), 8_000);
+    return () => clearTimeout(timer);
+  }, [connectError, applyState]);
+
   const value = useMemo(
     () => ({
       status,
@@ -569,6 +608,7 @@ export function SoftphoneProvider({ children }) {
       outboundNumbers,
       selectedOutboundNumber,
       selectOutboundNumber,
+      connectError,
       dial,
       accept,
       reject,
@@ -577,7 +617,7 @@ export function SoftphoneProvider({ children }) {
       sendDigits,
       normalizeE164,
     }),
-    [status, error, registered, incoming, active, muted, outboundNumbers, selectedOutboundNumber, selectOutboundNumber, dial, accept, reject, hangup, toggleMute, sendDigits],
+    [status, error, registered, incoming, active, muted, outboundNumbers, selectedOutboundNumber, selectOutboundNumber, connectError, dial, accept, reject, hangup, toggleMute, sendDigits],
   );
 
   return (
@@ -587,7 +627,23 @@ export function SoftphoneProvider({ children }) {
         <IncomingCallCard key={incoming.callSid || incoming.from} incoming={incoming} onAccept={accept} onReject={reject} />
       ) : null}
       {endedCall && !active && !incoming ? <EndedCallCard ended={endedCall} onClose={closeEndedCall} /> : null}
+      {connectError ? <ConnectErrorBanner message={connectError} onClose={() => applyState({ connectError: "" })} /> : null}
     </SoftphoneContext.Provider>
+  );
+}
+
+function ConnectErrorBanner({ message, onClose }) {
+  return (
+    <aside className={`${FLOATING_CALL_CARD_POSITION} overflow-hidden rounded-3xl border border-rose-200 bg-white/95 shadow-[0_24px_80px_rgba(190,18,60,0.22)] backdrop-blur-xl`} role="alert" aria-label="Call connection failed">
+      <div className="h-1 bg-rose-500" />
+      <div className="flex items-start gap-3 p-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600"><CircleAlert className="h-4.5 w-4.5" /></span>
+        <p className="flex-1 text-sm leading-5 text-slate-700">{message}</p>
+        <button type="button" onClick={onClose} aria-label="Dismiss" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </aside>
   );
 }
 

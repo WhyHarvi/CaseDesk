@@ -875,6 +875,31 @@ test("a staff browser can resolve who's calling for a queue-dispatched ring (whi
   assert.match(provider, /showIncoming\(context\?\.callerNumber \|\| call\.parameters\?\.From \|\| "", context\?\.parentCallSid \|\| dispatchedCallSid\);/);
 });
 
+test("a failed call.accept() (e.g. denied microphone access) is no longer silent — it's logged, cleans up the ring UI, and surfaces a dismissible message instead of the call just vanishing with zero signal", async () => {
+  const provider = await source("../../frontend/src/components/calls/SoftphoneProvider.jsx");
+  // Production evidence: the browser leg came back SIP 600 Busy Everywhere
+  // with zero connected duration and Twilio never requested /twilio/dequeue
+  // — meaning call.accept() itself failed client-side. Only cancel/reject/
+  // accept/disconnect were ever listened for on the incoming call; a Call's
+  // own "error" event (distinct from the Device-level one) went nowhere.
+  assert.match(provider, /function describeCallError\(callError\) \{/);
+  assert.match(provider, /if \(code === 31401 \|\| code === 31402\) \{/);
+  assert.match(provider, /call\.on\("error", \(callError\) => \{/);
+  assert.match(provider, /console\.error\("softphone\.call_error", callError\);/);
+  // "disconnect" isn't guaranteed to also fire when accept() itself fails,
+  // so this handler cleans up ring/active state on its own rather than
+  // assuming disconnect will do it.
+  assert.match(provider, /applyState\(\{ incoming: null, active: null, muted: false, connectError: describeCallError\(callError\) \}\);/);
+  assert.match(provider, /const \[connectError, setConnectError\] = useState\(""\);/);
+  assert.match(provider, /if \("connectError" in partial\) setConnectError\(partial\.connectError\);/);
+  // Auto-dismisses so a stale failure notice doesn't linger indefinitely,
+  // but is also broadcast through the same leader/follower state sync as
+  // everything else, so every open tab shows it, not just the one that
+  // happened to hold the Twilio Device.
+  assert.match(provider, /const timer = setTimeout\(\(\) => applyState\(\{ connectError: "" \}\), 8_000\);/);
+  assert.match(provider, /\{connectError \? <ConnectErrorBanner message=\{connectError\} onClose=\{\(\) => applyState\(\{ connectError: "" \}\)\} \/> : null\}/);
+});
+
 test("the settings panel's third greeting (\"while waiting to connect\") has the same masking/save/preview treatment as the other two, and the custom tune's copy reflects that it's now actually used on calls, not just stored", async () => {
   const controller = await source("../src/controllers/twilioSettingsController.js");
   assert.match(controller, /whileWaitingGreetingText: settings\?\.whileWaitingGreetingText \|\| "",/);
