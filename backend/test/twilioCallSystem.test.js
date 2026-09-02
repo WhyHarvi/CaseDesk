@@ -583,7 +583,7 @@ test("inbound calls play the agency's greeting before ringing staff, and offer v
   assert.match(service, /action="\$\{escapeXml\(statusBase\)\}" method="POST"/);
   // No staff/line configured falls straight to voicemail instead of just
   // hanging up.
-  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{greetingTwiML\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
+  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{sayTwiML\(config\.settings\)\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
   // The recording reuses statusBase as its recordingStatusCallback, so the
   // existing RecordingSid/RecordingUrl handling in handleTwilioCallStatus
   // (see its isRecording branch) attaches it to this same call session
@@ -733,7 +733,7 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   // which is what makes waitUrl (custom hold content) possible at all; a
   // <Dial> has no equivalent.
   assert.doesNotMatch(service, /const clients = identities\.map/);
-  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{greetingTwiML\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
+  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{sayTwiML\(config\.settings\)\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
   assert.match(service, /const queueName = `call-\$\{parentCallSid\}`;/);
   // Fixes a real bug: a fast answer could find the queue still empty (the
   // caller's own Enqueue hadn't been processed by Twilio yet), so
@@ -744,7 +744,14 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   // dispatch REST calls first.
   assert.doesNotMatch(service, /await dispatchRingAttempts\(/);
   assert.match(service, /dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base \}\)\.catch/);
-  assert.match(service, /return `<Response>\$\{greetingTwiML\}<Enqueue waitUrl="\$\{escapeXml\(waitUrl\)\}" action="\$\{escapeXml\(statusBase\)\}">\$\{escapeXml\(queueName\)\}<\/Enqueue><\/Response>`;/);
+  // The greeting is deliberately not said here before <Enqueue> at all —
+  // production call logs confirmed that's what actually caused a
+  // consultant to be disconnected the instant they answered: <Say> blocks
+  // TwiML execution for as long as it takes to speak, so a real greeting
+  // (8-10+ seconds) kept the caller out of the queue for far longer than
+  // any fixed pre-ring delay could safely outlast. See inboundWaitTwiML for
+  // where it's said instead.
+  assert.match(service, /return `<Response><Enqueue waitUrl="\$\{escapeXml\(waitUrl\)\}" action="\$\{escapeXml\(statusBase\)\}">\$\{escapeXml\(queueName\)\}<\/Enqueue><\/Response>`;/);
 
   // Every ring attempt is its own real outbound call via the REST API
   // (client.calls.create), each recorded so it can be canceled once one
@@ -776,6 +783,14 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   // would never re-fetch waitUrl to notice the deadline had passed.
   assert.match(service, /export async function inboundWaitTwiML\(agencyId, query, req\) \{/);
   assert.match(service, /if \(Number\.isFinite\(deadline\) && Date\.now\(\) > deadline\) return "<Response><Leave\/><\/Response>";/);
+  // The opening greeting is said as the first cycle of this handler, not
+  // before <Enqueue> in inboundTwiML — moving it here is what makes
+  // reaching <Enqueue> independent of the greeting's length, closing the
+  // disconnect-on-answer race at its root instead of just out-waiting it.
+  // elapsedMs this small can only happen on the very first fetch.
+  assert.match(service, /const FIRST_WAIT_CYCLE_WINDOW_MS = 3_000;/);
+  assert.match(service, /const elapsedMs = Number\.isFinite\(deadline\) \? QUEUE_WAIT_TIMEOUT_MS - \(deadline - Date\.now\(\)\) : Infinity;/);
+  assert.match(service, /const openingGreeting = elapsedMs < FIRST_WAIT_CYCLE_WINDOW_MS \? sayTwiML\(settings\) : "";/);
   assert.match(service, /if \(settings\?\.customTuneStorageKey\) \{/);
   assert.doesNotMatch(service, /<Play loop="0">/);
   // The tune plays alone at first — being told "please hold" the instant
@@ -787,9 +802,9 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   // is said, then the tune continues.
   assert.match(service, /const WAIT_ANNOUNCEMENT_DELAY_MS = 12_000;/);
   assert.match(service, /const elapsedMs = Number\.isFinite\(deadline\) \? QUEUE_WAIT_TIMEOUT_MS - \(deadline - Date\.now\(\)\) : Infinity;/);
-  assert.match(service, /if \(elapsedMs < WAIT_ANNOUNCEMENT_DELAY_MS\) \{\s*\n\s*return `<Response><Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
+  assert.match(service, /if \(elapsedMs < WAIT_ANNOUNCEMENT_DELAY_MS\) \{\s*\n\s*return `<Response>\$\{openingGreeting\}<Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
   assert.match(service, /const announcement = sayTwiML\(settings, settings\?\.whileWaitingGreetingText \|\| DEFAULT_WHILE_WAITING_GREETING_TEXT\);/);
-  assert.match(service, /return `<Response>\$\{announcement\}<Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
+  assert.match(service, /return `<Response>\$\{openingGreeting\}\$\{announcement\}<Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
   const constants = await source("../src/constants/twilioVoices.js");
   assert.match(constants, /export const DEFAULT_WHILE_WAITING_GREETING_TEXT =/);
 

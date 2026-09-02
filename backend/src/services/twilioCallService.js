@@ -407,8 +407,7 @@ export async function inboundTwiML(agencyId, lineId, req) {
   const identities = assignedUserIds
     ? assignedUserIds.map((userId) => clientIdentity(userId))
     : await staffClientIdentities(agencyId, { roles });
-  const greetingTwiML = sayTwiML(config.settings);
-  if (!identities.length) return `<Response>${greetingTwiML}${voicemailTwiML(config.settings, statusBase)}</Response>`;
+  if (!identities.length) return `<Response>${sayTwiML(config.settings)}${voicemailTwiML(config.settings, statusBase)}</Response>`;
 
   // Every assigned staff member is rung with their own, separately
   // dispatched outbound call (see dispatchRingAttempts) rather than being
@@ -427,19 +426,39 @@ export async function inboundTwiML(agencyId, lineId, req) {
   // the queue still empty and <Dial><Queue> has nothing to bridge to — the
   // staff member's screen shows "Connecting…" and the call just ends.
   // dispatchRingAttempts adds its own further delay before actually
-  // ringing anyone, on top of not blocking this return, to make that
-  // ordering safe rather than merely likely.
+  // ringing anyone, on top of not blocking this return, purely as a buffer
+  // against network/webhook round-trip jitter.
+  //
+  // The greeting itself is deliberately NOT said here before <Enqueue> —
+  // confirmed via production call logs to be the actual cause of a
+  // consultant getting disconnected the instant they answered: <Say> blocks
+  // TwiML execution until the whole thing has been spoken (a 28-word
+  // greeting easily runs 8-10+ seconds), so the caller wasn't reaching
+  // <Enqueue> — and therefore wasn't actually in the queue — until well
+  // after dispatchRingAttempts had already started ringing staff, no matter
+  // how long that delay was. Saying it as the first cycle of the wait
+  // handler instead (see inboundWaitTwiML) makes reaching <Enqueue>
+  // independent of the greeting's length entirely, rather than just trying
+  // to out-wait it.
   const queueName = `call-${parentCallSid}`;
   dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base }).catch((error) => {
     logger.warn("twilio.ring_dispatch_failed", { agencyId, parentCallSid, reason: error.message });
   });
   const waitUrl = `${base}/api/communications/webhooks/twilio/wait/${agencyId}?deadline=${Date.now() + QUEUE_WAIT_TIMEOUT_MS}`;
-  return `<Response>${greetingTwiML}<Enqueue waitUrl="${escapeXml(waitUrl)}" action="${escapeXml(statusBase)}">${escapeXml(queueName)}</Enqueue></Response>`;
+  return `<Response><Enqueue waitUrl="${escapeXml(waitUrl)}" action="${escapeXml(statusBase)}">${escapeXml(queueName)}</Enqueue></Response>`;
 }
 
 // Matches the old <Dial timeout="25"> — how long a caller waits in queue
 // before the wait handler leaves it and falls through to voicemail.
 const QUEUE_WAIT_TIMEOUT_MS = 25_000;
+
+// How soon after being queued a waitUrl fetch counts as "the very first
+// cycle" — the window in which the opening greeting gets said. Only the
+// actual first fetch ever lands this close to zero elapsed; every
+// subsequent one has already played at least one full tune/pause, putting
+// it far past this. Generous enough to absorb ordinary network/webhook
+// jitter without risking a second, later fetch mistakenly re-triggering it.
+const FIRST_WAIT_CYCLE_WINDOW_MS = 3_000;
 
 // How long the tune plays alone before the while-waiting line joins in — so
 // a caller isn't told "please hold" the instant they're queued, on top of
@@ -518,6 +537,15 @@ export async function inboundWaitTwiML(agencyId, query, req) {
   const deadline = Number(query?.deadline);
   if (Number.isFinite(deadline) && Date.now() > deadline) return "<Response><Leave/></Response>";
   const settings = config?.settings;
+  const elapsedMs = Number.isFinite(deadline) ? QUEUE_WAIT_TIMEOUT_MS - (deadline - Date.now()) : Infinity;
+  // The opening greeting is said here — as the first cycle of the wait
+  // handler — rather than before <Enqueue> in inboundTwiML (see the
+  // comment there for why a <Say> blocking <Enqueue> was the actual cause
+  // of a consultant getting disconnected the instant they answered).
+  // elapsedMs this small only happens on the very first fetch, right after
+  // being queued; every later cycle has already played at least one full
+  // tune/pause first, so this can never repeat mid-wait.
+  const openingGreeting = elapsedMs < FIRST_WAIT_CYCLE_WINDOW_MS ? sayTwiML(settings) : "";
   if (settings?.customTuneStorageKey) {
     const base = twilioPublicBase(req);
     const tuneUrl = `${base}/api/communications/webhooks/twilio/tune/${agencyId}`;
@@ -526,17 +554,16 @@ export async function inboundWaitTwiML(agencyId, query, req) {
     // queued, derived from the same embedded deadline used for the timeout
     // above. TwiML has no true audio mixing, so once it does join in, it's
     // sequential each cycle: spoken line, then the tune continues.
-    const elapsedMs = Number.isFinite(deadline) ? QUEUE_WAIT_TIMEOUT_MS - (deadline - Date.now()) : Infinity;
     if (elapsedMs < WAIT_ANNOUNCEMENT_DELAY_MS) {
-      return `<Response><Play>${escapeXml(tuneUrl)}</Play></Response>`;
+      return `<Response>${openingGreeting}<Play>${escapeXml(tuneUrl)}</Play></Response>`;
     }
     const announcement = sayTwiML(settings, settings?.whileWaitingGreetingText || DEFAULT_WHILE_WAITING_GREETING_TEXT);
-    return `<Response>${announcement}<Play>${escapeXml(tuneUrl)}</Play></Response>`;
+    return `<Response>${openingGreeting}${announcement}<Play>${escapeXml(tuneUrl)}</Play></Response>`;
   }
   if (settings?.whileWaitingGreetingText) {
-    return `<Response>${sayTwiML(settings, settings.whileWaitingGreetingText)}<Pause length="3"/></Response>`;
+    return `<Response>${openingGreeting}${sayTwiML(settings, settings.whileWaitingGreetingText)}<Pause length="3"/></Response>`;
   }
-  return "<Response><Pause length=\"5\"/></Response>";
+  return `<Response>${openingGreeting}<Pause length="5"/></Response>`;
 }
 
 // The <Say> a caller hears while their call connects — omitted entirely
