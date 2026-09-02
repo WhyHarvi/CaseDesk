@@ -416,21 +416,10 @@ export function SoftphoneProvider({ children }) {
         device.on("tokenWillExpire", (target) => void refreshToken(target));
         device.on("incoming", (call) => {
           if (disposed) return;
-          // The browser leg's ordinary From value is often an internal
-          // `client:casedesk:<userId>` identity. inboundTwiML passes the real
-          // external caller explicitly so the Answer / Decline banner can
-          // identify who is ringing before the call is accepted.
-          const from = call.customParameters?.get?.("CallerNumber") || call.parameters?.From || call.customParameters?.get?.("From") || "";
-          // call.parameters.CallSid is this call's own (child) leg — the
-          // <Dial> that rang this browser reports call status/recording
-          // against the PARENT call instead (see inboundTwiML's comment),
-          // so transfer/recording need that parent SID, passed through as a
-          // custom TwiML <Parameter> since the SDK has no other way to know it.
-          const callSid = call.customParameters?.get?.("ParentCallSid") || call.parameters?.CallSid || "";
           incomingCallRef.current = call;
-          applyState({ incoming: { from, callSid } });
-          playRingtone();
-          broadcast({ type: "ring-start" });
+          // Listeners attach immediately regardless of how "from"/callSid
+          // get resolved below, so a cancel/hangup that arrives mid-lookup
+          // still cleans up correctly even though the ring UI never showed.
           const clearIncoming = () => {
             stopRingtone();
             broadcast({ type: "ring-stop" });
@@ -449,6 +438,42 @@ export function SoftphoneProvider({ children }) {
             incomingCallRef.current = null;
             activeCallRef.current = null;
             applyState({ incoming: null, active: null, muted: false });
+          });
+
+          const showIncoming = (from, callSid) => {
+            // Superseded (this call was already answered/canceled, or a
+            // newer incoming call arrived) while resolving who's calling.
+            if (incomingCallRef.current !== call) return;
+            applyState({ incoming: { from, callSid } });
+            playRingtone();
+            broadcast({ type: "ring-start" });
+          };
+
+          const dispatchedCallSid = call.parameters?.CallSid || "";
+          const customFrom = call.customParameters?.get?.("CallerNumber") || "";
+          const customParentSid = call.customParameters?.get?.("ParentCallSid") || "";
+          if (customFrom || customParentSid) {
+            // Nested <Dial><Client><Parameter> already carries this
+            // synchronously — an internal-line call, or the caller's own
+            // <Dial> still directly containing this <Client> (neither
+            // routes through the queue-dispatch flow below).
+            showIncoming(customFrom || call.parameters?.From || call.customParameters?.get?.("From") || "", customParentSid || dispatchedCallSid);
+            return;
+          }
+          // A queue-dispatched ring (see twilioCallService.js's
+          // dispatchRingAttempts): this call was never nested inside the
+          // caller's own <Dial>, so there's no <Parameter> to read — and
+          // critically, call.parameters.CallSid here is this ring attempt's
+          // OWN leg, not the caller's. Using it directly for "Accept" would
+          // send transfer/recording/outcome the wrong call id, so the ring
+          // UI (and Accept) waits for the real caller number and parent
+          // call id to come back from the backend first rather than
+          // showing something that would answer wrong if tapped instantly.
+          api.get(`/twilio-calls/incoming-context/${encodeURIComponent(dispatchedCallSid)}`).then((response) => {
+            const context = response.data?.data;
+            showIncoming(context?.callerNumber || call.parameters?.From || "", context?.parentCallSid || dispatchedCallSid);
+          }).catch(() => {
+            showIncoming(call.parameters?.From || "", dispatchedCallSid);
           });
         });
         await device.register();

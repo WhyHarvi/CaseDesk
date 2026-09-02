@@ -692,6 +692,7 @@ model Agency {
   quickBooksWebhookEvents         QuickBooksWebhookEvent[]
   callSessions                CallSession[]
   callEvents                  CallEvent[]
+  callRingDispatches          CallRingDispatch[]
   twilioSettings                  AgencyTwilioSettings?
   twilioVoiceLines                AgencyTwilioVoiceLine[]
   accountStatements               AccountStatementGeneration[]
@@ -1738,6 +1739,22 @@ model AgencyTwilioSettings {
   lastSmsTestedAt       DateTime? @map("last_sms_tested_at")
   lastSmsTestStatus     String?   @map("last_sms_test_status")
   lastSmsTestMessage    String?   @map("last_sms_test_message")
+  // Per-agency call greetings — what a caller hears (a) while their call is
+  // being connected to staff, and (b) if no one answers and they're offered
+  // a voicemail. Rendered through Twilio's <Say> with an Amazon Polly
+  // neural voice (see constants/twilioVoices.js) rather than Twilio's
+  // classic, robotic-sounding voices.
+  voiceGreetingText     String?   @map("voice_greeting_text")
+  voicemailGreetingText String?   @map("voicemail_greeting_text")
+  whileWaitingGreetingText String? @map("while_waiting_greeting_text")
+  ttsVoice              String    @default("Polly.Joanna-Neural") @map("tts_voice")
+  // An agency's own uploaded audio tune (e.g. a jingle) — stored, not yet
+  // wired into live call playback (see the settings UI's "not used on
+  // calls yet" note).
+  customTuneStorageKey  String?   @map("custom_tune_storage_key")
+  customTuneMimeType    String?   @map("custom_tune_mime_type")
+  customTuneFilename    String?   @map("custom_tune_filename")
+  customTuneUploadedAt  DateTime? @map("custom_tune_uploaded_at")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
   agency                Agency    @relation(fields: [agencyId], references: [id], onDelete: Cascade)
@@ -1800,6 +1817,30 @@ model CallSession {
   @@index([appointmentId])
   @@index([agencyId, handledByUserId, startedAt])
   @@map("ooma_call_sessions")
+}
+
+// One row per staff member rung for one inbound call queued via Twilio's
+// Enqueue/Queue (see inboundTwiML) — lets the app do what Twilio's ring
+// group used to do for free with a single <Dial><Client>: stop ringing
+// everyone else the instant one person actually connects, and let the
+// answering browser look up who's calling (parentCallSid/callerNumber)
+// since this call was dispatched to them directly via the REST API rather
+// than nested inside the caller's own <Dial> (see twilioCallController.js's
+// incoming-context lookup for why that matters).
+model CallRingDispatch {
+  id                String   @id @default(uuid())
+  agencyId          String   @map("agency_id")
+  parentCallSid     String   @map("parent_call_sid")
+  dispatchedCallSid String   @unique @map("dispatched_call_sid")
+  identity          String
+  callerNumber      String?  @map("caller_number")
+  status            String   @default("ringing")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  agency            Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId, parentCallSid])
+  @@map("call_ring_dispatches")
 }
 
 model CallEvent {

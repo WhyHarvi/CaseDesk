@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Loader2,
   MessageSquareText,
+  Music,
   Phone,
   PhoneCall,
   RefreshCw,
@@ -10,6 +11,8 @@ import {
   ShieldCheck,
   Star,
   Trash2,
+  Upload,
+  Volume2,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -27,6 +30,24 @@ const inputClass =
 
 const settingsCard =
   "rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6";
+
+// The Web Speech API has no gender field on a voice — only a name and a
+// lang code — so matching the selected Polly voice's gender means guessing
+// from common voice names shipped by Chrome/Safari/Edge/Firefox.
+const FEMALE_VOICE_HINTS = ["female", "samantha", "victoria", "karen", "moira", "tessa", "fiona", "zira", "susan", "hazel", "aria", "jenny", "sara", "amy", "emma", "joanna", "salli", "kendra", "allison", "ava", "susan"];
+const MALE_VOICE_HINTS = ["male", "alex", "daniel", "fred", "david", "mark", "guy", "ryan", "matthew", "joey", "stephen", "tom", "eric", "christopher"];
+
+// Picks a browser voice that at least matches the selected Polly voice's
+// gender and is English — not the exact voice (no browser ships Polly's
+// voices), just a closer approximation than whatever the browser defaults
+// to regardless of what was picked below.
+function matchingBrowserVoice(voices, gender) {
+  const english = voices.filter((voice) => voice.lang?.toLowerCase().startsWith("en"));
+  if (!english.length) return null;
+  const hints = gender === "male" ? MALE_VOICE_HINTS : gender === "female" ? FEMALE_VOICE_HINTS : null;
+  const matched = hints ? english.find((voice) => hints.some((hint) => voice.name.toLowerCase().includes(hint))) : null;
+  return matched || english.find((voice) => voice.lang?.toLowerCase() === "en-us") || english[0];
+}
 
 const blank = {
   configured: false,
@@ -52,6 +73,11 @@ const blank = {
   lastCallTestedAt: null,
   lastCallTestStatus: null,
   lastCallTestMessage: null,
+  voiceGreetingText: "",
+  voicemailGreetingText: "",
+  whileWaitingGreetingText: "",
+  ttsVoice: "",
+  availableTtsVoices: [],
 };
 
 const errorMessage = (reason, fallback) => reason?.response?.data?.message || fallback;
@@ -212,6 +238,10 @@ export default function AgencyTwilioSettingsPanel() {
   const [apiKeySecretInput, setApiKeySecretInput] = useState("");
   const [voiceNumberInput, setVoiceNumberInput] = useState("");
   const [callsEnabledInput, setCallsEnabledInput] = useState(false);
+  const [voiceGreetingInput, setVoiceGreetingInput] = useState("");
+  const [voicemailGreetingInput, setVoicemailGreetingInput] = useState("");
+  const [whileWaitingGreetingInput, setWhileWaitingGreetingInput] = useState("");
+  const [ttsVoiceInput, setTtsVoiceInput] = useState("");
   const [numbers, setNumbers] = useState([]);
   const [numbersLoading, setNumbersLoading] = useState(false);
   const [lines, setLines] = useState([]);
@@ -242,6 +272,17 @@ export default function AgencyTwilioSettingsPanel() {
   const [credentialsError, setCredentialsError] = useState("");
   const [voiceNotice, setVoiceNotice] = useState("");
   const [voiceError, setVoiceError] = useState("");
+  const [greetingsSaving, setGreetingsSaving] = useState(false);
+  const [greetingsNotice, setGreetingsNotice] = useState("");
+  const [greetingsError, setGreetingsError] = useState("");
+  const [previewingField, setPreviewingField] = useState("");
+  const [browserVoices, setBrowserVoices] = useState([]);
+  const [tuneFile, setTuneFile] = useState(null);
+  const [tuneUrl, setTuneUrl] = useState("");
+  const [tuneUploading, setTuneUploading] = useState(false);
+  const [tuneRemoving, setTuneRemoving] = useState(false);
+  const [tuneNotice, setTuneNotice] = useState("");
+  const [tuneError, setTuneError] = useState("");
   const [linesNotice, setLinesNotice] = useState("");
   const [linesError, setLinesError] = useState("");
   const [voiceTestNotice, setVoiceTestNotice] = useState("");
@@ -372,6 +413,119 @@ export default function AgencyTwilioSettingsPanel() {
       setVoiceError(errorMessage(reason, "Voice settings could not be saved."));
     } finally {
       setVoiceSaving(false);
+    }
+  };
+
+  // The select needs a real initial value (unlike the text fields above,
+  // which fall back to form.* inline at render time) — sync it once the
+  // saved voice loads, but only before the admin has touched the picker.
+  useEffect(() => {
+    if (form.ttsVoice && !ttsVoiceInput) setTtsVoiceInput(form.ttsVoice);
+  }, [form.ttsVoice, ttsVoiceInput]);
+
+  const saveGreetings = async (event) => {
+    event.preventDefault();
+    try {
+      setGreetingsSaving(true);
+      setGreetingsError("");
+      setGreetingsNotice("");
+      const response = await api.put("/settings/twilio", {
+        voiceGreetingText: voiceGreetingInput || form.voiceGreetingText,
+        voicemailGreetingText: voicemailGreetingInput || form.voicemailGreetingText,
+        whileWaitingGreetingText: whileWaitingGreetingInput || form.whileWaitingGreetingText,
+        ttsVoice: ttsVoiceInput || form.ttsVoice,
+      });
+      mergeSettings(response.data.data);
+      setGreetingsNotice("Greetings saved.");
+    } catch (reason) {
+      setGreetingsError(errorMessage(reason, "Greetings could not be saved."));
+    } finally {
+      setGreetingsSaving(false);
+    }
+  };
+
+  // Chrome loads voices asynchronously — getVoices() returns [] until
+  // voiceschanged fires once, sometimes after the component's already
+  // mounted. Firefox/Safari have them ready synchronously; calling
+  // getVoices() again here is a harmless no-op there.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return undefined;
+    const loadVoices = () => setBrowserVoices(window.speechSynthesis.getVoices());
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+  }, []);
+
+  // Approximate only — the browser's own speech voices, not the Amazon
+  // Polly voice Twilio actually renders on a real call. There's no API to
+  // synthesize Twilio's exact <Say> audio outside of placing a call, so
+  // this is a quick "does the wording read naturally, in a similar voice"
+  // check, not a byte-accurate preview of what callers will hear.
+  const previewGreeting = (field, text) => {
+    if (!text?.trim() || typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text.trim());
+    const selectedVoiceId = ttsVoiceInput || form.ttsVoice;
+    const selectedVoice = (form.availableTtsVoices || []).find((voice) => voice.id === selectedVoiceId);
+    const browserVoice = matchingBrowserVoice(browserVoices, selectedVoice?.gender);
+    if (browserVoice) utterance.voice = browserVoice;
+    setPreviewingField(field);
+    utterance.onend = () => setPreviewingField("");
+    utterance.onerror = () => setPreviewingField("");
+    window.speechSynthesis.speak(utterance);
+  };
+
+  useEffect(() => {
+    if (!form.hasCustomTune) {
+      setTuneUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return "";
+      });
+      return undefined;
+    }
+    let active = true;
+    api.get("/settings/twilio/tune", { responseType: "blob" }).then((response) => {
+      if (active) setTuneUrl(URL.createObjectURL(response.data));
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [form.hasCustomTune]);
+
+  useEffect(() => () => { if (tuneUrl) URL.revokeObjectURL(tuneUrl); }, [tuneUrl]);
+
+  const uploadTune = async (event) => {
+    event.preventDefault();
+    if (!tuneFile) return;
+    try {
+      setTuneUploading(true);
+      setTuneError("");
+      setTuneNotice("");
+      const payload = new FormData();
+      payload.append("file", tuneFile);
+      const response = await api.post("/settings/twilio/tune", payload);
+      mergeSettings(response.data.data);
+      setTuneFile(null);
+      setTuneNotice("Tune uploaded. Callers will hear it while staff are being rung.");
+    } catch (reason) {
+      setTuneError(errorMessage(reason, "The tune could not be uploaded."));
+    } finally {
+      setTuneUploading(false);
+    }
+  };
+
+  const removeTune = async () => {
+    try {
+      setTuneRemoving(true);
+      setTuneError("");
+      setTuneNotice("");
+      await api.delete("/settings/twilio/tune");
+      mergeSettings({ hasCustomTune: false, customTuneFilename: "", customTuneUploadedAt: null });
+      setTuneNotice("Tune removed.");
+    } catch (reason) {
+      setTuneError(errorMessage(reason, "The tune could not be removed."));
+    } finally {
+      setTuneRemoving(false);
     }
   };
 
@@ -973,6 +1127,177 @@ export default function AgencyTwilioSettingsPanel() {
             </div>
           )}
         </section>
+
+        {form.configured && form.callsEnabled ? (
+          <section className={settingsCard}>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
+                  <MessageSquareText className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-500">Greetings</p>
+                  <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">What callers hear</h3>
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                    What CaseDesk says while connecting a call, and if no one picks up and the caller is offered
+                    voicemail. Leave either blank to skip it and go straight to ringing or a plain recording tone.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={saveGreetings} className="mt-5 space-y-4">
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-semibold text-slate-800" htmlFor="voice-greeting-input">While connecting your call</label>
+                  <button
+                    type="button"
+                    onClick={() => previewGreeting("voice", voiceGreetingInput || form.voiceGreetingText)}
+                    disabled={!(voiceGreetingInput || form.voiceGreetingText)?.trim()}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    <Volume2 className={`h-3.5 w-3.5 ${previewingField === "voice" ? "animate-pulse text-sky-600" : ""}`} />
+                    {previewingField === "voice" ? "Playing…" : "Preview"}
+                  </button>
+                </div>
+                <textarea
+                  id="voice-greeting-input"
+                  rows={3}
+                  maxLength={300}
+                  value={voiceGreetingInput || (form.voiceGreetingText ?? "")}
+                  onChange={(event) => setVoiceGreetingInput(event.target.value)}
+                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100/70"
+                  placeholder="Thank you for calling. Please hold while we connect you with our team."
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-semibold text-slate-800" htmlFor="voicemail-greeting-input">If no one answers, before voicemail</label>
+                  <button
+                    type="button"
+                    onClick={() => previewGreeting("voicemail", voicemailGreetingInput || form.voicemailGreetingText)}
+                    disabled={!(voicemailGreetingInput || form.voicemailGreetingText)?.trim()}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    <Volume2 className={`h-3.5 w-3.5 ${previewingField === "voicemail" ? "animate-pulse text-sky-600" : ""}`} />
+                    {previewingField === "voicemail" ? "Playing…" : "Preview"}
+                  </button>
+                </div>
+                <textarea
+                  id="voicemail-greeting-input"
+                  rows={3}
+                  maxLength={300}
+                  value={voicemailGreetingInput || (form.voicemailGreetingText ?? "")}
+                  onChange={(event) => setVoicemailGreetingInput(event.target.value)}
+                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100/70"
+                  placeholder="We're unable to take your call right now. Please leave your name, number, and a brief message after the tone."
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-semibold text-slate-800" htmlFor="while-waiting-greeting-input">While waiting to connect</label>
+                  <button
+                    type="button"
+                    onClick={() => previewGreeting("waiting", whileWaitingGreetingInput || form.whileWaitingGreetingText)}
+                    disabled={!(whileWaitingGreetingInput || form.whileWaitingGreetingText)?.trim()}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    <Volume2 className={`h-3.5 w-3.5 ${previewingField === "waiting" ? "animate-pulse text-sky-600" : ""}`} />
+                    {previewingField === "waiting" ? "Playing…" : "Preview"}
+                  </button>
+                </div>
+                <textarea
+                  id="while-waiting-greeting-input"
+                  rows={3}
+                  maxLength={300}
+                  value={whileWaitingGreetingInput || (form.whileWaitingGreetingText ?? "")}
+                  onChange={(event) => setWhileWaitingGreetingInput(event.target.value)}
+                  className="mt-2 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-normal text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-4 focus:ring-sky-100/70"
+                  placeholder="Thanks for your patience — a member of our team will be with you shortly."
+                />
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Repeats on a loop while staff are being rung. If a custom tune is uploaded below, it plays instead of
+                  this text.
+                </p>
+              </div>
+              <p className="text-xs text-slate-400">
+                Preview plays through your browser's own voice, as a quick check that the wording reads naturally — it
+                won't sound exactly like the voice below, which is what callers actually hear.
+              </p>
+              <label className="block text-sm font-semibold text-slate-800">
+                Greeting voice
+                <select
+                  value={ttsVoiceInput || form.ttsVoice}
+                  onChange={(event) => setTtsVoiceInput(event.target.value)}
+                  className={inputClass}
+                >
+                  {(form.availableTtsVoices || []).map((voice) => (
+                    <option key={voice.id} value={voice.id}>{voice.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-center justify-end">
+                <button
+                  type="submit"
+                  disabled={greetingsSaving || !form.canManage}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {greetingsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareText className="h-4 w-4" />}
+                  {greetingsSaving ? "Saving…" : "Save greetings"}
+                </button>
+              </div>
+              {greetingsNotice ? <StatusNotice>{greetingsNotice}</StatusNotice> : null}
+              {greetingsError ? <StatusNotice type="error">{greetingsError}</StatusNotice> : null}
+            </form>
+
+            <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-slate-50/60 p-4">
+              <div className="flex items-center gap-2">
+                <Music className="h-4 w-4 text-slate-500" />
+                <p className="text-sm font-semibold text-slate-900">Custom tune</p>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Upload your own audio — a jingle or hold music. Callers hear it on a loop while staff are being rung,
+                in place of the "While waiting to connect" text above.
+              </p>
+              {form.hasCustomTune ? (
+                <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-800">{form.customTuneFilename || "Custom tune"}</p>
+                    {tuneUrl ? <audio controls src={tuneUrl} className="mt-2 h-9 w-full max-w-xs" /> : null}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={tuneRemoving || !form.canManage}
+                    onClick={removeTune}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                  >
+                    {tuneRemoving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={uploadTune} className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(event) => setTuneFile(event.target.files?.[0] || null)}
+                    className="block w-full flex-1 text-sm text-slate-600 file:mr-3 file:rounded-full file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!tuneFile || tuneUploading || !form.canManage}
+                    className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+                  >
+                    {tuneUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {tuneUploading ? "Uploading…" : "Upload"}
+                  </button>
+                </form>
+              )}
+              {tuneNotice ? <div className="mt-3"><StatusNotice>{tuneNotice}</StatusNotice></div> : null}
+              {tuneError ? <div className="mt-3"><StatusNotice type="error">{tuneError}</StatusNotice></div> : null}
+            </div>
+          </section>
+        ) : null}
     </div>
   );
 }

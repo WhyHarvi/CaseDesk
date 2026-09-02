@@ -2,6 +2,7 @@ import { Router } from "express";
 import { asyncHandler } from "../utils/http.js";
 import {
   createTwilioVoiceLine,
+  getIncomingCallContext,
   getTwilioVoiceStatus,
   issueTwilioCallToken,
   listTwilioCallAddressBook,
@@ -39,5 +40,6 @@ router.get("/staff", asyncHandler(listTwilioCallStaff));
 router.post("/test", asyncHandler(testTwilioCallVoice));
 router.post("/sync", asyncHandler(syncTwilioCallHistoryHandler));
 router.get("/address-book", asyncHandler(listTwilioCallAddressBook));
+router.get("/incoming-context/:callSid", asyncHandler(getIncomingCallContext));
 
 export default router;

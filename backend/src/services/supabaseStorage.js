@@ -2,6 +2,7 @@ import { createHttpError } from "../utils/http.js";
 
 export const DOCUMENT_BUCKET = process.env.SUPABASE_DOCUMENT_BUCKET || "case-files";
 export const AVATAR_BUCKET = process.env.SUPABASE_AVATAR_BUCKET || "profile-avatars";
+export const VOICE_TUNE_BUCKET = process.env.SUPABASE_VOICE_TUNE_BUCKET || "agency-voice-tunes";
 
 function config() {
   const url = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -103,8 +104,34 @@ export async function copyStorageFile(bucket, sourceKey, destinationKey) {
 }
 
 export async function getBucket(bucket) {
-  const response = await storageRequest(`/bucket/${encodeURIComponent(bucket)}`);
+  const response = await storageRequest(`/bucket/${encodeURIComponent(bucket)}`, { allowMissing: true });
+  if (!response) return null;
   return response.json();
+}
+
+export async function createBucket(bucket, { public: isPublic = false, fileSizeLimit, allowedMimeTypes } = {}) {
+  await storageRequest("/bucket", {
+    method: "POST",
+    body: JSON.stringify({
+      id: bucket,
+      name: bucket,
+      public: isPublic,
+      file_size_limit: fileSizeLimit,
+      allowed_mime_types: allowedMimeTypes,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Creates the bucket with the given policy on first use, and leaves it
+// alone if it already exists — callers that need every upload's mime type
+// covered should keep their own allow-list in sync with what they pass
+// here the first time.
+export async function ensureBucket(bucket, options) {
+  const existing = await getBucket(bucket);
+  if (existing) return existing;
+  await createBucket(bucket, options);
+  return getBucket(bucket);
 }
 
 export async function updateBucket(bucket, { public: isPublic, fileSizeLimit, allowedMimeTypes }) {

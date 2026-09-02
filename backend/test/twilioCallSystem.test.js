@@ -61,22 +61,30 @@ test("losing the Voice SDK's registration mid-session also takes the dial button
 
 test("statusCallback/statusCallbackEvent live on <Client>/<Number>, never on <Dial> itself — Twilio's schema only allows them on the nested noun (Debugger warning 12200)", async () => {
   const service = await source("../src/services/twilioCallService.js");
-  // inboundTwiML and outboundTwiML's internal-line branch: each <Client>
-  // carries its own statusCallback, not the wrapping <Dial>.
+  // outboundTwiML's internal-line branch: each <Client> carries its own
+  // statusCallback, not the wrapping <Dial>. inboundTwiML no longer builds
+  // <Client> tags at all — it dispatches ring attempts via the REST API
+  // (dispatchRingAttempts) and bridges through <Enqueue>/<Dial><Queue>.
   const clientStatusCallbackCount = (service.match(/<Client statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{escapeXml\(identity\)\}<Parameter name="ParentCallSid"/g) || []).length;
-  assert.equal(clientStatusCallbackCount, 2, "both inboundTwiML and outboundTwiML's internal-line branch must put statusCallback on <Client>");
+  assert.equal(clientStatusCallbackCount, 1, "outboundTwiML's internal-line branch must put statusCallback on <Client>");
   // outboundTwiML's external-number branch: the bare dialed number is
   // wrapped in <Number> so statusCallback has a valid home; action/method
   // stay on <Dial> (still the authoritative outbound source). Keeping the
   // browser leg unanswered until the destination answers makes the SDK's
   // accept event—and therefore CaseDesk's call timer—represent a real answer.
   assert.match(service, /<Dial callerId="\$\{escapeXml\(outboundCallerId\)\}" timeout="30" answerOnBridge="true" action="\$\{escapeXml\(statusBase\)\}" method="POST"><Number statusCallback="\$\{escapeXml\(statusBase\)\}" statusCallbackEvent="initiated ringing answered completed">\$\{to\}<\/Number><\/Dial>/);
-  // None of the four <Dial ...> opening tags carry statusCallback directly.
-  const dialTags = service.match(/<Dial [^>]*>/g) || [];
-  assert.ok(dialTags.length >= 4, "expected at least 4 <Dial> tags across inbound/outbound/transfer");
+  // None of the real <Dial ...> opening tags carry statusCallback directly.
+  // Strip line comments first — several of them describe this exact rule in
+  // prose (mentioning "<Dial...>") and would otherwise pollute the match.
+  const codeOnly = service.replace(/^\s*\/\/.*$/gm, "");
+  const dialTags = codeOnly.match(/<Dial [^>]*>/g) || [];
+  assert.ok(dialTags.length >= 3, "expected at least 3 <Dial ...> tags with attributes, across outbound/internal-line/transfer");
   for (const tag of dialTags) {
     assert.doesNotMatch(tag, /statusCallback=/, `<Dial> tag must not carry statusCallback directly: ${tag}`);
   }
+  // dequeueTwiML's <Dial><Queue> bridge is a bare tag with no attributes at
+  // all, so it can never carry statusCallback in the first place.
+  assert.match(codeOnly, /<Dial><Queue>\$\{escapeXml\(queueName\)\}<\/Queue><\/Dial>/);
 });
 
 test("the status/action webhook always answers with a valid TwiML Content-Type, since it doubles as outboundTwiML's <Dial action> callback (Debugger error 12300 otherwise)", async () => {
@@ -101,12 +109,17 @@ test("status callbacks ingest into the shared call history and distinguish misse
   // The client identity Twilio reports ("client:casedesk:<userId>") is
   // normalized back to the raw userId for handledByUserId.
   assert.match(service, /replace\(\/\^client:\/, ""\)\.replace\(\/\^casedesk:\/, ""\)/);
-  // Inbound <Client> events must retain the parent PSTN leg's caller number.
-  // Twilio does not reliably include ParentCallSid on those child callbacks,
-  // so inboundTwiML explicitly threads the stable context through the URL.
+  // Inbound status callbacks must retain the parent PSTN leg's caller number.
+  // Twilio does not reliably include ParentCallSid on those callbacks, so
+  // inboundTwiML explicitly threads the stable context through the URL.
   assert.match(service, /parentCallSid=\$\{encodeURIComponent\(parentCallSid\)\}/);
   assert.match(service, /callerNumber=\$\{encodeURIComponent\(inboundCallerNumber\)\}/);
-  assert.match(service, /<Parameter name="CallerNumber" value="\$\{escapeXml\(inboundCallerNumber\)\}"\/>/);
+  // Each queue-dispatched ring attempt is never nested inside the caller's
+  // own <Dial>, so it can't carry a TwiML <Parameter> the way the old
+  // <Dial><Client> structure did — the caller number is persisted on the
+  // CallRingDispatch row per attempt instead, for the answering browser to
+  // look up by its own CallSid (see getIncomingCallContext).
+  assert.match(service, /data: \{ agencyId, parentCallSid, dispatchedCallSid: call\.sid, identity, callerNumber: callerNumber \|\| null \}/);
   assert.match(service, /body\.parentCallSid \|\| body\.ParentCallSid/);
   assert.match(service, /explicitInboundCaller \|\| body\.From/);
   assert.match(webhookController, /\{ \.\.\.\(req\.body \|\| \{\}\), \.\.\.\(req\.query \|\| \{\}\) \}/);
@@ -258,7 +271,11 @@ test("lead calls auto-record: the softphone dial threads the lead id through Twi
   // built from a multi-param URL must XML-escape it, not just URL-encode
   // the individual param values.
   const escapedStatusCallbackCount = (service.match(/statusCallback="\$\{escapeXml\(statusBase\)\}"/g) || []).length;
-  assert.equal(escapedStatusCallbackCount, 4, "every statusBase-built statusCallback attribute (inboundTwiML, outboundTwiML's internal-line branch, outboundTwiML's external-number branch, and transferTwilioCall) must be XML-escaped");
+  assert.equal(escapedStatusCallbackCount, 3, "every statusBase-built statusCallback attribute (outboundTwiML's internal-line branch, outboundTwiML's external-number branch, and transferTwilioCall) must be XML-escaped");
+  // inboundTwiML no longer puts statusBase on a statusCallback attribute at
+  // all — it's the <Enqueue action> that the caller's own queue result
+  // fires back to — but the same XML-escaping requirement applies there too.
+  assert.match(service, /<Enqueue waitUrl="\$\{escapeXml\(waitUrl\)\}" action="\$\{escapeXml\(statusBase\)\}">/);
 });
 
 test("the 'call ended' popup saves the outcome through a shared applyCallOutcome path", async () => {
@@ -427,7 +444,15 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(soundSwitch, /data-\[checked\]:bg-primary/);
   assert.match(settings, /id: "sound"/);
   assert.match(settings, /<SoundSettingsPanel \/>/);
-  assert.match(provider, /call\.customParameters\?\.get\?\.\("CallerNumber"\) \|\| call\.parameters\?\.From/);
+  // A nested <Dial><Client><Parameter> call (internal line) resolves who's
+  // calling synchronously; a queue-dispatched ring has no <Parameter> to
+  // read, so it waits on a backend lookup by its own dispatched CallSid
+  // before ever showing the incoming-call UI (see getIncomingCallContext) —
+  // showing it early would risk "Accept" sending the wrong CallSid.
+  assert.match(provider, /call\.customParameters\?\.get\?\.\("CallerNumber"\) \|\| ""/);
+  assert.match(provider, /if \(customFrom \|\| customParentSid\)/);
+  assert.match(provider, /api\.get\(`\/twilio-calls\/incoming-context\/\$\{encodeURIComponent\(dispatchedCallSid\)\}`\)/);
+  assert.match(provider, /showIncoming\(context\?\.callerNumber \|\| call\.parameters\?\.From \|\| "", context\?\.parentCallSid \|\| dispatchedCallSid\)/);
   assert.match(provider, /device\.connect\(\{\s*params: \{\s*To: target/);
   assert.match(provider, /call\.on\("ringing"/);
   assert.match(provider, /phase: "connected", connectedAt/);
@@ -477,4 +502,286 @@ test("the frontend mounts a real softphone provider and a Call center page", asy
   assert.match(dialpad, /api\.put\("\/twilio-calls\/active-note"/);
   assert.match(dialpad, /label="Notes" onClick=\{\(\) => setShowCallNotes\(true\)\} \/>/);
   assert.doesNotMatch(dialpad, /label="Notes"[^>]+disabled=\{!linkedRecord\}/);
+});
+
+test("per-agency call greetings: schema, settings validation/voice allow-list, and the shared voice constants", async () => {
+  const [schema, migration, constants] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260901220000_add_agency_voice_greetings/migration.sql"),
+    source("../src/constants/twilioVoices.js"),
+  ]);
+  assert.match(schema, /voiceGreetingText\s+String\?\s+@map\("voice_greeting_text"\)/);
+  assert.match(schema, /voicemailGreetingText\s+String\?\s+@map\("voicemail_greeting_text"\)/);
+  assert.match(schema, /ttsVoice\s+String\s+@default\("Polly\.Joanna-Neural"\)\s+@map\("tts_voice"\)/);
+  assert.match(migration, /ADD COLUMN "voice_greeting_text" TEXT/);
+  assert.match(migration, /ADD COLUMN "voicemail_greeting_text" TEXT/);
+  assert.match(migration, /ADD COLUMN "tts_voice" TEXT NOT NULL DEFAULT 'Polly\.Joanna-Neural'/);
+  // Amazon Polly neural voices, not Twilio's classic/robotic ones — this is
+  // the single source of truth both the settings controller (validation +
+  // the list it returns) and the TwiML builder (the default it falls back
+  // to) import from, so they can never drift apart.
+  assert.match(constants, /export const TTS_VOICES = \[/);
+  assert.match(constants, /"Polly\.Joanna-Neural"/);
+  assert.match(constants, /export const DEFAULT_TTS_VOICE = "Polly\.Joanna-Neural";/);
+  assert.match(constants, /export const TTS_VOICE_IDS = new Set\(TTS_VOICES\.map\(\(voice\) => voice\.id\)\);/);
+
+  const controller = await source("../src/controllers/twilioSettingsController.js");
+  assert.match(controller, /import \{ DEFAULT_TTS_VOICE, TTS_VOICES, TTS_VOICE_IDS \} from "\.\.\/constants\/twilioVoices\.js";/);
+  assert.match(controller, /availableTtsVoices: TTS_VOICES,/);
+  // Capped at 300 chars to match twilioCallService.js's escapeXml, which
+  // truncates there before rendering into <Say> — allowing a longer saved
+  // value would let it silently get cut off mid-sentence when spoken.
+  assert.match(controller, /clean\(body\.voiceGreetingText, 300\)/);
+  assert.match(controller, /clean\(body\.voicemailGreetingText, 300\)/);
+  assert.match(controller, /if \(!TTS_VOICE_IDS\.has\(ttsVoice\)\) throw createHttpError\(400, "Choose one of the available greeting voices\."\);/);
+  // Same partial-update convention as the other two settings cards: falls
+  // back to the existing saved value when the request omits the field.
+  assert.match(controller, /const ttsVoice = body\.ttsVoice !== undefined \? clean\(body\.ttsVoice, 64\) : existing\?\.ttsVoice \|\| DEFAULT_TTS_VOICE;/);
+});
+
+test("inbound calls play the agency's greeting before ringing staff, and offer voicemail (with a recording) when nobody answers", async () => {
+  const service = await source("../src/services/twilioCallService.js");
+  // The greeting is entirely optional — omitted rather than forcing a
+  // default script onto every workspace that hasn't set one.
+  assert.match(service, /function sayTwiML\(settings, text\)/);
+  assert.match(service, /if \(!body\) return "";/);
+  // <Dial action> re-uses the same URL as the <Client> statusCallback — the
+  // outbound flow's isDialAction check (DialCallStatus presence) is what
+  // tells the two kinds of callback on that one URL apart.
+  assert.match(service, /action="\$\{escapeXml\(statusBase\)\}" method="POST"/);
+  // No staff/line configured falls straight to voicemail instead of just
+  // hanging up.
+  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{greetingTwiML\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
+  // The recording reuses statusBase as its recordingStatusCallback, so the
+  // existing RecordingSid/RecordingUrl handling in handleTwilioCallStatus
+  // (see its isRecording branch) attaches it to this same call session
+  // automatically — no separate recording-handling path needed.
+  assert.match(service, /function voicemailTwiML\(settings, statusBase\)/);
+  assert.match(service, /<Record recordingStatusCallback="\$\{escapeXml\(statusBase\)\}" recordingStatusCallbackEvent="completed" maxLength="120" timeout="5" playBeep="true" trim="trim-silence"\/>/);
+  assert.match(service, /export async function inboundVoicemailTwiML\(agencyId, callback, req\)/);
+
+  const webhookController = await source("../src/controllers/twilioWebhookController.js");
+  assert.match(webhookController, /\bhandleTwilioCallStatus,\s*\n\s*inboundTwiML,\s*\n\s*inboundVoicemailTwiML,/);
+  // unansweredInboundDial (DialCallStatus + callerNumber) is now dormant for
+  // inbound calls — ringing staff is an <Enqueue>, not a <Dial>, so it never
+  // produces a DialCallStatus callback — but it's kept for outboundTwiML's
+  // internal-line bridge (still a plain <Dial>) and any in-flight calls from
+  // before the inbound flow moved to Queue.
+  assert.match(
+    webhookController,
+    /const unansweredInboundDial =\s*\n\s*callback\.DialCallStatus !== undefined &&\s*\n\s*Boolean\(callback\.callerNumber\) &&\s*\n\s*!\["completed", "answered"\]\.includes\(dialCallStatus\);/,
+  );
+  // The caller's own <Enqueue action> callback (QueueResult) is inbound's
+  // real "did anyone answer" signal now — it shares the same voicemail
+  // fallback as the legacy unansweredInboundDial branch below it.
+  assert.match(webhookController, /const isQueueResult = callback\.QueueResult !== undefined && Boolean\(callback\.callerNumber\);/);
+  assert.equal((webhookController.match(/const voicemailXml = await inboundVoicemailTwiML\(req\.params\.agencyId, callback, req\);/g) || []).length, 2, "both the queue-result and the legacy unansweredInboundDial branches offer voicemail");
+});
+
+test("the Phone & SMS settings tab lets an admin type both greetings and pick the voice, gated on calling actually being enabled", async () => {
+  const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
+  assert.match(panel, /form\.configured && form\.callsEnabled \? \(/);
+  assert.match(panel, /What callers hear/);
+  assert.match(panel, /const saveGreetings = async \(event\) => \{/);
+  assert.match(panel, /api\.put\("\/settings\/twilio", \{\s*\n\s*voiceGreetingText: voiceGreetingInput \|\| form\.voiceGreetingText,\s*\n\s*voicemailGreetingText: voicemailGreetingInput \|\| form\.voicemailGreetingText,\s*\n\s*whileWaitingGreetingText: whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText,\s*\n\s*ttsVoice: ttsVoiceInput \|\| form\.ttsVoice,/);
+  assert.match(panel, /\{\(form\.availableTtsVoices \|\| \[\]\)\.map\(\(voice\) => \(/);
+  assert.match(panel, /<option key=\{voice\.id\} value=\{voice\.id\}>\{voice\.label\}<\/option>/);
+});
+
+test("an agency can upload its own custom tune to a dedicated Supabase bucket (not the shared document/avatar ones, which don't allow audio), serve it back for preview, and remove it — schema, storage plumbing, routes, and the frontend uploader", async () => {
+  const [schema, migration, storage] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260902120000_add_agency_custom_tune/migration.sql"),
+    source("../src/services/supabaseStorage.js"),
+  ]);
+  assert.match(schema, /customTuneStorageKey\s+String\?\s+@map\("custom_tune_storage_key"\)/);
+  assert.match(schema, /customTuneMimeType\s+String\?\s+@map\("custom_tune_mime_type"\)/);
+  assert.match(schema, /customTuneFilename\s+String\?\s+@map\("custom_tune_filename"\)/);
+  assert.match(schema, /customTuneUploadedAt\s+DateTime\?\s+@map\("custom_tune_uploaded_at"\)/);
+  assert.match(migration, /ADD COLUMN "custom_tune_storage_key" TEXT/);
+  assert.match(migration, /ADD COLUMN "custom_tune_uploaded_at" TIMESTAMP\(3\)/);
+  assert.match(storage, /export const VOICE_TUNE_BUCKET = process\.env\.SUPABASE_VOICE_TUNE_BUCKET \|\| "agency-voice-tunes";/);
+  // getBucket now tolerates a missing bucket (returns null) instead of
+  // throwing, which is what lets ensureBucket provision it lazily on the
+  // very first upload rather than requiring it to exist beforehand.
+  assert.match(storage, /export async function getBucket\(bucket\) \{\s*\n\s*const response = await storageRequest\(`\/bucket\/\$\{encodeURIComponent\(bucket\)\}`, \{ allowMissing: true \}\);\s*\n\s*if \(!response\) return null;/);
+  assert.match(storage, /export async function createBucket\(bucket, \{ public: isPublic = false, fileSizeLimit, allowedMimeTypes \} = \{\}\)/);
+  assert.match(storage, /export async function ensureBucket\(bucket, options\) \{/);
+
+  const middleware = await source("../src/middleware/audioTuneUploadMiddleware.js");
+  assert.match(middleware, /"audio\/mpeg",/);
+  assert.match(middleware, /limits: \{ fileSize: 10 \* 1024 \* 1024, files: 1 \}/);
+  assert.match(middleware, /export const receiveAudioTune = upload\.single\("file"\);/);
+
+  const controller = await source("../src/controllers/twilioSettingsController.js");
+  // A dedicated bucket, not DOCUMENT_BUCKET/AVATAR_BUCKET — those already
+  // have their own restrictive Supabase-side allowlists that don't include
+  // audio, confirmed live: uploading audio/mpeg to case-files 400s.
+  assert.match(controller, /import \{ VOICE_TUNE_BUCKET, downloadStorageFile, ensureBucket, removeStorageFile, uploadStorageFile \} from "\.\.\/services\/supabaseStorage\.js";/);
+  assert.match(controller, /export async function uploadTwilioTune\(req, res\) \{/);
+  assert.match(controller, /await ensureBucket\(VOICE_TUNE_BUCKET, \{ fileSizeLimit: 10 \* 1024 \* 1024, allowedMimeTypes: Object\.keys\(AUDIO_EXTENSIONS\) \}\);/);
+  // Old file cleaned up only after the new one is safely referenced by the
+  // DB row (and the freshly-uploaded object is cleaned up if the DB write
+  // itself fails) — never left orphaned either way.
+  assert.match(controller, /if \(existing\?\.customTuneStorageKey && existing\.customTuneStorageKey !== storageKey\) \{/);
+  assert.match(controller, /export async function getTwilioTune\(req, res\) \{/);
+  assert.match(controller, /export async function deleteTwilioTune\(req, res\) \{/);
+  assert.match(controller, /hasCustomTune: Boolean\(settings\?\.customTuneStorageKey\),/);
+
+  const routes = await source("../src/routes/settingsRoutes.js");
+  assert.match(routes, /router\.post\("\/twilio\/tune", receiveAudioTune, asyncHandler\(uploadTwilioTune\)\);/);
+  assert.match(routes, /router\.get\("\/twilio\/tune", asyncHandler\(getTwilioTune\)\);/);
+  assert.match(routes, /router\.delete\("\/twilio\/tune", asyncHandler\(deleteTwilioTune\)\);/);
+
+  const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
+  // Superseded by the queue-hold-experience test below: once inboundWaitTwiML
+  // actually shipped, the tune stopped being a stored-but-unused placeholder.
+  assert.match(panel, /Callers hear it on a loop while staff are being rung,/);
+  assert.match(panel, /const uploadTune = async \(event\) => \{/);
+  assert.match(panel, /payload\.append\("file", tuneFile\);/);
+  assert.match(panel, /const removeTune = async \(\) => \{/);
+  assert.match(panel, /api\.get\("\/settings\/twilio\/tune", \{ responseType: "blob" \}\)/);
+});
+
+test("greeting text has a live browser preview, honestly labeled as approximate rather than the exact Polly voice a caller hears", async () => {
+  const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
+  assert.match(panel, /const previewGreeting = \(field, text\) => \{/);
+  assert.match(panel, /if \(!text\?\.trim\(\) \|\| typeof window === "undefined" \|\| !window\.speechSynthesis\) return;/);
+  assert.match(panel, /const utterance = new SpeechSynthesisUtterance\(text\.trim\(\)\);/);
+  // Set expectations honestly — this is the browser's own voice, not proof
+  // of what the Polly voice below will actually sound like on a real call.
+  assert.match(panel, /won't sound exactly like the voice below, which is what callers actually hear\./);
+  assert.match(panel, /onClick=\{\(\) => previewGreeting\("voice", voiceGreetingInput \|\| form\.voiceGreetingText\)\}/);
+  assert.match(panel, /onClick=\{\(\) => previewGreeting\("voicemail", voicemailGreetingInput \|\| form\.voicemailGreetingText\)\}/);
+  // Regression: the preview originally ignored the selected greeting voice
+  // entirely, always speaking in the browser's own default — it now picks
+  // a browser voice matching the selected Polly voice's gender (the Web
+  // Speech API has no Polly-equivalent voices, so this is the closest
+  // approximation available, not the exact voice).
+  const constants = await source("../src/constants/twilioVoices.js");
+  assert.match(constants, /\{ id: "Polly\.Joanna-Neural", label: "Joanna — warm \(female, US English\)", gender: "female" \},/);
+  assert.match(constants, /\{ id: "Polly\.Matthew-Neural", label: "Matthew — confident \(male, US English\)", gender: "male" \},/);
+  assert.match(panel, /function matchingBrowserVoice\(voices, gender\) \{/);
+  assert.match(panel, /const \[browserVoices, setBrowserVoices\] = useState\(\[\]\);/);
+  assert.match(panel, /window\.speechSynthesis\.addEventListener\("voiceschanged", loadVoices\);/);
+  assert.match(panel, /const selectedVoice = \(form\.availableTtsVoices \|\| \[\]\)\.find\(\(voice\) => voice\.id === selectedVoiceId\);/);
+  assert.match(panel, /const browserVoice = matchingBrowserVoice\(browserVoices, selectedVoice\?\.gender\);/);
+  assert.match(panel, /if \(browserVoice\) utterance\.voice = browserVoice;/);
+});
+
+test("inbound calls ring staff via separate dispatched calls into a Twilio Queue (not a nested <Dial><Client>), so the caller can hear hold content while waiting — schema and the shared dispatch/cancel/wait machinery", async () => {
+  const [schema, migration] = await Promise.all([
+    source("../prisma/schema.prisma"),
+    source("../prisma/migrations/20260902140000_add_queue_hold_experience/migration.sql"),
+  ]);
+  assert.match(schema, /whileWaitingGreetingText String\? @map\("while_waiting_greeting_text"\)/);
+  assert.match(schema, /model CallRingDispatch \{/);
+  assert.match(schema, /dispatchedCallSid String   @unique @map\("dispatched_call_sid"\)/);
+  assert.match(schema, /@@map\("call_ring_dispatches"\)/);
+  assert.match(migration, /ADD COLUMN "while_waiting_greeting_text" TEXT;/);
+  assert.match(migration, /CREATE TABLE "call_ring_dispatches"/);
+  assert.match(migration, /CONSTRAINT "call_ring_dispatches_dispatched_call_sid_key" UNIQUE \("dispatched_call_sid"\)/);
+
+  const service = await source("../src/services/twilioCallService.js");
+  // inboundTwiML no longer builds <Client> children of its own <Dial> — it
+  // dispatches one outbound call per staff member and Enqueues the caller,
+  // which is what makes waitUrl (custom hold content) possible at all; a
+  // <Dial> has no equivalent.
+  assert.doesNotMatch(service, /const clients = identities\.map/);
+  assert.match(service, /if \(!identities\.length\) return `<Response>\$\{greetingTwiML\}\$\{voicemailTwiML\(config\.settings, statusBase\)\}<\/Response>`;/);
+  assert.match(service, /const queueName = `call-\$\{parentCallSid\}`;/);
+  assert.match(service, /await dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base \}\)\.catch/);
+  assert.match(service, /return `<Response>\$\{greetingTwiML\}<Enqueue waitUrl="\$\{escapeXml\(waitUrl\)\}" action="\$\{escapeXml\(statusBase\)\}">\$\{escapeXml\(queueName\)\}<\/Enqueue><\/Response>`;/);
+
+  // Every ring attempt is its own real outbound call via the REST API
+  // (client.calls.create), each recorded so it can be canceled once one
+  // connects and so the answering browser can look itself up by CallSid.
+  assert.match(service, /async function dispatchRingAttempts\(\{ agencyId, config, identities, parentCallSid, callerNumber, base \}\) \{/);
+  assert.match(service, /const call = await client\.calls\.create\(\{\s*\n\s*to: `client:\$\{identity\}`,\s*\n\s*from: config\.voiceNumber,\s*\n\s*url: dequeueUrl,/);
+  assert.match(service, /await prisma\.callRingDispatch\.create\(\{\s*\n\s*data: \{ agencyId, parentCallSid, dispatchedCallSid: call\.sid, identity, callerNumber: callerNumber \|\| null \},/);
+
+  assert.match(service, /export function dequeueTwiML\(queueName\) \{/);
+  assert.match(service, /return `<Response><Dial><Queue>\$\{escapeXml\(queueName\)\}<\/Queue><\/Dial><\/Response>`;/);
+
+  // The wait handler's deadline check only works because tune/greeting
+  // playback is left at Twilio's default of playing once per fetch — a
+  // <Play loop="0"> loops forever within a single response and Twilio
+  // would never re-fetch waitUrl to notice the deadline had passed.
+  assert.match(service, /export async function inboundWaitTwiML\(agencyId, query, req\) \{/);
+  assert.match(service, /if \(Number\.isFinite\(deadline\) && Date\.now\(\) > deadline\) return "<Response><Leave\/><\/Response>";/);
+  assert.match(service, /if \(settings\?\.customTuneStorageKey\) \{/);
+  assert.doesNotMatch(service, /<Play loop="0">/);
+
+  // Answering doesn't by itself mean "connected" — only the caller's own
+  // queue-result callback reporting QueueResult=bridged proves a real
+  // bridge happened, which is what cancellation is gated on elsewhere.
+  assert.match(service, /export async function recordRingDispatchStatus\(agencyId, body\) \{/);
+  assert.match(service, /\? "answered"\s*\n\s*: \["completed", "busy", "no-answer", "canceled", "failed"\]\.includes\(status\)\s*\n\s*\? "no-answer"/);
+  assert.match(service, /where: \{ agencyId, dispatchedCallSid, status: "ringing" \},/);
+
+  assert.match(service, /export async function cancelSiblingRingDispatches\(agencyId, parentCallSid\) \{/);
+  assert.match(service, /where: \{ agencyId, parentCallSid, status: "ringing" \},/);
+  assert.match(service, /client\.calls\(row\.dispatchedCallSid\)\.update\(\{ status: "canceled" \}\)/);
+});
+
+test("the queue-result and per-dispatch webhooks are wired up: cancel whoever's still ringing the instant the caller leaves the queue, and only fall through to voicemail on a genuine timeout (never on a clean bridge or hangup)", async () => {
+  const controller = await source("../src/controllers/twilioWebhookController.js");
+  assert.match(controller, /import \{\s*\n\s*cancelSiblingRingDispatches,\s*\n\s*dequeueTwiML,\s*\n\s*handleTwilioCallStatus,\s*\n\s*inboundTwiML,\s*\n\s*inboundVoicemailTwiML,\s*\n\s*inboundWaitTwiML,\s*\n\s*outboundTwiML,\s*\n\s*recordRingDispatchStatus,/);
+  assert.match(controller, /const isQueueResult = callback\.QueueResult !== undefined && Boolean\(callback\.callerNumber\);/);
+  assert.match(controller, /await cancelSiblingRingDispatches\(req\.params\.agencyId, callback\.parentCallSid \|\| callback\.CallSid\)\.catch/);
+  assert.match(controller, /if \(!\["bridged", "hangup"\]\.includes\(queueResult\)\) \{/);
+  assert.match(controller, /export async function twilioDequeue\(req, res\) \{/);
+  assert.match(controller, /export async function twilioWait\(req, res\) \{/);
+  assert.match(controller, /export async function twilioRingStatus\(req, res\) \{/);
+  // The tune Twilio's <Play> actually fetches has to be a plain,
+  // unauthenticated GET — there's no user session for Twilio to carry, so
+  // it can't sit behind the same auth as the settings-page preview.
+  assert.match(controller, /export async function twilioServeTune\(req, res\) \{/);
+  assert.match(controller, /const buffer = await downloadStorageFile\(VOICE_TUNE_BUCKET, settings\.customTuneStorageKey, \{ allowMissing: true \}\);/);
+
+  const routes = await source("../src/routes/communicationWebhookRoutes.js");
+  assert.match(routes, /router\.post\("\/twilio\/dequeue\/:agencyId", asyncHandler\(twilioDequeue\)\);/);
+  assert.match(routes, /router\.post\("\/twilio\/wait\/:agencyId", asyncHandler\(twilioWait\)\);/);
+  assert.match(routes, /router\.post\("\/twilio\/ring-status\/:agencyId", asyncHandler\(twilioRingStatus\)\);/);
+  assert.match(routes, /router\.get\("\/twilio\/tune\/:agencyId", asyncHandler\(twilioServeTune\)\);/);
+});
+
+test("a staff browser can resolve who's calling for a queue-dispatched ring (which never carries TwiML <Parameter> values, unlike a nested <Dial><Client>) by looking its own call up by CallSid, and the answer button waits for that lookup rather than risking the wrong CallSid", async () => {
+  const controller = await source("../src/controllers/twilioCallController.js");
+  assert.match(controller, /export async function getIncomingCallContext\(req, res\) \{/);
+  assert.match(controller, /where: \{ agencyId: req\.user\.agencyId, dispatchedCallSid: req\.params\.callSid \},/);
+
+  const routes = await source("../src/routes/twilioCallRoutes.js");
+  assert.match(routes, /router\.get\("\/incoming-context\/:callSid", asyncHandler\(getIncomingCallContext\)\);/);
+
+  const provider = await source("../../frontend/src/components/calls/SoftphoneProvider.jsx");
+  // Listeners attach before any lookup, so a cancel/hangup that arrives
+  // mid-lookup still cleans up even though the ring UI never showed.
+  assert.match(provider, /call\.on\("cancel", clearIncoming\);\s*\n\s*call\.on\("reject", clearIncoming\);/);
+  assert.match(provider, /const showIncoming = \(from, callSid\) => \{/);
+  assert.match(provider, /if \(incomingCallRef\.current !== call\) return;/);
+  // customParameters are checked first (still correct for an internal-line
+  // call or a legacy nested <Dial><Client>) and only fall back to the
+  // backend lookup when they're genuinely empty.
+  assert.match(provider, /if \(customFrom \|\| customParentSid\) \{/);
+  assert.match(provider, /api\.get\(`\/twilio-calls\/incoming-context\/\$\{encodeURIComponent\(dispatchedCallSid\)\}`\)\.then/);
+  assert.match(provider, /showIncoming\(context\?\.callerNumber \|\| call\.parameters\?\.From \|\| "", context\?\.parentCallSid \|\| dispatchedCallSid\);/);
+});
+
+test("the settings panel's third greeting (\"while waiting to connect\") has the same masking/save/preview treatment as the other two, and the custom tune's copy reflects that it's now actually used on calls, not just stored", async () => {
+  const controller = await source("../src/controllers/twilioSettingsController.js");
+  assert.match(controller, /whileWaitingGreetingText: settings\?\.whileWaitingGreetingText \|\| "",/);
+  assert.match(controller, /const whileWaitingGreetingText = body\.whileWaitingGreetingText !== undefined \? clean\(body\.whileWaitingGreetingText, 300\) : existing\?\.whileWaitingGreetingText \|\| "";/);
+  assert.match(controller, /whileWaitingGreetingText: whileWaitingGreetingText \|\| null,/);
+
+  const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
+  assert.match(panel, /const \[whileWaitingGreetingInput, setWhileWaitingGreetingInput\] = useState\(""\);/);
+  assert.match(panel, /whileWaitingGreetingText: whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText,/);
+  assert.match(panel, /While waiting to connect/);
+  assert.match(panel, /onClick=\{\(\) => previewGreeting\("waiting", whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText\)\}/);
+  assert.match(panel, /Repeats on a loop while staff are being rung\. If a custom tune is uploaded below, it plays instead of/);
+  // No longer a placeholder — it's genuinely wired into the wait handler
+  // now (inboundWaitTwiML prefers the tune over the spoken text).
+  assert.match(panel, /in place of the "While waiting to connect" text above\./);
+  assert.match(panel, /setTuneNotice\("Tune uploaded\. Callers will hear it while staff are being rung\."\);/);
 });

@@ -1,8 +1,24 @@
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import prisma from "../services/prisma/client.js";
 import { sendAgencyTwilioSms, verifyAgencyTwilioCredentials } from "../services/agencyTwilioService.js";
 import { decryptSecret, encryptSecret, secretEncryptionReady } from "../services/secretEncryption.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
+import { DEFAULT_TTS_VOICE, TTS_VOICES, TTS_VOICE_IDS } from "../constants/twilioVoices.js";
+import { VOICE_TUNE_BUCKET, downloadStorageFile, ensureBucket, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
+
+const AUDIO_EXTENSIONS = {
+  "audio/mpeg": ".mp3",
+  "audio/mp3": ".mp3",
+  "audio/wav": ".wav",
+  "audio/x-wav": ".wav",
+  "audio/wave": ".wav",
+  "audio/ogg": ".ogg",
+  "audio/aac": ".aac",
+  "audio/mp4": ".m4a",
+  "audio/x-m4a": ".m4a",
+};
 
 const clean = (value, max = 300) => String(value ?? "").trim().slice(0, max);
 const normalizePhone = (value) => {
@@ -42,6 +58,19 @@ function publicSettings(settings, canManage) {
     lastSmsTestedAt: settings?.lastSmsTestedAt || null,
     lastSmsTestStatus: settings?.lastSmsTestStatus || null,
     lastSmsTestMessage: settings?.lastSmsTestMessage || null,
+    // Call greetings
+    voiceGreetingText: settings?.voiceGreetingText || "",
+    voicemailGreetingText: settings?.voicemailGreetingText || "",
+    whileWaitingGreetingText: settings?.whileWaitingGreetingText || "",
+    ttsVoice: settings?.ttsVoice || DEFAULT_TTS_VOICE,
+    availableTtsVoices: TTS_VOICES,
+    // Custom tune — uploaded and stored, but not yet used on live calls
+    // (see the settings UI's note). hasCustomTune is what the frontend
+    // gates the player/remove controls on; the storage key itself never
+    // needs to leave the server.
+    hasCustomTune: Boolean(settings?.customTuneStorageKey),
+    customTuneFilename: settings?.customTuneFilename || "",
+    customTuneUploadedAt: settings?.customTuneUploadedAt || null,
     updatedAt: settings?.updatedAt || null,
   };
 }
@@ -71,6 +100,14 @@ function validate(body, existing) {
   if (apiKeySid && !/^SK[a-f0-9]{32}$/i.test(apiKeySid)) throw createHttpError(400, "Enter a valid Twilio API Key SID (starts with SK).");
   const voiceNumber = body.voiceNumber !== undefined ? normalizePhone(body.voiceNumber) : existing?.voiceNumber || "";
   if (voiceNumber && !/^\+\d{8,15}$/.test(voiceNumber)) throw createHttpError(400, "Enter the Twilio voice number including country code, such as +14165550100.");
+  // Capped to match twilioCallService.js's escapeXml, which truncates at the
+  // same 300 chars before rendering into <Say> — a longer saved value would
+  // otherwise silently get cut off mid-sentence when actually spoken.
+  const voiceGreetingText = body.voiceGreetingText !== undefined ? clean(body.voiceGreetingText, 300) : existing?.voiceGreetingText || "";
+  const voicemailGreetingText = body.voicemailGreetingText !== undefined ? clean(body.voicemailGreetingText, 300) : existing?.voicemailGreetingText || "";
+  const whileWaitingGreetingText = body.whileWaitingGreetingText !== undefined ? clean(body.whileWaitingGreetingText, 300) : existing?.whileWaitingGreetingText || "";
+  const ttsVoice = body.ttsVoice !== undefined ? clean(body.ttsVoice, 64) : existing?.ttsVoice || DEFAULT_TTS_VOICE;
+  if (!TTS_VOICE_IDS.has(ttsVoice)) throw createHttpError(400, "Choose one of the available greeting voices.");
   return {
     accountSid,
     fromNumber: fromNumber || null,
@@ -80,6 +117,10 @@ function validate(body, existing) {
     voiceNumber: voiceNumber || null,
     enabled: body.enabled !== undefined ? body.enabled !== false : existing?.enabled ?? true,
     smsEnabled: body.smsEnabled !== undefined ? body.smsEnabled !== false : existing?.smsEnabled ?? true,
+    voiceGreetingText: voiceGreetingText || null,
+    voicemailGreetingText: voicemailGreetingText || null,
+    whileWaitingGreetingText: whileWaitingGreetingText || null,
+    ttsVoice,
   };
 }
 
@@ -208,6 +249,74 @@ export async function testTwilioSms(req, res) {
     });
     res.status(error.statusCode || 502).json({ status: "error", message, data: publicSettings(data, true) });
   }
+}
+
+// The agency's own uploaded tune — stored and available to preview here,
+// but not yet wired into what a caller actually hears (see the settings
+// panel's own note on this). Mirrors agencyProfileController.js's avatar
+// upload/serve/delete pattern.
+export async function uploadTwilioTune(req, res) {
+  requireAdmin(req);
+  if (!req.file) throw createHttpError(400, "Choose an audio file to upload.");
+  const extension = AUDIO_EXTENSIONS[req.file.mimetype];
+  if (!extension) throw createHttpError(400, "Unsupported file type. Upload an MP3, WAV, OGG, AAC, or M4A audio file.");
+  const existing = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.user.agencyId } });
+  const storageKey = path.posix.join(req.user.agencyId, "voice-tune", `${randomUUID()}${extension}`);
+  // Dedicated bucket, not the shared document/avatar ones — those already
+  // have their own restrictive Supabase-side mime-type allowlists that
+  // don't include audio, and broadening either would loosen what they
+  // accept for everything else that uses them too.
+  await ensureBucket(VOICE_TUNE_BUCKET, { fileSizeLimit: 10 * 1024 * 1024, allowedMimeTypes: Object.keys(AUDIO_EXTENSIONS) });
+  await uploadStorageFile(VOICE_TUNE_BUCKET, storageKey, req.file.buffer, req.file.mimetype);
+  let data;
+  try {
+    data = await prisma.agencyTwilioSettings.upsert({
+      where: { agencyId: req.user.agencyId },
+      create: { agencyId: req.user.agencyId, customTuneStorageKey: storageKey, customTuneMimeType: req.file.mimetype, customTuneFilename: clean(req.file.originalname, 200), customTuneUploadedAt: new Date() },
+      update: { customTuneStorageKey: storageKey, customTuneMimeType: req.file.mimetype, customTuneFilename: clean(req.file.originalname, 200), customTuneUploadedAt: new Date() },
+    });
+  } catch (error) {
+    await removeStorageFile(VOICE_TUNE_BUCKET, storageKey);
+    throw error;
+  }
+  if (existing?.customTuneStorageKey && existing.customTuneStorageKey !== storageKey) {
+    await removeStorageFile(VOICE_TUNE_BUCKET, existing.customTuneStorageKey);
+  }
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "settings.twilio_tune_uploaded",
+    details: `Custom tune uploaded: ${data.customTuneFilename}`,
+  });
+  res.status(201).json({ data: publicSettings(data, true) });
+}
+
+export async function getTwilioTune(req, res) {
+  const settings = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.user.agencyId } });
+  if (!settings?.customTuneStorageKey) throw createHttpError(404, "No custom tune has been uploaded.", "NOT_FOUND");
+  const buffer = await downloadStorageFile(VOICE_TUNE_BUCKET, settings.customTuneStorageKey, { allowMissing: true });
+  if (!buffer) throw createHttpError(404, "The uploaded tune could not be found.", "NOT_FOUND");
+  res.set("Cache-Control", "private, max-age=300");
+  res.type(settings.customTuneMimeType || "application/octet-stream");
+  res.send(buffer);
+}
+
+export async function deleteTwilioTune(req, res) {
+  requireAdmin(req);
+  const existing = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.user.agencyId } });
+  if (!existing?.customTuneStorageKey) return res.status(204).send();
+  await prisma.agencyTwilioSettings.update({
+    where: { agencyId: req.user.agencyId },
+    data: { customTuneStorageKey: null, customTuneMimeType: null, customTuneFilename: null, customTuneUploadedAt: null },
+  });
+  await removeStorageFile(VOICE_TUNE_BUCKET, existing.customTuneStorageKey);
+  await recordActivity({
+    agencyId: req.user.agencyId,
+    userId: req.user.id,
+    action: "settings.twilio_tune_removed",
+    details: "Custom tune removed",
+  });
+  res.status(204).send();
 }
 
 export async function deleteTwilioSettings(req, res) {

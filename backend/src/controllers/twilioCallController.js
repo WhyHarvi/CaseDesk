@@ -296,3 +296,19 @@ export async function recordOutboundCallOutcome(req, res) {
   await applyCallOutcome(call, outcomeInput, { agencyId, userId: req.user.id });
   res.json({ data: call });
 }
+
+// A call dispatched to ring a staff member's browser now arrives via a
+// separate outbound call (see twilioCallService.js's dispatchRingAttempts),
+// not nested inside the caller's own <Dial> — so the caller number/parent
+// call id it needs to display can't ride along as TwiML <Parameter>
+// values the way an internal-line or legacy <Dial><Client> call's still
+// can. SoftphoneProvider.jsx checks customParameters first (still correct
+// for those) and only falls back to this lookup, by the call's own SID,
+// when they're empty.
+export async function getIncomingCallContext(req, res) {
+  const dispatch = await prisma.callRingDispatch.findFirst({
+    where: { agencyId: req.user.agencyId, dispatchedCallSid: req.params.callSid },
+    select: { parentCallSid: true, callerNumber: true },
+  });
+  res.json({ data: dispatch || null });
+}

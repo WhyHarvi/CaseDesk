@@ -7,6 +7,7 @@ import { normalizeCommunicationPhone } from "./communicationAddressService.js";
 import { autoMatch, phoneMatches } from "./callHistoryService.js";
 import { adminRecipientIds, notifyUsers } from "./notificationService.js";
 import { autoMarkPhoneAppointmentFromCall } from "./appointmentAttendanceService.js";
+import { DEFAULT_TTS_VOICE, DEFAULT_VOICEMAIL_GREETING_TEXT } from "../constants/twilioVoices.js";
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const number = (value) => {
@@ -394,36 +395,184 @@ export async function inboundTwiML(agencyId, lineId, req) {
       assignedUserIds = assignees.map((assignee) => assignee.id);
     }
   }
-  // Twilio's statusCallback on <Dial> reports on the leg it creates (the
-  // browser <Client> leg). We map that event back to the inbound parent SID,
-  // rather than the client leg's own SID, because that parent is what
-  // the legacy call-session table ends up keyed by (providerCallId = parentCallSid ||
-  // callSid). The browser's own incoming Call object only ever knows its
-  // own (child) leg's SID, so transfer/recording — which need to find that
-  // session row — would look up the wrong id and 409 as "no longer active"
-  // unless we hand the parent SID over explicitly as a custom parameter.
+  // The legacy call-session table keys off providerCallId = the inbound
+  // parent SID (see handleTwilioCallStatus), so every downstream callback
+  // (queue result, ring-status, recording) threads it through explicitly —
+  // Twilio never hands a leg's own callback the parent's SID for free.
   const parentCallSid = clean(req.body?.CallSid, 64);
   const inboundCallerNumber = clean(req.body?.From, 80);
   const base = twilioPublicBase(req);
-  // A <Dial><Client> callback describes the browser child leg, where From is
-  // `client:casedesk:<userId>`. Twilio does not consistently include the
-  // parent SID on that callback, so carry the original inbound context in the
-  // callback URL. This lets every event update the parent call-history row and
-  // retain the external caller number instead of displaying "Private number".
   const inboundBusinessNumber = clean(req.body?.To, 80);
   const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?parentCallSid=${encodeURIComponent(parentCallSid)}&callerNumber=${encodeURIComponent(inboundCallerNumber)}&businessNumber=${encodeURIComponent(inboundBusinessNumber)}`;
-  // statusCallback/statusCallbackEvent belong on the <Client> noun, not on
-  // <Dial> itself — Twilio's TwiML schema only allows them there. Putting
-  // them on <Dial> instead is what Twilio Debugger warning 12200 ("not
-  // allowed to appear in element 'Dial'") was flagging on this exact
-  // endpoint, and per handleTwilioCallStatus's own notes below, an
-  // attribute Twilio's parser rejects also just never reliably fires.
   const identities = assignedUserIds
     ? assignedUserIds.map((userId) => clientIdentity(userId))
     : await staffClientIdentities(agencyId, { roles });
-  const clients = identities.map((identity) => `<Client statusCallback="${escapeXml(statusBase)}" statusCallbackEvent="initiated ringing answered completed">${escapeXml(identity)}<Parameter name="ParentCallSid" value="${escapeXml(parentCallSid)}"/><Parameter name="CallerNumber" value="${escapeXml(inboundCallerNumber)}"/></Client>`).join("");
-  if (!clients) return `<Response><Say voice="alice" language="en-US">No one is available to take your call right now. Goodbye.</Say></Response>`;
-  return `<Response><Dial callerId="${escapeXml(config.voiceNumber)}" timeout="25">${clients}</Dial></Response>`;
+  const greetingTwiML = sayTwiML(config.settings);
+  if (!identities.length) return `<Response>${greetingTwiML}${voicemailTwiML(config.settings, statusBase)}</Response>`;
+
+  // Every assigned staff member is rung with their own, separately
+  // dispatched outbound call (see dispatchRingAttempts) rather than being
+  // nested as <Client> children of this call's own <Dial>, the way it used
+  // to work. That's what makes it possible for the caller to hear the
+  // agency's own hold content (waitUrl below) instead of Twilio's bare
+  // ringback tone while everyone's phone rings — a <Dial> can't do that,
+  // only a queued call can. A ring-dispatch failure here (e.g. a transient
+  // Twilio API error) must never break the caller's own call, so it's
+  // logged, not thrown — the queue's own timeout (see the wait handler)
+  // falls through to voicemail if genuinely nobody ends up ringing.
+  const queueName = `call-${parentCallSid}`;
+  await dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber: inboundCallerNumber, base }).catch((error) => {
+    logger.warn("twilio.ring_dispatch_failed", { agencyId, parentCallSid, reason: error.message });
+  });
+  const waitUrl = `${base}/api/communications/webhooks/twilio/wait/${agencyId}?deadline=${Date.now() + QUEUE_WAIT_TIMEOUT_MS}`;
+  return `<Response>${greetingTwiML}<Enqueue waitUrl="${escapeXml(waitUrl)}" action="${escapeXml(statusBase)}">${escapeXml(queueName)}</Enqueue></Response>`;
+}
+
+// Matches the old <Dial timeout="25"> — how long a caller waits in queue
+// before the wait handler leaves it and falls through to voicemail.
+const QUEUE_WAIT_TIMEOUT_MS = 25_000;
+
+// Rings every assigned staff member's browser directly via the REST API
+// (rather than TwiML <Dial><Client>), each pointed at dequeueTwiML so
+// whoever answers first is bridged to the caller waiting in queueName. A
+// CallRingDispatch row is written per attempt so ring-status/queue-result
+// callbacks can cancel whichever ones are still ringing once one connects
+// (Twilio's Queue has no ring-group concept of its own — ringing everyone
+// and stopping the rest on answer is exactly what a single <Dial> used to
+// do for free), and so the answering browser can look up who's calling
+// (see twilioCallController.js's incoming-context lookup) since this call
+// was never nested inside the caller's own <Dial> the way <Parameter>
+// values require.
+async function dispatchRingAttempts({ agencyId, config, identities, parentCallSid, callerNumber, base }) {
+  const client = twilioClient(config.settings);
+  const queueName = `call-${parentCallSid}`;
+  const dequeueUrl = `${base}/api/communications/webhooks/twilio/dequeue/${agencyId}?queueName=${encodeURIComponent(queueName)}`;
+  const ringStatusUrl = `${base}/api/communications/webhooks/twilio/ring-status/${agencyId}`;
+  await Promise.all(identities.map(async (identity) => {
+    const call = await client.calls.create({
+      to: `client:${identity}`,
+      from: config.voiceNumber,
+      url: dequeueUrl,
+      statusCallback: ringStatusUrl,
+      statusCallbackEvent: ["answered", "completed"],
+    });
+    await prisma.callRingDispatch.create({
+      data: { agencyId, parentCallSid, dispatchedCallSid: call.sid, identity, callerNumber: callerNumber || null },
+    });
+  }));
+}
+
+// The Voice URL for each dispatched ring attempt above — once a staff
+// member answers, this is what pulls them into the caller's queue. If the
+// queue's already empty by the time they answer (someone else got there
+// first, or the caller hung up), <Dial><Queue> simply has nothing to
+// bridge to and the call ends on its own; no separate handling needed.
+export function dequeueTwiML(queueName) {
+  return `<Response><Dial><Queue>${escapeXml(queueName)}</Queue></Dial></Response>`;
+}
+
+// waitUrl — Twilio fetches this in a loop for as long as the caller stays
+// queued (each response's content plays once, then it's fetched again),
+// which is what lets a deadline embedded in the query string double as the
+// queue's timeout: <Leave/> ends the wait and triggers the <Enqueue
+// action> callback with QueueResult=leave, which the status webhook (see
+// twilioWebhookController.js) turns into the voicemail offer. A <Play
+// loop="0"> would loop forever within one response and never let Twilio
+// re-fetch this to check the deadline at all, so tune playback is
+// deliberately left at Twilio's default of playing once through per fetch.
+export async function inboundWaitTwiML(agencyId, query, req) {
+  const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
+  const deadline = Number(query?.deadline);
+  if (Number.isFinite(deadline) && Date.now() > deadline) return "<Response><Leave/></Response>";
+  const settings = config?.settings;
+  if (settings?.customTuneStorageKey) {
+    const base = twilioPublicBase(req);
+    const tuneUrl = `${base}/api/communications/webhooks/twilio/tune/${agencyId}`;
+    return `<Response><Play>${escapeXml(tuneUrl)}</Play></Response>`;
+  }
+  if (settings?.whileWaitingGreetingText) {
+    return `<Response>${sayTwiML(settings, settings.whileWaitingGreetingText)}<Pause length="3"/></Response>`;
+  }
+  return "<Response><Pause length=\"5\"/></Response>";
+}
+
+// The <Say> a caller hears while their call connects — omitted entirely
+// when the agency hasn't set a greeting, rather than forcing a default
+// script on every workspace.
+function sayTwiML(settings, text) {
+  const body = text ?? settings?.voiceGreetingText;
+  if (!body) return "";
+  const voice = escapeXml(settings?.ttsVoice || DEFAULT_TTS_VOICE);
+  return `<Say voice="${voice}">${escapeXml(body)}</Say>`;
+}
+
+// What plays when nobody answers: the agency's voicemail message (or a
+// sensible default), then a recording — reusing statusBase as the
+// recordingStatusCallback means handleTwilioCallStatus's existing
+// RecordingSid/RecordingUrl handling (see its isRecording branch) picks it
+// up and attaches it to this same call session automatically.
+function voicemailTwiML(settings, statusBase) {
+  const voice = escapeXml(settings?.ttsVoice || DEFAULT_TTS_VOICE);
+  const greeting = sayTwiML(settings, settings?.voicemailGreetingText || DEFAULT_VOICEMAIL_GREETING_TEXT);
+  return `${greeting}<Record recordingStatusCallback="${escapeXml(statusBase)}" recordingStatusCallbackEvent="completed" maxLength="120" timeout="5" playBeep="true" trim="trim-silence"/><Say voice="${voice}">We didn't receive a recording. Goodbye.</Say>`;
+}
+
+// Called from the <Dial action> callback (see twilioWebhookController.js)
+// once an inbound call goes unanswered — offers voicemail instead of just
+// ending the call.
+export async function inboundVoicemailTwiML(agencyId, callback, req) {
+  const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
+  if (!config) return null;
+  const base = twilioPublicBase(req);
+  const parentCallSid = clean(callback.parentCallSid || callback.CallSid, 64);
+  const inboundCallerNumber = clean(callback.callerNumber, 80);
+  const inboundBusinessNumber = clean(callback.businessNumber, 80);
+  const statusBase = `${base}/api/communications/webhooks/twilio/status/${agencyId}?parentCallSid=${encodeURIComponent(parentCallSid)}&callerNumber=${encodeURIComponent(inboundCallerNumber)}&businessNumber=${encodeURIComponent(inboundBusinessNumber)}`;
+  return `<Response>${voicemailTwiML(config.settings, statusBase)}</Response>`;
+}
+
+// Each dispatched ring attempt's own statusCallback (see
+// dispatchRingAttempts) — records whether that specific staff member
+// actually answered their phone, distinct from whether they went on to
+// successfully connect to the caller (that's decided by the queue itself
+// and only known once the caller's own <Enqueue action> callback reports
+// QueueResult=bridged). Answering but finding the queue already empty
+// (someone else got there first) still marks this row "answered": it
+// genuinely was, the call just didn't end up bridged here.
+export async function recordRingDispatchStatus(agencyId, body) {
+  const dispatchedCallSid = clean(body?.CallSid, 64);
+  if (!dispatchedCallSid) return;
+  const status = String(body?.CallStatus || "").toLowerCase();
+  const nextStatus = ["in-progress", "answered"].includes(status)
+    ? "answered"
+    : ["completed", "busy", "no-answer", "canceled", "failed"].includes(status)
+      ? "no-answer"
+      : null;
+  if (!nextStatus) return;
+  await prisma.callRingDispatch.updateMany({
+    where: { agencyId, dispatchedCallSid, status: "ringing" },
+    data: { status: nextStatus },
+  });
+}
+
+// Stops ringing everyone else the instant the caller leaves the queue for
+// any reason (bridged to someone, hung up, or timed out to voicemail) —
+// Twilio's Queue has no ring-group concept of doing this on its own the
+// way a single <Dial> with multiple <Client> children used to.
+export async function cancelSiblingRingDispatches(agencyId, parentCallSid) {
+  if (!parentCallSid) return;
+  const stillRinging = await prisma.callRingDispatch.findMany({
+    where: { agencyId, parentCallSid, status: "ringing" },
+  });
+  if (!stillRinging.length) return;
+  const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
+  await prisma.callRingDispatch.updateMany({
+    where: { id: { in: stillRinging.map((row) => row.id) } },
+    data: { status: "canceled" },
+  });
+  if (!config) return;
+  const client = twilioClient(config.settings);
+  await Promise.allSettled(stillRinging.map((row) => client.calls(row.dispatchedCallSid).update({ status: "canceled" })));
 }
 
 // Outbound call from a softphone client (the TwiML Application's Voice URL).
