@@ -9,11 +9,79 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useAuth } from "../../auth/AuthContext";
 import api from "../../services/api";
 
 const emptyCalendarStats = { active: false, scope: null, synced: 0, pending: 0, failed: 0, lastSyncedAt: null };
+
+const ACCENT_OPTIONS = [
+  { value: "#002FA7", label: "Brand blue" },
+  { value: "#0f172a", label: "Slate" },
+  { value: "#047857", label: "Emerald" },
+  { value: "#9f1239", label: "Burgundy" },
+];
+
+const emptySignatureFields = { name: "", title: "", company: "", phone: "", email: "", tagline: "", accent: ACCENT_OPTIONS[0].value };
+
+function escapeSignatureHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// Structured fields round-trip through a leading HTML comment ahead of the
+// visible signature markup — mail clients render comments as nothing, so it
+// never shows up in a sent email, but it's what lets someone reopen Settings
+// later and edit the same name/title/phone fields instead of starting over.
+function encodeSignatureMeta(fields) {
+  return `<!--casedesk-signature-fields:${encodeURIComponent(JSON.stringify(fields))}-->`;
+}
+function decodeSignatureMeta(html) {
+  const match = /^<!--casedesk-signature-fields:([^>]*)-->/.exec(String(html || "").trim());
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(decodeURIComponent(match[1]));
+    return parsed && typeof parsed === "object" ? { ...emptySignatureFields, ...parsed } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Real @font-face / Google Fonts get stripped by most mail clients, so a
+// "handwritten" look here leans on script fonts that ship with Windows and
+// macOS themselves (Segoe Script, Bradley Hand) — these actually render in
+// Outlook/Apple Mail without any font ever being downloaded, falling back to
+// the browser's generic cursive elsewhere.
+const SCRIPT_FONT_STACK = "'Segoe Script','Bradley Hand','Brush Script MT',cursive";
+
+function buildSignatureHtml({ name, title, company, phone, email, tagline, accent } = emptySignatureFields) {
+  const safeName = escapeSignatureHtml(name).trim();
+  if (!safeName && !title?.trim() && !phone?.trim() && !email?.trim() && !tagline?.trim()) return "";
+  const color = ACCENT_OPTIONS.some((option) => option.value === accent) ? accent : ACCENT_OPTIONS[0].value;
+  const titleLine = [escapeSignatureHtml(title).trim(), escapeSignatureHtml(company).trim()].filter(Boolean).join(" &middot; ");
+  const contactParts = [];
+  if (phone?.trim()) {
+    const telHref = phone.replace(/[^\d+]/g, "");
+    contactParts.push(`<a href="tel:${escapeSignatureHtml(telHref)}" style="color:#64748b;text-decoration:none;">${escapeSignatureHtml(phone.trim())}</a>`);
+  }
+  if (email?.trim()) {
+    contactParts.push(`<a href="mailto:${escapeSignatureHtml(email.trim())}" style="color:#64748b;text-decoration:none;">${escapeSignatureHtml(email.trim())}</a>`);
+  }
+  return [
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;">',
+    `<tr><td style="padding:0 0 2px 0;"><span style="font-family:${SCRIPT_FONT_STACK};font-size:27px;line-height:1.25;color:${color};">${safeName || "&nbsp;"}</span></td></tr>`,
+    titleLine ? `<tr><td style="padding:0 0 6px 0;font-size:13px;color:#475569;">${titleLine}</td></tr>` : "",
+    `<tr><td style="padding:0 0 8px 0;"><span style="display:inline-block;width:56px;height:2px;background-color:${color};font-size:0;line-height:0;">&nbsp;</span></td></tr>`,
+    contactParts.length ? `<tr><td style="font-size:12px;color:#64748b;">${contactParts.join(" &nbsp;&middot;&nbsp; ")}</td></tr>` : "",
+    tagline?.trim() ? `<tr><td style="padding-top:4px;font-size:11px;color:#94a3b8;">${escapeSignatureHtml(tagline.trim())}</td></tr>` : "",
+    "</table>",
+  ].filter(Boolean).join("");
+}
 
 const empty = {
   configured: false,
@@ -43,6 +111,7 @@ function Notice({ error = false, children }) {
 }
 
 export default function PersonalMailboxSettingsPanel() {
+  const { appUser, agency } = useAuth();
   const [searchParams] = useSearchParams();
   const [mailbox, setMailbox] = useState(empty);
   const [loading, setLoading] = useState(true);
@@ -53,6 +122,30 @@ export default function PersonalMailboxSettingsPanel() {
   const [calendarStats, setCalendarStats] = useState(emptyCalendarStats);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [sig, setSig] = useState(emptySignatureFields);
+  const sigInitializedRef = useRef(false);
+
+  // Seeded once, the first time a connected mailbox's saved signature (or
+  // lack of one) is known — reusing whatever fields were saved before, or
+  // falling back to the account's own name/title/phone so the builder
+  // never opens completely blank. Never re-seeds after that, so it can't
+  // clobber changes the person is mid-way through typing.
+  useEffect(() => {
+    if (sigInitializedRef.current || !mailbox.connected) return;
+    sigInitializedRef.current = true;
+    const decoded = decodeSignatureMeta(mailbox.signatureHtml);
+    setSig(decoded || {
+      ...emptySignatureFields,
+      name: appUser?.fullName || mailbox.displayName || "",
+      title: appUser?.jobTitle || "",
+      company: agency?.name || "",
+      phone: appUser?.phone || "",
+      email: mailbox.emailAddress || "",
+    });
+  }, [mailbox.connected, mailbox.signatureHtml, mailbox.displayName, mailbox.emailAddress, appUser, agency]);
+
+  const visibleSignatureHtml = useMemo(() => buildSignatureHtml(sig), [sig]);
+  const hasLegacySignature = Boolean(mailbox.signatureHtml) && !decodeSignatureMeta(mailbox.signatureHtml);
 
   const load = async (fresh = false) => {
     try {
@@ -128,14 +221,30 @@ export default function PersonalMailboxSettingsPanel() {
     try {
       setSaving(true);
       setError("");
+      const signatureHtml = visibleSignatureHtml ? `${encodeSignatureMeta(sig)}\n${visibleSignatureHtml}` : "";
       const response = await api.patch("/mailboxes/me", {
         syncEnabled: mailbox.syncEnabled,
-        signatureHtml: mailbox.signatureHtml,
+        signatureHtml,
       });
       setMailbox((current) => ({ ...current, ...response.data.data }));
       setNotice("Mailbox preferences saved.");
     } catch (reason) {
       setError(reason.response?.data?.message || "Mailbox preferences could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeSignature = async () => {
+    setSig(emptySignatureFields);
+    try {
+      setSaving(true);
+      setError("");
+      const response = await api.patch("/mailboxes/me", { syncEnabled: mailbox.syncEnabled, signatureHtml: "" });
+      setMailbox((current) => ({ ...current, ...response.data.data }));
+      setNotice("Signature removed.");
+    } catch (reason) {
+      setError(reason.response?.data?.message || "The signature could not be removed.");
     } finally {
       setSaving(false);
     }
@@ -282,10 +391,64 @@ export default function PersonalMailboxSettingsPanel() {
               <span><span className="block text-sm font-semibold text-slate-900">Synchronize client replies</span><span className="mt-1 block text-xs leading-5 text-slate-500">Only email matching CRM clients or existing CaseDesk threads is imported. Unrelated personal mail stays private.</span></span>
               <input type="checkbox" checked={mailbox.syncEnabled} onChange={(event) => setMailbox((current) => ({ ...current, syncEnabled: event.target.checked }))} className="mt-1 h-5 w-5 accent-sky-600" />
             </label>
-            <label className="mt-5 block text-sm font-semibold text-slate-900">
-              Personal signature
-              <textarea rows={5} value={mailbox.signatureHtml || ""} onChange={(event) => setMailbox((current) => ({ ...current, signatureHtml: event.target.value }))} className="mt-2 w-full resize-y rounded-2xl border border-white/90 bg-white/70 px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="Your name, title, phone number, and office details" />
-            </label>
+            <div className="mt-6">
+              <p className="text-sm font-semibold text-slate-900">Personal email signature</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Appears automatically at the bottom of every email you send through CaseDesk from this mailbox.</p>
+              {hasLegacySignature ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">You have a plain-text signature saved from before. Fill in the fields below and save to replace it with a styled one.</p>
+              ) : null}
+
+              <div className="mt-4 grid gap-5 lg:grid-cols-2">
+                <div className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block text-xs font-semibold text-slate-600">Full name
+                      <input value={sig.name} onChange={(event) => setSig((current) => ({ ...current, name: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="Gagandeep Singh" />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600">Title
+                      <input value={sig.title} onChange={(event) => setSig((current) => ({ ...current, title: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="Senior Immigration Consultant" />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600">Company
+                      <input value={sig.company} onChange={(event) => setSig((current) => ({ ...current, company: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="Agency name" />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600">Phone
+                      <input value={sig.phone} onChange={(event) => setSig((current) => ({ ...current, phone: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="+1 (555) 123-4567" />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600">Email
+                      <input value={sig.email} onChange={(event) => setSig((current) => ({ ...current, email: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder={mailbox.emailAddress || "you@example.com"} />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600">Tagline (optional)
+                      <input value={sig.tagline} onChange={(event) => setSig((current) => ({ ...current, tagline: event.target.value }))} className="mt-1.5 h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100/70" placeholder="RCIC #R123456" />
+                    </label>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600">Accent color</p>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      {ACCENT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setSig((current) => ({ ...current, accent: option.value }))}
+                          aria-label={option.label}
+                          aria-pressed={sig.accent === option.value}
+                          title={option.label}
+                          className={`h-7 w-7 rounded-full border-2 transition ${sig.accent === option.value ? "scale-110 border-slate-900" : "border-white/60"}`}
+                          style={{ backgroundColor: option.value }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  {mailbox.signatureHtml ? (
+                    <button type="button" disabled={saving} onClick={removeSignature} className="text-xs font-semibold text-rose-600 transition hover:underline disabled:opacity-50">Remove signature</button>
+                  ) : null}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-600">Preview</p>
+                  <div className="mt-1.5 min-h-32 rounded-2xl border border-white/90 bg-white px-5 py-4 shadow-sm">
+                    {visibleSignatureHtml ? <div dangerouslySetInnerHTML={{ __html: visibleSignatureHtml }} /> : <p className="text-sm text-slate-400">Fill in your name to see a preview.</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
             <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
               <button type="button" disabled={disconnecting} onClick={disconnect} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-100 bg-rose-50/80 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50">
                 {disconnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Disconnect

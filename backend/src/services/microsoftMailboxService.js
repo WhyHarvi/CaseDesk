@@ -387,13 +387,26 @@ const escapeHtml = (value) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
+// The signature builder in Personal Settings saves genuine markup (a
+// styled table, a script-font name, an accent rule) — escaping that would
+// dump raw tags into the email as visible text. A signature saved before
+// that builder existed is still plain text with real newlines, so only
+// that legacy shape gets escape-and-<br>'d; anything already containing a
+// real tag is trusted as-is, same as a composed email's own bodyHtml
+// already is elsewhere in this app.
+function renderSignatureHtml(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return /<[a-z][\s\S]*>/i.test(raw) ? raw : escapeHtml(raw).replace(/\n/g, "<br>");
+}
+
 export async function sendMicrosoftMailboxEmail({ userId, to, cc, bcc, replyTo, subject, text, html, headers, attachments = [] }) {
   const { connection, request } = await microsoftGraphClient(userId);
   const totalBytes = attachments.reduce((sum, item) => sum + Number(item.content?.length || 0), 0);
   if (totalBytes > 2.5 * 1024 * 1024) {
     throw createHttpError(413, "Microsoft mailbox attachments are currently limited to 2.5 MB per email.");
   }
-  const signature = escapeHtml(connection.signatureHtml).trim().replace(/\n/g, "<br>");
+  const signature = renderSignatureHtml(connection.signatureHtml);
   const contentType = html || signature ? "HTML" : "Text";
   const content = html
     ? `${html}${signature ? `<br><br>${signature}` : ""}`
