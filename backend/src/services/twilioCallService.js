@@ -432,6 +432,13 @@ export async function inboundTwiML(agencyId, lineId, req) {
 // before the wait handler leaves it and falls through to voicemail.
 const QUEUE_WAIT_TIMEOUT_MS = 25_000;
 
+// How long the tune plays alone before the while-waiting line joins in — so
+// a caller isn't told "please hold" the instant they're queued, on top of
+// the greeting they just heard. Comfortably under QUEUE_WAIT_TIMEOUT_MS so
+// there's still time left for the announcement to actually play before the
+// deadline cuts the wait short.
+const WAIT_ANNOUNCEMENT_DELAY_MS = 12_000;
+
 // Rings every assigned staff member's browser directly via the REST API
 // (rather than TwiML <Dial><Client>), each pointed at dequeueTwiML so
 // whoever answers first is bridged to the caller waiting in queueName. A
@@ -493,10 +500,15 @@ export async function inboundWaitTwiML(agencyId, query, req) {
   if (settings?.customTuneStorageKey) {
     const base = twilioPublicBase(req);
     const tuneUrl = `${base}/api/communications/webhooks/twilio/tune/${agencyId}`;
-    // The tune is background music, not a substitute for telling the caller
-    // what's happening — it's announced first, then keeps playing under/
-    // after it (TwiML has no true audio mixing, so this is sequential:
-    // spoken line, then the tune continues).
+    // The tune plays alone first — the while-waiting line only joins in once
+    // WAIT_ANNOUNCEMENT_DELAY_MS has actually elapsed since the caller was
+    // queued, derived from the same embedded deadline used for the timeout
+    // above. TwiML has no true audio mixing, so once it does join in, it's
+    // sequential each cycle: spoken line, then the tune continues.
+    const elapsedMs = Number.isFinite(deadline) ? QUEUE_WAIT_TIMEOUT_MS - (deadline - Date.now()) : Infinity;
+    if (elapsedMs < WAIT_ANNOUNCEMENT_DELAY_MS) {
+      return `<Response><Play>${escapeXml(tuneUrl)}</Play></Response>`;
+    }
     const announcement = sayTwiML(settings, settings?.whileWaitingGreetingText || DEFAULT_WHILE_WAITING_GREETING_TEXT);
     return `<Response>${announcement}<Play>${escapeXml(tuneUrl)}</Play></Response>`;
   }

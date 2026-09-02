@@ -648,8 +648,8 @@ test("an agency can upload its own custom tune to a dedicated Supabase bucket (n
   const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
   // Superseded by the queue-hold-experience test below: once inboundWaitTwiML
   // actually shipped, the tune stopped being a stored-but-unused placeholder.
-  assert.match(panel, /Callers hear the "While waiting to/);
-  assert.match(panel, /connect" message above, then this tune, on a loop while staff are being rung\./);
+  assert.match(panel, /20 seconds or less\. It plays first; the "While waiting/);
+  assert.match(panel, /to connect" message above joins in partway through, then both repeat on a loop while staff are being/);
   assert.match(panel, /const uploadTune = async \(event\) => \{/);
   assert.match(panel, /payload\.append\("file", tuneFile\);/);
   assert.match(panel, /const removeTune = async \(\) => \{/);
@@ -724,10 +724,16 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   assert.match(service, /if \(Number\.isFinite\(deadline\) && Date\.now\(\) > deadline\) return "<Response><Leave\/><\/Response>";/);
   assert.match(service, /if \(settings\?\.customTuneStorageKey\) \{/);
   assert.doesNotMatch(service, /<Play loop="0">/);
-  // The tune is background music, not a substitute for telling the caller
-  // what's happening — TwiML can't truly mix audio, so it's sequential: the
-  // while-waiting line is said first (falling back to a sensible default
-  // rather than silence), then the tune plays.
+  // The tune plays alone at first — being told "please hold" the instant
+  // the caller is queued, on top of the greeting they just heard, reads as
+  // an interruption rather than reassurance. Only once
+  // WAIT_ANNOUNCEMENT_DELAY_MS has actually elapsed does the while-waiting
+  // line join in (falling back to a sensible default rather than silence);
+  // TwiML can't truly mix audio, so once it does, it's sequential: the line
+  // is said, then the tune continues.
+  assert.match(service, /const WAIT_ANNOUNCEMENT_DELAY_MS = 12_000;/);
+  assert.match(service, /const elapsedMs = Number\.isFinite\(deadline\) \? QUEUE_WAIT_TIMEOUT_MS - \(deadline - Date\.now\(\)\) : Infinity;/);
+  assert.match(service, /if \(elapsedMs < WAIT_ANNOUNCEMENT_DELAY_MS\) \{\s*\n\s*return `<Response><Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
   assert.match(service, /const announcement = sayTwiML\(settings, settings\?\.whileWaitingGreetingText \|\| DEFAULT_WHILE_WAITING_GREETING_TEXT\);/);
   assert.match(service, /return `<Response>\$\{announcement\}<Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
   const constants = await source("../src/constants/twilioVoices.js");
@@ -800,12 +806,13 @@ test("the settings panel's third greeting (\"while waiting to connect\") has the
   assert.match(panel, /whileWaitingGreetingText: whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText,/);
   assert.match(panel, /While waiting to connect/);
   assert.match(panel, /onClick=\{\(\) => previewGreeting\("waiting", whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText\)\}/);
-  assert.match(panel, /Repeats on a loop while staff are being rung\. If a custom tune is uploaded below, this is spoken/);
+  assert.match(panel, /Repeats on a loop while staff are being rung\. If a custom tune is uploaded below, the tune plays/);
+  assert.match(panel, /first — this joins in partway through, rather than interrupting it immediately\./);
   // No longer a placeholder — it's genuinely wired into the wait handler
-  // now, spoken first and then followed by the tune rather than replaced by
-  // it (inboundWaitTwiML can't truly mix the two, so it plays them in
-  // sequence).
-  assert.match(panel, /then this tune, on a loop while staff are being rung\./);
-  assert.match(panel, /20 seconds or less\. Callers hear the "While waiting to/);
+  // now: the tune plays first, and the spoken line only joins in partway
+  // through rather than interrupting it immediately (inboundWaitTwiML can't
+  // truly mix the two, so once it does join in, it plays them in sequence).
+  assert.match(panel, /20 seconds or less\. It plays first; the "While waiting/);
+  assert.match(panel, /to connect" message above joins in partway through, then both repeat on a loop while staff are being/);
   assert.match(panel, /setTuneNotice\("Tune uploaded\. Callers will hear it while staff are being rung\."\);/);
 });
