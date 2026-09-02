@@ -1,11 +1,12 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { parseBuffer } from "music-metadata";
 import prisma from "../services/prisma/client.js";
 import { sendAgencyTwilioSms, verifyAgencyTwilioCredentials } from "../services/agencyTwilioService.js";
 import { decryptSecret, encryptSecret, secretEncryptionReady } from "../services/secretEncryption.js";
 import { createHttpError } from "../utils/http.js";
 import { recordActivity } from "../utils/prismaCrud.js";
-import { DEFAULT_TTS_VOICE, TTS_VOICES, TTS_VOICE_IDS } from "../constants/twilioVoices.js";
+import { DEFAULT_TTS_VOICE, MAX_CUSTOM_TUNE_SECONDS, TTS_VOICES, TTS_VOICE_IDS } from "../constants/twilioVoices.js";
 import { VOICE_TUNE_BUCKET, downloadStorageFile, ensureBucket, removeStorageFile, uploadStorageFile } from "../services/supabaseStorage.js";
 
 const AUDIO_EXTENSIONS = {
@@ -19,6 +20,15 @@ const AUDIO_EXTENSIONS = {
   "audio/mp4": ".m4a",
   "audio/x-m4a": ".m4a",
 };
+
+async function probeAudioDurationSeconds(buffer, mimeType) {
+  try {
+    const metadata = await parseBuffer(buffer, { mimeType });
+    return Number.isFinite(metadata.format?.duration) ? metadata.format.duration : null;
+  } catch {
+    return null;
+  }
+}
 
 const clean = (value, max = 300) => String(value ?? "").trim().slice(0, max);
 const normalizePhone = (value) => {
@@ -64,10 +74,10 @@ function publicSettings(settings, canManage) {
     whileWaitingGreetingText: settings?.whileWaitingGreetingText || "",
     ttsVoice: settings?.ttsVoice || DEFAULT_TTS_VOICE,
     availableTtsVoices: TTS_VOICES,
-    // Custom tune — uploaded and stored, but not yet used on live calls
-    // (see the settings UI's note). hasCustomTune is what the frontend
-    // gates the player/remove controls on; the storage key itself never
-    // needs to leave the server.
+    // Custom tune — played while a caller waits in queue (see
+    // twilioCallService.js's inboundWaitTwiML). hasCustomTune is what the
+    // frontend gates the player/remove controls on; the storage key itself
+    // never needs to leave the server.
     hasCustomTune: Boolean(settings?.customTuneStorageKey),
     customTuneFilename: settings?.customTuneFilename || "",
     customTuneUploadedAt: settings?.customTuneUploadedAt || null,
@@ -251,15 +261,25 @@ export async function testTwilioSms(req, res) {
   }
 }
 
-// The agency's own uploaded tune — stored and available to preview here,
-// but not yet wired into what a caller actually hears (see the settings
-// panel's own note on this). Mirrors agencyProfileController.js's avatar
-// upload/serve/delete pattern.
+// The agency's own uploaded tune — played as background hold music while a
+// caller waits in queue (see twilioCallService.js's inboundWaitTwiML).
+// Mirrors agencyProfileController.js's avatar upload/serve/delete pattern.
 export async function uploadTwilioTune(req, res) {
   requireAdmin(req);
   if (!req.file) throw createHttpError(400, "Choose an audio file to upload.");
   const extension = AUDIO_EXTENSIONS[req.file.mimetype];
   if (!extension) throw createHttpError(400, "Unsupported file type. Upload an MP3, WAV, OGG, AAC, or M4A audio file.");
+  // Twilio always plays a <Play> all the way through before re-checking
+  // whether a queued caller's wait has timed out, with no way to cut it
+  // short — so an overly long tune would silently delay the fallback to
+  // voicemail by its entire length. A duration that can't be determined is
+  // let through rather than rejected: a file odd enough to defeat parsing
+  // here is just as likely to fail to play cleanly on Twilio's side too, so
+  // blocking it gains little.
+  const duration = await probeAudioDurationSeconds(req.file.buffer, req.file.mimetype);
+  if (duration !== null && duration > MAX_CUSTOM_TUNE_SECONDS) {
+    throw createHttpError(400, `Keep the tune under ${MAX_CUSTOM_TUNE_SECONDS} seconds — it loops while callers wait, and a longer track delays the fallback to voicemail when nobody answers.`);
+  }
   const existing = await prisma.agencyTwilioSettings.findUnique({ where: { agencyId: req.user.agencyId } });
   const storageKey = path.posix.join(req.user.agencyId, "voice-tune", `${randomUUID()}${extension}`);
   // Dedicated bucket, not the shared document/avatar ones — those already

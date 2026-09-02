@@ -526,7 +526,7 @@ test("per-agency call greetings: schema, settings validation/voice allow-list, a
   assert.match(constants, /export const TTS_VOICE_IDS = new Set\(TTS_VOICES\.map\(\(voice\) => voice\.id\)\);/);
 
   const controller = await source("../src/controllers/twilioSettingsController.js");
-  assert.match(controller, /import \{ DEFAULT_TTS_VOICE, TTS_VOICES, TTS_VOICE_IDS \} from "\.\.\/constants\/twilioVoices\.js";/);
+  assert.match(controller, /import \{ DEFAULT_TTS_VOICE, MAX_CUSTOM_TUNE_SECONDS, TTS_VOICES, TTS_VOICE_IDS \} from "\.\.\/constants\/twilioVoices\.js";/);
   assert.match(controller, /availableTtsVoices: TTS_VOICES,/);
   // Capped at 300 chars to match twilioCallService.js's escapeXml, which
   // truncates there before rendering into <Say> — allowing a longer saved
@@ -627,6 +627,18 @@ test("an agency can upload its own custom tune to a dedicated Supabase bucket (n
   assert.match(controller, /export async function getTwilioTune\(req, res\) \{/);
   assert.match(controller, /export async function deleteTwilioTune\(req, res\) \{/);
   assert.match(controller, /hasCustomTune: Boolean\(settings\?\.customTuneStorageKey\),/);
+  // Twilio always plays a <Play> to completion before re-checking a queued
+  // caller's deadline, with no way to cut it short — an overly long tune
+  // would silently delay the fallback to voicemail by its entire length, so
+  // duration is probed (without ffmpeg — a pure-JS parser) and capped at
+  // upload time rather than left to Twilio's playback behavior at call time.
+  assert.match(controller, /import \{ parseBuffer \} from "music-metadata";/);
+  assert.match(controller, /async function probeAudioDurationSeconds\(buffer, mimeType\) \{/);
+  assert.match(controller, /const metadata = await parseBuffer\(buffer, \{ mimeType \}\);/);
+  assert.match(controller, /const duration = await probeAudioDurationSeconds\(req\.file\.buffer, req\.file\.mimetype\);/);
+  assert.match(controller, /if \(duration !== null && duration > MAX_CUSTOM_TUNE_SECONDS\) \{/);
+  const constants = await source("../src/constants/twilioVoices.js");
+  assert.match(constants, /export const MAX_CUSTOM_TUNE_SECONDS = 20;/);
 
   const routes = await source("../src/routes/settingsRoutes.js");
   assert.match(routes, /router\.post\("\/twilio\/tune", receiveAudioTune, asyncHandler\(uploadTwilioTune\)\);/);
@@ -636,7 +648,8 @@ test("an agency can upload its own custom tune to a dedicated Supabase bucket (n
   const panel = await source("../../frontend/src/components/settings/AgencyTwilioSettingsPanel.jsx");
   // Superseded by the queue-hold-experience test below: once inboundWaitTwiML
   // actually shipped, the tune stopped being a stored-but-unused placeholder.
-  assert.match(panel, /Callers hear it on a loop while staff are being rung,/);
+  assert.match(panel, /Callers hear the "While waiting to/);
+  assert.match(panel, /connect" message above, then this tune, on a loop while staff are being rung\./);
   assert.match(panel, /const uploadTune = async \(event\) => \{/);
   assert.match(panel, /payload\.append\("file", tuneFile\);/);
   assert.match(panel, /const removeTune = async \(\) => \{/);
@@ -711,6 +724,14 @@ test("inbound calls ring staff via separate dispatched calls into a Twilio Queue
   assert.match(service, /if \(Number\.isFinite\(deadline\) && Date\.now\(\) > deadline\) return "<Response><Leave\/><\/Response>";/);
   assert.match(service, /if \(settings\?\.customTuneStorageKey\) \{/);
   assert.doesNotMatch(service, /<Play loop="0">/);
+  // The tune is background music, not a substitute for telling the caller
+  // what's happening — TwiML can't truly mix audio, so it's sequential: the
+  // while-waiting line is said first (falling back to a sensible default
+  // rather than silence), then the tune plays.
+  assert.match(service, /const announcement = sayTwiML\(settings, settings\?\.whileWaitingGreetingText \|\| DEFAULT_WHILE_WAITING_GREETING_TEXT\);/);
+  assert.match(service, /return `<Response>\$\{announcement\}<Play>\$\{escapeXml\(tuneUrl\)\}<\/Play><\/Response>`;/);
+  const constants = await source("../src/constants/twilioVoices.js");
+  assert.match(constants, /export const DEFAULT_WHILE_WAITING_GREETING_TEXT =/);
 
   // Answering doesn't by itself mean "connected" — only the caller's own
   // queue-result callback reporting QueueResult=bridged proves a real
@@ -779,9 +800,12 @@ test("the settings panel's third greeting (\"while waiting to connect\") has the
   assert.match(panel, /whileWaitingGreetingText: whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText,/);
   assert.match(panel, /While waiting to connect/);
   assert.match(panel, /onClick=\{\(\) => previewGreeting\("waiting", whileWaitingGreetingInput \|\| form\.whileWaitingGreetingText\)\}/);
-  assert.match(panel, /Repeats on a loop while staff are being rung\. If a custom tune is uploaded below, it plays instead of/);
+  assert.match(panel, /Repeats on a loop while staff are being rung\. If a custom tune is uploaded below, this is spoken/);
   // No longer a placeholder — it's genuinely wired into the wait handler
-  // now (inboundWaitTwiML prefers the tune over the spoken text).
-  assert.match(panel, /in place of the "While waiting to connect" text above\./);
+  // now, spoken first and then followed by the tune rather than replaced by
+  // it (inboundWaitTwiML can't truly mix the two, so it plays them in
+  // sequence).
+  assert.match(panel, /then this tune, on a loop while staff are being rung\./);
+  assert.match(panel, /20 seconds or less\. Callers hear the "While waiting to/);
   assert.match(panel, /setTuneNotice\("Tune uploaded\. Callers will hear it while staff are being rung\."\);/);
 });

@@ -40,6 +40,7 @@
     "libphonenumber-js": "^1.13.8",
     "mailparser": "^3.9.14",
     "multer": "^2.2.0",
+    "music-metadata": "^11.15.0",
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",

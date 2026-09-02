@@ -7,7 +7,7 @@ import { normalizeCommunicationPhone } from "./communicationAddressService.js";
 import { autoMatch, phoneMatches } from "./callHistoryService.js";
 import { adminRecipientIds, notifyUsers } from "./notificationService.js";
 import { autoMarkPhoneAppointmentFromCall } from "./appointmentAttendanceService.js";
-import { DEFAULT_TTS_VOICE, DEFAULT_VOICEMAIL_GREETING_TEXT } from "../constants/twilioVoices.js";
+import { DEFAULT_TTS_VOICE, DEFAULT_VOICEMAIL_GREETING_TEXT, DEFAULT_WHILE_WAITING_GREETING_TEXT } from "../constants/twilioVoices.js";
 
 const clean = (value, max = 500) => String(value ?? "").trim().slice(0, max);
 const number = (value) => {
@@ -479,7 +479,12 @@ export function dequeueTwiML(queueName) {
 // twilioWebhookController.js) turns into the voicemail offer. A <Play
 // loop="0"> would loop forever within one response and never let Twilio
 // re-fetch this to check the deadline at all, so tune playback is
-// deliberately left at Twilio's default of playing once through per fetch.
+// deliberately left at Twilio's default of playing once through per fetch —
+// and, for the same reason, the tune itself is capped to
+// MAX_CUSTOM_TUNE_SECONDS at upload time (see twilioSettingsController.js):
+// a long <Play> still blocks the deadline check for its entire length, so an
+// uncapped multi-minute track could leave a caller waiting well past the
+// queue timeout with no way to fall through to voicemail until it finishes.
 export async function inboundWaitTwiML(agencyId, query, req) {
   const config = await resolveAgencyTwilioVoiceConfig(agencyId, { optional: true });
   const deadline = Number(query?.deadline);
@@ -488,7 +493,12 @@ export async function inboundWaitTwiML(agencyId, query, req) {
   if (settings?.customTuneStorageKey) {
     const base = twilioPublicBase(req);
     const tuneUrl = `${base}/api/communications/webhooks/twilio/tune/${agencyId}`;
-    return `<Response><Play>${escapeXml(tuneUrl)}</Play></Response>`;
+    // The tune is background music, not a substitute for telling the caller
+    // what's happening — it's announced first, then keeps playing under/
+    // after it (TwiML has no true audio mixing, so this is sequential:
+    // spoken line, then the tune continues).
+    const announcement = sayTwiML(settings, settings?.whileWaitingGreetingText || DEFAULT_WHILE_WAITING_GREETING_TEXT);
+    return `<Response>${announcement}<Play>${escapeXml(tuneUrl)}</Play></Response>`;
   }
   if (settings?.whileWaitingGreetingText) {
     return `<Response>${sayTwiML(settings, settings.whileWaitingGreetingText)}<Pause length="3"/></Response>`;

@@ -25,3 +25,13 @@ export const DEFAULT_VOICE_GREETING_TEXT =
 
 export const DEFAULT_VOICEMAIL_GREETING_TEXT =
   "We're unable to take your call right now. Please leave your name, number, and a brief message after the tone, and we'll get back to you.";
+
+export const DEFAULT_WHILE_WAITING_GREETING_TEXT =
+  "Our team members are busy helping other callers right now. Thanks for holding — we'll be with you shortly.";
+
+// A custom tune loops for as long as a caller waits in queue, and Twilio has
+// no way to cut a <Play> short — it always plays the whole file before
+// re-checking whether the queue's timeout has passed. A long track would
+// silently delay the fallback to voicemail for its entire length, so uploads
+// are capped to a duration comfortably under the queue timeout.
+export const MAX_CUSTOM_TUNE_SECONDS = 20;

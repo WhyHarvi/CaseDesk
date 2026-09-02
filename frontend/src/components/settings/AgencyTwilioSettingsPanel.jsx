@@ -1216,8 +1216,8 @@ export default function AgencyTwilioSettingsPanel() {
                   placeholder="Thanks for your patience — a member of our team will be with you shortly."
                 />
                 <p className="mt-1.5 text-xs text-slate-400">
-                  Repeats on a loop while staff are being rung. If a custom tune is uploaded below, it plays instead of
-                  this text.
+                  Repeats on a loop while staff are being rung. If a custom tune is uploaded below, this is spoken
+                  first, then the tune plays.
                 </p>
               </div>
               <p className="text-xs text-slate-400">
@@ -1256,8 +1256,10 @@ export default function AgencyTwilioSettingsPanel() {
                 <p className="text-sm font-semibold text-slate-900">Custom tune</p>
               </div>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Upload your own audio — a jingle or hold music. Callers hear it on a loop while staff are being rung,
-                in place of the "While waiting to connect" text above.
+                Upload your own audio — a jingle or hold music, 20 seconds or less. Callers hear the "While waiting to
+                connect" message above, then this tune, on a loop while staff are being rung. Keeping it short matters:
+                Twilio can't cut a track off mid-play, so a longer one delays the fallback to voicemail when nobody
+                answers.
               </p>
               {form.hasCustomTune ? (
                 <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
