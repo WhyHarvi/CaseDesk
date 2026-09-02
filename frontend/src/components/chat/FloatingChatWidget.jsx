@@ -42,6 +42,16 @@ const initials = (name) =>
     .slice(0, 2)
     .toUpperCase();
 
+// A shared-inbox conversation can be replied to by anyone on the case team,
+// so "You: " is only accurate when the current user actually sent the last
+// outbound message — otherwise the preview must name whoever really did.
+function previewSenderPrefix(latestMessage, myUserId) {
+  if (!latestMessage || latestMessage.direction !== "Outbound") return "";
+  if (latestMessage.senderUser?.id === myUserId) return "You: ";
+  const senderName = latestMessage.senderUser?.fullName;
+  return senderName ? `${senderName.split(" ")[0]}: ` : "";
+}
+
 function QuickAvatar({ item, avatarUrl, className = "h-9 w-9 text-[11px]" }) {
   if (item?.kind === "ai") {
     return <NovaAssistantAvatar className={className} />;
@@ -223,11 +233,11 @@ export default function FloatingChatWidget() {
         isGroup: false,
         lastMessageAt: conversation.lastMessageAt,
         unreadCount: conversation.unreadCount || 0,
-        preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
+        preview: latest ? previewSenderPrefix(latest, myUserId) + (latest.bodyText || "Sent an attachment") : "",
       };
     });
     return [novaItem, supportItem, ...[...internal, ...client].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, novaItem, supportItem]);
+  }, [internalThreads, clientConversations, novaItem, supportItem, myUserId]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();

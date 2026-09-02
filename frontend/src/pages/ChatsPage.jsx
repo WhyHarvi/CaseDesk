@@ -93,6 +93,22 @@ function formatThreadTime(value) {
   return new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric" }).format(date);
 }
 
+// A shared-inbox conversation can be replied to by anyone on the case team,
+// so "You: " is only accurate when the current user actually sent the last
+// outbound message — otherwise the preview must name whoever really did.
+function previewSenderPrefix(latestMessage, myUserId) {
+  if (!latestMessage || latestMessage.direction !== "Outbound") return "";
+  if (latestMessage.senderUser?.id === myUserId) return "You: ";
+  const senderName = latestMessage.senderUser?.fullName;
+  return senderName ? `${senderName.split(" ")[0]}: ` : "";
+}
+
+const OWNER_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "mine", label: "Mine" },
+  { key: "unassigned", label: "Unassigned" },
+];
+
 // One avatar for every row/header — color identity distinguishes what kind
 // of conversation this is at a glance: client chat stays the established
 // WhatsApp-green from the client-profile drawer, internal DMs are sky/
@@ -181,8 +197,13 @@ function ChatRow({ item, active, avatarUrl, onClick }) {
           <span className="min-w-0 flex-1" />
           <span className="shrink-0 text-[10px] text-slate-400">{formatThreadTime(item.lastMessageAt)}</span>
         </span>
+        {["client", "email", "sms"].includes(item.kind) ? (
+          <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-400">
+            {item.assignedToName ? `Assigned to ${item.assignedToName}` : "Unassigned"}
+          </span>
+        ) : null}
         <span className="mt-1 flex items-center gap-1.5">
-          {item.kind !== "email" ? <KindBadge kind={item.kind} /> : null}
+          {!["email", "client"].includes(item.kind) ? <KindBadge kind={item.kind} /> : null}
           <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{item.preview || "Say hello"}</span>
           {item.unreadCount ? (
             <span className="inline-flex min-w-5 shrink-0 justify-center rounded-full bg-sky-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
@@ -450,6 +471,13 @@ export default function ChatsPage() {
   // directly on a client conversation, in which case that filter is active
   // so the opened item is actually visible (and highlighted) in the list.
   const [categoryFilter, setCategoryFilter] = useState(initialKind === "client" ? "portal" : initialKind === "email" ? "email" : initialKind === "sms" ? "sms" : "teams");
+  // "all" | "mine" | "unassigned" | a specific colleague's user id — only
+  // meaningful for the assignable channels (portal/email/sms), so it's
+  // ignored server-side (see loadLists) once categoryFilter is teams/groups.
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+  const reassignMenuRef = useRef(null);
   const [selectedKind, setSelectedKind] = useState(initialKind);
   const [selectedId, setSelectedId] = useState(initialKind === "ai" && requestedThreadId ? "nova" : requestedThreadId);
   const [activeDetail, setActiveDetail] = useState(null);
@@ -504,6 +532,15 @@ export default function ChatsPage() {
     preview: "Report a problem to CaseDesk",
   }), []);
 
+  // getMyColleagues() deliberately excludes the current user (it backs the
+  // "new chat" picker, and you can't DM yourself) — but reassigning or
+  // filtering by owner both need "me" as a selectable option too.
+  const reassignableColleagues = useMemo(() => {
+    if (!myUserId) return colleagues;
+    const self = { id: myUserId, fullName: appUser?.fullName ? `${appUser.fullName} (you)` : "You" };
+    return [self, ...colleagues.filter((user) => user.id !== myUserId)];
+  }, [colleagues, myUserId, appUser?.fullName]);
+
   useEffect(() => {
     Promise.all([
       api.get("/communications/providers"),
@@ -519,13 +556,22 @@ export default function ChatsPage() {
     }).catch(() => {});
   }, []);
 
+  // "mine"/"unassigned" map straight to the backend's own scope values;
+  // anything else is a specific colleague's id, sent as an explicit
+  // assignedToId filter (scope stays "all" so it isn't also narrowed to me).
+  const ownerQuery = ownerFilter === "mine" || ownerFilter === "unassigned"
+    ? `scope=${ownerFilter}`
+    : ownerFilter && ownerFilter !== "all"
+      ? `scope=all&assignedToId=${encodeURIComponent(ownerFilter)}`
+      : "scope=all";
+
   const loadLists = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setListLoading(true);
     const [internalResult, clientResult, emailResult, smsResult] = await Promise.allSettled([
       getInternalChatThreads(),
-      api.get("/communications/inbox?scope=all&channel=Chat&limit=100").then((response) => response.data.data),
-      api.get("/communications/inbox?scope=all&channel=Email&limit=100").then((response) => response.data.data),
-      api.get("/communications/inbox?scope=all&channel=Sms&limit=100").then((response) => response.data.data),
+      api.get(`/communications/inbox?${ownerQuery}&channel=Chat&limit=100`).then((response) => response.data.data),
+      api.get(`/communications/inbox?${ownerQuery}&channel=Email&limit=100`).then((response) => response.data.data),
+      api.get(`/communications/inbox?${ownerQuery}&channel=Sms&limit=100`).then((response) => response.data.data),
     ]);
     // Each source degrades independently — a permissions edge case on one
     // (e.g. client-chat view restricted for this user) must never blank
@@ -535,7 +581,7 @@ export default function ChatsPage() {
     if (emailResult.status === "fulfilled") setEmailConversations(emailResult.value);
     if (smsResult.status === "fulfilled") setSmsConversations(smsResult.value);
     if (!silent) setListLoading(false);
-  }, []);
+  }, [ownerQuery]);
 
   const syncSms = useCallback(async () => {
     if (smsSyncing) return;
@@ -587,6 +633,8 @@ export default function ChatsPage() {
         replyParentMessageId: latestMessage?.id || null,
         messageCount: data.totalMessages || data.messages?.length || 0,
         subject: latestConversation?.subject || latestMessage?.subject || latestMessage?.conversation?.subject || "",
+        assignedToId: latestConversation?.assignedTo?.id || null,
+        assignedToName: latestConversation?.assignedTo?.fullName || null,
         messages: data.messages || [],
       };
     }
@@ -604,6 +652,8 @@ export default function ChatsPage() {
       clientEmail: data.client?.email || null,
       clientPhone: data.client?.phone || null,
       subject: data.subject || data.messages?.find((message) => message.subject)?.subject || "",
+      assignedToId: data.assignedTo?.id || null,
+      assignedToName: data.assignedTo?.fullName || null,
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
@@ -660,8 +710,18 @@ export default function ChatsPage() {
     setEditingMessageId("");
     setEditDraft("");
     setGroupProfileOpen(false);
+    setReassignOpen(false);
     if (selectedId) void loadDetail(selectedKind, selectedId);
   }, [selectedKind, selectedId, loadDetail]);
+
+  useEffect(() => {
+    if (!reassignOpen) return undefined;
+    function handleClickOutside(event) {
+      if (reassignMenuRef.current && !reassignMenuRef.current.contains(event.target)) setReassignOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [reassignOpen]);
 
   const fetchRealtimeConfig = useCallback(() => {
     if (!selectedId) return Promise.resolve({ configured: false });
@@ -794,7 +854,9 @@ export default function ChatsPage() {
         isGroup: false,
         lastMessageAt: conversation.lastMessageAt,
         unreadCount: conversation.unreadCount || 0,
-        preview: latest ? (latest.direction === "Outbound" ? "You: " : "") + (latest.bodyText || "Sent an attachment") : "",
+        assignedToId: conversation.assignedTo?.id || null,
+        assignedToName: conversation.assignedTo?.fullName || null,
+        preview: latest ? previewSenderPrefix(latest, myUserId) + (latest.bodyText || "Sent an attachment") : "",
       };
     });
     const emailByClient = new Map();
@@ -823,7 +885,9 @@ export default function ChatsPage() {
         isGroup: false,
         lastMessageAt: latestConversation.lastMessageAt,
         unreadCount: sorted.reduce((total, conversation) => total + (conversation.unreadCount || 0), 0),
-        preview: latest ? `${subject} — ${(latest.direction === "Outbound" ? "You: " : "")}${latest.bodyText || "Email message"}` : subject,
+        assignedToId: latestConversation.assignedTo?.id || null,
+        assignedToName: latestConversation.assignedTo?.fullName || null,
+        preview: latest ? `${subject} — ${previewSenderPrefix(latest, myUserId)}${latest.bodyText || "Email message"}` : subject,
       };
     });
     const sms = smsConversations.map((conversation) => {
@@ -838,11 +902,13 @@ export default function ChatsPage() {
         isGroup: false,
         lastMessageAt: conversation.lastMessageAt,
         unreadCount: conversation.unreadCount || 0,
-        preview: latest ? `${latest.direction === "Outbound" ? "You: " : ""}${latest.bodyText || "SMS message"}` : "",
+        assignedToId: conversation.assignedTo?.id || null,
+        assignedToName: conversation.assignedTo?.fullName || null,
+        preview: latest ? `${previewSenderPrefix(latest, myUserId)}${latest.bodyText || "SMS message"}` : "",
       };
     });
     return [novaItem, supportItem, ...[...internal, ...client, ...email, ...sms].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))];
-  }, [internalThreads, clientConversations, emailConversations, smsConversations, novaItem, supportItem]);
+  }, [internalThreads, clientConversations, emailConversations, smsConversations, novaItem, supportItem, myUserId]);
 
   const filteredItems = useMemo(() => {
     const query = listSearch.trim().toLowerCase();
@@ -1096,12 +1162,15 @@ export default function ChatsPage() {
         : replyTarget.senderUser?.fullName || activeDetail?.name
     : "";
 
+  function ensureColleaguesLoaded() {
+    if (colleagues.length || colleaguesLoading) return;
+    setColleaguesLoading(true);
+    getMyColleagues().then(setColleagues).catch(() => {}).finally(() => setColleaguesLoading(false));
+  }
+
   function openPicker() {
     setPickerOpen(true);
-    if (!colleagues.length) {
-      setColleaguesLoading(true);
-      getMyColleagues().then(setColleagues).catch(() => {}).finally(() => setColleaguesLoading(false));
-    }
+    ensureColleaguesLoaded();
   }
 
   async function handleCreateThread(participantUserIds, name) {
@@ -1147,6 +1216,25 @@ export default function ChatsPage() {
     setGroupProfileOpen(false);
     setSelectedId("");
     void loadLists({ silent: true });
+  }
+
+  async function reassignConversation(userId) {
+    // Email threads are grouped by client in this UI, but the backend
+    // assigns ownership per underlying conversation — reassign the latest
+    // one, same conversation the row-level "Assigned to" already reflects.
+    const conversationId = activeDetail?.kind === "email" ? activeDetail?.replyConversationId : selectedId;
+    if (!conversationId || reassigning) return;
+    setReassigning(true);
+    setError("");
+    try {
+      await api.patch(`/communications/conversations/${conversationId}`, { assignedToId: userId || null });
+      setReassignOpen(false);
+      await Promise.all([loadDetail(selectedKind, selectedId, { silent: true }), loadLists({ silent: true })]);
+    } catch (reason) {
+      setError(internalChatErrorMessage(reason, "This conversation could not be reassigned."));
+    } finally {
+      setReassigning(false);
+    }
   }
 
   return (
@@ -1217,6 +1305,34 @@ export default function ChatsPage() {
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
               />
             </label>
+            {["portal", "email", "sms"].includes(categoryFilter) ? (
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                {OWNER_FILTERS.map((filter) => {
+                  const active = ownerFilter === filter.key;
+                  return (
+                    <button
+                      key={filter.key}
+                      type="button"
+                      onClick={() => setOwnerFilter(filter.key)}
+                      aria-pressed={active}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${active ? "border-[#002FA7] bg-[#002FA7] text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
+                    >
+                      {filter.label}
+                    </button>
+                  );
+                })}
+                <select
+                  value={OWNER_FILTERS.some((filter) => filter.key === ownerFilter) ? "" : ownerFilter}
+                  onChange={(event) => setOwnerFilter(event.target.value || "all")}
+                  onFocus={ensureColleaguesLoaded}
+                  aria-label="Filter by team member"
+                  className="h-[26px] min-w-0 max-w-[130px] rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 outline-none transition focus:border-sky-300"
+                >
+                  <option value="">Team member…</option>
+                  {reassignableColleagues.map((user) => <option key={user.id} value={user.id}>{user.fullName}</option>)}
+                </select>
+              </div>
+            ) : null}
           </header>
           <div className="scrollbar-hidden min-h-0 flex-1 overflow-y-auto p-2">
             {listLoading ? (
@@ -1317,6 +1433,53 @@ export default function ChatsPage() {
                         </p>
                       ) : null}
                     </div>
+                    {["client", "email", "sms"].includes(activeDetail?.kind) ? (
+                      <div className="relative shrink-0" ref={reassignMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            ensureColleaguesLoaded();
+                            setReassignOpen((open) => !open);
+                          }}
+                          aria-label="Conversation owner — click to reassign"
+                          title="Conversation owner — click to reassign"
+                          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-[#002FA7] hover:text-[#002FA7]"
+                        >
+                          <UserRound className="h-4 w-4" />
+                          <span className="hidden max-w-[130px] truncate sm:inline">
+                            {activeDetail.assignedToName ? `Owner: ${activeDetail.assignedToName}` : "Unassigned"}
+                          </span>
+                        </button>
+                        {reassignOpen ? (
+                          <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-xl">
+                            <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reassign conversation</p>
+                            <div className="max-h-64 overflow-y-auto">
+                              <button
+                                type="button"
+                                onClick={() => reassignConversation(null)}
+                                disabled={reassigning}
+                                className={`flex w-full items-center px-3 py-2 text-left text-sm transition hover:bg-slate-50 disabled:opacity-50 ${!activeDetail.assignedToId ? "font-semibold text-[#002FA7]" : "text-slate-700"}`}
+                              >
+                                Unassigned
+                              </button>
+                              {colleaguesLoading ? (
+                                <div className="flex justify-center py-3"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div>
+                              ) : reassignableColleagues.map((user) => (
+                                <button
+                                  key={user.id}
+                                  type="button"
+                                  onClick={() => reassignConversation(user.id)}
+                                  disabled={reassigning}
+                                  className={`flex w-full items-center px-3 py-2 text-left text-sm transition hover:bg-slate-50 disabled:opacity-50 ${activeDetail.assignedToId === user.id ? "font-semibold text-[#002FA7]" : "text-slate-700"}`}
+                                >
+                                  {user.fullName}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {["client", "email", "sms"].includes(activeDetail?.kind) && activeDetail.clientId ? (
                       <Link
                         to={`/app/clients/${encodeURIComponent(activeDetail.clientId)}`}

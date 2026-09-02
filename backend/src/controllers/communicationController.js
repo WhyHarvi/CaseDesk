@@ -474,6 +474,8 @@ export async function getClientEmailThread(req, res) {
       subject: true,
       lastMessageAt: true,
       unreadCount: true,
+      assignedToId: true,
+      assignedTo: { select: userSelect },
       case: { select: { id: true, caseType: true } },
       _count: { select: { messages: { where: { deletedAt: null } } } },
     },
@@ -692,6 +694,12 @@ export async function listCommunicationInbox(req, res) {
           ? [{ priority: "desc" }, { lastMessageAt: "desc" }]
           : [{ lastMessageAt: "desc" }];
   const scope = clean(req.query.scope, 30, "all");
+  // Lets an inbox filtered to a specific team member's queue reuse this same
+  // endpoint instead of a bespoke one — only meaningful once canViewAll is
+  // true, since a restricted user is already pinned to their own id below.
+  const assignedToId = permissions.canViewAll
+    ? clean(req.query.assignedToId, 80)
+    : "";
   const where = {
     agencyId: req.user.agencyId,
     deletedAt: null,
@@ -704,6 +712,7 @@ export async function listCommunicationInbox(req, res) {
       : {}),
     ...(scope === "unassigned" ? { assignedToId: null } : {}),
     ...(scope === "unread" ? { unreadCount: { gt: 0 } } : {}),
+    ...(assignedToId ? { assignedToId } : {}),
     AND: [
       relatedRecordAccessWhere(req),
       ...(search

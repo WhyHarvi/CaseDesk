@@ -173,11 +173,11 @@ export default function ClientPortalChat() {
           <ChevronLeft className="h-5 w-5" />
         </button>
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-500 text-sm font-semibold text-white">
-          {(overview?.case?.consultantName || overview?.agency?.name || "CD").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+          {(overview?.agency?.name || overview?.case?.consultantName || "CD").split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold leading-5 text-slate-950">
-            {overview?.case?.consultantName || overview?.agency?.name || "Your consultant"}
+            Your case team
           </h1>
           {cases.length > 1 ? (
             <select
@@ -189,7 +189,10 @@ export default function ClientPortalChat() {
               {cases.map((item) => <option key={item.id} value={item.id}>{item.caseType}</option>)}
             </select>
           ) : (
-            <p className="truncate text-xs text-slate-500">{activeCase?.caseType || "Secure CaseDesk chat"}</p>
+            <p className="truncate text-xs text-slate-500">
+              {activeCase?.caseType || "Secure CaseDesk chat"}
+              {overview?.case?.consultantName ? ` · ${overview.case.consultantName}` : ""}
+            </p>
           )}
         </div>
         <NotificationBell variant="chat" />
@@ -214,7 +217,7 @@ export default function ClientPortalChat() {
             <>
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><MessagesSquare className="h-6 w-6" /></div>
               <h2 className="mt-4 text-[15px] font-semibold text-slate-900">Chat isn't available yet</h2>
-              <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your consultant opens your application file, you can message your consultant here.</p>
+              <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">Once your case team opens your application file, you can message them here.</p>
             </>
           ) : (
             <>
@@ -223,7 +226,7 @@ export default function ClientPortalChat() {
               <p className="mt-1.5 max-w-xs text-sm leading-6 text-slate-500">
                 {activeCase?.isGeneral
                   ? "Send a secure message to your agency — your team will reply right here."
-                  : `Send a message about your ${activeCase?.caseType || "application"} — your consultant will reply right here.`}
+                  : `Send a message about your ${activeCase?.caseType || "application"} — your case team will reply right here.`}
               </p>
             </>
           )
