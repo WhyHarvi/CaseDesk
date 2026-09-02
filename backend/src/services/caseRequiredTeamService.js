@@ -4,7 +4,10 @@ import { logger } from "./logger.js";
 import { ensureRequiredCaseRoles, listCaseRoles, REQUIRED_CASE_ROLE_CODES } from "./caseRoleService.js";
 import { refreshOpenInvoiceSnapshots } from "./incentiveCreditingService.js";
 
-const STAFF_ROLES = ["consultant", "frontdesk"];
+// Administrators can hold case roles in Team Members just like consultants
+// and front-desk staff, so they must remain eligible everywhere those role
+// assignments are consumed (new-case selectors, collaboration, and access).
+const STAFF_ROLES = ["admin", "consultant", "frontdesk"];
 export const CASE_TEAM_ROLE_CODES = { RCIC: "rcic", CASE_WORKER: "case-worker" };
 
 export const collaborationUserSelect = {

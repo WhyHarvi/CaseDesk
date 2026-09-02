@@ -33,6 +33,12 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   const [users, setUsers] = useState([]);
   const [caseTypeOptions, setCaseTypeOptions] = useState([]);
   const [caseTypeAliases, setCaseTypeAliases] = useState({});
+  const [caseTeamOptions, setCaseTeamOptions] = useState({
+    rcicUsers: [],
+    caseWorkerUsers: [],
+    ready: true,
+    missing: [],
+  });
   const [contactMatches, setContactMatches] = useState([]);
   const [caseEasyMatches, setCaseEasyMatches] = useState([]);
   const [importingCaseEasyId, setImportingCaseEasyId] = useState("");
@@ -56,12 +62,28 @@ export default function QuickCreateCurtains({ kind, onClose }) {
       api.get("/clients"),
       api.get("/leads/staff"),
       api.get("/cases/case-types"),
-    ]).then(([clientResult, userResult, typeResult]) => {
+      api.get("/cases/collaboration-options"),
+    ]).then(([clientResult, userResult, typeResult, teamResult]) => {
       if (clientResult.status === "fulfilled") setClients(clientResult.value.data.data || []);
       if (userResult.status === "fulfilled") setUsers(userResult.value.data.data || []);
       if (typeResult.status === "fulfilled") {
         setCaseTypeOptions(typeResult.value.data.data || []);
         setCaseTypeAliases(typeResult.value.data.aliases || {});
+      }
+      if (teamResult.status === "fulfilled") {
+        const options = teamResult.value.data.data || {
+          rcicUsers: [], caseWorkerUsers: [], ready: false, missing: ["RCIC", "Case Worker"],
+        };
+        setCaseTeamOptions(options);
+        setCaseForm((current) => {
+          const rcicUserId = current.rcicUserId || (options.rcicUsers?.length === 1 ? options.rcicUsers[0].id : "");
+          const caseWorkerUserId = current.caseWorkerUserId || (options.caseWorkerUsers?.length === 1 ? options.caseWorkerUsers[0].id : "");
+          return { ...current, rcicUserId, caseWorkerUserId, assignedUserId: current.assignedUserId || rcicUserId };
+        });
+      } else {
+        setCaseTeamOptions({
+          rcicUsers: [], caseWorkerUsers: [], ready: false, missing: ["RCIC", "Case Worker"],
+        });
       }
     });
   }, [kind]);
@@ -167,6 +189,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
         }
       }
       if (name === "stage" && !current.nextAction) next.nextAction = getDefaultNextAction(value);
+      if (name === "rcicUserId") next.assignedUserId = value;
       return next;
     });
   }
@@ -176,8 +199,11 @@ export default function QuickCreateCurtains({ kind, onClose }) {
     setSaving(true);
     setFormError("");
     try {
-      const payload = { ...caseForm, idempotencyKey: caseKey, assignedUserId: caseForm.assignedUserId || "", studyIntakeMonth: isStudyPermitCaseType(caseForm.caseType) ? studyIntakeApiValue(caseForm.studyIntakeMonth) : null, nextAction: caseForm.nextAction.trim() || getDefaultNextAction(caseForm.stage) };
-      if (!payload.assignedUserId) delete payload.assignedUserId;
+      const payload = { ...caseForm, idempotencyKey: caseKey, studyIntakeMonth: isStudyPermitCaseType(caseForm.caseType) ? studyIntakeApiValue(caseForm.studyIntakeMonth) : null, nextAction: caseForm.nextAction.trim() || getDefaultNextAction(caseForm.stage) };
+      if (!payload.rcicUserId || !payload.caseWorkerUserId) {
+        throw new Error("Choose both an RCIC and a Case Worker before creating the case.");
+      }
+      delete payload.assignedUserId;
       if (!payload.submittedAt) delete payload.submittedAt;
       if (!payload.decisionAt) delete payload.decisionAt;
       const response = await api.post("/cases", payload);
@@ -196,7 +222,7 @@ export default function QuickCreateCurtains({ kind, onClose }) {
   }
 
   if (kind === "case") {
-    return <CaseFormDrawer formState={caseForm} onChange={handleCaseChange} onSubmit={submitCase} onCancel={close} saving={saving} formError={formError} clients={clients} users={users} caseTypeOptions={caseTypeOptions} caseTypeAliases={caseTypeAliases} isEditing={false} editingClientName="" closing={closing} />;
+    return <CaseFormDrawer formState={caseForm} onChange={handleCaseChange} onSubmit={submitCase} onCancel={close} saving={saving} formError={formError} clients={clients} users={users} caseTypeOptions={caseTypeOptions} caseTypeAliases={caseTypeAliases} newCaseTeamOptions={caseTeamOptions} isEditing={false} editingClientName="" closing={closing} />;
   }
 
   return null;
