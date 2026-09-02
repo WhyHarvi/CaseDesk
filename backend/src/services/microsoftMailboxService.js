@@ -6,11 +6,16 @@ import { createHttpError } from "../utils/http.js";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const STATE_TTL_MS = 10 * 60_000;
 // Calendars.ReadWrite lets outlookCalendarSyncService.js mirror appointments
-// onto a staff member's own Outlook calendar. Microsoft requires incremental
-// consent for it — anyone who connected before this scope was added needs to
-// reconnect once (same "Connect Outlook" button; Microsoft just shows one
-// extra permission line) before their appointments start syncing.
-const SCOPES = ["openid", "profile", "email", "offline_access", "User.Read", "Mail.Read", "Mail.Send", "Calendars.ReadWrite"];
+// onto a staff member's own Outlook calendar. Temporarily dropped from the
+// requested scope set: the chkimmigration.ca tenant's admin consent grant
+// only covers the other 7 permissions (Calendars.ReadWrite was never added
+// under App registrations > API permissions there), and a single missing
+// scope blocks the ENTIRE sign-in — mail connect included — since consent
+// is all-or-nothing per request. Add it back to this array once an admin
+// adds Calendars.ReadWrite there and clicks "Grant admin consent" again;
+// until then, calendar sync just stays unavailable (mailboxGrantsCalendarAccess
+// already degrades gracefully for anyone without the scope).
+const SCOPES = ["openid", "profile", "email", "offline_access", "User.Read", "Mail.Read", "Mail.Send"];
 
 const tenant = () => String(process.env.MS_MAIL_TENANT_ID || "organizations").trim();
 const authority = () => `https://login.microsoftonline.com/${encodeURIComponent(tenant())}/oauth2/v2.0`;
