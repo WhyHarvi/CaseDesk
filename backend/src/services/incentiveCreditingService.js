@@ -371,6 +371,10 @@ async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refu
         sourceAmountCollected: -sourceToReverse, creditedAmount: -amount, triggerSource: trigger,
         triggerRef: `balance:${Number(newBalance).toFixed(2)}`, entryType: "REVERSAL",
         reversesEntryId: credit.id, creditedAt: new Date(),
+        planNameSnapshot: credit.planNameSnapshot,
+        planVersionSnapshot: credit.planVersionSnapshot,
+        formulaTypeSnapshot: credit.formulaTypeSnapshot,
+        calculationSnapshot: { reversalRatio: ratio, refundedSourceAmount: sourceToReverse },
       });
     }
     remainingSource -= sourceToReverse;
@@ -435,7 +439,7 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
   if (delta === 0) return { credited: false, reason: "no_balance_change" };
 
   if (delta < 0) {
-    return prisma.$transaction(async (tx) => {
+    const reversalResult = await prisma.$transaction(async (tx) => {
       const claim = await tx.caseInvoiceCreditCursor.updateMany({
         where: { caseInvoiceId, agencyId, lastCreditedBalance: cursor.lastCreditedBalance },
         data: { lastCreditedBalance: newBalanceNumber },
@@ -446,6 +450,14 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
       });
       return { credited: false, reversed: true, entryCount };
     });
+    if (reversalResult.reversed) {
+      const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+      await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
+        triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }).catch((error) => {
+        logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId, reason: error.message });
+      });
+    }
+    return reversalResult;
   }
 
   // A no-plan snapshot is intentional. Advance the cursor so activating a
@@ -490,6 +502,10 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     triggerRef: `balance:${newBalanceNumber.toFixed(2)}`,
     entryType: "CREDIT",
     creditedAt,
+    planNameSnapshot: snapshot.planName,
+    planVersionSnapshot: snapshot.planVersion,
+    formulaTypeSnapshot: snapshot.formulaType,
+    calculationSnapshot: { formulaType: snapshot.formulaType, grossPool: pool, matchedRate: null },
   }));
 
   const result = await prisma.$transaction(async (tx) => {
@@ -509,6 +525,11 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     // worker (this function is already called from there).
     await evaluateCaseTimelineLegs(agencyId, caseId).catch((error) => {
       logger.warn("incentive.timeline_bonus_evaluation_failed", { agencyId, caseId, reason: error.message });
+    });
+    const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+    await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
+      triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }).catch((error) => {
+      logger.warn("incentive.revenue_credit_failed", { caseInvoiceId, reason: error.message });
     });
   }
   return result;

@@ -30,3 +30,28 @@ export async function getActiveTimelines({ userId } = {}) {
   const response = await api.get("/incentives/timelines", { params: { userId } });
   return response.data.data;
 }
+
+export async function getIncentiveContest(periodId) {
+  const response = await api.get("/incentives/contest", { params: { periodId } });
+  return response.data.data;
+}
+
+export async function getCurrentIncentivePeriod() {
+  const response = await api.get("/incentives/period/current", { cache: false });
+  return response.data.data;
+}
+
+export async function closeCurrentIncentivePeriod(reason) {
+  const response = await api.post("/incentives/period/close", { reason });
+  return response.data.data;
+}
+
+export async function runIncentiveSimulation(values) {
+  const response = await api.post("/incentives/simulate", values);
+  return response.data.data;
+}
+
+export async function finalizeIncentiveContest(values) {
+  const response = await api.post("/incentives/contest/finalize", values);
+  return response.data.data;
+}

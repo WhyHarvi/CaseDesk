@@ -9,13 +9,42 @@ import { logger } from "./logger.js";
 
 export const FORMULA_TYPES = ["FLAT_PER_PAYMENT", "PERCENT_OF_PAYMENT", "TIERED_PERCENT_OF_REVENUE"];
 export const ATTRIBUTION_KINDS = ["CASE_ROLE", "LEAD_OWNER", "LEAD_CONVERTER", "PAYMENT_PROCESSOR"];
+export const MILESTONE_EVENT_TYPES = [
+  "COLLEGE_APPLICATION_SUBMITTED",
+  "STUDY_PERMIT_APPLICATION_SUBMITTED",
+  "POST_SUBMISSION_FOLLOW_UP_COMPLETED",
+];
 
 const planInclude = {
   tiers: { orderBy: { minCumulativeAmount: "asc" } },
   roleShares: { include: { caseRole: { select: { id: true, code: true, name: true } } } },
   timelineLegs: { orderBy: { sortOrder: "asc" }, include: { tiers: { orderBy: { thresholdDays: "asc" } } } },
+  milestoneRules: { orderBy: { sortOrder: "asc" } },
   createdBy: { select: { id: true, fullName: true } },
 };
+
+function validateMilestoneRules(caseType, values) {
+  const supplied = Array.isArray(values) ? values : [];
+  if (!supplied.length) return [];
+  if (!/study permit/i.test(String(caseType || ""))) {
+    throw createHttpError(400, "Study Permit milestone rewards require a Study Permit case type.", "VALIDATION_ERROR");
+  }
+  const seen = new Set();
+  return supplied.map((rule, index) => {
+    const eventType = String(rule?.eventType || "").trim();
+    const name = String(rule?.name || "").trim().slice(0, 120);
+    const flatAmount = toDecimalString(rule?.flatAmount);
+    const payoutPercent = toDecimalString(rule?.payoutPercent);
+    if (!MILESTONE_EVENT_TYPES.includes(eventType) || seen.has(eventType)) {
+      throw createHttpError(400, "Choose each Study Permit milestone at most once.", "VALIDATION_ERROR");
+    }
+    if (!name || flatAmount === null || flatAmount <= 0 || payoutPercent === null || payoutPercent <= 0 || payoutPercent > 100) {
+      throw createHttpError(400, "Each milestone needs a source amount and consultant percentage between 0 and 100.", "VALIDATION_ERROR");
+    }
+    seen.add(eventType);
+    return { agencyId: null, eventType, name, flatAmount, payoutPercent, sortOrder: index, isActive: rule?.isActive !== false };
+  });
+}
 
 function toDecimalString(value) {
   const number = Number(value);
@@ -194,6 +223,7 @@ export async function createIncentivePlan(agencyId, userId, values) {
   const { data: formula, tiers } = validateFormula(values);
   const roleShares = await validateRoleShares(agencyId, values?.roleShares);
   const timelineLegs = validateTimelineLegs(caseType, values?.timelineLegs);
+  const milestoneRules = validateMilestoneRules(caseType, values?.milestoneRules);
 
   return prisma.incentivePlan.create({
     data: {
@@ -208,6 +238,7 @@ export async function createIncentivePlan(agencyId, userId, values) {
       timelineLegs: {
         create: timelineLegs.map((leg, index) => ({ ...leg, sortOrder: index, tiers: { create: leg.tiers } })),
       },
+      milestoneRules: { create: milestoneRules.map(({ agencyId: _ignored, ...rule }) => ({ ...rule, agencyId })) },
     },
     include: planInclude,
   });
@@ -245,6 +276,12 @@ export async function updateIncentivePlan(agencyId, id, values) {
     timelineLegs = validateTimelineLegs(effectiveCaseType, values.timelineLegs);
   }
 
+  let milestoneRules = null;
+  if (values?.milestoneRules !== undefined) {
+    const effectiveCaseType = data.caseType !== undefined ? data.caseType : current.caseType;
+    milestoneRules = validateMilestoneRules(effectiveCaseType, values.milestoneRules);
+  }
+
   if (values?.isActive === false && current.isActive) {
     data.isActive = false;
     data.deactivatedAt = new Date();
@@ -268,6 +305,14 @@ export async function updateIncentivePlan(agencyId, id, values) {
       await tx.incentivePlanTimelineLeg.deleteMany({ where: { planId: id } });
       for (const [index, leg] of timelineLegs.entries()) {
         await tx.incentivePlanTimelineLeg.create({ data: { ...leg, planId: id, sortOrder: index, tiers: { create: leg.tiers } } });
+      }
+    }
+    if (milestoneRules !== null) {
+      await tx.incentivePlanMilestoneRule.deleteMany({ where: { planId: id } });
+      if (milestoneRules.length) {
+        await tx.incentivePlanMilestoneRule.createMany({
+          data: milestoneRules.map(({ agencyId: _ignored, ...rule }) => ({ ...rule, agencyId, planId: id })),
+        });
       }
     }
     await tx.incentivePlan.update({ where: { id }, data });

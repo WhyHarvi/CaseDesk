@@ -13,6 +13,7 @@ import { evaluateStageTriggers } from "../services/paymentScheduleService.js";
 import { evaluateCaseTimelineLegs } from "../services/incentiveTimelineService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { logger } from "../services/logger.js";
+import { creditStudyPermitMilestone, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
 
 const DECISION_OUTCOMES = new Set(["APPROVED", "REFUSED"]);
 const REFUSAL_RESOLUTIONS = new Set(["NEW_CASE", "CLOSE_FILE"]);
@@ -101,6 +102,11 @@ async function runStageAutomations(agencyId, caseId, clientId, previousStage, ne
   await evaluateCaseTimelineLegs(agencyId, caseId).catch((error) => {
     logger.warn("case.lifecycle_timeline_evaluation_failed", { caseId, reason: error.message });
   });
+  const milestoneType = STUDY_PERMIT_MILESTONES[nextStage];
+  if (milestoneType) await creditStudyPermitMilestone(agencyId, {
+    caseId, eventType: milestoneType, triggerSource: "CASE_STAGE_HISTORY",
+    triggerRef: `${caseId}:${nextStage}`, occurredAt: new Date(), actorUserId,
+  }).catch((error) => logger.warn("case.lifecycle_milestone_incentive_failed", { caseId, reason: error.message }));
 }
 
 async function validateSuccessorCaseType(req, value, currentCaseType) {

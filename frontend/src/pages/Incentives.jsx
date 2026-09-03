@@ -3,7 +3,7 @@ import { ArrowLeft, Award, HandCoins, Search, Settings2, Sparkles, TrendingUp, U
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
-import { getActiveTimelines, getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
+import { closeCurrentIncentivePeriod, getActiveTimelines, getCurrentIncentivePeriod, getIncentiveContest, getIncentiveLedger, getIncentivePipeline, getIncentiveSummary, getIncentiveTeamSummary } from "../api/incentivesApi";
 import TimelineProgressStrip from "../components/incentives/TimelineProgressStrip";
 import { computeLegProgress } from "../components/incentives/timelineProgressUtils";
 import InfoDrawer from "../components/ui/InfoDrawer";
@@ -443,6 +443,28 @@ function TeamTable({ rows, onSelect, delay = 0 }) {
   );
 }
 
+function RevenueContestCard() {
+  const [data, setData] = useState(null);
+  const [reason, setReason] = useState("");
+  const [closing, setClosing] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(() => Promise.all([getCurrentIncentivePeriod(), getIncentiveContest()]).then(([period, contestData]) => setData({ ...contestData, period })), []);
+  useEffect(() => { load().catch(() => setError("Revenue standings could not be loaded.")); }, [load]);
+  async function closePeriod() {
+    if (!reason.trim()) { setError("Enter a reason before closing this period."); return; }
+    setClosing(true); setError("");
+    try { await closeCurrentIncentivePeriod(reason); setReason(""); await load(); }
+    catch (cause) { setError(cause.response?.data?.message || "The period could not be closed."); }
+    finally { setClosing(false); }
+  }
+  return <ChartCard title="Monthly Revenue Champion" subtitle="Net eligible professional-fee revenue collected in this period" delay={0.12}>
+    <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
+      <div className="space-y-2">{data?.ranking?.length ? data.ranking.map((row, index) => <div key={row.userId} className="flex items-center justify-between rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50/70 to-cyan-50/60 px-4 py-3"><div><p className="text-sm font-semibold text-slate-900">{index + 1}. {row.fullName}</p><p className="text-xs text-slate-500">{row.paidCaseCount} paid case{row.paidCaseCount === 1 ? "" : "s"}</p></div><span className="text-sm font-semibold tabular-nums text-violet-700">{money.format(row.netRevenue)}</span></div>) : <EmptyRow>No eligible revenue has been collected in this period.</EmptyRow>}</div>
+      <div className="rounded-2xl border border-slate-200 bg-white/70 p-4"><p className="text-xs font-semibold text-slate-800">{data?.period?.label || "Current period"}</p><p className="mt-1 text-xs text-slate-500">Closing starts a new immutable period. It never deletes earnings or revenue history.</p><textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for closing early" className="mt-3 min-h-20 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-violet-300 focus:ring-4 focus:ring-violet-100" /><button type="button" onClick={closePeriod} disabled={closing} className="mt-2 h-9 w-full rounded-full bg-violet-600 px-4 text-xs font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50">{closing ? "Closing…" : "Close incentive period"}</button>{error ? <p className="mt-2 text-xs font-medium text-rose-600">{error}</p> : null}</div>
+    </div>
+  </ChartCard>;
+}
+
 function AdminOverview({ team, error, onSelect }) {
   const topEarner = useMemo(() => (team?.length ? [...team].sort((a, b) => b.monthTotal - a.monthTotal)[0] : null), [team]);
   const activeEarners = useMemo(() => team?.filter((row) => row.lifetimeTotal > 0).length ?? 0, [team]);
@@ -466,8 +488,9 @@ function AdminOverview({ team, error, onSelect }) {
         <KpiCard label="Team earned this month" value={team.reduce((sum, row) => sum + row.monthTotal, 0)} icon={TrendingUp} tint="bg-emerald-50 text-emerald-500 ring-emerald-100" delay={0.05} />
         <KpiCard label="Team earned lifetime" value={team.reduce((sum, row) => sum + row.lifetimeTotal, 0)} icon={Wallet} tint="bg-sky-50 text-sky-500 ring-sky-100" delay={0.1} />
         <KpiCard label="People earning" value={activeEarners} format={(v) => String(Math.round(v))} icon={Users} tint="bg-violet-50 text-violet-500 ring-violet-100" delay={0.15} />
-        <KpiCard label="Top earner this month" value={topEarner?.monthTotal ?? 0} footnote={topEarner?.fullName} icon={Award} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.2} />
+        <KpiCard label="Highest incentive earned this month" value={topEarner?.monthTotal ?? 0} footnote={topEarner?.fullName} icon={Award} tint="bg-amber-50 text-amber-500 ring-amber-100" delay={0.2} />
       </div>
+      <RevenueContestCard />
       <TeamTable rows={team} onSelect={onSelect} delay={0.15} />
     </div>
   );

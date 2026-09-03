@@ -80,8 +80,18 @@ export async function getLedger(req, res) {
     }),
     prisma.incentiveLedgerEntry.count({ where }),
   ]);
+  const isAdmin = req.auth.role === "admin";
   res.json({
-    data: rows.map((row) => ({ ...row, approvalStatus: approvalStatusFor(row) })),
+    data: rows.map((row) => {
+      const result = { ...row, approvalStatus: approvalStatusFor(row) };
+      if (!isAdmin && row.entryType === "MILESTONE_CREDIT") {
+        result.sourceAmountCollected = null;
+        result.sharePercentApplied = null;
+        result.formulaTypeSnapshot = null;
+        result.calculationSnapshot = {};
+      }
+      return result;
+    }),
     meta: { page, pageSize, total, approvalStatuses: [...APPROVAL_STATUSES] },
   });
 }

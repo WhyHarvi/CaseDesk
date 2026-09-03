@@ -6,6 +6,7 @@ import { activateIncentivePlan, approveRetroactiveIncentiveApprovals, applyIncen
 import { caseStagesForType } from "../../constants/caseStages";
 import { humanize, LEAD_STAGES } from "../../modules/leads/leadPresentation";
 import api from "../../services/api";
+import InfoDrawer from "../ui/InfoDrawer";
 import Select from "../ui/Select";
 
 const CHECKPOINT_TYPES_INFO = {
@@ -58,7 +59,37 @@ function blankTimelineLeg() {
 }
 
 function blankDraft() {
-  return { name: "", caseType: "", formulaType: "PERCENT_OF_PAYMENT", flatAmount: "", percentRate: "", tiers: [blankTier()], roleShares: [blankShare()], timelineLegs: [] };
+  return { name: "", caseType: "", formulaType: "PERCENT_OF_PAYMENT", flatAmount: "", percentRate: "", tiers: [blankTier()], roleShares: [blankShare()], timelineLegs: [], milestoneRules: [] };
+}
+
+const milestoneCatalog = [
+  ["COLLEGE_APPLICATION_SUBMITTED", "College Application Submitted"],
+  ["STUDY_PERMIT_APPLICATION_SUBMITTED", "Study Permit Application Submitted"],
+  ["POST_SUBMISSION_FOLLOW_UP_COMPLETED", "Post-Submission Follow-Up Completed"],
+];
+
+function MilestoneRuleEditor({ rules, onChange }) {
+  const byType = new Map((rules || []).map((rule) => [rule.eventType, rule]));
+  const update = (eventType, patch) => onChange(milestoneCatalog.map(([type, name], index) => ({
+    eventType: type, name, flatAmount: "", payoutPercent: "10", isActive: false, sortOrder: index, ...(byType.get(type) || {}), ...(type === eventType ? patch : {}),
+  })).filter((rule) => rule.isActive || rule.flatAmount));
+  return <div className="space-y-2">
+    {milestoneCatalog.map(([eventType, name]) => {
+      const rule = byType.get(eventType) || { eventType, name, flatAmount: "", payoutPercent: "10", isActive: false };
+      const projectedPool = (Number(rule.flatAmount) || 0) * (Number(rule.payoutPercent) || 0) / 100;
+      return <div key={eventType} className="grid items-center gap-2 rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50/80 to-cyan-50/60 p-3 sm:grid-cols-[auto_1fr_8rem_7rem]">
+        <input aria-label={`Enable ${name}`} type="checkbox" checked={rule.isActive === true} onChange={(event) => update(eventType, { isActive: event.target.checked })} className="h-4 w-4 rounded border-slate-300 text-violet-600" />
+        <div><p className="text-xs font-semibold text-slate-800">{name}</p><p className="text-[11px] text-slate-500">Internal calculation. Consultants see only their final dollar credit.</p></div>
+        <label className={labelClass}>College incentive
+          <span className="relative mt-1 block"><span className="pointer-events-none absolute left-3 top-2 text-xs text-slate-500">$</span><input aria-label={`${name} reward`} type="number" min="0" step="0.01" value={rule.flatAmount} onChange={(event) => update(eventType, { flatAmount: event.target.value, isActive: true })} className={`${inputClass} h-8 pl-7`} /></span>
+        </label>
+        <label className={labelClass}>Consultant share
+          <span className="relative mt-1 block"><input aria-label={`${name} consultant percentage`} type="number" min="0.01" max="100" step="0.01" value={rule.payoutPercent} onChange={(event) => update(eventType, { payoutPercent: event.target.value, isActive: true })} className={`${inputClass} h-8 pr-7`} /><span className="pointer-events-none absolute right-3 top-2 text-xs text-slate-500">%</span></span>
+          <span className="mt-1 block text-[10px] font-semibold text-violet-700">Pool {money.format(projectedPool)}</span>
+        </label>
+      </div>;
+    })}
+  </div>;
 }
 
 function shareTotal(roleShares) {
@@ -328,6 +359,10 @@ function PlanFormFields({ draft, setDraft, caseRoles, caseTypeOptions }) {
         <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">4</span><div><p className="text-xs font-semibold text-slate-800">Timeline bonuses</p><p className="text-xs text-slate-500">Add speed-based bonuses on top of the pool above.</p></div></div>
         <TimelineLegEditor timelineLegs={draft.timelineLegs} caseType={draft.caseType} onChange={(timelineLegs) => setDraft((c) => ({ ...c, timelineLegs }))} />
       </section>
+      {/study permit/i.test(draft.caseType) ? <section className="border-t border-slate-200 pt-4">
+        <div className="mb-3 flex items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-600 text-[11px] font-semibold text-white">5</span><div><p className="text-xs font-semibold text-slate-800">Study Permit work milestones</p><p className="text-xs text-slate-500">Reward verified staff work independently from collected revenue.</p></div></div>
+        <MilestoneRuleEditor rules={draft.milestoneRules} onChange={(milestoneRules) => setDraft((current) => ({ ...current, milestoneRules }))} />
+      </section> : null}
       <PlanExample draft={draft} caseRoles={caseRoles} />
     </div>
   );
@@ -351,7 +386,45 @@ function draftFromPlan(plan) {
       baseBonusAmount: leg.baseBonusAmount,
       tiers: leg.tiers.length ? leg.tiers.map((tier) => ({ thresholdDays: tier.thresholdDays, multiplierPercent: tier.multiplierPercent })) : [blankTimelineTier()],
     })),
+    milestoneRules: (plan.milestoneRules || []).map((rule) => ({ eventType: rule.eventType, name: rule.name, flatAmount: rule.flatAmount, payoutPercent: rule.payoutPercent ?? 100, isActive: rule.isActive })),
   };
+}
+
+function SimulationDrawer({ plan, simulation, onClose }) {
+  const cases = [...new Map(simulation.rows.map((row) => [row.caseId, {
+    caseId: row.caseId,
+    clientName: row.clientName,
+    rows: simulation.rows.filter((candidate) => candidate.caseId === row.caseId),
+  }])).values()];
+  return <InfoDrawer eyebrow="Private plan simulation" title={plan.name} onClose={onClose}>
+    <section className="overflow-hidden rounded-3xl bg-[radial-gradient(circle_at_90%_0%,rgba(34,211,238,0.24),transparent_44%),linear-gradient(135deg,#5b21b6,#7c3aed_55%,#2563eb)] p-5 text-white shadow-[0_20px_45px_rgba(91,33,182,0.22)]">
+      <p className="text-xs font-medium text-violet-100">Projected incentive total</p>
+      <p className="mt-1 text-3xl font-semibold tabular-nums">{money.format(simulation.total)}</p>
+      <p className="mt-3 text-xs leading-5 text-violet-100">Calculation preview only. No earnings, cases, assignments, or notifications were changed.</p>
+    </section>
+
+    <section className="grid grid-cols-2 gap-2">
+      {[
+        [simulation.summary.caseCount, "Cases reviewed"],
+        [simulation.summary.recipientCount, "Recipients"],
+        [simulation.summary.eligibleResultCount, "Recipient awards"],
+        [simulation.summary.excludedResultCount, "Excluded events"],
+      ].map(([value, label]) => <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-xl font-semibold tabular-nums text-slate-900">{value}</p><p className="mt-0.5 text-xs text-slate-500">{label}</p></div>)}
+    </section>
+
+    <section>
+      <div className="mb-2 flex items-end justify-between"><div><h3 className="text-sm font-semibold text-slate-900">Who would receive it</h3><p className="text-xs text-slate-500">Totals across every included case and milestone</p></div></div>
+      <div className="space-y-2">{simulation.totalsByPerson.length ? simulation.totalsByPerson.map((person, index) => <div key={person.userId} className="flex items-center justify-between gap-3 rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50/80 to-cyan-50/60 px-3.5 py-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold text-violet-700 shadow-sm">{index + 1}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{person.fullName}</p><p className="text-xs text-slate-500">{person.caseCount} case{person.caseCount === 1 ? "" : "s"} · {person.resultCount} recipient award{person.resultCount === 1 ? "" : "s"}</p></div></div><p className="shrink-0 text-sm font-semibold tabular-nums text-violet-700">{money.format(person.total)}</p></div>) : <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">No eligible recipients were found.</p>}</div>
+    </section>
+
+    <section>
+      <h3 className="text-sm font-semibold text-slate-900">Case-by-case payout map</h3>
+      <p className="mt-0.5 text-xs text-slate-500">Each line shows the milestone pool, recipient role, share, and projected credit.</p>
+      <div className="mt-2 space-y-3">{cases.map((caseRow) => <div key={caseRow.caseId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-100 bg-slate-50/70 px-3.5 py-2.5"><p className="truncate text-xs font-semibold text-slate-800">{caseRow.clientName}</p><p className="mt-0.5 text-[11px] text-slate-400">{caseRow.rows.filter((row) => row.included).length} recipient-level result{caseRow.rows.filter((row) => row.included).length === 1 ? "" : "s"}</p></div><div className="divide-y divide-slate-100">{caseRow.rows.map((row, index) => <div key={`${row.eventType}-${row.userId || "excluded"}-${index}`} className="px-3.5 py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold text-slate-700">{humanize(row.eventType)}</p>{row.included ? <p className="mt-1 text-[11px] leading-4 text-slate-500">{money.format(row.sourceAmount)} × {row.consultantPercent}% = {money.format(row.incentivePool)} pool · {row.userName} · {row.role} · {row.splitPercent}%</p> : <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-700"><CircleAlert className="h-3 w-3" />{row.reason}</p>}</div><span className={`shrink-0 text-xs font-semibold tabular-nums ${row.included ? "text-emerald-700" : "text-slate-400"}`}>{row.included ? money.format(row.credit) : "Excluded"}</span></div></div>)}</div></div>)}</div>
+    </section>
+
+    <button type="button" onClick={onClose} className="h-10 w-full rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:bg-slate-50">Clear simulation</button>
+  </InfoDrawer>;
 }
 
 function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDeleted }) {
@@ -375,6 +448,8 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
   const [recalcLoading, setRecalcLoading] = useState(false);
   const [recalcApplying, setRecalcApplying] = useState(false);
   const [recalcResult, setRecalcResult] = useState(null);
+  const [simulation, setSimulation] = useState(null);
+  const [simulating, setSimulating] = useState(false);
   const [error, setError] = useState("");
 
   async function loadLegacyPreview() {
@@ -484,6 +559,19 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
     }
   }
 
+  async function runSimulation() {
+    setSimulating(true);
+    setError("");
+    try {
+      const response = await api.post("/incentives/simulate", { planId: plan.id, caseType: plan.caseType || undefined });
+      setSimulation(response.data.data);
+    } catch (reason) {
+      setError(reason.response?.data?.message || "Could not run the private simulation.");
+    } finally {
+      setSimulating(false);
+    }
+  }
+
   async function activate() {
     setActivating(true);
     setError("");
@@ -567,6 +655,9 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
                 <button type="button" onClick={loadRecalculationPreview} disabled={recalcLoading || recalcApplying || saving} className="flex h-9 items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-4 text-xs font-semibold text-sky-700 transition hover:bg-sky-100 disabled:opacity-50">
                   {recalcLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />} {recalcPreview ? "Hide existing incentive review" : "Review existing incentives"}
                 </button>
+                <button type="button" onClick={runSimulation} disabled={simulating || saving} className="flex h-9 items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-4 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 disabled:opacity-50">
+                  {simulating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Calculator className="h-3.5 w-3.5" />} {simulation ? "Run simulation again" : "Test against current data"}
+                </button>
                 {!plan.isActive ? (
                   <button type="button" onClick={activate} disabled={activating} className="flex h-9 items-center gap-1.5 rounded-full bg-emerald-600 px-4 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50">
                     {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Activate
@@ -598,6 +689,7 @@ function PlanRow({ plan, caseRoles, caseTypeOptions, onSaved, onActivated, onDel
                   {confirmingDelete ? <button type="button" onClick={() => setConfirmingDelete(false)} className="text-xs font-semibold text-slate-500 hover:text-slate-700">Cancel</button> : null}
                 </div>
               </div>
+              <AnimatePresence>{simulation ? <SimulationDrawer plan={plan} simulation={simulation} onClose={() => setSimulation(null)} /> : null}</AnimatePresence>
               {recalcPreview ? (
                 <div className="border-t border-sky-200 pt-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">

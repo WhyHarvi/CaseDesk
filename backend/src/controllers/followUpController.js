@@ -8,6 +8,7 @@ import { portalDataScope } from "../services/portalAccessService.js";
 import { leadFollowUpAccessWhere, leadSegmentWhere } from "../modules/leads/lead.permissions.js";
 import { reportingBounds } from "../modules/leads/lead.metrics.js";
 import { logger } from "../services/logger.js";
+import { creditStudyPermitMilestone, POST_SUBMISSION_FOLLOW_UP_TYPE } from "../services/incentiveExpansionService.js";
 
 export const FOLLOW_UP_PRIORITIES = ["High", "Medium", "Low"];
 export const FOLLOW_UP_TYPES = [
@@ -16,6 +17,7 @@ export const FOLLOW_UP_TYPES = [
   "Document request",
   "Payment reminder",
   "Case review",
+  POST_SUBMISSION_FOLLOW_UP_TYPE,
 ];
 export const FOLLOW_UP_COMPLETION_OUTCOMES = [
   "Client contacted",
@@ -244,6 +246,16 @@ const controller = createCrudController({
         entityId: data.id,
         metadata: { completionOutcome: data.completionOutcome },
       });
+      if (data.caseId && data.followUpType === POST_SUBMISSION_FOLLOW_UP_TYPE) {
+        await creditStudyPermitMilestone(req.auth.agencyId, {
+          caseId: data.caseId,
+          eventType: "POST_SUBMISSION_FOLLOW_UP_COMPLETED",
+          triggerSource: "FOLLOW_UP_COMPLETED",
+          triggerRef: data.id,
+          occurredAt: data.completedAt || new Date(),
+          actorUserId: req.auth.userId,
+        }).catch((error) => logger.warn("follow_up.milestone_incentive_failed", { followUpId: data.id, reason: error.message }));
+      }
     }
     const notificationContextChanged =
       existing.title !== data.title ||

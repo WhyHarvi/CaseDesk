@@ -1118,13 +1118,13 @@ model CaseInvoiceIncentiveSnapshot {
 model IncentiveLedgerEntry {
   id                      String                          @id @default(uuid())
   agencyId                String                          @map("agency_id")
-  caseId                  String                          @map("case_id")
+  caseId                  String?                         @map("case_id")
   // Null for a TIMELINE_BONUS row — a timeline bonus (e.g. "reached
   // Qualified") has no invoice at all. Every other entryType still requires
   // one; that's enforced in incentiveCreditingService, not the database.
   caseInvoiceId           String?                         @map("case_invoice_id")
   timelineLegEvaluationId String?                         @map("timeline_leg_evaluation_id")
-  incentivePlanId         String                          @map("incentive_plan_id")
+  incentivePlanId         String?                         @map("incentive_plan_id")
   userId                  String                          @map("user_id")
   attributionKind         String                          @map("attribution_kind")
   caseRoleId              String?                         @map("case_role_id")
@@ -1132,6 +1132,12 @@ model IncentiveLedgerEntry {
   sharePercentApplied     Decimal                         @map("share_percent_applied") @db.Decimal(5, 2)
   sourceAmountCollected   Decimal                         @map("source_amount_collected") @db.Decimal(10, 2)
   creditedAmount          Decimal                         @map("credited_amount") @db.Decimal(10, 2)
+  planNameSnapshot        String?                         @map("plan_name_snapshot")
+  planVersionSnapshot     Int?                            @map("plan_version_snapshot")
+  formulaTypeSnapshot     String?                         @map("formula_type_snapshot")
+  calculationSnapshot     Json                            @default("{}") @map("calculation_snapshot")
+  incentiveCycleId        String?                         @map("incentive_cycle_id")
+  incentivePeriodId       String?                         @map("incentive_period_id")
   triggerSource           String                          @map("trigger_source")
   triggerRef              String?                         @map("trigger_ref")
   entryType               String                          @default("CREDIT") @map("entry_type")
@@ -1139,10 +1145,10 @@ model IncentiveLedgerEntry {
   creditedAt              DateTime                        @map("credited_at")
   createdAt               DateTime                        @default(now()) @map("created_at")
   agency                  Agency                          @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  case                    Case                            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  case                    Case?                           @relation(fields: [caseId], references: [id], onDelete: Cascade)
   caseInvoice             CaseInvoice?                    @relation(fields: [caseInvoiceId], references: [id], onDelete: Cascade)
   timelineLegEvaluation   IncentiveTimelineLegEvaluation? @relation(fields: [timelineLegEvaluationId], references: [id], onDelete: Restrict)
-  incentivePlan           IncentivePlan                   @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
+  incentivePlan           IncentivePlan?                  @relation(fields: [incentivePlanId], references: [id], onDelete: Restrict)
   user                    User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
   caseRole                AgencyCaseRole?                 @relation(fields: [caseRoleId], references: [id], onDelete: SetNull)
   reversesEntry           IncentiveLedgerEntry?           @relation("IncentiveLedgerReversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
@@ -1152,6 +1158,8 @@ model IncentiveLedgerEntry {
   @@index([agencyId, caseId])
   @@index([agencyId, caseInvoiceId])
   @@index([agencyId, creditedAt])
+  @@index([agencyId, incentiveCycleId])
+  @@index([agencyId, incentivePeriodId])
   @@index([reversesEntryId])
   @@map("incentive_ledger_entries")
 }
@@ -1401,6 +1409,7 @@ model AgencyFeeCategory {
   name        String
   description String?
   kind        String   @default("Other")
+  countsTowardRevenue Boolean @default(false) @map("counts_toward_revenue")
   qboItemId   String?  @map("qbo_item_id")
   qboItemName String?  @map("qbo_item_name")
   isActive    Boolean  @default(true) @map("is_active")
@@ -1472,12 +1481,131 @@ model IncentivePlan {
   tiers                         IncentivePlanTier[]
   roleShares                    IncentivePlanRoleShare[]
   timelineLegs                  IncentivePlanTimelineLeg[]
+  milestoneRules               IncentivePlanMilestoneRule[]
   ledgerEntries                 IncentiveLedgerEntry[]
   timelineLegEvaluations        IncentiveTimelineLegEvaluation[]
   caseInvoiceIncentiveSnapshots CaseInvoiceIncentiveSnapshot[]
 
   @@index([agencyId, caseType, isActive])
   @@map("incentive_plans")
+}
+
+model IncentivePlanMilestoneRule {
+  id              String        @id @default(uuid())
+  agencyId        String        @map("agency_id")
+  planId          String        @map("plan_id")
+  eventType       String        @map("event_type")
+  name            String
+  flatAmount      Decimal       @map("flat_amount") @db.Decimal(10, 2)
+  payoutPercent   Decimal       @default(100) @map("payout_percent") @db.Decimal(5, 2)
+  sortOrder       Int           @default(0) @map("sort_order")
+  isActive        Boolean       @default(true) @map("is_active")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  plan            IncentivePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, eventType])
+  @@index([agencyId, planId])
+  @@map("incentive_plan_milestone_rules")
+}
+
+model IncentiveCycle {
+  id              String   @id @default(uuid())
+  agencyId        String   @map("agency_id")
+  caseId          String   @map("case_id")
+  sequence        Int
+  cycleType       String   @default("ORIGINAL") @map("cycle_type")
+  incentiveEligible Boolean @default(true) @map("incentive_eligible")
+  eligibilityReason String? @map("eligibility_reason")
+  status          String   @default("ACTIVE")
+  createdById     String?  @map("created_by_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  closedAt        DateTime? @map("closed_at")
+
+  @@unique([caseId, sequence])
+  @@index([agencyId, caseId, status])
+  @@map("incentive_cycles")
+}
+
+model IncentiveMilestoneEvaluation {
+  id                  String   @id @default(uuid())
+  agencyId            String   @map("agency_id")
+  caseId              String   @map("case_id")
+  incentiveCycleId    String   @map("incentive_cycle_id")
+  incentivePlanId     String   @map("incentive_plan_id")
+  milestoneRuleId     String   @map("milestone_rule_id")
+  eventType           String   @map("event_type")
+  eventNameSnapshot   String   @map("event_name_snapshot")
+  amountSnapshot      Decimal  @map("amount_snapshot") @db.Decimal(10, 2)
+  payoutPercentSnapshot Decimal @default(100) @map("payout_percent_snapshot") @db.Decimal(5, 2)
+  triggerSource       String   @map("trigger_source")
+  triggerRef          String   @map("trigger_ref")
+  occurredAt          DateTime @map("occurred_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([incentiveCycleId, eventType])
+  @@unique([agencyId, triggerSource, triggerRef, eventType])
+  @@index([agencyId, caseId, occurredAt])
+  @@map("incentive_milestone_evaluations")
+}
+
+model IncentivePeriod {
+  id            String   @id @default(uuid())
+  agencyId      String   @map("agency_id")
+  label         String
+  startsAt      DateTime @map("starts_at")
+  endsAt        DateTime @map("ends_at")
+  status        String   @default("ACTIVE")
+  closedById    String?  @map("closed_by_id")
+  closedReason  String?  @map("closed_reason")
+  closedAt      DateTime? @map("closed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([agencyId, status, startsAt])
+  @@unique([agencyId, startsAt])
+  @@map("incentive_periods")
+}
+
+model IncentiveRevenueCredit {
+  id                    String   @id @default(uuid())
+  agencyId              String   @map("agency_id")
+  incentivePeriodId     String   @map("incentive_period_id")
+  caseId                String   @map("case_id")
+  caseInvoiceId         String   @map("case_invoice_id")
+  revenueOwnerId        String   @map("revenue_owner_id")
+  revenueOwnerSnapshot  String   @map("revenue_owner_snapshot")
+  revenueCategory       String   @map("revenue_category")
+  sourceAmount          Decimal  @map("source_amount") @db.Decimal(10, 2)
+  netAmount             Decimal  @map("net_amount") @db.Decimal(10, 2)
+  triggerSource         String   @map("trigger_source")
+  triggerRef            String   @map("trigger_ref")
+  reversesCreditId      String?  @map("reverses_credit_id")
+  collectedAt           DateTime @map("collected_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@unique([agencyId, triggerSource, triggerRef])
+  @@index([agencyId, incentivePeriodId, revenueOwnerId])
+  @@index([agencyId, caseInvoiceId])
+  @@index([reversesCreditId])
+  @@map("incentive_revenue_credits")
+}
+
+model IncentiveContest {
+  id                       String   @id @default(uuid())
+  agencyId                 String   @map("agency_id")
+  incentivePeriodId        String   @unique @map("incentive_period_id")
+  prizeType                String   @map("prize_type")
+  prizeValue               Decimal  @map("prize_value") @db.Decimal(10, 2)
+  status                   String   @default("DRAFT")
+  rankingSnapshot          Json     @default("[]") @map("ranking_snapshot")
+  winnerSnapshot           Json     @default("[]") @map("winner_snapshot")
+  finalizedById            String?  @map("finalized_by_id")
+  finalizedAt              DateTime? @map("finalized_at")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@index([agencyId, status])
+  @@map("incentive_contests")
 }
 
 // Only populated when the owning plan's formulaType is
@@ -2364,6 +2492,7 @@ model Case {
   agencyId                     String                           @map("agency_id")
   clientId                     String                           @map("client_id")
   assignedUserId               String?                          @map("assigned_user_id")
+  revenueOwnerId                String?                          @map("revenue_owner_id")
   // Extra consultants beyond assignedUserId (the primary owner) — currently
   // only ever populated by Case Easy conversion, when the legacy case named
   // more than one assignee. Purely informational: nothing outside display
@@ -2439,6 +2568,7 @@ model Case {
   @@index([agencyId, studyIntakeMonth])
   @@index([clientId])
   @@index([assignedUserId])
+  @@index([agencyId, revenueOwnerId])
   @@index([agencyId, archivedAt])
   @@index([agencyId, deletedAt])
   @@map("cases")

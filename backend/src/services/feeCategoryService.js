@@ -3,10 +3,10 @@ import { createHttpError } from "../utils/http.js";
 import { listQuickBooksItems } from "./quickbooksService.js";
 
 export const DEFAULT_FEE_CATEGORIES = [
-  { code: "fees", name: "Professional fees", description: "Legal and immigration professional services.", kind: "Professional", sortOrder: 10 },
-  { code: "disbursement", name: "Government fee disbursements", description: "Government, IRCC and third-party disbursements.", kind: "Government", sortOrder: 20 },
-  { code: "consultation", name: "Consultation fees", description: "Initial and follow-up consultation charges.", kind: "Consultation", sortOrder: 30 },
-  { code: "other", name: "Other fees", description: "Other client charges configured by the agency.", kind: "Other", sortOrder: 40 },
+  { code: "fees", name: "Professional fees", description: "Legal and immigration professional services.", kind: "Professional", countsTowardRevenue: true, sortOrder: 10 },
+  { code: "disbursement", name: "Government fee disbursements", description: "Government, IRCC and third-party disbursements.", kind: "Government", countsTowardRevenue: false, sortOrder: 20 },
+  { code: "consultation", name: "Consultation fees", description: "Initial and follow-up consultation charges.", kind: "Consultation", countsTowardRevenue: false, sortOrder: 30 },
+  { code: "other", name: "Other fees", description: "Other client charges configured by the agency.", kind: "Other", countsTowardRevenue: false, sortOrder: 40 },
 ];
 
 function legacyMapping(settings, code) {
@@ -91,6 +91,7 @@ export async function createFeeCategory(agencyId, values) {
         qboItemName: item?.name || null,
         isActive: true,
         sortOrder: Number.isInteger(values?.sortOrder) ? values.sortOrder : 100,
+        countsTowardRevenue: values?.countsTowardRevenue === true,
       },
     });
   } catch (error) {
@@ -111,6 +112,7 @@ export async function updateFeeCategory(agencyId, id, values) {
   if (values?.kind !== undefined) data.kind = String(values.kind || "Other").trim().slice(0, 40) || "Other";
   if (typeof values?.isActive === "boolean") data.isActive = values.isActive;
   if (Number.isInteger(values?.sortOrder)) data.sortOrder = values.sortOrder;
+  if (typeof values?.countsTowardRevenue === "boolean") data.countsTowardRevenue = values.countsTowardRevenue;
   if (values?.qboItemId !== undefined) {
     const itemId = String(values.qboItemId || "").trim() || null;
     const item = await validateQuickBooksItem(agencyId, itemId);

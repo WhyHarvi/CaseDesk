@@ -17,6 +17,7 @@ import { offerWaitlistOpening } from "../services/bookingWaitlistService.js";
 import { invalidateDashboardCache } from "../services/dashboardCache.js";
 import { notifyCaseAssignment } from "../services/caseAssignmentNotificationService.js";
 import { formatStudyIntakeMonth, isStudyPermitCaseType, normalizeStudyIntakeMonth, stageRequiresStudyIntake, studyIntakeKey } from "../utils/studyIntake.js";
+import { creditStudyPermitMilestone, STUDY_PERMIT_MILESTONES } from "../services/incentiveExpansionService.js";
 
 const include = {
   client: {
@@ -358,6 +359,7 @@ export async function createCase(req, res) {
     const data = await tx.case.create({
       data: {
         ...payload,
+        revenueOwnerId: payload.assignedUserId || null,
         agencyId: req.user.agencyId,
         creationIdempotencyKey: idempotencyKey,
       },
@@ -546,6 +548,15 @@ export async function updateCase(req, res) {
     await evaluateCaseTimelineLegs(req.auth.agencyId, result.data.id).catch((error) => {
       logger.warn("case.timeline_bonus_evaluation_failed", { caseId: result.data.id, reason: error.message });
     });
+    const milestoneType = STUDY_PERMIT_MILESTONES[payload.stage];
+    if (milestoneType) await creditStudyPermitMilestone(req.auth.agencyId, {
+      caseId: result.data.id,
+      eventType: milestoneType,
+      triggerSource: "CASE_STAGE_HISTORY",
+      triggerRef: `${result.data.id}:${payload.stage}`,
+      occurredAt: new Date(),
+      actorUserId: req.auth.userId,
+    }).catch((error) => logger.warn("case.milestone_incentive_failed", { caseId: result.data.id, reason: error.message }));
   }
 
   const clientVisibleChanges = ["stage", "status", "submittedAt", "decisionAt"]
