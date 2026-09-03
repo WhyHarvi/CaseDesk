@@ -143,6 +143,15 @@ test("client conversations link to the scoped client profile from full and float
   assert.match(widget, /aria-label="Open client profile"/);
 });
 
+test("the opened quick-chat header shows the client conversation assignee", async () => {
+  const widget = await source("../../frontend/src/components/chat/FloatingChatWidget.jsx");
+
+  assert.match(widget, /assignedToName: conversation\.assignedTo\?\.fullName \|\| null/);
+  assert.match(widget, /assignedToName: data\.assignedTo\?\.fullName \|\| null/);
+  assert.match(widget, /<header className="flex h-\[4\.5rem\]/);
+  assert.match(widget, /`Assigned to \$\{activeDetail\.assignedToName\}` : "Unassigned"/);
+});
+
 test("refreshing a Nova deep link keeps it as AI instead of loading an internal thread named nova", async () => {
   const page = await source("../../frontend/src/pages/ChatsPage.jsx");
   assert.match(page, /\["ai", "support", "client", "email", "sms", "internal"\]\.includes\(requestedKind\)/);

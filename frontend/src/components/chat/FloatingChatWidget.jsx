@@ -233,6 +233,8 @@ export default function FloatingChatWidget() {
         isGroup: false,
         lastMessageAt: conversation.lastMessageAt,
         unreadCount: conversation.unreadCount || 0,
+        assignedToId: conversation.assignedTo?.id || null,
+        assignedToName: conversation.assignedTo?.fullName || null,
         preview: latest ? previewSenderPrefix(latest, myUserId) + (latest.bodyText || "Sent an attachment") : "",
       };
     });
@@ -311,6 +313,8 @@ export default function FloatingChatWidget() {
       isGroup: false,
       caseId: data.caseId || null,
       clientId: data.clientId,
+      assignedToId: data.assignedTo?.id || null,
+      assignedToName: data.assignedTo?.fullName || null,
       messages: data.messages,
       clientLastReadAt: data.clientLastReadAt,
     };
@@ -621,7 +625,7 @@ export default function FloatingChatWidget() {
             transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.16, 1, 0.3, 1] }}
             className="mb-3 flex h-[560px] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[1.75rem] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.25)]"
           >
-            <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-100 bg-white/95 px-3 backdrop-blur-xl">
+            <header className="flex h-[4.5rem] shrink-0 items-center gap-2 border-b border-slate-100 bg-white/95 px-3 backdrop-blur-xl">
               {view === "thread" ? (
                 <button type="button" onClick={() => setView("list")} aria-label="See all chats" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100">
                   <ChevronLeft className="h-4.5 w-4.5" />
@@ -632,6 +636,7 @@ export default function FloatingChatWidget() {
                   <QuickAvatar item={activeDetail} avatarUrl={threadAvatarUrl(activeDetail)} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-slate-950">{activeDetail.name}</p>
+                    {activeDetail.kind === "client" ? <p className="mt-0.5 truncate text-[10px] font-medium text-slate-500">{activeDetail.assignedToName ? `Assigned to ${activeDetail.assignedToName}` : "Unassigned"}</p> : null}
                     {activeDetail.kind === "ai" ? <p className="text-[10px] font-medium text-slate-500">CaseDesk guide</p> : null}
                     {activeDetail.kind === "support" ? <p className="text-[10px] font-medium text-slate-500">Report a problem</p> : null}
                   </div>
