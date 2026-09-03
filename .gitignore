@@ -9,6 +9,8 @@ dist
 coverage
 .vite
 backend/storage/
-docs/
+# Architecture notes are repository documentation; keep only per-user
+# Obsidian workspace state out of version control.
+.obsidian/
 .agents/
 run-dev.sh
