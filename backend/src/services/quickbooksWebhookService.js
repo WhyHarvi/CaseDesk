@@ -16,7 +16,7 @@ import { invalidateDashboardCache } from "./dashboardCache.js";
 import { createOrLinkLeadForConsultation, captureAbandonedPublicBookingLead } from "../modules/leads/lead.booking.js";
 import { triggerRetainerFlow } from "../modules/leads/lead.retainer.service.js";
 import { deriveCaseInvoiceStatus } from "./caseInvoiceService.js";
-import { creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
+import { creditCaseInvoiceCollection, resetCreditCursor, reverseCaseInvoiceRefund } from "./incentiveCreditingService.js";
 import { financialOperationsRecipientIds, notifyUsers, resolveNotifications } from "./notificationService.js";
 import { MEETING_MODES, appointmentMeetingFields } from "./bookingMeetingModeService.js";
 import { enqueueAppointmentMeetingJob } from "./appointmentMeetingService.js";
@@ -383,17 +383,33 @@ async function applyCaseInvoiceRefundReceipt(agencyId, refund) {
   }
   if (candidates.length !== 1) return null;
   const candidate = candidates[0];
-  const completed = await prisma.invoiceRefund.update({
-    where: { id: candidate.id },
-    data: { status: "Completed", qbRefundReceiptId: refund.id, completedAt: new Date(refund.createdAt || refund.transactionDate || Date.now()) },
-    include: { invoice: { include: { refunds: { where: { status: "Completed" } } } } },
+  const completed = await prisma.$transaction(async (tx) => {
+    const row = await tx.invoiceRefund.update({
+      where: { id: candidate.id },
+      data: { status: "Completed", qbRefundReceiptId: refund.id, completedAt: new Date(refund.createdAt || refund.transactionDate || Date.now()) },
+      include: { invoice: { include: { refunds: { where: { status: "Completed" } } } } },
+    });
+    const totalRefunded = row.invoice.refunds.reduce((sum, item) => sum + Number(item.amount), 0);
+    const collected = Math.max(0, Number(row.invoice.amount) - Number(row.invoice.balance));
+    await tx.caseInvoice.update({
+      where: { id: row.invoice.id },
+      data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+    });
+    await reverseCaseInvoiceRefund(tx, {
+      agencyId, caseId: row.invoice.caseId, caseInvoiceId: row.invoice.id, refundAmount: Number(row.amount),
+      trigger: "QBO_REFUND", triggerRef: `refund:${row.id}`,
+    });
+    return row;
   });
-  const totalRefunded = completed.invoice.refunds.reduce((sum, item) => sum + Number(item.amount), 0);
-  const collected = Math.max(0, Number(completed.invoice.amount) - Number(completed.invoice.balance));
-  await prisma.caseInvoice.update({
-    where: { id: completed.invoice.id },
-    data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+  await recordRevenueMovement(agencyId, {
+    caseId: completed.invoice.caseId, caseInvoiceId: completed.invoice.id, delta: -Number(completed.amount),
+    triggerSource: "QBO_REFUND", triggerRef: `refund:${completed.id}`,
+  }).catch((error) => {
+    logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId: completed.invoice.id, refundId: completed.id, reason: error.message });
   });
+
   await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: completed.invoice.clientId, caseId: completed.invoice.caseId }).catch(() => {});
   await recordActivity({
     agencyId,

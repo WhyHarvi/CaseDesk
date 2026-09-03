@@ -315,3 +315,38 @@ test("incentive read APIs scope self-vs-admin correctly and are mounted behind t
   assert.match(controller, /return req\.auth\.userId;\s*\n\}/);
   assert.match(server, /app\.use\(\s*"\/api\/incentives",\s*requireAuth,\s*staffUser,[\s\S]*?requirePortalPage\("incentives"\),\s*incentiveRoutes,\s*\);/);
 });
+
+test("a completed refund reverses incentive ledger credits and contest revenue, not just the invoice/refund records", async () => {
+  const [creditingService, caseInvoiceService, quickbooksWebhookService] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/services/caseInvoiceService.js"),
+    source("../src/services/quickbooksWebhookService.js"),
+  ]);
+
+  // The reversal engine has its own entry point for refunds that never move
+  // CaseInvoice.balance (cash refunds and QuickBooks refund receipts both
+  // settle through InvoiceRefund/CashTransaction, not by re-inflating the
+  // owed balance) — creditCaseInvoiceCollection's balance-diff cursor can
+  // never observe these, so it can't be the thing that reverses them.
+  assert.match(creditingService, /export async function reverseCaseInvoiceRefund\(tx, \{ agencyId, caseId, caseInvoiceId, refundAmount, trigger, triggerRef \}\)/);
+
+  // Cash refund: the ledger reversal runs inside the same transaction that
+  // first flips the InvoiceRefund row to Completed, so a crash mid-way
+  // leaves nothing partially applied — the existing approvalId idempotency
+  // guard reprocesses the whole step, reversal included, on retry.
+  const cashRefundStart = caseInvoiceService.indexOf("export async function completeCashInvoiceRefund(");
+  const cashRefundBody = caseInvoiceService.slice(cashRefundStart, caseInvoiceService.indexOf("\nexport async function markInvoiceRefundFailed(", cashRefundStart));
+  assert.match(cashRefundBody, /const refund = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.upsert\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: invoice\.caseId, caseInvoiceId: invoice\.id, refundAmount: numericAmount,\s*\n\s*trigger: "CASH_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);\s*\n\s*return row;\s*\n\s*\}\);/);
+  assert.match(cashRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: invoice\.caseId, caseInvoiceId: invoice\.id, delta: -numericAmount,\s*\n\s*triggerSource: "CASH_REFUND"/);
+  assert.match(cashRefundBody, /\.catch\(\(error\) => \{\s*\n\s*logger\.warn\("incentive\.revenue_reversal_failed"/);
+
+  // QuickBooks refund receipt: same shape — the reversal is inside the
+  // transaction that marks the InvoiceRefund Completed (qbRefundReceiptId
+  // set), so the existing "alreadyApplied" lookup on that field makes a
+  // retried webhook delivery safe to reprocess in full.
+  const qboRefundStart = quickbooksWebhookService.indexOf("async function applyCaseInvoiceRefundReceipt(");
+  const qboRefundBody = quickbooksWebhookService.slice(qboRefundStart, quickbooksWebhookService.indexOf("\nasync function processCaseInvoiceEvent(", qboRefundStart));
+  assert.match(qboRefundBody, /const completed = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.update\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: row\.invoice\.caseId, caseInvoiceId: row\.invoice\.id, refundAmount: Number\(row\.amount\),\s*\n\s*trigger: "QBO_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);\s*\n\s*return row;\s*\n\s*\}\);/);
+  assert.match(qboRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: completed\.invoice\.caseId, caseInvoiceId: completed\.invoice\.id, delta: -Number\(completed\.amount\),\s*\n\s*triggerSource: "QBO_REFUND"/);
+  assert.match(qboRefundBody, /\.catch\(\(error\) => \{\s*\n\s*logger\.warn\("incentive\.revenue_reversal_failed"/);
+});

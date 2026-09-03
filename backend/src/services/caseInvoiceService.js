@@ -20,7 +20,7 @@ import { syncLeadInitialPaymentFromEvidence } from "../modules/leads/lead.financ
 import { requireFeeCategory, listFeeCategories } from "./feeCategoryService.js";
 import { applyLocalCashToInvoice, createApprovedCashLedgerRecord, postApprovedCashTransaction } from "./paymentApprovalLedgerService.js";
 import { resolveCustomPaymentLedger } from "./customPaymentLedgerService.js";
-import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor } from "./incentiveCreditingService.js";
+import { buildInvoiceIncentiveSnapshot, creditCaseInvoiceCollection, resetCreditCursor, reverseCaseInvoiceRefund } from "./incentiveCreditingService.js";
 
 export const PAYMENT_TYPES = { fees: "Professional fees", disbursement: "Government fee disbursement" };
 export const ACCOUNTING_PROVIDERS = Object.freeze({ QUICKBOOKS: "QuickBooks", CASH: "CaseDeskCash" });
@@ -875,26 +875,41 @@ export async function completeCashInvoiceRefund(agencyId, { invoiceId, caseId, a
     type: "Refund",
     customLedgerId: invoice.customLedgerId || null,
   });
-  const refund = await prisma.invoiceRefund.upsert({
-    where: { cashTransactionId: transaction.id },
-    create: {
-      agencyId,
-      invoiceId: invoice.id,
-      amount: numericAmount,
-      currency: invoice.currency,
-      accountingProvider: ACCOUNTING_PROVIDERS.CASH,
-      status: "Completed",
-      reason: refundReason,
-      cashTransactionId: transaction.id,
-      requestedById: actorUserId,
-      completedAt: new Date(),
-    },
-    update: {},
-  });
   const totalRefunded = money(committedRefunds + numericAmount);
-  await prisma.caseInvoice.update({
-    where: { id: invoice.id },
-    data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+  const refund = await prisma.$transaction(async (tx) => {
+    const row = await tx.invoiceRefund.upsert({
+      where: { cashTransactionId: transaction.id },
+      create: {
+        agencyId,
+        invoiceId: invoice.id,
+        amount: numericAmount,
+        currency: invoice.currency,
+        accountingProvider: ACCOUNTING_PROVIDERS.CASH,
+        status: "Completed",
+        reason: refundReason,
+        cashTransactionId: transaction.id,
+        requestedById: actorUserId,
+        completedAt: new Date(),
+      },
+      update: {},
+    });
+    await tx.caseInvoice.update({
+      where: { id: invoice.id },
+      data: { status: totalRefunded >= collected - 0.01 ? "Refunded" : "PartiallyRefunded" },
+    });
+    await reverseCaseInvoiceRefund(tx, {
+      agencyId, caseId: invoice.caseId, caseInvoiceId: invoice.id, refundAmount: numericAmount,
+      trigger: "CASH_REFUND", triggerRef: `refund:${row.id}`,
+    });
+    return row;
+  });
+
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+  await recordRevenueMovement(agencyId, {
+    caseId: invoice.caseId, caseInvoiceId: invoice.id, delta: -numericAmount,
+    triggerSource: "CASH_REFUND", triggerRef: `refund:${refund.id}`,
+  }).catch((error) => {
+    logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId: invoice.id, refundId: refund.id, reason: error.message });
   });
 
   await recordActivity({

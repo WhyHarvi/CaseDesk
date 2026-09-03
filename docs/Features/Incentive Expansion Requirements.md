@@ -79,6 +79,7 @@ The admin-only simulator calculates a candidate plan against tenant-scoped cases
 - Schema and migration: `backend/prisma/schema.prisma`, `backend/prisma/migrations/20260903120000_add_incentive_expansion/`
 - Core rules: `backend/src/services/incentiveExpansionService.js`
 - Posting integration: `backend/src/services/incentiveCreditingService.js`
+- Refund reversal: cash and QuickBooks refunds never move `CaseInvoice.balance` (they settle through `InvoiceRefund`/`CashTransaction`, not by re-inflating the owed balance), so they can't ride `creditCaseInvoiceCollection`'s balance-diff cursor. `incentiveCreditingService.reverseCaseInvoiceRefund` is the dedicated entry point; it's called from inside the same transaction that first marks a refund `Completed` in `caseInvoiceService.completeCashInvoiceRefund` and `quickbooksWebhookService.applyCaseInvoiceRefundReceipt`, so a crash mid-way leaves nothing partially applied and each path's existing refund-idempotency guard covers the reversal too.
 - Milestone hooks: case, lifecycle, and follow-up controllers
 - APIs: incentive expansion controller and incentive routes
 - UI: Incentives page and incentive-plan settings panel

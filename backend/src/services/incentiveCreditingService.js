@@ -340,7 +340,7 @@ async function computeSnapshotPool(snapshot, { agencyId, caseId, delta }) {
   return { pool: rate === null ? 0 : (delta * rate) / 100, matchedRate: rate };
 }
 
-async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refundAmount, trigger, newBalance }) {
+async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refundAmount, trigger, triggerRef }) {
   const credits = await tx.incentiveLedgerEntry.findMany({
     where: { agencyId, caseId, caseInvoiceId, entryType: "CREDIT", creditedAmount: { gt: 0 } },
     include: { reversalEntries: { select: { creditedAmount: true } } },
@@ -369,7 +369,7 @@ async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refu
         attributionKind: credit.attributionKind, caseRoleId: credit.caseRoleId,
         roleNameSnapshot: credit.roleNameSnapshot, sharePercentApplied: credit.sharePercentApplied,
         sourceAmountCollected: -sourceToReverse, creditedAmount: -amount, triggerSource: trigger,
-        triggerRef: `balance:${Number(newBalance).toFixed(2)}`, entryType: "REVERSAL",
+        triggerRef, entryType: "REVERSAL",
         reversesEntryId: credit.id, creditedAt: new Date(),
         planNameSnapshot: credit.planNameSnapshot,
         planVersionSnapshot: credit.planVersionSnapshot,
@@ -381,6 +381,23 @@ async function reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refu
   }
   if (rows.length) await tx.incentiveLedgerEntry.createMany({ data: rows });
   return rows.length;
+}
+
+// For refunds that never move CaseInvoice.balance — CaseDeskCash refunds and
+// QuickBooks refund receipts both settle through InvoiceRefund/
+// CashTransaction, not by re-inflating the invoice's owed balance, so
+// neither can ride creditCaseInvoiceCollection's balance-diff cursor (there
+// is no balance drift for the retry sweep to ever notice). Callers own
+// idempotency: this must run at most once per refund, so call it from
+// inside the same transaction that first flips that refund to Completed —
+// if the transaction fails, the refund's own idempotency guard (unset
+// qbRefundReceiptId / missing invoiceRefund row) makes the whole step,
+// reversal included, safe to retry from scratch.
+export async function reverseCaseInvoiceRefund(tx, { agencyId, caseId, caseInvoiceId, refundAmount, trigger, triggerRef }) {
+  const amount = Number(refundAmount);
+  if (!(amount > 0)) return { entryCount: 0 };
+  const entryCount = await reverseInvoiceCredits(tx, { agencyId, caseId, caseInvoiceId, refundAmount: amount, trigger, triggerRef });
+  return { entryCount };
 }
 
 // Called for genuine collection events only (a payment applied that shrinks
@@ -446,7 +463,8 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
       });
       if (claim.count !== 1) return { credited: false, reason: "lost_race" };
       const entryCount = await reverseInvoiceCredits(tx, {
-        agencyId, caseId, caseInvoiceId, refundAmount: Math.abs(delta), trigger, newBalance: newBalanceNumber,
+        agencyId, caseId, caseInvoiceId, refundAmount: Math.abs(delta), trigger,
+        triggerRef: `balance:${newBalanceNumber.toFixed(2)}`,
       });
       return { credited: false, reversed: true, entryCount };
     });
