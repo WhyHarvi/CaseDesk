@@ -1393,7 +1393,7 @@ export default function ClientProfile() {
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ ...spring, delay: 0.08 }}
-              className={cx(glass, "flex min-h-[320px] flex-col p-6")}
+              className={cx(glass, "flex h-[28rem] max-h-[calc(100dvh-3rem)] flex-col overflow-hidden p-6")}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -1408,7 +1408,7 @@ export default function ClientProfile() {
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{clientActivities.length}</span>
               </div>
 
-              <div className="mt-5 min-h-0 flex-1 space-y-0 overflow-y-auto pr-1">
+              <div className="mt-5 min-h-0 flex-1 space-y-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
                 {clientActivities.length ? clientActivities.map((activity, index) => (
                   <div key={activity.id} className="flex gap-3">
                     <div className="flex flex-col items-center">
