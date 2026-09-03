@@ -876,6 +876,7 @@ export async function completeCashInvoiceRefund(agencyId, { invoiceId, caseId, a
     customLedgerId: invoice.customLedgerId || null,
   });
   const totalRefunded = money(committedRefunds + numericAmount);
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
   const refund = await prisma.$transaction(async (tx) => {
     const row = await tx.invoiceRefund.upsert({
       where: { cashTransactionId: transaction.id },
@@ -901,15 +902,15 @@ export async function completeCashInvoiceRefund(agencyId, { invoiceId, caseId, a
       agencyId, caseId: invoice.caseId, caseInvoiceId: invoice.id, refundAmount: numericAmount,
       trigger: "CASH_REFUND", triggerRef: `refund:${row.id}`,
     });
+    // Same transaction as the ledger reversal above and the invoiceRefund
+    // row itself — if this fails, the whole refund completion rolls back
+    // (approvalId idempotency reprocesses it in full on retry) instead of
+    // the refund posting while the contest projection silently falls behind.
+    await recordRevenueMovement(agencyId, {
+      caseId: invoice.caseId, caseInvoiceId: invoice.id, delta: -numericAmount,
+      triggerSource: "CASH_REFUND", triggerRef: `refund:${row.id}`,
+    }, tx);
     return row;
-  });
-
-  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
-  await recordRevenueMovement(agencyId, {
-    caseId: invoice.caseId, caseInvoiceId: invoice.id, delta: -numericAmount,
-    triggerSource: "CASH_REFUND", triggerRef: `refund:${refund.id}`,
-  }).catch((error) => {
-    logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId: invoice.id, refundId: refund.id, reason: error.message });
   });
 
   await recordActivity({

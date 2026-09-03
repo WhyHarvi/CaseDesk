@@ -229,22 +229,31 @@ export async function getRevenueContest(agencyId, periodId = null) {
   return { period, ranking, winners: contest?.status === "FINALIZED" ? contest.winnerSnapshot : contestWinners(ranking), contest };
 }
 
-export async function recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource, triggerRef, collectedAt = new Date() }) {
+// db defaults to the module client but accepts a transaction handle so a
+// caller (creditCaseInvoiceCollection, the cash/QBO refund completions) can
+// post this in the SAME transaction as its ledger credit/reversal rows.
+// That's what makes the two durable: if the revenue write fails, the whole
+// transaction rolls back — the credit cursor never advances and the ledger
+// rows never post — so the invoice looks exactly like it was never observed,
+// and the next natural retry (a later balance observation, or the hourly
+// reconcilePendingIncentiveCredits sweep) redoes both together instead of
+// the ledger credit posting while the contest projection is silently lost.
+export async function recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource, triggerRef, collectedAt = new Date() }, db = prisma) {
   if (!Number.isFinite(Number(delta)) || Number(delta) === 0) return { recorded: false, reason: "no_movement" };
-  const invoice = await prisma.caseInvoice.findFirst({
+  const invoice = await db.caseInvoice.findFirst({
     where: { id: caseInvoiceId, caseId, agencyId },
     select: { paymentType: true, case: { select: { assignedUserId: true, revenueOwnerId: true } } },
   });
   if (!invoice) return { recorded: false, reason: "invoice_not_found" };
-  const category = await prisma.agencyFeeCategory.findFirst({ where: { agencyId, code: invoice.paymentType, isActive: true } });
+  const category = await db.agencyFeeCategory.findFirst({ where: { agencyId, code: invoice.paymentType, isActive: true } });
   if (!category?.countsTowardRevenue) return { recorded: false, reason: "revenue_category_excluded" };
   let original = null;
   if (Number(delta) < 0) {
-    original = await prisma.incentiveRevenueCredit.findFirst({
+    original = await db.incentiveRevenueCredit.findFirst({
       where: { agencyId, caseInvoiceId, netAmount: { gt: 0 } }, orderBy: [{ collectedAt: "asc" }, { id: "asc" }],
     });
     if (!original) return { recorded: false, reason: "original_credit_missing" };
-    const reversed = await prisma.incentiveRevenueCredit.aggregate({
+    const reversed = await db.incentiveRevenueCredit.aggregate({
       where: { agencyId, reversesCreditId: original.id }, _sum: { netAmount: true },
     });
     const remaining = Math.max(0, Number(original.netAmount) + Number(reversed._sum.netAmount || 0));
@@ -254,13 +263,13 @@ export async function recordRevenueMovement(agencyId, { caseId, caseInvoiceId, d
   const ownerId = original?.revenueOwnerId || invoice.case.revenueOwnerId || invoice.case.assignedUserId;
   if (!ownerId) return { recorded: false, reason: "revenue_owner_missing" };
   const owner = original ? { id: original.revenueOwnerId, fullName: original.revenueOwnerSnapshot }
-    : await prisma.user.findFirst({ where: { id: ownerId, agencyId, status: "active" }, select: { id: true, fullName: true } });
+    : await db.user.findFirst({ where: { id: ownerId, agencyId, status: "active" }, select: { id: true, fullName: true } });
   if (!owner) return { recorded: false, reason: "revenue_owner_invalid" };
   const period = original
-    ? await prisma.incentivePeriod.findFirst({ where: { id: original.incentivePeriodId, agencyId } })
-    : await getOrCreateActiveIncentivePeriod(agencyId, collectedAt);
+    ? await db.incentivePeriod.findFirst({ where: { id: original.incentivePeriodId, agencyId } })
+    : await getOrCreateActiveIncentivePeriod(agencyId, collectedAt, db);
   try {
-    const row = await prisma.incentiveRevenueCredit.create({ data: { agencyId, incentivePeriodId: period.id, caseId, caseInvoiceId,
+    const row = await db.incentiveRevenueCredit.create({ data: { agencyId, incentivePeriodId: period.id, caseId, caseInvoiceId,
       revenueOwnerId: owner.id, revenueOwnerSnapshot: owner.fullName, revenueCategory: category.code,
       sourceAmount: Number(delta), netAmount: Number(delta), triggerSource, triggerRef, reversesCreditId: original?.id || null, collectedAt } });
     return { recorded: true, row };

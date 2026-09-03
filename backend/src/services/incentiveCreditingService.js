@@ -455,6 +455,8 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
   const delta = Number(cursor.lastCreditedBalance) - newBalanceNumber;
   if (delta === 0) return { credited: false, reason: "no_balance_change" };
 
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
+
   if (delta < 0) {
     const reversalResult = await prisma.$transaction(async (tx) => {
       const claim = await tx.caseInvoiceCreditCursor.updateMany({
@@ -466,15 +468,10 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
         agencyId, caseId, caseInvoiceId, refundAmount: Math.abs(delta), trigger,
         triggerRef: `balance:${newBalanceNumber.toFixed(2)}`,
       });
+      await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
+        triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }, tx);
       return { credited: false, reversed: true, entryCount };
     });
-    if (reversalResult.reversed) {
-      const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
-      await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
-        triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }).catch((error) => {
-        logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId, reason: error.message });
-      });
-    }
     return reversalResult;
   }
 
@@ -533,6 +530,8 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     });
     if (claim.count !== 1) return { credited: false, reason: "lost_race" };
     if (rows.length) await tx.incentiveLedgerEntry.createMany({ data: rows });
+    await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
+      triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }, tx);
     return { credited: true, entryCount: rows.length };
   });
 
@@ -543,11 +542,6 @@ export async function creditCaseInvoiceCollection(agencyId, { caseId, caseInvoic
     // worker (this function is already called from there).
     await evaluateCaseTimelineLegs(agencyId, caseId).catch((error) => {
       logger.warn("incentive.timeline_bonus_evaluation_failed", { agencyId, caseId, reason: error.message });
-    });
-    const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
-    await recordRevenueMovement(agencyId, { caseId, caseInvoiceId, delta, triggerSource: trigger,
-      triggerRef: `${caseInvoiceId}:${Number(cursor.lastCreditedBalance).toFixed(2)}:${newBalanceNumber.toFixed(2)}` }).catch((error) => {
-      logger.warn("incentive.revenue_credit_failed", { caseInvoiceId, reason: error.message });
     });
   }
   return result;

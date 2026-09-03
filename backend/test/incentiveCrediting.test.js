@@ -330,23 +330,73 @@ test("a completed refund reverses incentive ledger credits and contest revenue, 
   // never observe these, so it can't be the thing that reverses them.
   assert.match(creditingService, /export async function reverseCaseInvoiceRefund\(tx, \{ agencyId, caseId, caseInvoiceId, refundAmount, trigger, triggerRef \}\)/);
 
-  // Cash refund: the ledger reversal runs inside the same transaction that
-  // first flips the InvoiceRefund row to Completed, so a crash mid-way
-  // leaves nothing partially applied — the existing approvalId idempotency
-  // guard reprocesses the whole step, reversal included, on retry.
+  // Cash refund: the ledger reversal AND the revenue-contest reversal both
+  // run inside the same transaction that first flips the InvoiceRefund row
+  // to Completed, so a crash or a revenue-write failure anywhere in there
+  // rolls back the whole thing — nothing partially applied — and the
+  // existing approvalId idempotency guard reprocesses it in full on retry.
   const cashRefundStart = caseInvoiceService.indexOf("export async function completeCashInvoiceRefund(");
   const cashRefundBody = caseInvoiceService.slice(cashRefundStart, caseInvoiceService.indexOf("\nexport async function markInvoiceRefundFailed(", cashRefundStart));
-  assert.match(cashRefundBody, /const refund = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.upsert\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: invoice\.caseId, caseInvoiceId: invoice\.id, refundAmount: numericAmount,\s*\n\s*trigger: "CASH_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);\s*\n\s*return row;\s*\n\s*\}\);/);
-  assert.match(cashRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: invoice\.caseId, caseInvoiceId: invoice\.id, delta: -numericAmount,\s*\n\s*triggerSource: "CASH_REFUND"/);
-  assert.match(cashRefundBody, /\.catch\(\(error\) => \{\s*\n\s*logger\.warn\("incentive\.revenue_reversal_failed"/);
+  assert.match(cashRefundBody, /const \{ recordRevenueMovement \} = await import\("\.\/incentiveExpansionService\.js"\);\s*\n\s*const refund = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.upsert\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: invoice\.caseId, caseInvoiceId: invoice\.id, refundAmount: numericAmount,\s*\n\s*trigger: "CASH_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);/);
+  assert.match(cashRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: invoice\.caseId, caseInvoiceId: invoice\.id, delta: -numericAmount,\s*\n\s*triggerSource: "CASH_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}, tx\);\s*\n\s*return row;\s*\n\s*\}\);/);
 
-  // QuickBooks refund receipt: same shape — the reversal is inside the
+  // QuickBooks refund receipt: same shape — both reversals are inside the
   // transaction that marks the InvoiceRefund Completed (qbRefundReceiptId
   // set), so the existing "alreadyApplied" lookup on that field makes a
   // retried webhook delivery safe to reprocess in full.
   const qboRefundStart = quickbooksWebhookService.indexOf("async function applyCaseInvoiceRefundReceipt(");
   const qboRefundBody = quickbooksWebhookService.slice(qboRefundStart, quickbooksWebhookService.indexOf("\nasync function processCaseInvoiceEvent(", qboRefundStart));
-  assert.match(qboRefundBody, /const completed = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.update\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: row\.invoice\.caseId, caseInvoiceId: row\.invoice\.id, refundAmount: Number\(row\.amount\),\s*\n\s*trigger: "QBO_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);\s*\n\s*return row;\s*\n\s*\}\);/);
-  assert.match(qboRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: completed\.invoice\.caseId, caseInvoiceId: completed\.invoice\.id, delta: -Number\(completed\.amount\),\s*\n\s*triggerSource: "QBO_REFUND"/);
-  assert.match(qboRefundBody, /\.catch\(\(error\) => \{\s*\n\s*logger\.warn\("incentive\.revenue_reversal_failed"/);
+  assert.match(qboRefundBody, /const \{ recordRevenueMovement \} = await import\("\.\/incentiveExpansionService\.js"\);\s*\n\s*const completed = await prisma\.\$transaction\(async \(tx\) => \{[\s\S]*?tx\.invoiceRefund\.update\([\s\S]*?tx\.caseInvoice\.update\([\s\S]*?reverseCaseInvoiceRefund\(tx, \{\s*\n\s*agencyId, caseId: row\.invoice\.caseId, caseInvoiceId: row\.invoice\.id, refundAmount: Number\(row\.amount\),\s*\n\s*trigger: "QBO_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}\);/);
+  assert.match(qboRefundBody, /recordRevenueMovement\(agencyId, \{\s*\n\s*caseId: row\.invoice\.caseId, caseInvoiceId: row\.invoice\.id, delta: -Number\(row\.amount\),\s*\n\s*triggerSource: "QBO_REFUND", triggerRef: `refund:\$\{row\.id\}`,\s*\n\s*\}, tx\);\s*\n\s*return row;\s*\n\s*\}\);/);
+});
+
+test("a revenue-contest write failure can no longer post the incentive ledger credit while silently losing the contest record", async () => {
+  const [creditingService, expansionService] = await Promise.all([
+    source("../src/services/incentiveCreditingService.js"),
+    source("../src/services/incentiveExpansionService.js"),
+  ]);
+
+  // recordRevenueMovement takes an optional db handle (the same convention
+  // getOrCreateActiveIncentivePeriod/ensureIncentiveCycle/refreshOpenInvoiceSnapshots
+  // already use) so a caller can post it inside its own transaction instead
+  // of as a separate, best-effort call after the ledger transaction commits.
+  assert.match(expansionService, /export async function recordRevenueMovement\(agencyId, \{ caseId, caseInvoiceId, delta, triggerSource, triggerRef, collectedAt = new Date\(\) \}, db = prisma\) \{/);
+  // Every internal read/write in the function must go through the passed-in
+  // db handle — a single leftover bare `prisma.` call would silently escape
+  // the transaction and reintroduce the exact non-atomicity being fixed.
+  const bodyStart = expansionService.indexOf("export async function recordRevenueMovement(");
+  const bodyEnd = expansionService.indexOf("\n}\n", bodyStart);
+  const body = expansionService.slice(bodyStart, bodyEnd);
+  assert.doesNotMatch(body, /[^.]\bprisma\./, "recordRevenueMovement must route every call through `db`, not the module-level `prisma` client");
+  assert.match(body, /getOrCreateActiveIncentivePeriod\(agencyId, collectedAt, db\)/);
+
+  // Both creditCaseInvoiceCollection transactions (the delta<0 reversal
+  // branch and the delta>0 credit branch) call it with `tx` — so if the
+  // revenue write throws, the ledger rows and the cursor claim roll back
+  // together. The invoice looks exactly like it was never observed, and the
+  // next natural retry (another balance observation, or the hourly
+  // reconcilePendingIncentiveCredits sweep) redoes both atomically instead
+  // of the ledger credit posting while the contest projection vanishes.
+  assert.match(creditingService, /const \{ recordRevenueMovement \} = await import\("\.\/incentiveExpansionService\.js"\);\s*\n\s*\n\s*if \(delta < 0\) \{/);
+  // Reversal branch: reverseInvoiceCredits and recordRevenueMovement both
+  // run, with `tx`, before the transaction returns.
+  const reversalBranchStart = creditingService.indexOf("if (delta < 0) {");
+  const reversalBranchEnd = creditingService.indexOf("return reversalResult;", reversalBranchStart);
+  const reversalBranch = creditingService.slice(reversalBranchStart, reversalBranchEnd);
+  assert.match(reversalBranch, /await reverseInvoiceCredits\(tx, \{/);
+  assert.match(reversalBranch, /await recordRevenueMovement\(agencyId, \{ caseId, caseInvoiceId, delta, triggerSource: trigger,/);
+  assert.match(reversalBranch, /\}, tx\);\s*\n\s*return \{ credited: false, reversed: true, entryCount \};/);
+  assert.ok(reversalBranch.indexOf("await reverseInvoiceCredits") < reversalBranch.indexOf("await recordRevenueMovement"),
+    "the ledger reversal must be written before the revenue reversal is attempted, both inside the same transaction");
+
+  // Credit branch: the ledger createMany and recordRevenueMovement both run,
+  // with `tx`, before the transaction returns.
+  const creditBranchStart = creditingService.indexOf("const result = await prisma.$transaction(async (tx) => {");
+  const creditBranchEnd = creditingService.indexOf("return { credited: true, entryCount: rows.length };", creditBranchStart);
+  const creditBranch = creditingService.slice(creditBranchStart, creditBranchEnd);
+  assert.match(creditBranch, /await tx\.incentiveLedgerEntry\.createMany\(\{ data: rows \}\);/);
+  assert.match(creditBranch, /await recordRevenueMovement\(agencyId, \{ caseId, caseInvoiceId, delta, triggerSource: trigger,/);
+  assert.match(creditBranch, /\}, tx\);\s*$/);
+  assert.ok(creditBranch.indexOf("createMany") < creditBranch.indexOf("recordRevenueMovement"),
+    "the ledger credit must be written before the revenue credit is attempted, both inside the same transaction");
 });

@@ -383,6 +383,7 @@ async function applyCaseInvoiceRefundReceipt(agencyId, refund) {
   }
   if (candidates.length !== 1) return null;
   const candidate = candidates[0];
+  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
   const completed = await prisma.$transaction(async (tx) => {
     const row = await tx.invoiceRefund.update({
       where: { id: candidate.id },
@@ -399,15 +400,16 @@ async function applyCaseInvoiceRefundReceipt(agencyId, refund) {
       agencyId, caseId: row.invoice.caseId, caseInvoiceId: row.invoice.id, refundAmount: Number(row.amount),
       trigger: "QBO_REFUND", triggerRef: `refund:${row.id}`,
     });
+    // Same transaction as the ledger reversal and the qbRefundReceiptId
+    // write above — if this fails, the whole thing rolls back (the
+    // "alreadyApplied" lookup on qbRefundReceiptId reprocesses a retried
+    // webhook delivery in full) instead of the refund posting while the
+    // contest projection silently falls behind.
+    await recordRevenueMovement(agencyId, {
+      caseId: row.invoice.caseId, caseInvoiceId: row.invoice.id, delta: -Number(row.amount),
+      triggerSource: "QBO_REFUND", triggerRef: `refund:${row.id}`,
+    }, tx);
     return row;
-  });
-
-  const { recordRevenueMovement } = await import("./incentiveExpansionService.js");
-  await recordRevenueMovement(agencyId, {
-    caseId: completed.invoice.caseId, caseInvoiceId: completed.invoice.id, delta: -Number(completed.amount),
-    triggerSource: "QBO_REFUND", triggerRef: `refund:${completed.id}`,
-  }).catch((error) => {
-    logger.warn("incentive.revenue_reversal_failed", { caseInvoiceId: completed.invoice.id, refundId: completed.id, reason: error.message });
   });
 
   await syncLeadInitialPaymentFromEvidence(agencyId, { clientId: completed.invoice.clientId, caseId: completed.invoice.caseId }).catch(() => {});
